@@ -1,0 +1,25 @@
+{
+  "name": "youtube-plus-modular-build",
+  "private": true,
+  "scripts": {
+    "prepare": "husky install",
+    "format": "prettier --write \"src/**/*.js\" \"*.js\"",
+    "format:check": "prettier --check \"src/**/*.js\" \"*.js\""
+  },
+  "devDependencies": {
+    "eslint": "^9.37.0",
+    "husky": "^9.1.7",
+    "lint-staged": "^16.2.3",
+    "prettier": "^3.0.0"
+  },
+  "lint-staged": {
+    "src/**/*.js": [
+      "prettier --write",
+      "git add"
+    ],
+    "*.js": [
+      "prettier --write",
+      "git add"
+    ]
+  }
+}
