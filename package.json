@@ -1,25 +1,49 @@
 {
-  "name": "youtube-plus-modular-build",
+  "name": "youtubeplus",
+  "version": "2.0.0",
+  "description": "Modular userscript build system for YouTube+ with automatic formatting, linting and pre-commit hooks",
   "private": true,
+  "author": "diorhc",
+  "license": "MIT",
   "scripts": {
     "prepare": "husky install",
-    "format": "prettier --write \"src/**/*.js\" \"*.js\"",
-    "format:check": "prettier --check \"src/**/*.js\" \"*.js\""
+    "build": "node build.js",
+    "build:fast": "node build.js --no-eslint",
+    "build:minify": "node build.js --minify",
+    "build:watch": "node build.js --watch",
+    "lint": "eslint \"src/**/*.js\" \"build.js\"",
+    "lint:fix": "eslint \"src/**/*.js\" \"build.js\" --fix",
+    "typecheck": "tsc --noEmit",
+    "format": "prettier --write \"src/**/*.js\" \"*.js\" \"!youtube.user.js\"",
+    "format:check": "prettier --check \"src/**/*.js\" \"*.js\" \"!youtube.user.js\"",
+    "test": "npm run lint && npm run format:check && npm run test:unit && npm run build",
+    "test:unit": "jest",
+    "test:unit:watch": "jest --watch",
+    "test:unit:coverage": "jest --coverage",
+    "test:smoke": "node test/smoke.js"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
+    "@types/node": "^24.7.0",
+    "chokidar": "^3.5.3",
     "eslint": "^9.37.0",
     "husky": "^9.1.7",
+    "jest": "^30.2.0",
+    "jest-environment-jsdom": "^30.2.0",
     "lint-staged": "^16.2.3",
-    "prettier": "^3.0.0"
+    "prettier": "^3.0.0",
+    "pretty-quick": "^4.2.2",
+    "terser": "^5.44.0",
+    "typescript": "^5.9.3"
   },
   "lint-staged": {
     "src/**/*.js": [
-      "prettier --write",
-      "git add"
+      "eslint --fix",
+      "prettier --write"
     ],
-    "*.js": [
-      "prettier --write",
-      "git add"
+    "build.js": [
+      "eslint --fix",
+      "prettier --write"
     ]
   }
 }

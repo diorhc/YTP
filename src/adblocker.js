@@ -2,7 +2,15 @@
 (function () {
   'use strict';
 
+  /**
+   * Ad blocking functionality for YouTube
+   * @namespace AdBlocker
+   */
   const AdBlocker = {
+    /**
+     * Configuration settings
+     * @type {Object}
+     */
     config: {
       skipInterval: 500,
       removeInterval: 1500,
@@ -12,6 +20,10 @@
       storageKey: 'youtube_adblocker_settings',
     },
 
+    /**
+     * Current state tracking
+     * @type {Object}
+     */
     state: {
       isYouTubeShorts: false,
       isYouTubeMusic: location.hostname === 'music.youtube.com',
@@ -20,7 +32,10 @@
       initialized: false,
     },
 
-    // Cached DOM queries for better performance
+    /**
+     * Cached DOM queries for performance
+     * @type {Object}
+     */
     cache: {
       moviePlayer: null,
       ytdPlayer: null,
@@ -28,7 +43,10 @@
       cacheTimeout: 5000,
     },
 
-    // Optimized selectors
+    /**
+     * Optimized CSS selectors for ad elements
+     * @type {Object}
+     */
     selectors: {
       ads: '#player-ads,.ytp-ad-module,.ad-showing,.ytp-ad-timed-pie-countdown-container,.ytp-ad-survey-questions',
       elements:
@@ -37,8 +55,15 @@
       removal: 'ytd-reel-video-renderer .ytd-ad-slot-renderer',
     },
 
-    // Settings with localStorage caching
+    /**
+     * Settings management with localStorage persistence
+     * @type {Object}
+     */
     settings: {
+      /**
+       * Load settings from localStorage
+       * @returns {void}
+       */
       load() {
         try {
           const saved = localStorage.getItem(AdBlocker.config.storageKey);
@@ -47,9 +72,15 @@
             AdBlocker.config.enabled = parsed.enabled ?? true;
             AdBlocker.config.enableLogging = parsed.enableLogging ?? false;
           }
-        } catch (e) {}
+        } catch {
+          // Silently fail if localStorage is unavailable
+        }
       },
 
+      /**
+       * Save settings to localStorage
+       * @returns {void}
+       */
       save() {
         try {
           localStorage.setItem(
@@ -59,11 +90,16 @@
               enableLogging: AdBlocker.config.enableLogging,
             })
           );
-        } catch (e) {}
+        } catch {
+          // Silently fail if localStorage is unavailable
+        }
       },
     },
 
-    // Cached player access
+    /**
+     * Get cached player elements
+     * @returns {Object} Object containing player element and controller
+     */
     getPlayer() {
       const now = Date.now();
       if (now - AdBlocker.cache.lastCacheTime > AdBlocker.cache.cacheTimeout) {
@@ -79,7 +115,10 @@
       };
     },
 
-    // Streamlined ad detection and skipping
+    /**
+     * Skip current ad by seeking to end
+     * @returns {void}
+     */
     skipAd() {
       if (!AdBlocker.config.enabled) return;
 
@@ -99,7 +138,7 @@
       }
 
       try {
-        const { element: moviePlayer, player } = AdBlocker.getPlayer();
+        const { player } = AdBlocker.getPlayer();
         if (!player) return;
 
         const video = document.querySelector(AdBlocker.selectors.video);
@@ -109,7 +148,7 @@
 
         // Skip logic based on platform
         if (AdBlocker.state.isYouTubeMusic && video) {
-          video.currentTime = video.duration || 999;
+          /** @type {HTMLVideoElement} */ (video).currentTime = video.duration || 999;
         } else if (typeof player.getVideoData === 'function') {
           const videoData = player.getVideoData();
           if (videoData?.video_id) {
@@ -123,7 +162,7 @@
         }
 
         AdBlocker.state.retryCount = 0;
-      } catch (error) {
+      } catch {
         if (AdBlocker.state.retryCount < AdBlocker.config.maxRetries) {
           AdBlocker.state.retryCount++;
           setTimeout(AdBlocker.skipAd, 800);
@@ -151,7 +190,7 @@
       // Use requestIdleCallback for non-blocking removal
       const remove = () => {
         const elements = document.querySelectorAll(AdBlocker.selectors.removal);
-        elements.forEach((el) => el.closest('ytd-reel-video-renderer')?.remove());
+        elements.forEach(el => el.closest('ytd-reel-video-renderer')?.remove());
       };
 
       if (window.requestIdleCallback) {
@@ -179,8 +218,9 @@
 
         section.appendChild(item);
 
-        item.querySelector('input').addEventListener('change', (e) => {
-          AdBlocker.config.enabled = e.target.checked;
+        item.querySelector('input').addEventListener('change', e => {
+          const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+          AdBlocker.config.enabled = target.checked;
           AdBlocker.settings.save();
           AdBlocker.config.enabled ? AdBlocker.addCss() : AdBlocker.removeCss();
         });
@@ -224,10 +264,10 @@
       };
 
       // Settings modal integration
-      const settingsObserver = new MutationObserver((mutations) => {
-        for (const { addedNodes } of mutations) {
+      const settingsObserver = new MutationObserver(_mutations => {
+        for (const { addedNodes } of _mutations) {
           for (const node of addedNodes) {
-            if (node.classList?.contains('ytp-plus-settings-modal')) {
+            if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
               setTimeout(AdBlocker.addSettingsUI, 50);
               return;
             }
@@ -237,11 +277,20 @@
 
       // ✅ Register observer in cleanupManager
       YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-      settingsObserver.observe(document.body, { childList: true });
+
+      // ✅ Safe observe with document.body check
+      if (document.body) {
+        settingsObserver.observe(document.body, { childList: true });
+      } else {
+        document.addEventListener('DOMContentLoaded', () => {
+          settingsObserver.observe(document.body, { childList: true });
+        });
+      }
 
       // ✅ Register global click listener in cleanupManager
-      const clickHandler = (e) => {
-        if (e.target.dataset?.section === 'basic') {
+      const clickHandler = e => {
+        const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+        if (target.dataset?.section === 'basic') {
           setTimeout(AdBlocker.addSettingsUI, 25);
         }
       };

@@ -1,8 +1,15 @@
-// Commment Manager
+/**
+ * Comment Manager Module
+ * Provides bulk delete functionality and comment management tools for YouTube
+ * @module CommentManager
+ */
 (function () {
   'use strict';
 
-  // Streamlined configuration
+  /**
+   * Configuration object for comment manager
+   * @const {Object}
+   */
   const CONFIG = {
     selectors: {
       deleteButtons: 'div[class^="VfPpkd-Bz112c-"]',
@@ -10,7 +17,19 @@
     },
     classes: {
       checkbox: 'comment-checkbox',
+      checkboxAnchor: 'comment-checkbox-anchor',
+      checkboxFloating: 'comment-checkbox-floating',
       container: 'comment-controls-container',
+      panel: 'comment-controls-panel',
+      header: 'comment-controls-header',
+      title: 'comment-controls-title',
+      actions: 'comment-controls-actions',
+      button: 'comment-controls-button',
+      buttonDanger: 'comment-controls-button--danger',
+      buttonPrimary: 'comment-controls-button--primary',
+      buttonSuccess: 'comment-controls-button--success',
+      close: 'comment-controls-close',
+      deleteButton: 'comment-controls-button-delete',
     },
     debounceDelay: 100,
     deleteDelay: 200,
@@ -23,6 +42,7 @@
     observer: null,
     isProcessing: false,
     settingsNavListenerKey: null,
+    panelCollapsed: false,
   };
 
   // Optimized settings
@@ -31,135 +51,258 @@
       try {
         const saved = localStorage.getItem(CONFIG.storageKey);
         if (saved) CONFIG.enabled = JSON.parse(saved).enabled ?? true;
-      } catch (e) {}
+      } catch {}
     },
     save: () => {
       try {
         localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
-      } catch (e) {}
+      } catch {}
     },
   };
 
-  // Utility functions
+  // Utility functions: use shared debounce when available
   const debounce = (func, wait) => {
-    let timeout;
-    return (...args) => {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func(...args), wait);
-    };
+    try {
+      return (
+        (window.YouTubeUtils && window.YouTubeUtils.debounce) ||
+        ((f, w) => {
+          let timeout;
+          return (...args) => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => f(...args), w);
+          };
+        })(func, wait)
+      );
+    } catch {
+      // fallback
+      let timeout;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func(...args), wait);
+      };
+    }
   };
 
-  const $ = (selector) => document.querySelector(selector);
-  const $$ = (selector) => document.querySelectorAll(selector);
+  /**
+   * Safely query a single element
+   * @param {string} selector - CSS selector
+   * @returns {HTMLElement|null} The first matching element or null
+   */
+  const $ = selector => /** @type {HTMLElement|null} */ (document.querySelector(selector));
 
-  // Core functionality
-  const addCheckboxes = () => {
+  /**
+   * Safely query multiple elements
+   * @param {string} selector - CSS selector
+   * @returns {NodeListOf<HTMLElement>} NodeList of matching elements
+   */
+  const $$ = selector =>
+    /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll(selector));
+
+  /**
+   * Log error with error boundary integration
+   * @param {string} context - Error context
+   * @param {Error|string|unknown} error - Error object or message
+   */
+  const logError = (context, error) => {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    if (window.YouTubeErrorBoundary) {
+      window.YouTubeErrorBoundary.logError(errorObj, { context });
+    } else {
+      console.error(`[YouTube+][CommentManager] ${context}:`, error);
+    }
+  };
+
+  /**
+   * Wraps function with error boundary protection
+   * @template {Function} T
+   * @param {T} fn - Function to wrap
+   * @param {string} context - Error context for debugging
+   * @returns {T} Wrapped function
+   */
+  const withErrorBoundary = (fn, context) => {
+    if (window.YouTubeErrorBoundary?.withErrorBoundary) {
+      return /** @type {T} */ (window.YouTubeErrorBoundary.withErrorBoundary(fn, 'CommentManager'));
+    }
+    return /** @type {any} */ (
+      (...args) => {
+        try {
+          return fn(...args);
+        } catch (error) {
+          logError(context, error);
+          return null;
+        }
+      }
+    );
+  };
+
+  /**
+   * Add checkboxes to comment elements for selection
+   * Core functionality for bulk operations
+   */
+  const addCheckboxes = withErrorBoundary(() => {
     if (!CONFIG.enabled || state.isProcessing) return;
 
     const deleteButtons = $$(CONFIG.selectors.deleteButtons);
 
-    deleteButtons.forEach((button) => {
+    deleteButtons.forEach(button => {
+      const parent = button.parentNode;
       if (
         button.closest(CONFIG.selectors.menuButton) ||
-        button.parentNode.querySelector(`.${CONFIG.classes.checkbox}`)
-      )
+        (parent && parent.querySelector && parent.querySelector(`.${CONFIG.classes.checkbox}`))
+      ) {
         return;
+      }
 
       const commentElement =
-        button.closest('[class*="comment"]') ||
-        button.closest('[role="article"]') ||
-        button.parentNode;
+        button.closest('[class*="comment"]') || button.closest('[role="article"]') || parent;
 
-      if (commentElement && !commentElement.hasAttribute('data-comment-text')) {
-        commentElement.setAttribute('data-comment-text', commentElement.textContent.toLowerCase());
+      if (commentElement && commentElement instanceof Element) {
+        if (!commentElement.hasAttribute('data-comment-text')) {
+          commentElement.setAttribute(
+            'data-comment-text',
+            (commentElement.textContent || '').toLowerCase()
+          );
+        }
       }
 
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.className = CONFIG.classes.checkbox;
-      checkbox.style.cssText =
-        'appearance:none;width:20px;height:20px;border:2px solid rgba(221,221,221,0.5);border-radius:6px;cursor:pointer;transition:all 0.2s ease;background:rgba(0,0,0,0.9);position:relative;margin-right:8px;';
+      checkbox.className = `${CONFIG.classes.checkbox} ytp-plus-settings-checkbox`;
+      checkbox.setAttribute('aria-label', 'Select comment');
 
       checkbox.addEventListener('change', updateDeleteButtonState);
-      checkbox.addEventListener('click', (e) => e.stopPropagation());
+      checkbox.addEventListener('click', e => e.stopPropagation());
 
       // Optimized positioning
-      const dateElement = commentElement.querySelector(
-        '[class*="date"],[class*="time"],time,[title*="20"],[aria-label*="ago"]'
-      );
+      const dateElement =
+        commentElement && commentElement.querySelector
+          ? commentElement.querySelector(
+              '[class*="date"],[class*="time"],time,[title*="20"],[aria-label*="ago"]'
+            )
+          : null;
 
-      if (dateElement) {
-        dateElement.style.cssText += 'position:relative;';
-        checkbox.style.cssText += 'position:absolute;right:-30px;top:0px;';
+      if (dateElement && dateElement instanceof Element) {
+        dateElement.classList.add(CONFIG.classes.checkboxAnchor);
+        checkbox.classList.add(CONFIG.classes.checkboxFloating);
         dateElement.appendChild(checkbox);
-      } else {
-        button.parentNode.insertBefore(checkbox, button);
+      } else if (parent && parent.insertBefore) {
+        parent.insertBefore(checkbox, button);
       }
     });
-  };
+  }, 'addCheckboxes');
 
-  const addControlButtons = () => {
+  /**
+   * Add control panel with bulk action buttons
+   */
+  const addControlButtons = withErrorBoundary(() => {
     if (!CONFIG.enabled || $(`.${CONFIG.classes.container}`)) return;
 
     const deleteButtons = $$(CONFIG.selectors.deleteButtons);
     if (!deleteButtons.length) return;
 
-    const container = deleteButtons[0].parentNode.parentNode;
-    const buttonsContainer = document.createElement('div');
-    buttonsContainer.className = CONFIG.classes.container;
-    buttonsContainer.style.cssText =
-      'position:fixed;top:50%;right:20px;transform:translateY(-50%);display:flex;flex-direction:column;gap:12px;z-index:9999;';
+    const first = deleteButtons[0];
+    const container = first && first.parentNode && first.parentNode.parentNode;
+    if (!container || !(container instanceof Element)) return;
 
-    const buttonStyles =
-      'padding:16px 24px;border:none;border-radius:16px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s ease;min-width:180px;text-align:center;backdrop-filter:blur(15px);-webkit-backdrop-filter:blur(15px);';
+    const panel = document.createElement('div');
+    panel.className = `${CONFIG.classes.container} ${CONFIG.classes.panel} glass-panel`;
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', 'Comment manager controls');
 
-    // Delete All Button
-    const deleteAllButton = document.createElement('button');
-    deleteAllButton.textContent = 'Delete Selected';
-    deleteAllButton.className = 'delete-all-button';
-    deleteAllButton.disabled = true;
-    deleteAllButton.style.cssText =
-      buttonStyles +
-      'background:rgba(244,67,54,0.2);color:#f44336;border:1px solid rgba(244,67,54,0.3);';
-    deleteAllButton.addEventListener('click', deleteSelectedComments);
+    const header = document.createElement('div');
+    header.className = CONFIG.classes.header;
 
-    // Select All Button
-    const selectAllButton = document.createElement('button');
-    selectAllButton.textContent = 'Select All';
-    selectAllButton.style.cssText =
-      buttonStyles +
-      'background:rgba(33,150,243,0.2);color:#2196f3;border:1px solid rgba(33,150,243,0.3);';
-    selectAllButton.addEventListener('click', () => {
-      $$(`.${CONFIG.classes.checkbox}`).forEach((cb) => (cb.checked = true));
+    const title = document.createElement('div');
+    title.className = CONFIG.classes.title;
+    title.textContent = 'Comment Manager';
+
+    const collapseButton = document.createElement('button');
+    collapseButton.className = `${CONFIG.classes.close} ytp-plus-settings-close`;
+    collapseButton.setAttribute('type', 'button');
+    collapseButton.setAttribute('aria-expanded', String(!state.panelCollapsed));
+    collapseButton.setAttribute('aria-label', 'Toggle panel');
+    collapseButton.innerHTML = `
+        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+        </svg>
+      `;
+
+    const togglePanelState = collapsed => {
+      state.panelCollapsed = collapsed;
+      header.classList.toggle('is-collapsed', collapsed);
+      actions.classList.toggle('is-hidden', collapsed);
+      collapseButton.setAttribute('aria-expanded', String(!collapsed));
+      panel.classList.toggle('is-collapsed', collapsed);
+    };
+
+    collapseButton.addEventListener('click', () => {
+      state.panelCollapsed = !state.panelCollapsed;
+      togglePanelState(state.panelCollapsed);
+    });
+
+    header.append(title, collapseButton);
+
+    const actions = document.createElement('div');
+    actions.className = CONFIG.classes.actions;
+
+    const createActionButton = (label, className, onClick, options = {}) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.className = `${CONFIG.classes.button} ${className}`;
+      if (options.id) button.id = options.id;
+      if (options.disabled) button.disabled = true;
+      button.addEventListener('click', onClick);
+      return button;
+    };
+
+    const deleteAllButton = createActionButton(
+      'Delete Selected',
+      `${CONFIG.classes.buttonDanger} ${CONFIG.classes.deleteButton}`,
+      deleteSelectedComments,
+      { disabled: true }
+    );
+
+    const selectAllButton = createActionButton('Select All', CONFIG.classes.buttonPrimary, () => {
+      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = true));
       updateDeleteButtonState();
     });
 
-    // Clear All Button
-    const clearAllButton = document.createElement('button');
-    clearAllButton.textContent = 'Clear All';
-    clearAllButton.style.cssText =
-      buttonStyles +
-      'background:rgba(76,175,80,0.2);color:#4caf50;border:1px solid rgba(76,175,80,0.3);';
-    clearAllButton.addEventListener('click', () => {
-      $$(`.${CONFIG.classes.checkbox}`).forEach((cb) => (cb.checked = false));
+    const clearAllButton = createActionButton('Clear All', CONFIG.classes.buttonSuccess, () => {
+      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = false));
       updateDeleteButtonState();
     });
 
-    buttonsContainer.append(deleteAllButton, selectAllButton, clearAllButton);
-    container.insertBefore(buttonsContainer, deleteButtons[0].parentNode);
-  };
+    actions.append(deleteAllButton, selectAllButton, clearAllButton);
+    togglePanelState(state.panelCollapsed);
 
-  const updateDeleteButtonState = () => {
-    const deleteAllButton = $('.delete-all-button');
+    panel.append(header, actions);
+
+    const refNode = deleteButtons[0] && deleteButtons[0].parentNode;
+    if (refNode && refNode.parentNode) {
+      container.insertBefore(panel, refNode);
+    } else {
+      container.appendChild(panel);
+    }
+  }, 'addControlButtons');
+
+  /**
+   * Update delete button state based on checkbox selection
+   */
+  const updateDeleteButtonState = withErrorBoundary(() => {
+    const deleteAllButton = $(`.${CONFIG.classes.deleteButton}`);
     if (!deleteAllButton) return;
 
-    const hasChecked = Array.from($$(`.${CONFIG.classes.checkbox}`)).some((cb) => cb.checked);
+    const hasChecked = Array.from($$(`.${CONFIG.classes.checkbox}`)).some(cb => cb.checked);
     deleteAllButton.disabled = !hasChecked;
     deleteAllButton.style.opacity = hasChecked ? '1' : '0.6';
-  };
+  }, 'updateDeleteButtonState');
 
-  const deleteSelectedComments = () => {
-    const checkedBoxes = Array.from($$(`.${CONFIG.classes.checkbox}`)).filter((cb) => cb.checked);
+  /**
+   * Delete selected comments with confirmation
+   */
+  const deleteSelectedComments = withErrorBoundary(() => {
+    const checkedBoxes = Array.from($$(`.${CONFIG.classes.checkbox}`)).filter(cb => cb.checked);
 
     if (!checkedBoxes.length || !confirm(`Delete ${checkedBoxes.length} comment(s)?`)) return;
 
@@ -174,14 +317,20 @@
     });
 
     setTimeout(() => (state.isProcessing = false), checkedBoxes.length * CONFIG.deleteDelay + 1000);
-  };
+  }, 'deleteSelectedComments');
 
-  const cleanup = () => {
-    $$(`.${CONFIG.classes.checkbox}`).forEach((el) => el.remove());
+  /**
+   * Clean up all comment manager elements
+   */
+  const cleanup = withErrorBoundary(() => {
+    $$(`.${CONFIG.classes.checkbox}`).forEach(el => el.remove());
     $(`.${CONFIG.classes.container}`)?.remove();
-  };
+  }, 'cleanup');
 
-  const initializeScript = () => {
+  /**
+   * Initialize or cleanup script based on enabled state
+   */
+  const initializeScript = withErrorBoundary(() => {
     if (CONFIG.enabled) {
       addCheckboxes();
       addControlButtons();
@@ -189,26 +338,67 @@
     } else {
       cleanup();
     }
-  };
+  }, 'initializeScript');
 
-  // Enhanced styles with better performance
-  const addStyles = () => {
+  /**
+   * Add enhanced CSS styles for comment manager UI
+   */
+  const addStyles = withErrorBoundary(() => {
     if ($('#comment-delete-styles')) return;
 
-    // ✅ Use StyleManager instead of createElement('style')
     const styles = `
-        .${CONFIG.classes.checkbox}:hover{border-color:rgba(33,150,243,0.7);background:rgba(245,245,245,0.3);transform:scale(1.1)}
-        .${CONFIG.classes.checkbox}:checked{background:rgba(33,150,243,0.3);border-color:rgba(33,150,243,0.7);box-shadow:0 4px 12px rgba(33,150,243,0.2)}
-        .${CONFIG.classes.checkbox}:checked::after{content:'✓';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#2196f3;font-size:14px;font-weight:bold}
-        .delete-all-button:hover:not(:disabled){background:rgba(244,67,54,0.3)!important;transform:translateY(-3px);box-shadow:0 8px 24px rgba(244,67,54,0.2)}
+  .${CONFIG.classes.checkboxAnchor}{position:relative;display:inline-flex;align-items:center;gap:8px;width:auto;}
+        .${CONFIG.classes.checkboxFloating}{position:absolute;top:-4px;right:-32px;margin:0;}
+        .${CONFIG.classes.panel}{position:fixed;top:50%;right:24px;transform:translateY(-50%);display:flex;flex-direction:column;gap:16px;z-index:9999;padding:18px;background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-lg);box-shadow:var(--yt-glass-shadow);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);min-width:220px;max-width:260px;color:var(--yt-text-primary);transition:transform .3s ease,opacity .3s ease;}
+        html:not([dark]) .${CONFIG.classes.panel}{background:var(--yt-glass-bg);}
+        .${CONFIG.classes.header}{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .${CONFIG.classes.panel}.is-collapsed{padding:14px 18px;}
+  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.title}{font-weight:500;opacity:.85;}
+  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.close}{transform:rotate(45deg);}
+  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.actions}{display:none!important;}
+        .${CONFIG.classes.title}{font-size:15px;font-weight:600;letter-spacing:.3px;}
+        .${CONFIG.classes.close}{background:transparent;border:none;cursor:pointer;padding:6px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--yt-text-primary);transition:all .2s ease;}
+        .${CONFIG.classes.close}:hover{transform:rotate(90deg) scale(1.05);color:var(--yt-accent);}
+        .${CONFIG.classes.actions}{display:flex;flex-direction:column;gap:10px;}
+  .${CONFIG.classes.actions}.is-hidden{display:none!important;}
+        .${CONFIG.classes.button}{padding:12px 16px;border-radius:var(--yt-radius-md);border:1px solid var(--yt-glass-border);cursor:pointer;font-size:13px;font-weight:500;background:var(--yt-button-bg);color:var(--yt-text-primary);transition:all .2s ease;text-align:center;}
+        .${CONFIG.classes.button}:disabled{opacity:.5;cursor:not-allowed;}
+        .${CONFIG.classes.button}:not(:disabled):hover{transform:translateY(-1px);box-shadow:var(--yt-shadow);}
+        .${CONFIG.classes.buttonDanger}{background:rgba(255,99,71,.12);border-color:rgba(255,99,71,.25);color:#ff5c5c;}
+        .${CONFIG.classes.buttonPrimary}{background:rgba(33,150,243,.12);border-color:rgba(33,150,243,.25);color:#2196f3;}
+        .${CONFIG.classes.buttonSuccess}{background:rgba(76,175,80,.12);border-color:rgba(76,175,80,.25);color:#4caf50;}
+        .${CONFIG.classes.buttonDanger}:not(:disabled):hover{background:rgba(255,99,71,.22);}
+        .${CONFIG.classes.buttonPrimary}:not(:disabled):hover{background:rgba(33,150,243,.22);}
+        .${CONFIG.classes.buttonSuccess}:not(:disabled):hover{background:rgba(76,175,80,.22);}
+        @media(max-width:1280px){
+          .${CONFIG.classes.panel}{top:auto;bottom:24px;transform:none;right:16px;}
+        }
+        @media(max-width:768px){
+          .${CONFIG.classes.panel}{position:fixed;left:16px;right:16px;bottom:16px;top:auto;transform:none;max-width:none;}
+          .${CONFIG.classes.actions}{flex-direction:row;flex-wrap:wrap;}
+          .${CONFIG.classes.button}{flex:1;min-width:140px;}
+        }
       `;
     YouTubeUtils.StyleManager.add('comment-delete-styles', styles);
-  };
+  }, 'addStyles');
 
-  // Settings integration
-  const addCommentManagerSettings = () => {
+  /**
+   * Add comment manager settings to YouTube+ settings panel
+   */
+  const addCommentManagerSettings = withErrorBoundary(() => {
     const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
-    if (!advancedSection || $('.comment-manager-settings-item')) return;
+    if (!advancedSection) return;
+
+    // If already exists, move it to the bottom to ensure Comment Manager is last
+    const existing = $('.comment-manager-settings-item');
+    if (existing) {
+      try {
+        advancedSection.appendChild(existing);
+      } catch {
+        // ignore
+      }
+      return;
+    }
 
     const settingsItem = document.createElement('div');
     settingsItem.className = 'ytp-plus-settings-item comment-manager-settings-item';
@@ -226,15 +416,19 @@
         </button>
       `;
 
+    // Append to end (ensure it's the bottom-most item)
     advancedSection.appendChild(settingsItem);
 
     $('#open-comment-history-page').addEventListener('click', () => {
       window.open('https://www.youtube.com/feed/history/comment_history', '_blank');
     });
-  };
+  }, 'addCommentManagerSettings');
 
-  // Optimized initialization
-  const init = () => {
+  /**
+   * Initialize comment manager module
+   * Sets up observers, event listeners, and initial state
+   */
+  const init = withErrorBoundary(() => {
     settings.load();
     addStyles();
 
@@ -244,7 +438,15 @@
 
     // ✅ Register observer in cleanupManager
     YouTubeUtils.cleanupManager.registerObserver(state.observer);
-    state.observer.observe(document.body, { childList: true, subtree: true });
+
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      state.observer.observe(document.body, { childList: true, subtree: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        state.observer.observe(document.body, { childList: true, subtree: true });
+      });
+    }
 
     // Initial setup
     if (document.readyState === 'loading') {
@@ -254,10 +456,10 @@
     }
 
     // Settings modal integration
-    const settingsObserver = new MutationObserver((mutations) => {
+    const settingsObserver = new MutationObserver(mutations => {
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
-          if (node.classList?.contains('ytp-plus-settings-modal')) {
+          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
             setTimeout(addCommentManagerSettings, 100);
             return;
           }
@@ -267,10 +469,19 @@
 
     // ✅ Register observer in cleanupManager
     YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-    settingsObserver.observe(document.body, { childList: true, subtree: true });
 
-    const handleAdvancedNavClick = (e) => {
-      if (e.target.dataset?.section === 'advanced') {
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      settingsObserver.observe(document.body, { childList: true, subtree: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        settingsObserver.observe(document.body, { childList: true, subtree: true });
+      });
+    }
+
+    const handleAdvancedNavClick = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (target.dataset?.section === 'advanced') {
         setTimeout(addCommentManagerSettings, 50);
       }
     };
@@ -283,7 +494,8 @@
         { passive: true, capture: true }
       );
     }
-  };
+  }, 'init');
 
+  // Start the module
   init();
 })();

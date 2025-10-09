@@ -86,7 +86,7 @@
       let hasStreams = false;
       let hasShorts = false;
 
-      tabs.forEach((tab) => {
+      tabs.forEach(tab => {
         const tabUrl = tab?.tabRenderer?.endpoint?.commandMetadata?.webCommandMetadata?.url;
         if (tabUrl) {
           if (/\/streams$/.test(tabUrl)) hasStreams = true;
@@ -104,7 +104,7 @@
         existingMenu.remove();
         createStatsMenu();
       }
-    } catch (e) {
+    } catch {
     } finally {
       isChecking = false;
     }
@@ -247,7 +247,7 @@
   }
 
   function openStatsModal(url, titleText) {
-    document.querySelectorAll('.stats-modal-overlay').forEach((m) => m.remove());
+    document.querySelectorAll('.stats-modal-overlay').forEach(m => m.remove());
 
     const overlay = document.createElement('div');
     overlay.className = 'stats-modal-overlay';
@@ -280,8 +280,9 @@
     content.append(closeBtn, title, iframe);
     overlay.appendChild(content);
 
-    overlay.onclick = (e) => {
-      if (e.target === overlay) overlay.remove();
+    overlay.onclick = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (target === overlay) overlay.remove();
     };
     document.addEventListener(
       'keydown',
@@ -498,13 +499,14 @@
       `;
     section.appendChild(item);
 
-    item.querySelector('input').addEventListener('change', (e) => {
-      statsButtonEnabled = e.target.checked;
+    item.querySelector('input').addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      statsButtonEnabled = target.checked;
       localStorage.setItem(SETTINGS_KEY, statsButtonEnabled ? 'true' : 'false');
       // Remove all stats buttons and menus
       document
         .querySelectorAll('.videoStats,.shortsStats,.stats-menu-container')
-        .forEach((el) => el.remove());
+        .forEach(el => el.remove());
       if (statsButtonEnabled) {
         checkAndInsertIcon();
         checkAndAddMenu();
@@ -513,10 +515,10 @@
   }
 
   // Observe settings modal for experimental section
-  const settingsObserver = new MutationObserver((mutations) => {
+  const settingsObserver = new MutationObserver(mutations => {
     for (const { addedNodes } of mutations) {
       for (const node of addedNodes) {
-        if (node.classList?.contains('ytp-plus-settings-modal')) {
+        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
           setTimeout(addSettingsUI, 50);
         }
       }
@@ -528,12 +530,21 @@
 
   // ✅ Register observer in cleanupManager
   YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-  settingsObserver.observe(document.body, { childList: true, subtree: true });
 
-  const handleExperimentalNavClick = (e) => {
+  // ✅ Safe observe with document.body check
+  if (document.body) {
+    settingsObserver.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      settingsObserver.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+
+  const handleExperimentalNavClick = e => {
+    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
     if (
-      e.target.classList?.contains('ytp-plus-settings-nav-item') &&
-      e.target.dataset.section === 'experimental'
+      target.classList?.contains('ytp-plus-settings-nav-item') &&
+      target.dataset?.section === 'experimental'
     ) {
       setTimeout(addSettingsUI, 50);
     }
@@ -556,16 +567,20 @@
     }
 
     history.pushState = (function (f) {
+      /** @this {any} */
       return function () {
-        const result = f.apply(this, arguments);
+        const fAny = /** @type {any} */ (f);
+        const result = fAny.apply(this, arguments);
         checkUrlChange();
         return result;
       };
     })(history.pushState);
 
     history.replaceState = (function (f) {
+      /** @this {any} */
       return function () {
-        const result = f.apply(this, arguments);
+        const fAny = /** @type {any} */ (f);
+        const result = fAny.apply(this, arguments);
         checkUrlChange();
         return result;
       };
@@ -578,8 +593,8 @@
     }
   }
 
-  const observer = new MutationObserver((mutations) => {
-    for (let mutation of mutations) {
+  const observer = new MutationObserver(mutations => {
+    for (const mutation of mutations) {
       if (mutation.type === 'childList') {
         if (statsButtonEnabled) {
           checkAndInsertIcon();
@@ -589,7 +604,14 @@
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  // ✅ Safe observe with document.body check
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
@@ -608,7 +630,8 @@
   });
 
   document.addEventListener('yt-action', function (event) {
-    if (event.detail && event.detail.actionName === 'yt-reload-continuation-items-command') {
+    const ev = /** @type {CustomEvent<any>} */ (event);
+    if (ev.detail && ev.detail.actionName === 'yt-reload-continuation-items-command') {
       if (statsButtonEnabled) {
         checkAndInsertIcon();
         checkAndAddMenu();

@@ -3,7 +3,9 @@
  * @param {*} value - The value to return
  * @returns {*} The same value
  */
-const identityFn = (value) => value; /**
+// @ts-nocheck
+
+const identityFn = value => value; /**
  * Ensure TrustedTypes policy exists for secure HTML handling
  * @returns {{createHTML: Function, error: Error|null}} Policy object with createHTML function and error status
  */
@@ -50,10 +52,10 @@ function createNextBrowserTick(existing) {
   const SafePromise = (async () => {})().constructor;
   const queue =
     typeof queueMicrotask === 'function'
-      ? (callback) => queueMicrotask(callback)
-      : (callback) => SafePromise.resolve().then(callback);
+      ? callback => queueMicrotask(callback)
+      : callback => SafePromise.resolve().then(callback);
 
-  const scheduler = (callback) => {
+  const scheduler = callback => {
     if (typeof callback === 'function') {
       queue(callback);
       return;
@@ -75,6 +77,11 @@ if (trustHTMLErr) {
   throw new Error('CSP restriction - cannot initialize TrustedTypes');
 }
 
+// Export createHTML for use in modules if needed
+if (typeof window !== 'undefined') {
+  window._ytplusCreateHTML = createHTML;
+}
+
 const nextBrowserTick = createNextBrowserTick(
   (typeof window !== 'undefined' && window.nextBrowserTick) || undefined
 );
@@ -88,14 +95,11 @@ if (
 
 // -----------------------------------------------------------------------------------------------------------------------------
 
-/** @const {number} Rounded corner radius value */
-const VAL_ROUNDED_A1 = 12;
-
 /**
  * Main execution script for YouTube tab view
- * @param {string} communicationKey - Unique key for cross-context communication
+ * @param {string} _communicationKey - Unique key for cross-context communication (reserved for future use)
  */
-const executionScript = (communicationKey) => {
+const executionScript = _communicationKey => {
   /** @const {boolean} Debug flag for attachment/detachment events */
   const DEBUG_5084 = false;
 
@@ -112,9 +116,6 @@ const executionScript = (communicationKey) => {
   /** @const {number} Reset value when attribute exceeds max */
   const ATTRIBUTE_RESET_VALUE = 9;
 
-  /** @const {number} Random seed multiplier for unique ID generation */
-  const MAGIC_NUMBER_RANDOM_SEED = 314159265359;
-
   // Validate configuration
   if (
     MAX_ATTRIBUTE_VALUE <= 0 ||
@@ -125,7 +126,7 @@ const executionScript = (communicationKey) => {
       '[YouTube+] Invalid configuration: MAX_ATTRIBUTE_VALUE and ATTRIBUTE_RESET_VALUE must be valid positive numbers'
     );
   } // Reuse utility functions from parent scope
-  const identityFn = (value) => value;
+  const identityFn = value => value;
   const ensureTrustedTypesPolicyLocal = () => {
     if (typeof trustedTypes === 'undefined') {
       return { createHTML: identityFn, error: null };
@@ -158,7 +159,7 @@ const executionScript = (communicationKey) => {
    * @param {Function} existing - Existing scheduler to reuse if version compatible
    * @returns {Function} Scheduler function
    */
-  const createNextBrowserTickLocal = (existing) => {
+  const createNextBrowserTickLocal = existing => {
     if (existing?.version >= 2) {
       return existing;
     }
@@ -166,10 +167,10 @@ const executionScript = (communicationKey) => {
     const SafePromise = (async () => {})().constructor;
     const queue =
       typeof queueMicrotask === 'function'
-        ? (callback) => queueMicrotask(callback)
-        : (callback) => SafePromise.resolve().then(callback);
+        ? callback => queueMicrotask(callback)
+        : callback => SafePromise.resolve().then(callback);
 
-    const scheduler = (callback) => {
+    const scheduler = callback => {
       if (typeof callback === 'function') {
         queue(callback);
         return;
@@ -217,7 +218,8 @@ const executionScript = (communicationKey) => {
      * Helps reduce DOM traversal overhead
      */
     const selectorCache = new Map();
-    const CACHE_MAX_SIZE = 50;
+    // eslint-disable-next-line no-unused-vars
+    const _CACHE_MAX_SIZE = 50; // Reserved for future cache implementation
     const CACHE_TTL = 5000; // 5 seconds
 
     /**
@@ -251,7 +253,8 @@ const executionScript = (communicationKey) => {
      * @param {string} selector - CSS selector string
      * @returns {NodeListOf<Element>} NodeList of found elements
      */
-    const qsAll = (elm, selector) => {
+    // eslint-disable-next-line no-unused-vars
+    const _qsAll = (elm, selector) => {
       return HTMLElement_.prototype.querySelectorAll.call(elm, selector);
     };
 
@@ -397,7 +400,7 @@ const executionScript = (communicationKey) => {
      *
      */
     (() => {
-      let e =
+      const e =
         'undefined' != typeof unsafeWindow ? unsafeWindow : this instanceof Window ? this : window;
       if (!e._ytConfigHacks) {
         let t = 4;
@@ -407,49 +410,50 @@ const executionScript = (communicationKey) => {
             'function' == typeof e && super.add(e);
           }
         }
-        let a = (async () => {})().constructor,
-          i = (e._ytConfigHacks = new n()),
-          l = () => {
-            let t = e.ytcsi.originalYtcsi;
-            t && ((e.ytcsi = t), (l = null));
-          },
-          c = null,
-          o = () => {
-            if (t >= 1) {
-              let n = (e.yt || 0).config_ || (e.ytcfg || 0).data_ || 0;
-              if ('string' == typeof n.INNERTUBE_API_KEY && 'object' == typeof n.EXPERIMENT_FLAGS)
-                for (let a of (--t <= 0 && l && l(), (c = !0), i)) a(n);
+        const a = (async () => {})().constructor,
+          i = (e._ytConfigHacks = new n());
+        let l = () => {
+          const t = e.ytcsi.originalYtcsi;
+          t && ((e.ytcsi = t), (l = null));
+        };
+        let c = null;
+        const o = () => {
+          if (t >= 1) {
+            const n = (e.yt || 0).config_ || (e.ytcfg || 0).data_ || 0;
+            if ('string' == typeof n.INNERTUBE_API_KEY && 'object' == typeof n.EXPERIMENT_FLAGS) {
+              for (const a of (--t <= 0 && l && l(), (c = !0), i)) a(n);
             }
-          },
-          f = 1,
-          d = (t) => {
-            if ((t = t || e.ytcsi))
-              return (
-                (e.ytcsi = new Proxy(t, {
-                  get: (e, t, n) =>
-                    'originalYtcsi' === t ? e : (o(), c && --f <= 0 && l && l(), e[t]),
-                })),
-                !0
-              );
-          };
+          }
+        };
+        let f = 1;
+        const d = t => {
+          if ((t = t || e.ytcsi)) {
+            return (
+              (e.ytcsi = new Proxy(t, {
+                get: (e, t) => ('originalYtcsi' === t ? e : (o(), c && --f <= 0 && l && l(), e[t])),
+              })),
+              !0
+            );
+          }
+        };
         d() ||
           Object.defineProperty(e, 'ytcsi', {
             get() {},
-            set: (t) => (t && (delete e.ytcsi, d(t)), !0),
+            set: t => (t && (delete e.ytcsi, d(t)), !0),
             enumerable: !1,
             configurable: !0,
           });
-        let { addEventListener: s, removeEventListener: y } = Document.prototype;
+        const { addEventListener: s, removeEventListener: y } = Document.prototype;
         function r(t) {
           (o(), t && e.removeEventListener('DOMContentLoaded', r, !1));
         }
-        (new a((e) => {
-          if ('undefined' != typeof AbortSignal)
+        (new a(e => {
+          if ('undefined' != typeof AbortSignal) {
             (s.call(document, 'yt-page-data-fetched', e, { once: !0 }),
               s.call(document, 'yt-navigate-finish', e, { once: !0 }),
               s.call(document, 'spfdone', e, { once: !0 }));
-          else {
-            let t = () => {
+          } else {
+            const t = () => {
               (e(),
                 y.call(document, 'yt-page-data-fetched', t, !1),
                 y.call(document, 'yt-navigate-finish', t, !1),
@@ -460,11 +464,11 @@ const executionScript = (communicationKey) => {
               s.call(document, 'spfdone', t, !1));
           }
         }).then(o),
-          new a((e) => {
-            if ('undefined' != typeof AbortSignal)
+          new a(e => {
+            if ('undefined' != typeof AbortSignal) {
               s.call(document, 'yt-action', e, { once: !0, capture: !0 });
-            else {
-              let t = () => {
+            } else {
+              const t = () => {
                 (e(), y.call(document, 'yt-action', t, !0));
               };
               s.call(document, 'yt-action', t, !0);
@@ -477,7 +481,7 @@ const executionScript = (communicationKey) => {
     })();
 
     let configOnce = false;
-    window._ytConfigHacks.add((config_) => {
+    window._ytConfigHacks.add(config_ => {
       if (configOnce) return;
       configOnce = true;
 
@@ -509,10 +513,10 @@ const executionScript = (communicationKey) => {
 
     /** @type {(o: Object | null) => WeakRef | null} */
     const mWeakRef =
-      typeof WeakRef === 'function' ? (o) => (o ? new WeakRef(o) : null) : (o) => o || null; // typeof InvalidVar == 'undefined'
+      typeof WeakRef === 'function' ? o => (o ? new WeakRef(o) : null) : o => o || null; // typeof InvalidVar == 'undefined'
 
     /** @type {(wr: Object | null) => Object | null} */
-    const kRef = (wr) => (wr && wr.deref ? wr.deref() : wr);
+    const kRef = wr => (wr && wr.deref ? wr.deref() : wr);
 
     /** @type {globalThis.PromiseConstructor} */
     /** @type {PromiseConstructor} Safe Promise constructor (YouTube hacks Promise in WaterFox Classic) */
@@ -523,14 +527,14 @@ const executionScript = (communicationKey) => {
      * @param {number} delay - Delay in milliseconds
      * @returns {Promise<void>} Promise that resolves after the delay
      */
-    const delayPn = (delay) => new Promise((fn) => setTimeout(fn, delay));
+    const delayPn = delay => new Promise(fn => setTimeout(fn, delay));
 
     /**
      * Get polymer controller or instance from element
      * @param {*} o - Element or object to inspect
      * @returns {*} Polymer controller, instance, or the object itself
      */
-    const insp = (o) => (o ? o.polymerController || o.inst || o || 0 : o || 0);
+    const insp = o => (o ? o.polymerController || o.inst || o || 0 : o || 0);
 
     /** @type {Function} Bound setTimeout to ensure correct context */
     const setTimeout_ = setTimeout.bind(window);
@@ -574,7 +578,8 @@ const executionScript = (communicationKey) => {
     const isPassiveArgSupport = typeof IntersectionObserver === 'function';
 
     /** @const {Object|boolean} Event listener options for bubble phase with passive */
-    const bubblePassive = isPassiveArgSupport ? { capture: false, passive: true } : false;
+    // eslint-disable-next-line no-unused-vars
+    const _bubblePassive = isPassiveArgSupport ? { capture: false, passive: true } : false;
 
     /** @const {Object|boolean} Event listener options for capture phase with passive */
     const capturePassive = isPassiveArgSupport ? { capture: true, passive: true } : true;
@@ -664,7 +669,8 @@ const executionScript = (communicationKey) => {
      * @param {Function} asyncFn - Async function to wrap
      * @returns {Function} Wrapped function
      */
-    const asyncWrap = (asyncFn) => {
+    // eslint-disable-next-line no-unused-vars
+    const _asyncWrap = asyncFn => {
       return () => {
         Promise.resolve().then(asyncFn);
       };
@@ -742,13 +748,16 @@ const executionScript = (communicationKey) => {
     const svgPlayList =
       `<path d="M0 3h12v2H0zm0 4h12v2H0zm0 4h8v2H0zm16 0V7h-2v4h-4v2h4v4h2v-4h4v-2z"/>`.trim();
 
+    // eslint-disable-next-line no-unused-vars
     const svgDiag1 = `<svg stroke="currentColor" fill="none"><path d="M8 2h2v2M7 5l3-3m-6 8H2V8m0 2l3-3"/></svg>`;
+    // eslint-disable-next-line no-unused-vars
     const svgDiag2 = `<svg stroke="currentColor" fill="none"><path d="M7 3v2h2M7 5l3-3M5 9V7H3m-1 3l3-3"/></svg>`;
 
     /**
      * Get GMT offset for the current timezone
      * @returns {string} GMT offset string (e.g., "+9" or "-5")
      */
+    // eslint-disable-next-line no-unused-vars
     const getGMT = () => {
       const m = new Date('2023-01-01T00:00:00Z');
       return m.getDate() === 1 ? `+${m.getHours()}` : `-${24 - m.getHours()}`;
@@ -776,7 +785,7 @@ const executionScript = (communicationKey) => {
     const svgElm = (w, h, vw, vh, p, m) =>
       `<svg${m ? ` class=${m}` : ''} width="${w}" height="${h}" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid meet">${p}</svg>`;
 
-    let hiddenTabsByUserCSS = 0;
+    const hiddenTabsByUserCSS = 0;
 
     /**
      * Generate HTML for tab buttons
@@ -788,14 +797,14 @@ const executionScript = (communicationKey) => {
       const sTabBtnInfo = `${svgElm(16, 16, 60, 60, svgInfo)}<span>${getWord('info')}</span>`;
       const sTabBtnPlayList = `${svgElm(16, 16, 20, 20, svgPlayList)}<span>${getWord('playlist')}</span>`;
 
-      let str1 = `
+      const str1 = `
         <paper-ripple class="style-scope yt-icon-button">
             <div id="background" class="style-scope paper-ripple" style="opacity:0;"></div>
             <div id="waves" class="style-scope paper-ripple"></div>
         </paper-ripple>
         `;
 
-      let str_fbtns = `
+      const str_fbtns = `
     <div class="font-size-right">
     <div class="font-size-btn font-size-plus" tyt-di="8rdLQ">
     <svg width="12" height="12" viewbox="0 0 50 50" preserveAspectRatio="xMidYMid meet" 
@@ -818,7 +827,7 @@ const executionScript = (communicationKey) => {
         `<a id="tab-btn5" tyt-di="q9Kjc" tyt-tab-content="#tab-list" class="tab-btn tab-btn-hidden">${sTabBtnPlayList}${str1}${str_fbtns}</a>`,
       ].join('');
 
-      let addHTML = `
+      const addHTML = `
         <div id="right-tabs">
             <tabview-view-pos-thead></tabview-view-pos-thead>
             <header>
@@ -877,7 +886,7 @@ const executionScript = (communicationKey) => {
       get(target, prop) {
         return target[prop] || 0;
       },
-      set(target, prop, val) {
+      set(_target, _prop, _val) {
         return true;
       },
     });
@@ -887,7 +896,7 @@ const executionScript = (communicationKey) => {
         if (target[prop] > MAX_ATTRIBUTE_VALUE) target[prop] = ATTRIBUTE_RESET_VALUE;
         return (target[prop] = (target[prop] || 0) + 1);
       },
-      set(target, prop, val) {
+      set(_target, _prop, _val) {
         return true;
       },
     });
@@ -910,21 +919,22 @@ const executionScript = (communicationKey) => {
      * Add function to attribute change stack
      * @param {Function} f - Function to execute on attribute change
      */
-    const cmAttrStackPush = (f) => {
+    // eslint-disable-next-line no-unused-vars
+    const cmAttrStackPush = f => {
       cmAttrStack.push(f);
       cmAttr.data = `${(cmAttr.data & 7) + 1}`;
     };
 
     const cmAttrObs = new MutationObserver(() => {
-      cmAttrStack.forEach((fn) => fn());
+      cmAttrStack.forEach(fn => fn());
     });
     cmAttrObs.observe(cmAttr, { characterData: true });
 
     /**
      * Function to calculate if element can collapse
-     * @param {*} s - Parameter (unused but kept for compatibility)
+     * @param {*} _s - Parameter (unused but kept for compatibility)
      */
-    const funcCanCollapse = function (s) {
+    const funcCanCollapse = function (_s) {
       const content = this.content || this.$.content;
       this.canToggle =
         this.shouldUseNumberOfLines &&
@@ -937,7 +947,7 @@ const executionScript = (communicationKey) => {
             (content && content.scrollHeight > this.collapsedHeight);
     };
 
-    const aoChatAttrChangeFn = async (lockId) => {
+    const aoChatAttrChangeFn = async lockId => {
       if (lockGet['aoChatAttrAsyncLock'] !== lockId) return;
 
       const chatElm = elements.chat;
@@ -954,7 +964,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const aoPlayListAttrChangeFn = async (lockId) => {
+    const aoPlayListAttrChangeFn = async lockId => {
       if (lockGet['aoPlayListAttrAsyncLock'] !== lockId) return;
 
       const playlistElm = elements.playlist;
@@ -973,16 +983,16 @@ const executionScript = (communicationKey) => {
     const aoChat = new MutationObserver(() => {
       Promise.resolve(lockSet['aoChatAttrAsyncLock'])
         .then(aoChatAttrChangeFn)
-        .catch((err) => handlePromiseError(err, 'aoChatAttrChange'));
+        .catch(err => handlePromiseError(err, 'aoChatAttrChange'));
     });
 
     const aoPlayList = new MutationObserver(() => {
       Promise.resolve(lockSet['aoPlayListAttrAsyncLock'])
         .then(aoPlayListAttrChangeFn)
-        .catch((err) => handlePromiseError(err, 'aoPlayListAttrChange'));
+        .catch(err => handlePromiseError(err, 'aoPlayListAttrChange'));
     });
 
-    const aoComment = new MutationObserver(async (mutations) => {
+    const aoComment = new MutationObserver(async mutations => {
       const commentsArea = elements.comments;
       const ytdFlexyElm = elements.flexy;
 
@@ -1011,12 +1021,12 @@ const executionScript = (communicationKey) => {
         if (!commentsArea.hasAttribute000('hidden')) {
           Promise.resolve(commentsArea)
             .then(eventMap['settingCommentsVideoId'])
-            .catch((err) => handlePromiseError(err, 'settingCommentsVideoId'));
+            .catch(err => handlePromiseError(err, 'settingCommentsVideoId'));
         }
 
         Promise.resolve(lockSet['removeKeepCommentsScrollerLock'])
           .then(removeKeepCommentsScroller)
-          .catch((err) => handlePromiseError(err, 'removeKeepCommentsScroller'));
+          .catch(err => handlePromiseError(err, 'removeKeepCommentsScroller'));
       }
 
       if ((bfHidden || bfCommentsVideoId || bfCommentDisabled) && ytdFlexyElm) {
@@ -1029,7 +1039,7 @@ const executionScript = (communicationKey) => {
 
         Promise.resolve(lockSet['checkCommentsShouldBeHiddenLock'])
           .then(eventMap['checkCommentsShouldBeHidden'])
-          .catch((err) => handlePromiseError(err, 'checkCommentsShouldBeHidden'));
+          .catch(err => handlePromiseError(err, 'checkCommentsShouldBeHidden'));
 
         const lockId = lockSet['rightTabReadyLock01'];
         await rightTabsProvidedPromise.then();
@@ -1049,7 +1059,7 @@ const executionScript = (communicationKey) => {
     });
 
     const ioComment = new IntersectionObserver(
-      (entries) => {
+      entries => {
         for (const entry of entries) {
           const target = entry.target;
           const cnt = insp(target);
@@ -1079,7 +1089,7 @@ const executionScript = (communicationKey) => {
     let bFixForResizedTabLater = false;
     let lastRoRightTabsWidth = 0;
 
-    const roRightTabs = new ResizeObserver((entries) => {
+    const roRightTabs = new ResizeObserver(entries => {
       const entry = entries[entries.length - 1];
       const width = Math.round(entry.borderBoxSize.inlineSize);
 
@@ -1098,7 +1108,7 @@ const executionScript = (communicationKey) => {
      * Switch to specified tab
      * @param {string|Element} activeLink - Tab link selector or element
      */
-    const switchToTab = (activeLink) => {
+    const switchToTab = activeLink => {
       if (typeof activeLink === 'string') {
         activeLink = document.querySelector(`a[tyt-tab-content="${activeLink}"]`) || null;
       }
@@ -1203,7 +1213,9 @@ const executionScript = (communicationKey) => {
 
     /**
      * Enable theater mode
+     * @internal Reserved for future use
      */
+    // eslint-disable-next-line no-unused-vars
     function ytBtnSetTheater() {
       if (!isTheater()) {
         getTheaterButton()?.click();
@@ -1355,31 +1367,31 @@ const executionScript = (communicationKey) => {
     }
 
     /*
-        function ytBtnCloseEngagementPanel( s) {
-          //ePanel.setAttribute('visibility',"ENGAGEMENT_PANEL_VISIBILITY_HIDDEN");
-       
-          let panelId = s.getAttribute('target-id')
-          scriptletDeferred.debounce(() => {
-            document.dispatchEvent(new CustomEvent('tyt-engagement-panel-visibility-change', {
-              detail: {
-                panelId,
-                toHide: true
-              }
-            }))
-          })
-       
-        }
-    
-        /**
-         * Close all expanded YouTube engagement panels
-         */
+            function ytBtnCloseEngagementPanel( s) {
+              //ePanel.setAttribute('visibility',"ENGAGEMENT_PANEL_VISIBILITY_HIDDEN");
+           
+              let panelId = s.getAttribute('target-id')
+              scriptletDeferred.debounce(() => {
+                document.dispatchEvent(new CustomEvent('tyt-engagement-panel-visibility-change', {
+                  detail: {
+                    panelId,
+                    toHide: true
+                  }
+                }))
+              })
+           
+            }
+        
+            /**
+             * Close all expanded YouTube engagement panels
+             */
     function ytBtnCloseEngagementPanels() {
       const actions = [];
       for (const panelElm of document.querySelectorAll(
         `ytd-watch-flexy[flexy][tyt-tab] #panels.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility]:not([hidden])`
       )) {
         if (
-          panelElm.getAttribute('visibility') == 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
+          panelElm.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
           !panelElm.closest('[hidden]')
         ) {
           actions.push({
@@ -1413,27 +1425,27 @@ const executionScript = (communicationKey) => {
 
     const updateChatLocation498 = function () {
       /*
-         
-                    updateChatLocation: function() {
-                    if (this.is !== "ytd-watch-grid" && y("web_watch_theater_chat")) {
-                        var a = T(this.hostElement).querySelector("#chat-container")
-                          , b = this.theater && (!this.fullscreen || y("web_watch_fullscreen_panels"));
-                        this.watchWhileWindowSizeSufficient && this.liveChatPresentAndExpanded && b ? y("web_watch_theater_chat_beside_player") ? (b = T(this.hostElement).querySelector("#panels-full-bleed-container"),
-                        (a == null ? void 0 : a.parentElement) !== b && b.append(a),
-                        this.panelsBesidePlayer = !0) : y("web_watch_theater_fixed_chat") && (b = T(this.hostElement).querySelector("#columns"),
-                        (a == null ? void 0 : a.parentElement) !== b && b.append(a),
-                        this.fixedPanels = !0) : (y("web_watch_theater_chat_beside_player") ? this.panelsBesidePlayer = !1 : y("web_watch_theater_fixed_chat") && (this.fixedPanels = !1),
-                        b = T(this.hostElement).querySelector("#playlist"),
-                        a && b ? Fh(a, b) : Gm(new zk("Missing element when updating chat location",{
-                            "chatContainer defined": !!a,
-                            "playlist defined": !!b
-                        })));
-                        this.updatePageMediaQueries();
-                        this.schedulePlayerSizeUpdate_()
-                    }
-                },
-         
-                */
+               
+                          updateChatLocation: function() {
+                          if (this.is !== "ytd-watch-grid" && y("web_watch_theater_chat")) {
+                              var a = T(this.hostElement).querySelector("#chat-container")
+                                , b = this.theater && (!this.fullscreen || y("web_watch_fullscreen_panels"));
+                              this.watchWhileWindowSizeSufficient && this.liveChatPresentAndExpanded && b ? y("web_watch_theater_chat_beside_player") ? (b = T(this.hostElement).querySelector("#panels-full-bleed-container"),
+                              (a == null ? void 0 : a.parentElement) !== b && b.append(a),
+                              this.panelsBesidePlayer = !0) : y("web_watch_theater_fixed_chat") && (b = T(this.hostElement).querySelector("#columns"),
+                              (a == null ? void 0 : a.parentElement) !== b && b.append(a),
+                              this.fixedPanels = !0) : (y("web_watch_theater_chat_beside_player") ? this.panelsBesidePlayer = !1 : y("web_watch_theater_fixed_chat") && (this.fixedPanels = !1),
+                              b = T(this.hostElement).querySelector("#playlist"),
+                              a && b ? Fh(a, b) : Gm(new zk("Missing element when updating chat location",{
+                                  "chatContainer defined": !!a,
+                                  "playlist defined": !!b
+                              })));
+                              this.updatePageMediaQueries();
+                              this.schedulePlayerSizeUpdate_()
+                          }
+                      },
+               
+                      */
 
       // console.log('updateChatLocation498')
       if (this.is !== 'ytd-watch-grid') {
@@ -1445,91 +1457,91 @@ const executionScript = (communicationKey) => {
     const mirrorNodeWS = new WeakMap();
 
     /*
-          const infoFix = () => {
-            const infoExpander = elements.infoExpander;
-            const ytdFlexyElm = elements.flexy;
-            if (!infoExpander || !ytdFlexyElm) return;
-            console.log(386, infoExpander, infoExpander.matches('#tab-info > [class]'))
-            if (!infoExpander.matches('#tab-info > [class]')) return;
-            // const elms = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"], ytd-watch-metadata.ytd-watch-flexy ytd-metadata-row-container-renderer')].filter(elm=>{
-            //   if(elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
-            //    return true;
-            // });
-        
-        
-        
-            const requireElements = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *')].filter(elm => {
-              return typeof elm.is == 'string'
-            }).map(elm => {
-              const is = elm.is;
-              while (elm instanceof HTMLElement_) {
-                const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
-                if (q.length >= 1) return q[0];
-                elm = elm.parentNode;
-              }
-            }).filter(elm => !!elm && typeof elm.is === 'string');
-            console.log(requireElements)
-        
-            const source = requireElements.map(entry=>({
-              data: insp(entry).data,
-              tag: insp(entry).is,
-              elm: entry
-            }))
-        
-            if (!document.querySelector('noscript#aythl')) {
-              const noscript = document.createElement('noscript')
-              noscript.id = 'aythl';
-              ytdFlexyElm.insertBefore000(noscript, ytdFlexyElm.firstChild);
-        
-            }
-            const noscript = document.querySelector('noscript#aythl');
-        
-            const clones = new Set();
-            for (const {data, tag, elm} of source) {
-        
-              // const cloneNode = document.createElement(tag);
-              let cloneNode = elm.cloneNode(true);
-              // noscript.appendChild(cloneNode);
-              // insp(cloneNode).data = null;
-              insp(cloneNode).data = data;
-              source.clone = cloneNode;
-              clones.add(cloneNode);
-            }
-        
-        
-            // const elms = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"]')].filter(elm => {
-            //   if (elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
-            //   return true;
-            // });
-        
-            // let arr = [];
-            // for(const elm of elms){
-            //   if(elm.hasAttribute('slot')) arr.push(...elm.childNodes);
-            //   else arr.push(elm);
-            // }
-            // arr = arr.filter(e=>e && e.nodeType === 1);
-            // console.log(386,arr)
-        
-            // const clones = arr.map(e=>e.cloneNode(true));
-        
-            // for(let node = infoExpander.nextSibling; node instanceof Node; node = node.nextSibling) node.remove();
-        
-            // infoExpander.parentNode.assignChildren111(null, infoExpander, [...clones]);
-            let removal = [];
-            for(let node = infoExpander.nextSibling; node instanceof Node; node = node.nextSibling)removal.push(node);
-            for(const node of removal) node.remove();
-            for(const node of clones) infoExpander.parentNode.appendChild(node);
+              const infoFix = () => {
+                const infoExpander = elements.infoExpander;
+                const ytdFlexyElm = elements.flexy;
+                if (!infoExpander || !ytdFlexyElm) return;
+                console.log(386, infoExpander, infoExpander.matches('#tab-info > [class]'))
+                if (!infoExpander.matches('#tab-info > [class]')) return;
+                // const elms = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"], ytd-watch-metadata.ytd-watch-flexy ytd-metadata-row-container-renderer')].filter(elm=>{
+                //   if(elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
+                //    return true;
+                // });
             
-        
-            for (const {data, tag, elm, clone} of source) {
-        
-              insp(clone).data = null;
-              insp(clone).data = data;
-            }
-        
-            // console.log(infoExpander.parentNode.childNodes)
-          }
-        */
+            
+            
+                const requireElements = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *')].filter(elm => {
+                  return typeof elm.is == 'string'
+                }).map(elm => {
+                  const is = elm.is;
+                  while (elm instanceof HTMLElement_) {
+                    const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
+                    if (q.length >= 1) return q[0];
+                    elm = elm.parentNode;
+                  }
+                }).filter(elm => !!elm && typeof elm.is === 'string');
+                console.log(requireElements)
+            
+                const source = requireElements.map(entry=>({
+                  data: insp(entry).data,
+                  tag: insp(entry).is,
+                  elm: entry
+                }))
+            
+                if (!document.querySelector('noscript#aythl')) {
+                  const noscript = document.createElement('noscript')
+                  noscript.id = 'aythl';
+                  ytdFlexyElm.insertBefore000(noscript, ytdFlexyElm.firstChild);
+            
+                }
+                const noscript = document.querySelector('noscript#aythl');
+            
+                const clones = new Set();
+                for (const {data, tag, elm} of source) {
+            
+                  // const cloneNode = document.createElement(tag);
+                  let cloneNode = elm.cloneNode(true);
+                  // noscript.appendChild(cloneNode);
+                  // insp(cloneNode).data = null;
+                  insp(cloneNode).data = data;
+                  source.clone = cloneNode;
+                  clones.add(cloneNode);
+                }
+            
+            
+                // const elms = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"]')].filter(elm => {
+                //   if (elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
+                //   return true;
+                // });
+            
+                // let arr = [];
+                // for(const elm of elms){
+                //   if(elm.hasAttribute('slot')) arr.push(...elm.childNodes);
+                //   else arr.push(elm);
+                // }
+                // arr = arr.filter(e=>e && e.nodeType === 1);
+                // console.log(386,arr)
+            
+                // const clones = arr.map(e=>e.cloneNode(true));
+            
+                // for(let node = infoExpander.nextSibling; node instanceof Node; node = node.nextSibling) node.remove();
+            
+                // infoExpander.parentNode.assignChildren111(null, infoExpander, [...clones]);
+                let removal = [];
+                for(let node = infoExpander.nextSibling; node instanceof Node; node = node.nextSibling)removal.push(node);
+                for(const node of removal) node.remove();
+                for(const node of clones) infoExpander.parentNode.appendChild(node);
+                
+            
+                for (const {data, tag, elm, clone} of source) {
+            
+                  insp(clone).data = null;
+                  insp(clone).data = data;
+                }
+            
+                // console.log(infoExpander.parentNode.childNodes)
+              }
+            */
 
     const dummyNode = document.createElement('noscript');
 
@@ -1538,7 +1550,7 @@ const executionScript = (communicationKey) => {
     const __j5744__ = Symbol(); // original element
     const __j5733__ = Symbol(); // __lastChanged__
 
-    const monitorDataChangedByDOMMutation = async function (mutations) {
+    const monitorDataChangedByDOMMutation = async function (_mutations) {
       const nodeWR = this;
       const node = kRef(nodeWR);
       if (!node) return;
@@ -1590,61 +1602,61 @@ const executionScript = (communicationKey) => {
     };
 
     /*
-        const moChangeReflection = async function (mutations) {
-      
-          const nodeWR = this;
-          const node = kRef(nodeWR);
-          if (!node) return;
-          const originElement = kRef(node[__j5744__] || null) || null;
-          if (!originElement) return;
-      
-          const cnt = insp(node);
-          const oriCnt = insp(originElement);
-      
-          if(mutations){
-      
-            let bfDataChangeCounter = false;
-            for (const mutation of mutations) {
-              if (mutation.attributeName === 'tyt-data-change-counter' && mutation.target === originElement) {
-                bfDataChangeCounter = true;
+            const moChangeReflection = async function (mutations) {
+          
+              const nodeWR = this;
+              const node = kRef(nodeWR);
+              if (!node) return;
+              const originElement = kRef(node[__j5744__] || null) || null;
+              if (!originElement) return;
+          
+              const cnt = insp(node);
+              const oriCnt = insp(originElement);
+          
+              if(mutations){
+          
+                let bfDataChangeCounter = false;
+                for (const mutation of mutations) {
+                  if (mutation.attributeName === 'tyt-data-change-counter' && mutation.target === originElement) {
+                    bfDataChangeCounter = true;
+                  }
+                }
+                if(bfDataChangeCounter && oriCnt.data){
+                  node.replaceWith(dummyNode);
+                  cnt.data = Object.assign({}, oriCnt.data);
+                  dummyNode.replaceWith(node);
+                }
+          
+              } 
+          
+              // console.log(8348, originElement)
+          
+              if (cnt.isAttached === false) {
+                // do nothing
+                // don't call infoFix() as it shall be only called in ytd-expander::attached and yt-navigate-finish
+              } else if (oriCnt.isAttached === false && cnt.isAttached === true) {
+                if (node.isConnected && node.parentNode instanceof HTMLElement_) {
+                  node.parentNode.removeChild(node);
+                } else {
+                  node.remove();
+                }
+                if (oriCnt.data !== null) {
+                  cnt.data = null;
+                }
+              } else if (oriCnt.isAttached === true && cnt.isAttached === true) {
+                if (!oriCnt.data) {
+                  if(cnt.data){
+                    cnt.data = null;
+                  }
+                } else if (!cnt.data || oriCnt.data[__j4838__] !== cnt.data[__j4838__]) {
+                  oriCnt.data[__j4838__] = Date.now();
+                  await Promise.resolve(); // required for making sufficient delay for data rendering
+                  attributeInc(originElement, 'tyt-data-change-counter'); // next macro task
+                }
               }
-            }
-            if(bfDataChangeCounter && oriCnt.data){
-              node.replaceWith(dummyNode);
-              cnt.data = Object.assign({}, oriCnt.data);
-              dummyNode.replaceWith(node);
-            }
-      
-          } 
-      
-          // console.log(8348, originElement)
-      
-          if (cnt.isAttached === false) {
-            // do nothing
-            // don't call infoFix() as it shall be only called in ytd-expander::attached and yt-navigate-finish
-          } else if (oriCnt.isAttached === false && cnt.isAttached === true) {
-            if (node.isConnected && node.parentNode instanceof HTMLElement_) {
-              node.parentNode.removeChild(node);
-            } else {
-              node.remove();
-            }
-            if (oriCnt.data !== null) {
-              cnt.data = null;
-            }
-          } else if (oriCnt.isAttached === true && cnt.isAttached === true) {
-            if (!oriCnt.data) {
-              if(cnt.data){
-                cnt.data = null;
-              }
-            } else if (!cnt.data || oriCnt.data[__j4838__] !== cnt.data[__j4838__]) {
-              oriCnt.data[__j4838__] = Date.now();
-              await Promise.resolve(); // required for making sufficient delay for data rendering
-              attributeInc(originElement, 'tyt-data-change-counter'); // next macro task
-            }
-          }
-      
-        };
-        */
+          
+            };
+            */
 
     /**
      * Increment attribute value with overflow protection
@@ -1666,7 +1678,7 @@ const executionScript = (communicationKey) => {
      * @param {string} x - The string to validate
      * @returns {boolean} True if valid channel ID
      */
-    const isChannelId = (x) => {
+    const isChannelId = x => {
       return typeof x === 'string' && x.length === 24 && /^UC[-_a-zA-Z0-9+=.]{22}$/.test(x);
     };
 
@@ -1674,7 +1686,7 @@ const executionScript = (communicationKey) => {
      * Fix and organize info panel layout
      * @param {number|null} lockId - Lock identifier for concurrent execution control
      */
-    const infoFix = (lockId) => {
+    const infoFix = lockId => {
       if (lockId !== null && lockGet['infoFixLock'] !== lockId) return;
       const infoExpander = elements.infoExpander;
       const infoContainer =
@@ -1693,20 +1705,20 @@ const executionScript = (communicationKey) => {
           'ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *'
         ),
       ]
-        .filter((elm) => {
+        .filter(elm => {
           return typeof elm.is == 'string';
         })
-        .map((elm) => {
+        .map(elm => {
           const is = elm.is;
           while (elm instanceof HTMLElement_) {
-            const q = [...elm.querySelectorAll(is)].filter((e) => insp(e).data);
+            const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
             if (q.length >= 1) return q[0];
             elm = elm.parentNode;
           }
         })
-        .filter((elm) => !!elm && typeof elm.is === 'string');
+        .filter(elm => !!elm && typeof elm.is === 'string');
 
-      const source = requireElements.map((entry) => {
+      const source = requireElements.map(entry => {
         const inst = insp(entry);
         return {
           data: inst.data,
@@ -1783,7 +1795,7 @@ const executionScript = (communicationKey) => {
                   typeof cnt._dataChanged496k === 'function' &&
                   Promise.resolve(cnt)
                     .then(cnt._dataChanged496k)
-                    .catch((err) => handlePromiseError(err, 'setWithPath_dataChanged496k'));
+                    .catch(err => handlePromiseError(err, 'setWithPath_dataChanged496k'));
                 return this.setWithPath573(...arguments);
               };
               cProto._dataChanged496 = function () {
@@ -1793,7 +1805,7 @@ const executionScript = (communicationKey) => {
                   attributeInc(node, 'tyt-data-change-counter');
                 }
               };
-              cProto._dataChanged496k = (cnt) => cnt._dataChanged496();
+              cProto._dataChanged496k = cnt => cnt._dataChanged496();
             }
           }
 
@@ -1834,7 +1846,7 @@ const executionScript = (communicationKey) => {
         let e = infoExpander ? -1 : 0;
         // DOM Tree Check
         for (let n = targetParent.firstChild; n instanceof Node; n = n.nextSibling) {
-          let target = e < 0 ? infoExpander : mirroElmArr[e];
+          const target = e < 0 ? infoExpander : mirroElmArr[e];
           e++;
           if (n !== target) {
             // target can be undefined if index overflow
@@ -1869,7 +1881,7 @@ const executionScript = (communicationKey) => {
      * Fix and optimize secondary layout structure
      * @param {number} lockId - Lock identifier for concurrent execution control
      */
-    const layoutFix = (lockId) => {
+    const layoutFix = lockId => {
       if (lockGet['layoutFixLock'] !== lockId) return;
       // console.log('((layoutFix))')
 
@@ -1888,8 +1900,8 @@ const executionScript = (communicationKey) => {
           (chatContainer && !chatContainer.closest('secondary-wrapper'))
         ) {
           // console.log(38381)
-          let w = [];
-          let w2 = [];
+          const w = [];
+          const w2 = [];
           for (
             let node = secondaryInner.firstChild;
             node instanceof Node;
@@ -1947,10 +1959,10 @@ const executionScript = (communicationKey) => {
       // console.log(5094,3);
       Promise.resolve(lockSet['updateEgmPanelsLock'])
         .then(updateEgmPanels)
-        .catch((err) => handlePromiseError(err, 'aoEgmPanels_updateEgmPanels'));
+        .catch(err => handlePromiseError(err, 'aoEgmPanels_updateEgmPanels'));
     });
 
-    const removeKeepCommentsScroller = async (lockId) => {
+    const removeKeepCommentsScroller = async lockId => {
       if (lockGet['removeKeepCommentsScrollerLock'] !== lockId) return;
       await Promise.resolve();
       if (lockGet['removeKeepCommentsScrollerLock'] !== lockId) return;
@@ -1960,7 +1972,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const updateEgmPanels = async (lockId) => {
+    const updateEgmPanels = async lockId => {
       if (lockId !== lockGet['updateEgmPanelsLock']) return;
       await navigateFinishedPromise.then().catch(console.warn);
       if (lockId !== lockGet['updateEgmPanelsLock']) return;
@@ -1982,7 +1994,7 @@ const executionScript = (communicationKey) => {
           visibility === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
           !panelElm.closest('[hidden]')
         ) {
-          let visibleAt = panelElm.getAttribute000('tyt-visible-at');
+          const visibleAt = panelElm.getAttribute000('tyt-visible-at');
           if (!visibleAt) {
             panelElm.setAttribute111('tyt-visible-at', Date.now());
             newVisiblePanels.push(panelElm);
@@ -2033,11 +2045,11 @@ const executionScript = (communicationKey) => {
 
       function findLcComment(lc) {
         if (arguments.length === 1) {
-          let element = document.querySelector(
+          const element = document.querySelector(
             `#tab-comments ytd-comments ytd-comment-renderer #header-author a[href*="lc=${lc}"]`
           );
           if (element) {
-            let commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
+            const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
             if (commentRendererElm && lc) {
               return {
                 lc,
@@ -2046,18 +2058,18 @@ const executionScript = (communicationKey) => {
             }
           }
         } else if (arguments.length === 0) {
-          let element = document.querySelector(
+          const element = document.querySelector(
             `#tab-comments ytd-comments ytd-comment-renderer > #linked-comment-badge span:not(:empty)`
           );
           if (element) {
-            let commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
+            const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
             if (commentRendererElm) {
-              let header = _querySelector.call(commentRendererElm, '#header-author');
+              const header = _querySelector.call(commentRendererElm, '#header-author');
               if (header) {
-                let anchor = _querySelector.call(header, 'a[href*="lc="]');
+                const anchor = _querySelector.call(header, 'a[href*="lc="]');
                 if (anchor) {
-                  let href = anchor.getAttribute('href') || '';
-                  let m = /[&?]lc=([\w_.-]+)/.exec(href); // dot = sub-comment
+                  const href = anchor.getAttribute('href') || '';
+                  const m = /[&?]lc=([\w_.-]+)/.exec(href); // dot = sub-comment
                   if (m) {
                     lc = m[1];
                   }
@@ -2081,14 +2093,14 @@ const executionScript = (communicationKey) => {
         try {
           // console.log(currentLcId, targetLcId)
 
-          let r1 = findLcComment(currentLcId).commentRendererElm;
-          let r2 = findLcComment(targetLcId).commentRendererElm;
+          const r1 = findLcComment(currentLcId).commentRendererElm;
+          const r2 = findLcComment(targetLcId).commentRendererElm;
 
           if (
             typeof insp(r1).data.linkedCommentBadge === 'object' &&
             typeof insp(r2).data.linkedCommentBadge === 'undefined'
           ) {
-            let p = Object.assign({}, insp(r1).data.linkedCommentBadge);
+            const p = Object.assign({}, insp(r1).data.linkedCommentBadge);
 
             if (((p || 0).metadataBadgeRenderer || 0).trackingParams) {
               delete p.metadataBadgeRenderer.trackingParams;
@@ -2142,17 +2154,17 @@ const executionScript = (communicationKey) => {
       function lcSwapFuncB(targetLcId, currentLcId, _p) {
         let done = 0;
         try {
-          let r1 = findLcComment(currentLcId).commentRendererElm;
-          let r1cnt = insp(r1);
-          let r2 = findLcComment(targetLcId).commentRendererElm;
-          let r2cnt = insp(r2);
+          const r1 = findLcComment(currentLcId).commentRendererElm;
+          const r1cnt = insp(r1);
+          const r2 = findLcComment(targetLcId).commentRendererElm;
+          const r2cnt = insp(r2);
 
           const r1d = r1cnt.data;
-          let p = Object.assign({}, _p);
+          const p = Object.assign({}, _p);
           r1d.linkedCommentBadge = null;
           delete r1d.linkedCommentBadge;
 
-          let q = Object.assign({}, r1d);
+          const q = Object.assign({}, r1d);
           q.linkedCommentBadge = null;
           delete q.linkedCommentBadge;
 
@@ -2166,8 +2178,8 @@ const executionScript = (communicationKey) => {
         return done === 1;
       }
 
-      const loadStartFx = async (evt) => {
-        let media = (evt || 0).target || 0;
+      const loadStartFx = async evt => {
+        const media = (evt || 0).target || 0;
         if (media.nodeName === 'VIDEO' || media.nodeName === 'AUDIO') {
         } else return;
 
@@ -2180,27 +2192,27 @@ const executionScript = (communicationKey) => {
           if (newMedia !== media1 && media1.paused === false) {
             if (isVideoPlaying(media1)) {
               Promise.resolve(newMedia)
-                .then((video) => video.paused === false && video.pause())
+                .then(video => video.paused === false && video.pause())
                 .catch(console.warn);
             }
           } else if (newMedia === media1) {
             for (const s of media2) {
               if (s.paused === false) {
                 Promise.resolve(s)
-                  .then((s) => s.paused === false && s.pause())
+                  .then(s => s.paused === false && s.pause())
                   .catch(console.warn);
                 break;
               }
             }
           } else {
             Promise.resolve(media1)
-              .then((video1) => video1.paused === false && video1.pause())
+              .then(video1 => video1.paused === false && video1.pause())
               .catch(console.warn);
           }
         }
       };
 
-      const getBrowsableEndPoint = (req) => {
+      const getBrowsableEndPoint = req => {
         let valid = false;
         let endpoint = req ? req.command : null;
         if (
@@ -2208,25 +2220,25 @@ const executionScript = (communicationKey) => {
           (endpoint.commandMetadata || 0).webCommandMetadata &&
           endpoint.watchEndpoint
         ) {
-          let videoId = endpoint.watchEndpoint.videoId;
-          let url = endpoint.commandMetadata.webCommandMetadata.url;
+          const videoId = endpoint.watchEndpoint.videoId;
+          const url = endpoint.commandMetadata.webCommandMetadata.url;
 
           if (typeof videoId === 'string' && typeof url === 'string' && url.indexOf('lc=') > 0) {
-            let m = /^\/watch\?v=([\w_-]+)&lc=([\w_.-]+)$/.exec(url); // dot = sub-comment
+            const m = /^\/watch\?v=([\w_-]+)&lc=([\w_.-]+)$/.exec(url); // dot = sub-comment
             if (m && m[1] === videoId) {
               /*
-                            {
-                              "style": "BADGE_STYLE_TYPE_SIMPLE",
-                              "label": "注目のコメント",
-                              "trackingParams": "XXXXXX"
-                          }
-                            */
+                                          {
+                                            "style": "BADGE_STYLE_TYPE_SIMPLE",
+                                            "label": "注目のコメント",
+                                            "trackingParams": "XXXXXX"
+                                        }
+                                          */
 
-              let targetLc = findLcComment(m[2]);
-              let currentLc = targetLc ? findLcComment() : null;
+              const targetLc = findLcComment(m[2]);
+              const currentLc = targetLc ? findLcComment() : null;
 
               if (targetLc && currentLc) {
-                let done =
+                const done =
                   targetLc.lc === currentLc.lc ? 1 : lcSwapFuncA(targetLc.lc, currentLc.lc) ? 1 : 0;
 
                 if (done === 1) {
@@ -2239,17 +2251,17 @@ const executionScript = (communicationKey) => {
         }
 
         /*
-                    
-                    {
-                      "type": 0,
-                      "command": endpoint,
-                      "form": {
-                        "tempData": {},
-                        "reload": false
-                      }
-                    }
-          
-                */
+                            
+                            {
+                              "type": 0,
+                              "command": endpoint,
+                              "form": {
+                                "tempData": {},
+                                "reload": false
+                              }
+                            }
+                  
+                        */
 
         if (
           endpoint &&
@@ -2269,7 +2281,7 @@ const executionScript = (communicationKey) => {
             const playerMedia = common.getMediaElement(1);
             if (playerMedia && playerMedia.paused === false) valid = true; // home page
           } else if (endpoint.commandMetadata && endpoint.commandMetadata.webCommandMetadata) {
-            let meta = endpoint.commandMetadata.webCommandMetadata;
+            const meta = endpoint.commandMetadata.webCommandMetadata;
             if (meta && /*meta.apiUrl &&*/ meta.url && meta.webPageType) {
               valid = true;
             }
@@ -2289,7 +2301,7 @@ const executionScript = (communicationKey) => {
         if (isSubTypeExist) return true;
 
         const movie_player = [...document.querySelectorAll('#movie_player')].filter(
-          (e) => !e.closest('[hidden]')
+          e => !e.closest('[hidden]')
         )[0];
         if (movie_player) {
           const media = qsOne(movie_player, 'video[class], audio[class]');
@@ -2307,7 +2319,7 @@ const executionScript = (communicationKey) => {
         // return !!document.querySelector('ytd-page-manager#page-manager > ytd-browse[page-subtype]');
       };
 
-      const conditionFulfillment = (req) => {
+      const conditionFulfillment = req => {
         const endpoint = req ? req.command : null;
         if (!endpoint) return;
 
@@ -2335,17 +2347,17 @@ const executionScript = (communicationKey) => {
         if (!shouldUseMiniPlayer()) return false;
 
         /*
-                  // user would like to switch page immediately without playing the video;
-                  // attribute appear after playing video for more than 2s
-                  if (!document.head.dataset.viTime) return false;
-                  else {
-                    let currentVideo = common.getMediaElement(0);
-                    if (currentVideo && currentVideo.readyState > currentVideo.HAVE_CURRENT_DATA && currentVideo.currentTime > 2.2 && currentVideo.duration - 2.2 < currentVideo.currentTime) {
-                      // disable miniview browsing if the media is near to the end
-                      return false;
-                    }
-                  }
-                */
+                          // user would like to switch page immediately without playing the video;
+                          // attribute appear after playing video for more than 2s
+                          if (!document.head.dataset.viTime) return false;
+                          else {
+                            let currentVideo = common.getMediaElement(0);
+                            if (currentVideo && currentVideo.readyState > currentVideo.HAVE_CURRENT_DATA && currentVideo.currentTime > 2.2 && currentVideo.duration - 2.2 < currentVideo.currentTime) {
+                              // disable miniview browsing if the media is near to the end
+                              return false;
+                            }
+                          }
+                        */
 
         if (pageType !== 'watch') return false;
 
@@ -2362,7 +2374,7 @@ const executionScript = (communicationKey) => {
       };
 
       let u38 = 0;
-      const fixChannelAboutPopup = async (t38) => {
+      const fixChannelAboutPopup = async t38 => {
         let promise = new PromiseExternal();
         const f = () => {
           promise && promise.resolve();
@@ -2375,7 +2387,7 @@ const executionScript = (communicationKey) => {
         if (t38 !== u38) return;
         setTimeout(() => {
           const currentAbout = [...document.querySelectorAll('ytd-about-channel-renderer')].filter(
-            (e) => !e.closest('[hidden]')
+            e => !e.closest('[hidden]')
           )[0];
           let okay = false;
           if (!currentAbout) okay = true;
@@ -2386,7 +2398,7 @@ const executionScript = (communicationKey) => {
               let arr = null;
               try {
                 arr = cnt.handleGetOpenedPopupsAction_();
-              } catch (e) {}
+              } catch {}
               if (arr && arr.length === 0) okay = true;
             } else {
               okay = false;
@@ -2395,10 +2407,10 @@ const executionScript = (communicationKey) => {
           if (okay) {
             const descriptionModel = [
               ...document.querySelectorAll('yt-description-preview-view-model'),
-            ].filter((e) => !e.closest('[hidden]'))[0];
+            ].filter(e => !e.closest('[hidden]'))[0];
             if (descriptionModel) {
               const button = [...descriptionModel.querySelectorAll('button')].filter(
-                (e) => !e.closest('[hidden]') && `${e.textContent}`.trim().length > 0
+                e => !e.closest('[hidden]') && `${e.textContent}`.trim().length > 0
               )[0];
               if (button) {
                 button.click();
@@ -2407,7 +2419,7 @@ const executionScript = (communicationKey) => {
           }
         }, 80);
       };
-      const handleNavigateFactory = (handleNavigate) => {
+      const handleNavigateFactory = handleNavigate => {
         return function (req) {
           if (u38 > MAX_ATTRIBUTE_VALUE) u38 = ATTRIBUTE_RESET_VALUE;
           const t38 = ++u38;
@@ -2431,7 +2443,7 @@ const executionScript = (communicationKey) => {
           let object = null;
           try {
             object = ytdAppCnt.data.response.currentVideoEndpoint.watchEndpoint || null;
-          } catch (e) {
+          } catch {
             object = null;
           }
 
@@ -2447,18 +2459,18 @@ const executionScript = (communicationKey) => {
             let count = 0;
 
             /*
-                          
-                          rcb(b) => a = playlistId = undefinded
-                          
-                          var scb = function(a, b, c, d) {
-                                  a.isInitialized() && (B("kevlar_miniplayer_navigate_to_shorts_killswitch") ? c || d ? ("watch" !== Xu(b) && "shorts" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
-                                  qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
-                                  a.activateMiniplayer(b)) : c ? ("watch" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
-                                  qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : d ? qs(a.miniplayerEl, "yt-pause-miniplayer-action") : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
-                                  a.activateMiniplayer(b)))
-                              };
-                
-                        */
+                                      
+                                      rcb(b) => a = playlistId = undefinded
+                                      
+                                      var scb = function(a, b, c, d) {
+                                              a.isInitialized() && (B("kevlar_miniplayer_navigate_to_shorts_killswitch") ? c || d ? ("watch" !== Xu(b) && "shorts" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
+                                              qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
+                                              a.activateMiniplayer(b)) : c ? ("watch" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
+                                              qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : d ? qs(a.miniplayerEl, "yt-pause-miniplayer-action") : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
+                                              a.activateMiniplayer(b)))
+                                          };
+                            
+                                    */
 
             Object.defineProperty(kRef(wObject) || {}, 'playlistId', {
               get() {
@@ -2480,10 +2492,10 @@ const executionScript = (communicationKey) => {
 
             let timeoutid = 0;
             Promise.race([
-              new Promise((r) => {
+              new Promise(r => {
                 timeoutid = setTimeout(r, 4000);
               }),
-              new Promise((r) => {
+              new Promise(r => {
                 playlistClearout = () => {
                   if (timeoutid > 0) {
                     clearTimeout(timeoutid);
@@ -2502,7 +2514,7 @@ const executionScript = (communicationKey) => {
                 }
                 playlistClearout = null;
                 count = N - 1;
-                let object = kRef(wObject);
+                const object = kRef(wObject);
                 wObject = null;
                 return object ? object.playlistId : null;
               })
@@ -2533,9 +2545,9 @@ const executionScript = (communicationKey) => {
 
     const common = (() => {
       let mediaModeLock = 0;
-      const _getMediaElement = (i) => {
+      const _getMediaElement = i => {
         if (mediaModeLock === 0) {
-          let e =
+          const e =
             document.querySelector('.video-stream.html5-main-video') ||
             document.querySelector('#movie_player video, #movie_player audio') ||
             document.querySelector('body video[src], body audio[src]');
@@ -2573,7 +2585,7 @@ const executionScript = (communicationKey) => {
         xReplaceState(s, u) {
           try {
             history.replaceState(s, '', u);
-          } catch (e) {
+          } catch {
             // in case error occurs if replaceState is replaced by any external script / extension
           }
           if (s.endpoint) {
@@ -2581,16 +2593,16 @@ const executionScript = (communicationKey) => {
               const ytdAppElm = document.querySelector('ytd-app');
               const ytdAppCnt = insp(ytdAppElm);
               ytdAppCnt.replaceState(s.endpoint, '', u);
-            } catch (e) {}
+            } catch {}
           }
         },
         getMediaElement(i) {
-          let s = _getMediaElement(i) || '';
+          const s = _getMediaElement(i) || '';
           if (s) return document.querySelector(s);
           return null;
         },
         getMediaElements(i) {
-          let s = _getMediaElement(i) || '';
+          const s = _getMediaElement(i) || '';
           if (s) return document.querySelectorAll(s);
           return [];
         },
@@ -2610,16 +2622,21 @@ const executionScript = (communicationKey) => {
       return '';
     };
 
-    const holdInlineExpanderAlwaysExpanded = (inlineExpanderCnt) => {
+    // eslint-disable-next-line no-unused-vars
+    const holdInlineExpanderAlwaysExpanded = inlineExpanderCnt => {
       console.log('holdInlineExpanderAlwaysExpanded');
-      if (inlineExpanderCnt.alwaysShowExpandButton === true)
+      if (inlineExpanderCnt.alwaysShowExpandButton === true) {
         inlineExpanderCnt.alwaysShowExpandButton = false;
-      if (typeof (inlineExpanderCnt.collapseLabel || 0) === 'string')
+      }
+      if (typeof (inlineExpanderCnt.collapseLabel || 0) === 'string') {
         inlineExpanderCnt.collapseLabel = '';
-      if (typeof (inlineExpanderCnt.expandLabel || 0) === 'string')
+      }
+      if (typeof (inlineExpanderCnt.expandLabel || 0) === 'string') {
         inlineExpanderCnt.expandLabel = '';
-      if (inlineExpanderCnt.showCollapseButton === true)
+      }
+      if (inlineExpanderCnt.showCollapseButton === true) {
         inlineExpanderCnt.showCollapseButton = false;
+      }
       if (inlineExpanderCnt.showExpandButton === true) inlineExpanderCnt.showExpandButton = false;
       if (inlineExpanderCnt.expandButton instanceof HTMLElement_) {
         inlineExpanderCnt.expandButton = null;
@@ -2627,7 +2644,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const fixInlineExpanderDisplay = (inlineExpanderCnt) => {
+    const fixInlineExpanderDisplay = inlineExpanderCnt => {
       try {
         inlineExpanderCnt.updateIsAttributedExpanded();
       } catch (e) {
@@ -2650,7 +2667,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const fixInlineExpanderMethods = (inlineExpanderCnt) => {
+    const fixInlineExpanderMethods = inlineExpanderCnt => {
       if (inlineExpanderCnt && !inlineExpanderCnt.__$$idncjk8487$$__) {
         inlineExpanderCnt.__$$idncjk8487$$__ = true;
         inlineExpanderCnt.updateTextOnSnippetTypeChange = function () {
@@ -2735,7 +2752,7 @@ const executionScript = (communicationKey) => {
                 try {
                   insp(mainInfo).handleMoreTap(new Event('tap'));
                   success = true;
-                } catch (e) {}
+                } catch {}
                 if (success) mainInfo.setAttribute111('tyt-no-less-btn', '');
               }
               break;
@@ -2849,7 +2866,7 @@ const executionScript = (communicationKey) => {
               .then(this.moFn)
               .catch(console.warn);
           });
-          this.ro = new ResizeObserver((mutations) => {
+          this.ro = new ResizeObserver(mutations => {
             if (Date.now() > this.checkResize) return;
             for (const mutation of mutations) {
               const uploadInfo = mutation.target;
@@ -2873,20 +2890,21 @@ const executionScript = (communicationKey) => {
     // let shouldFixInfo = false;
     const __attachedSymbol__ = Symbol();
 
-    const makeInitAttached = (tag) => {
+    const makeInitAttached = tag => {
       const inPageRearrange_ = inPageRearrange;
       inPageRearrange = false;
       for (const elm of document.querySelectorAll(`${tag}`)) {
         const cnt = insp(elm) || 0;
-        if (typeof cnt.attached498 === 'function' && !elm[__attachedSymbol__])
+        if (typeof cnt.attached498 === 'function' && !elm[__attachedSymbol__]) {
           Promise.resolve(elm).then(eventMap[`${tag}::attached`]).catch(console.warn);
+        }
       }
       inPageRearrange = inPageRearrange_;
     };
 
     const getGeneralChatElement = async () => {
       for (let i = 2; i-- > 0; ) {
-        let t = document.querySelector(
+        const t = document.querySelector(
           '#columns.style-scope.ytd-watch-flexy ytd-live-chat-frame#chat'
         );
         if (t instanceof Element) return t;
@@ -2916,7 +2934,7 @@ const executionScript = (communicationKey) => {
       return true;
     };
 
-    const invalidFlexyParent = (hostElement) => {
+    const invalidFlexyParent = hostElement => {
       if (hostElement instanceof HTMLElement) {
         const hasFlexyParent = HTMLElement.prototype.closest.call(hostElement, 'ytd-watch-flexy'); // eg short
         if (!hasFlexyParent) return true;
@@ -2948,7 +2966,7 @@ const executionScript = (communicationKey) => {
         retrieveCE('ytd-expander').then(eventMap['ytd-expander::defined']).catch(console.warn);
         retrieveCE('ytd-watch-next-secondary-results-renderer')
           .then(eventMap['ytd-watch-next-secondary-results-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn(
               '[YouTube+] retrieveCE ytd-watch-next-secondary-results-renderer failed:',
               err
@@ -2956,18 +2974,18 @@ const executionScript = (communicationKey) => {
           );
         retrieveCE('ytd-comments-header-renderer')
           .then(eventMap['ytd-comments-header-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn('[YouTube+] retrieveCE ytd-comments-header-renderer failed:', err)
           );
         retrieveCE('ytd-live-chat-frame')
           .then(eventMap['ytd-live-chat-frame::defined'])
-          .catch((err) => console.warn('[YouTube+] retrieveCE ytd-live-chat-frame failed:', err));
+          .catch(err => console.warn('[YouTube+] retrieveCE ytd-live-chat-frame failed:', err));
         retrieveCE('ytd-comments')
           .then(eventMap['ytd-comments::defined'])
-          .catch((err) => console.warn('[YouTube+] retrieveCE ytd-comments failed:', err));
+          .catch(err => console.warn('[YouTube+] retrieveCE ytd-comments failed:', err));
         retrieveCE('ytd-engagement-panel-section-list-renderer')
           .then(eventMap['ytd-engagement-panel-section-list-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn(
               '[YouTube+] retrieveCE ytd-engagement-panel-section-list-renderer failed:',
               err
@@ -2975,15 +2993,15 @@ const executionScript = (communicationKey) => {
           );
         retrieveCE('ytd-watch-metadata')
           .then(eventMap['ytd-watch-metadata::defined'])
-          .catch((err) => console.warn('[YouTube+] retrieveCE ytd-watch-metadata failed:', err));
+          .catch(err => console.warn('[YouTube+] retrieveCE ytd-watch-metadata failed:', err));
         retrieveCE('ytd-playlist-panel-renderer')
           .then(eventMap['ytd-playlist-panel-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn('[YouTube+] retrieveCE ytd-playlist-panel-renderer failed:', err)
           );
         retrieveCE('ytd-expandable-video-description-body-renderer')
           .then(eventMap['ytd-expandable-video-description-body-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn(
               '[YouTube+] retrieveCE ytd-expandable-video-description-body-renderer failed:',
               err
@@ -2991,7 +3009,7 @@ const executionScript = (communicationKey) => {
           );
       },
 
-      fixForTabDisplay: (isResize) => {
+      fixForTabDisplay: isResize => {
         // isResize is true if the layout is resized (not due to tab switching)
         // youtube components shall handle the resize issue. can skip some checkings.
 
@@ -3051,7 +3069,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-watch-flexy::defined': (cProto) => {
+      'ytd-watch-flexy::defined': cProto => {
         if (
           !cProto.updateChatLocation498 &&
           typeof cProto.updateChatLocation === 'function' &&
@@ -3062,24 +3080,26 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-watch-next-secondary-results-renderer::defined': (cProto) => {
+      'ytd-watch-next-secondary-results-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-watch-next-secondary-results-renderer::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-watch-next-secondary-results-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3087,7 +3107,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-watch-next-secondary-results-renderer');
       },
 
-      'ytd-watch-next-secondary-results-renderer::attached': (hostElement) => {
+      'ytd-watch-next-secondary-results-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3097,8 +3117,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3115,7 +3136,7 @@ const executionScript = (communicationKey) => {
         // console.log('ytd-watch-next-secondary-results-renderer::attached', hostElement);
       },
 
-      'ytd-watch-next-secondary-results-renderer::detached': (hostElement) => {
+      'ytd-watch-next-secondary-results-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.log(5084, 'ytd-watch-next-secondary-results-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
@@ -3129,13 +3150,14 @@ const executionScript = (communicationKey) => {
         console.log('ytd-watch-next-secondary-results-renderer::detached', hostElement);
       },
 
-      settingCommentsVideoId: (hostElement) => {
+      settingCommentsVideoId: hostElement => {
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         const cnt = insp(hostElement);
         const commentsArea = elements.comments;
         if (
@@ -3144,8 +3166,9 @@ const executionScript = (communicationKey) => {
           cnt.isAttached !== true ||
           !cnt.data ||
           cnt.hidden !== false
-        )
+        ) {
           return;
+        }
         const ytdFlexyElm = elements.flexy;
         const ytdFlexyCnt = ytdFlexyElm ? insp(ytdFlexyElm) : null;
         if (ytdFlexyCnt && ytdFlexyCnt.videoId) {
@@ -3154,7 +3177,7 @@ const executionScript = (communicationKey) => {
           hostElement.removeAttribute000('tyt-comments-video-id');
         }
       },
-      checkCommentsShouldBeHidden: (lockId) => {
+      checkCommentsShouldBeHidden: lockId => {
         if (lockGet['checkCommentsShouldBeHiddenLock'] !== lockId) return;
 
         // commentsArea's attribute: tyt-comments-video-id
@@ -3173,14 +3196,15 @@ const executionScript = (communicationKey) => {
           }
         }
       },
-      'ytd-comments::defined': (cProto) => {
+      'ytd-comments::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-comments::attached'])
                 .catch(console.warn);
+            }
             // Promise.resolve(this.hostElement).then(eventMap['ytd-comments::dataChanged_']).catch(console.warn);
             return this.attached498();
           };
@@ -3188,10 +3212,11 @@ const executionScript = (communicationKey) => {
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-comments::detached'])
                 .catch(console.warn);
+            }
             // Promise.resolve(this.hostElement).then(eventMap['ytd-comments::dataChanged_']).catch(console.warn);
             return this.detached498();
           };
@@ -3216,7 +3241,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-comments');
       },
 
-      'ytd-comments::_dataChanged498': (hostElement) => {
+      'ytd-comments::_dataChanged498': hostElement => {
         // console.log(18984, hostElement.hasAttribute('tyt-comments-area'))
         if (!hostElement.hasAttribute000('tyt-comments-area')) return;
         let commentsDataStatus = 0;
@@ -3241,7 +3266,7 @@ const executionScript = (communicationKey) => {
         Promise.resolve(hostElement).then(eventMap['settingCommentsVideoId']).catch(console.warn);
       },
 
-      'ytd-comments::attached': async (hostElement) => {
+      'ytd-comments::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3251,8 +3276,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3296,7 +3322,7 @@ const executionScript = (communicationKey) => {
 
         TAB_AUTO_SWITCH_TO_COMMENTS && switchToTab('#tab-comments');
       },
-      'ytd-comments::detached': (hostElement) => {
+      'ytd-comments::detached': hostElement => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.log(5084, 'ytd-comments::detached');
         // console.log(858, hostElement)
@@ -3326,14 +3352,15 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-comments-header-renderer::defined': (cProto) => {
+      'ytd-comments-header-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-comments-header-renderer::attached'])
                 .catch(console.warn);
+            }
             Promise.resolve(this.hostElement)
               .then(eventMap['ytd-comments-header-renderer::dataChanged'])
               .catch(console.warn); // force dataChanged on attached
@@ -3343,10 +3370,11 @@ const executionScript = (communicationKey) => {
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-comments-header-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3364,7 +3392,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-comments-header-renderer');
       },
 
-      'ytd-comments-header-renderer::attached': (hostElement) => {
+      'ytd-comments-header-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3374,8 +3402,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3397,7 +3426,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-comments-header-renderer::detached': (hostElement) => {
+      'ytd-comments-header-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.log(5084, 'ytd-comments-header-renderer::detached');
 
@@ -3422,13 +3451,14 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-comments-header-renderer::dataChanged': (hostElement) => {
+      'ytd-comments-header-renderer::dataChanged': hostElement => {
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
 
         const ytdFlexyElm = elements.flexy;
 
@@ -3465,8 +3495,9 @@ const executionScript = (communicationKey) => {
             subtree: false,
             childList: true,
           });
-          if (!headerMutationTmpNode)
+          if (!headerMutationTmpNode) {
             headerMutationTmpNode = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+          }
           const tmpNode = headerMutationTmpNode;
           hostElement.insertAdjacentElement('afterend', tmpNode);
           tmpNode.remove();
@@ -3490,24 +3521,24 @@ const executionScript = (communicationKey) => {
           ) {
             let max = -1;
             const z = data.commentsCount.runs
-              .map((e) => {
-                let c = e.text.replace(/\D+/g, '').length;
+              .map(e => {
+                const c = e.text.replace(/\D+/g, '').length;
                 if (c > max) max = c;
                 return [e.text, c];
               })
-              .filter((a) => a[1] === max);
+              .filter(a => a[1] === max);
             if (z.length >= 1) {
               ez = z[0][0];
             }
           } else if (data.countText && data.countText.runs && data.countText.runs.length >= 1) {
             let max = -1;
             const z = data.countText.runs
-              .map((e) => {
-                let c = e.text.replace(/\D+/g, '').length;
+              .map(e => {
+                const c = e.text.replace(/\D+/g, '').length;
                 if (c > max) max = c;
                 return [e.text, c];
               })
-              .filter((a) => a[1] === max);
+              .filter(a => a[1] === max);
             if (z.length >= 1) {
               ez = z[0][0];
             }
@@ -3524,24 +3555,26 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-expander::defined': (cProto) => {
+      'ytd-expander::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-expander::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-expander::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3561,20 +3594,20 @@ const executionScript = (communicationKey) => {
         }
 
         /*
-         
-                console.log('ytd-expander::defined 01');
-                
-                CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback = connectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback)
-                CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback = disconnectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback)
-                
-                console.log('ytd-expander::defined 02');
-         
-                */
+                 
+                        console.log('ytd-expander::defined 01');
+                        
+                        CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback = connectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback)
+                        CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback = disconnectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback)
+                        
+                        console.log('ytd-expander::defined 02');
+                 
+                        */
 
         makeInitAttached('ytd-expander');
       },
 
-      'ytd-expander::childrenChanged': (hostElement) => {
+      'ytd-expander::childrenChanged': hostElement => {
         if (
           hostElement instanceof Node &&
           hostElement.hasAttribute000('hidden') &&
@@ -3585,24 +3618,26 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-expandable-video-description-body-renderer::defined': (cProto) => {
+      'ytd-expandable-video-description-body-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-expandable-video-description-body-renderer::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-expandable-video-description-body-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3610,7 +3645,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-expandable-video-description-body-renderer');
       },
 
-      'ytd-expandable-video-description-body-renderer::attached': async (hostElement) => {
+      'ytd-expandable-video-description-body-renderer::attached': async hostElement => {
         if (
           hostElement instanceof HTMLElement_ &&
           isPageDOM(hostElement, '[tyt-info-renderer]') &&
@@ -3698,8 +3733,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
 
         if (isPageDOM(hostElement, '#tab-info [tyt-main-info]')) {
@@ -3744,7 +3780,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-expandable-video-description-body-renderer::detached': async (hostElement) => {
+      'ytd-expandable-video-description-body-renderer::detached': async hostElement => {
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -3758,7 +3794,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-expander::attached': async (hostElement) => {
+      'ytd-expander::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3767,8 +3803,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3818,7 +3855,7 @@ const executionScript = (communicationKey) => {
         // console.log('ytd-expander::attached', hostElement);
       },
 
-      'ytd-expander::detached': (hostElement) => {
+      'ytd-expander::detached': hostElement => {
         // if (inPageRearrange) return;
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
@@ -3836,7 +3873,8 @@ const executionScript = (communicationKey) => {
         // console.log('ytd-expander::detached', hostElement);
       },
 
-      'ytd-live-chat-frame::defined': (cProto) => {
+      'ytd-live-chat-frame::defined': cProto => {
+        // eslint-disable-next-line no-unused-vars
         let lastDomAction = 0;
 
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
@@ -3844,10 +3882,11 @@ const executionScript = (communicationKey) => {
           cProto.attached = function () {
             lastDomAction = Date.now();
             // console.log('chat868-attached', Date.now());
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-live-chat-frame::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
@@ -3856,10 +3895,11 @@ const executionScript = (communicationKey) => {
           cProto.detached = function () {
             lastDomAction = Date.now();
             // console.log('chat868-detached', Date.now());
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-live-chat-frame::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3881,11 +3921,11 @@ const executionScript = (communicationKey) => {
                 await Promise.resolve('#').catch(console.warn);
                 if (t !== ath) return;
               }
-              await new Promise((resolve) => setTimeout_(resolve, 1)).catch(console.warn); // neccessary for Brave
+              await new Promise(resolve => setTimeout_(resolve, 1)).catch(console.warn); // neccessary for Brave
               if (t !== ath) return;
               const isBlankPage = !this.data || this.collapsed;
-              const p1 = new Promise((resolve) => setTimeout_(resolve, 706)).catch(console.warn);
-              const p2 = new Promise((resolve) => {
+              const p1 = new Promise(resolve => setTimeout_(resolve, 706)).catch(console.warn);
+              const p2 = new Promise(resolve => {
                 new IntersectionObserver((entries, observer) => {
                   for (const entry of entries) {
                     const rect = entry.boundingClientRect || 0;
@@ -3915,7 +3955,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-live-chat-frame');
       },
 
-      'ytd-live-chat-frame::attached': async (hostElement) => {
+      'ytd-live-chat-frame::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3925,8 +3965,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3968,7 +4009,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-live-chat-frame::detached': (hostElement) => {
+      'ytd-live-chat-frame::detached': hostElement => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.log(5084, 'ytd-live-chat-frame::detached');
 
@@ -3991,31 +4032,33 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::defined': (cProto) => {
+      'ytd-engagement-panel-section-list-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-engagement-panel-section-list-renderer::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-engagement-panel-section-list-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
         makeInitAttached('ytd-engagement-panel-section-list-renderer');
       },
 
-      'ytd-engagement-panel-section-list-renderer::bindTarget': (hostElement) => {
+      'ytd-engagement-panel-section-list-renderer::bindTarget': hostElement => {
         if (
           hostElement.matches(
             '#panels.ytd-watch-flexy > ytd-engagement-panel-section-list-renderer[target-id][visibility]'
@@ -4032,7 +4075,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::attached': (hostElement) => {
+      'ytd-engagement-panel-section-list-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -4043,8 +4086,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -4055,8 +4099,9 @@ const executionScript = (communicationKey) => {
           !hostElement.matches(
             '#panels.ytd-watch-flexy > ytd-engagement-panel-section-list-renderer'
           )
-        )
+        ) {
           return;
+        }
 
         if (hostElement.hasAttribute000('target-id') && hostElement.hasAttribute000('visibility')) {
           Promise.resolve(hostElement)
@@ -4071,7 +4116,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::detached': (hostElement) => {
+      'ytd-engagement-panel-section-list-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.log(5084, 'ytd-engagement-panel-section-list-renderer::detached');
@@ -4088,24 +4133,26 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-watch-metadata::defined': (cProto) => {
+      'ytd-watch-metadata::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-watch-metadata::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-watch-metadata::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -4113,7 +4160,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-watch-metadata');
       },
 
-      'ytd-watch-metadata::attached': (hostElement) => {
+      'ytd-watch-metadata::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -4124,17 +4171,19 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
 
-        if (plugin.fullChannelNameOnHover.activated)
+        if (plugin.fullChannelNameOnHover.activated) {
           plugin.fullChannelNameOnHover.onNavigateFinish();
+        }
       },
 
-      'ytd-watch-metadata::detached': (hostElement) => {
+      'ytd-watch-metadata::detached': hostElement => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.log(5084, 'ytd-watch-metadata::detached');
@@ -4144,24 +4193,26 @@ const executionScript = (communicationKey) => {
         // hostElement.__connectedFlg__ = 9;
       },
 
-      'ytd-playlist-panel-renderer::defined': (cProto) => {
+      'ytd-playlist-panel-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-playlist-panel-renderer::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-playlist-panel-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -4169,7 +4220,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-playlist-panel-renderer');
       },
 
-      'ytd-playlist-panel-renderer::attached': (hostElement) => {
+      'ytd-playlist-panel-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -4180,8 +4231,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -4195,7 +4247,7 @@ const executionScript = (communicationKey) => {
         hostElement.incAttribute111('attr-1y6nu');
       },
 
-      'ytd-playlist-panel-renderer::detached': (hostElement) => {
+      'ytd-playlist-panel-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.log(5084, 'ytd-playlist-panel-renderer::detached');
@@ -4209,7 +4261,7 @@ const executionScript = (communicationKey) => {
         mLoaded.flag |= 4;
         document.documentElement.setAttribute111('tabview-loaded', mLoaded.makeString());
       },
-      relatedElementProvided: (target) => {
+      relatedElementProvided: target => {
         if (target.closest('[hidden]')) return;
         elements.related = target;
         console.log('relatedElementProvided');
@@ -4223,18 +4275,18 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      refreshSecondaryInner: (lockId) => {
+      refreshSecondaryInner: lockId => {
         if (lockGet['refreshSecondaryInnerLock'] !== lockId) return;
         /*
-           
-                ytd-watch-flexy:not([panels-beside-player]):not([fixed-panels]) #panels-full-bleed-container.ytd-watch-flexy{
-                    display: none;}
-           
-          #player-full-bleed-container.ytd-watch-flexy{
-              position: relative;
-              flex: 1;}
-           
-                */
+                   
+                        ytd-watch-flexy:not([panels-beside-player]):not([fixed-panels]) #panels-full-bleed-container.ytd-watch-flexy{
+                            display: none;}
+                   
+                  #player-full-bleed-container.ytd-watch-flexy{
+                      position: relative;
+                      flex: 1;}
+                   
+                        */
 
         const ytdFlexyElm = elements.flexy;
         // if(ytdFlexyElm && ytdFlexyElm.matches('ytd-watch-flexy[fixed-panels][theater]')){
@@ -4282,7 +4334,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'yt-navigate-finish': (evt) => {
+      'yt-navigate-finish': _evt => {
         const ytdAppElm = document.querySelector(
           'ytd-page-manager#page-manager.style-scope.ytd-app'
         );
@@ -4293,7 +4345,7 @@ const executionScript = (communicationKey) => {
         // shouldFixInfo = true;
         // console.log('yt-navigate-finish')
         const flexyArr = [...document.querySelectorAll('ytd-watch-flexy')].filter(
-          (e) => !e.closest('[hidden]') && e.querySelector('#player')
+          e => !e.closest('[hidden]') && e.querySelector('#player')
         );
         if (flexyArr.length === 1) {
           // const lockId = lockSet['yt-navigate-finish-videos'];
@@ -4320,8 +4372,9 @@ const executionScript = (communicationKey) => {
             Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn);
           }
           Promise.resolve(lockSet['layoutFixLock']).then(layoutFix);
-          if (plugin.fullChannelNameOnHover.activated)
+          if (plugin.fullChannelNameOnHover.activated) {
             plugin.fullChannelNameOnHover.onNavigateFinish();
+          }
         }
       },
 
@@ -4331,9 +4384,9 @@ const executionScript = (communicationKey) => {
         let rightTabs = document.querySelector('#right-tabs');
         if (!document.querySelector('#right-tabs') && related) {
           getLangForPage();
-          let docTmp = document.createElement('template');
+          const docTmp = document.createElement('template');
           docTmp.innerHTML = createHTML(getTabsHTML());
-          let newElm = docTmp.content.firstElementChild;
+          const newElm = docTmp.content.firstElementChild;
           if (newElm !== null) {
             inPageRearrange = true;
             related.parentNode.insertBefore000(newElm, related);
@@ -4365,7 +4418,7 @@ const executionScript = (communicationKey) => {
         if (rightTabs) {
           isRightTabsInserted = true;
           const ioTabBtns = new IntersectionObserver(
-            (entries) => {
+            entries => {
               for (const entry of entries) {
                 const rect = entry.boundingClientRect;
                 entry.target.classList.toggle('tab-btn-visible', rect.width && rect.height);
@@ -4425,7 +4478,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      twoColumnChanged10: (lockId) => {
+      twoColumnChanged10: lockId => {
         if (lockId !== lockGet['twoColumnChanged10Lock']) return;
         for (const continuation of document.querySelectorAll(
           '#tab-videos ytd-watch-next-secondary-results-renderer ytd-continuation-item-renderer'
@@ -4443,7 +4496,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      tabsStatusCorrection: (lockId) => {
+      tabsStatusCorrection: lockId => {
         if (lockId !== lockGet['tabsStatusCorrectionLock']) return;
         const ytdFlexyElm = elements.flexy;
         if (!ytdFlexyElm) return;
@@ -4459,8 +4512,8 @@ const executionScript = (communicationKey) => {
           } else if ((p & 8) === 0 && (q & 8) === 8) {
             lastPanel = 'chat';
           } else if (
-            (((p & 4) == 4 && (q & (4 | 8)) == (0 | 0)) ||
-              ((p & 8) == 8 && (q & (4 | 8)) === (0 | 0))) &&
+            (((p & 4) === 4 && (q & (4 | 8)) === (0 | 0)) ||
+              ((p & 8) === 8 && (q & (4 | 8)) === (0 | 0))) &&
             lastPanel === 'chat'
           ) {
             // 24 -> 16 = -8; 'd'
@@ -4532,13 +4585,13 @@ const executionScript = (communicationKey) => {
           }
 
           // p->q +128
-          if ((p & (1 | 16 | 128)) == (1 | 16) && (q & (1 | 16 | 128)) == (1 | 16 | 128)) {
+          if ((p & (1 | 16 | 128)) === (1 | 16) && (q & (1 | 16 | 128)) === (1 | 16 | 128)) {
             ytBtnCancelTheater();
             actioned = true;
           }
 
           // p->q +1
-          if ((p & (1 | 16 | 128)) == (16 | 128) && (q & (1 | 16 | 128)) == (1 | 16 | 128)) {
+          if ((p & (1 | 16 | 128)) === (16 | 128) && (q & (1 | 16 | 128)) === (1 | 16 | 128)) {
             lastPanel = lastTab || '';
             ytBtnClosePlaylist();
             actioned = true;
@@ -4546,7 +4599,7 @@ const executionScript = (communicationKey) => {
 
           if ((q & 64) === 64) {
             actioned = false;
-          } else if ((p & 64) == 64 && (q & 64) === 0) {
+          } else if ((p & 64) === 64 && (q & 64) === 0) {
             // p->q -64
 
             if ((q & 32) === 32) {
@@ -4696,7 +4749,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      updateOnVideoIdChanged: (lockId) => {
+      updateOnVideoIdChanged: lockId => {
         if (lockId !== lockGet['updateOnVideoIdChangedLock']) return;
         const videoId = tmpLastVideoId;
         if (!videoId) return;
@@ -4715,7 +4768,7 @@ const executionScript = (communicationKey) => {
         Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn);
       },
 
-      fixInitialTabStateFn: async (lockId) => {
+      fixInitialTabStateFn: async lockId => {
         // console.log('fixInitialTabStateFn 0a');
         if (lockGet['fixInitialTabStateLock'] !== lockId) return;
         // console.log('fixInitialTabStateFn 0b');
@@ -4758,7 +4811,7 @@ const executionScript = (communicationKey) => {
         fixInitialTabStateK++;
       },
 
-      'tabs-btn-click': (evt) => {
+      'tabs-btn-click': evt => {
         const target = evt.target;
         if (
           target instanceof HTMLElement_ &&
@@ -4789,7 +4842,7 @@ const executionScript = (communicationKey) => {
 
     const promiseForCustomYtElementsReady = isCustomElementsProvided
       ? Promise.resolve(0)
-      : new Promise((callback) => {
+      : new Promise(callback => {
           const EVENT_KEY_ON_REGISTRY_READY = 'ytI-ce-registry-created';
           if (typeof customElements === 'undefined') {
             if (!('__CE_registry' in document)) {
@@ -4810,7 +4863,7 @@ const executionScript = (communicationKey) => {
                 configurable: true,
               });
             }
-            let eventHandler = (evt) => {
+            let eventHandler = _evt => {
               document.removeEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
               const f = callback;
               callback = null;
@@ -4823,7 +4876,8 @@ const executionScript = (communicationKey) => {
           }
         });
 
-    const _retrieveCE = async (nodeName) => {
+    // eslint-disable-next-line no-unused-vars
+    const _retrieveCE = async nodeName => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
         await customElements.whenDefined(nodeName);
@@ -4832,7 +4886,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const retrieveCE = async (nodeName) => {
+    const retrieveCE = async nodeName => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
         await customElements.whenDefined(nodeName);
@@ -4866,7 +4920,7 @@ const executionScript = (communicationKey) => {
 
     moOverall.observe(document, { subtree: true, childList: true });
 
-    const moEgmPanelReady = new MutationObserver((mutations) => {
+    const moEgmPanelReady = new MutationObserver(mutations => {
       for (const mutation of mutations) {
         const target = mutation.target;
         if (!target.hasAttribute000('tyt-egm-panel-jclmd')) continue;
@@ -4891,7 +4945,7 @@ const executionScript = (communicationKey) => {
 
     document.addEventListener(
       'animationstart',
-      (evt) => {
+      evt => {
         const f = eventMap[evt.animationName];
         if (typeof f === 'function') f(evt.target);
       },
@@ -4905,6 +4959,7 @@ const executionScript = (communicationKey) => {
 
     promiseForCustomYtElementsReady.then(eventMap['ceHack']).catch(console.warn);
 
+    // eslint-disable-next-line no-unused-vars
     executionFinished = 1;
   } catch (e) {
     console.log('error 0xF491');
@@ -5063,7 +5118,7 @@ ytd-watch-flexy[is-two-columns_]{contain:layout style;}
   if (!document.documentElement) {
     await Promise.resolve(0);
     while (!document.documentElement) {
-      await new Promise((resolve) => nextBrowserTick(resolve)).then().catch(console.warn);
+      await new Promise(resolve => nextBrowserTick(resolve)).then().catch(console.warn);
     }
   }
   const sourceURL = 'debug://tabview-youtube/tabview.execution.js';
@@ -5089,7 +5144,7 @@ ytd-watch-flexy[is-two-columns_]{contain:layout style;}
   script.remove();
   script = null;
 
-  let style = document.createElement('style');
+  const style = document.createElement('style');
   const sourceURLMainCSS = 'debug://tabview-youtube/tabview.main.css';
   style.textContent = `${styles['main'].trim()}${'\n\n'}/*# sourceURL=${sourceURLMainCSS} */${'\n'}`;
   document.documentElement.appendChild(style);

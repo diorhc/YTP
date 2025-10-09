@@ -18,6 +18,7 @@ const YouTubeUtils = (() => {
    * @returns {Function} Wrapped function
    */
   const safeExecute = (fn, context = 'Unknown') => {
+    /** @this {any} */
     return function (...args) {
       try {
         return fn.apply(this, args);
@@ -35,6 +36,7 @@ const YouTubeUtils = (() => {
    * @returns {Function} Wrapped async function
    */
   const safeExecuteAsync = (fn, context = 'Unknown') => {
+    /** @this {any} */
     return async function (...args) {
       try {
         return await fn.apply(this, args);
@@ -50,7 +52,7 @@ const YouTubeUtils = (() => {
    * @param {string} html - HTML string to sanitize
    * @returns {string} Sanitized HTML
    */
-  const sanitizeHTML = (html) => {
+  const sanitizeHTML = html => {
     if (typeof html !== 'string') return '';
 
     const map = {
@@ -62,7 +64,7 @@ const YouTubeUtils = (() => {
       '/': '&#x2F;',
     };
 
-    return html.replace(/[<>&"'\/]/g, (char) => map[char]);
+    return html.replace(/[<>&"'\/]/g, char => map[char]);
   };
 
   /**
@@ -70,7 +72,7 @@ const YouTubeUtils = (() => {
    * @param {string} url - URL to validate
    * @returns {boolean} Whether URL is safe
    */
-  const isValidURL = (url) => {
+  const isValidURL = url => {
     if (typeof url !== 'string') return false;
     try {
       const parsed = new URL(url);
@@ -129,7 +131,7 @@ const YouTubeUtils = (() => {
      * Remove item from localStorage
      * @param {string} key - Storage key
      */
-    remove: (key) => {
+    remove: key => {
       try {
         if (typeof key !== 'string' || !key) {
           logError('Storage', 'Invalid storage key', new Error('Key must be a non-empty string'));
@@ -142,66 +144,60 @@ const YouTubeUtils = (() => {
     },
   };
 
-  /**
-   * Optimized debounce function with cleanup
-   * @param {Function} func - Function to debounce
-   * @param {number} wait - Wait time in ms
-   * @param {Object} options - Options {leading: boolean}
-   * @returns {Function} Debounced function with cancel method
-   */
-  const debounce = (func, wait, options = {}) => {
-    let timeout;
-    let lastArgs;
-    let lastThis;
+  // Use shared debounce and throttle from YouTubeUtils (defined in utils.js)
+  const debounce =
+    /** @type {any} */ (window).YouTubeUtils?.debounce ||
+    ((func, wait, options = {}) => {
+      let timeout;
+      let lastArgs;
+      let lastThis;
 
-    const debounced = function (...args) {
-      lastArgs = args;
-      lastThis = this;
-      clearTimeout(timeout);
+      /** @this {any} */
+      const debounced = function (...args) {
+        lastArgs = args;
+        lastThis = this;
+        clearTimeout(timeout);
 
-      if (options.leading && !timeout) {
-        func.apply(this, args);
-      }
-
-      timeout = setTimeout(() => {
-        if (!options.leading) {
-          func.apply(lastThis, lastArgs);
+        if (options.leading && !timeout) {
+          /** @type {Function} */ (func).apply(this, args);
         }
+
+        timeout = setTimeout(() => {
+          if (!options.leading) {
+            /** @type {Function} */ (func).apply(lastThis, lastArgs);
+          }
+          timeout = null;
+          lastArgs = null;
+          lastThis = null;
+        }, wait);
+      };
+
+      debounced.cancel = () => {
+        clearTimeout(timeout);
         timeout = null;
         lastArgs = null;
         lastThis = null;
-      }, wait);
-    };
+      };
 
-    debounced.cancel = () => {
-      clearTimeout(timeout);
-      timeout = null;
-      lastArgs = null;
-      lastThis = null;
-    };
+      return debounced;
+    });
 
-    return debounced;
-  };
+  const throttle =
+    /** @type {any} */ (window).YouTubeUtils?.throttle ||
+    ((func, limit) => {
+      let inThrottle;
+      let lastResult;
 
-  /**
-   * Throttle function for rate limiting
-   * @param {Function} func - Function to throttle
-   * @param {number} limit - Time limit in ms
-   * @returns {Function} Throttled function
-   */
-  const throttle = (func, limit) => {
-    let inThrottle;
-    let lastResult;
-
-    return function (...args) {
-      if (!inThrottle) {
-        lastResult = func.apply(this, args);
-        inThrottle = true;
-        setTimeout(() => (inThrottle = false), limit);
-      }
-      return lastResult;
-    };
-  };
+      /** @this {any} */
+      return function (...args) {
+        if (!inThrottle) {
+          lastResult = /** @type {Function} */ (func).apply(this, args);
+          inThrottle = true;
+          setTimeout(() => (inThrottle = false), limit);
+        }
+        return lastResult;
+      };
+    });
 
   /**
    * Safe DOM element creation with props and children
@@ -245,7 +241,7 @@ const YouTubeUtils = (() => {
       }
     });
 
-    children.forEach((child) => {
+    children.forEach(child => {
       if (typeof child === 'string') {
         element.appendChild(document.createTextNode(child));
       } else if (child instanceof Node) {
@@ -324,16 +320,16 @@ const YouTubeUtils = (() => {
       try {
         const element = parent.querySelector(selector);
         if (element) {
-          resolve(element);
+          resolve(/** @type {HTMLElement} */ (/** @type {unknown} */ (element)));
           return;
         }
-      } catch (e) {
+      } catch {
         reject(new Error(`Invalid selector: ${selector}`));
         return;
       }
 
       const controller = new AbortController();
-      let observer;
+      let observer = null;
 
       const timeoutId = setTimeout(() => {
         controller.abort();
@@ -353,7 +349,7 @@ const YouTubeUtils = (() => {
           if (element) {
             clearTimeout(timeoutId);
             observer.disconnect();
-            resolve(element);
+            resolve(/** @type {HTMLElement} */ (/** @type {unknown} */ (element)));
           }
         } catch (e) {
           logError('waitForElement', 'Observer callback error', e);
@@ -361,18 +357,18 @@ const YouTubeUtils = (() => {
       });
 
       try {
-        observer.observe(parent, {
-          childList: true,
-          subtree: true,
-          signal: controller.signal,
-        });
-      } catch (e) {
+        // Ensure parent supports observe/querySelector
+        if (!(parent instanceof Element) && parent !== document) {
+          throw new Error('Parent does not support observation');
+        }
+        observer.observe(parent, { childList: true, subtree: true });
+      } catch {
         // Fallback for browsers without signal support
         try {
           observer.observe(parent, { childList: true, subtree: true });
-        } catch (observeError) {
+        } catch {
           clearTimeout(timeoutId);
-          reject(new Error('Failed to observe DOM: ' + observeError.message));
+          reject(new Error('Failed to observe DOM'));
         }
       }
     });
@@ -394,7 +390,7 @@ const YouTubeUtils = (() => {
      * @param {MutationObserver} observer - Observer to register
      * @returns {MutationObserver} Registered observer
      */
-    registerObserver: (observer) => {
+    registerObserver: observer => {
       cleanupManager.observers.add(observer);
       return observer;
     },
@@ -403,7 +399,7 @@ const YouTubeUtils = (() => {
      * Unregister and disconnect specific observer
      * @param {MutationObserver} observer - Observer to unregister
      */
-    unregisterObserver: (observer) => {
+    unregisterObserver: observer => {
       if (observer) {
         try {
           observer.disconnect();
@@ -416,16 +412,20 @@ const YouTubeUtils = (() => {
 
     /**
      * Register event listener for cleanup
-     * @param {HTMLElement} element - Target element
+     * @param {EventTarget|Document|Window} element - Target element
      * @param {string} event - Event name
-     * @param {Function} handler - Event handler
+     * @param {EventListener|EventListenerObject} handler - Event handler
      * @param {Object} options - Event listener options
      * @returns {Symbol} Listener key for later removal
      */
     registerListener: (element, event, handler, options) => {
       const key = Symbol('listener');
       cleanupManager.listeners.set(key, { element, event, handler, options });
-      element.addEventListener(event, handler, options);
+      try {
+        element.addEventListener(event, /** @type {EventListener} */ (handler), options);
+      } catch {
+        // best-effort: if addEventListener fails, still register the listener record
+      }
       return key;
     },
 
@@ -433,7 +433,7 @@ const YouTubeUtils = (() => {
      * Unregister specific listener
      * @param {Symbol} key - Listener key
      */
-    unregisterListener: (key) => {
+    unregisterListener: key => {
       const listener = cleanupManager.listeners.get(key);
       if (listener) {
         const { element, event, handler, options } = listener;
@@ -448,10 +448,10 @@ const YouTubeUtils = (() => {
 
     /**
      * Register interval for cleanup
-     * @param {number} id - Interval ID
-     * @returns {number} Interval ID
+     * @param {TimerId} id - Interval ID
+     * @returns {TimerId} Interval ID
      */
-    registerInterval: (id) => {
+    registerInterval: id => {
       cleanupManager.intervals.add(id);
       return id;
     },
@@ -460,17 +460,17 @@ const YouTubeUtils = (() => {
      * Unregister specific interval
      * @param {number} id - Interval ID
      */
-    unregisterInterval: (id) => {
+    unregisterInterval: id => {
       clearInterval(id);
       cleanupManager.intervals.delete(id);
     },
 
     /**
      * Register timeout for cleanup
-     * @param {number} id - Timeout ID
-     * @returns {number} Timeout ID
+     * @param {TimerId} id - Timeout ID
+     * @returns {TimerId} Timeout ID
      */
-    registerTimeout: (id) => {
+    registerTimeout: id => {
       cleanupManager.timeouts.add(id);
       return id;
     },
@@ -479,7 +479,7 @@ const YouTubeUtils = (() => {
      * Unregister specific timeout
      * @param {number} id - Timeout ID
      */
-    unregisterTimeout: (id) => {
+    unregisterTimeout: id => {
       clearTimeout(id);
       cleanupManager.timeouts.delete(id);
     },
@@ -489,7 +489,7 @@ const YouTubeUtils = (() => {
      * @param {number} id - Animation frame ID
      * @returns {number} Animation frame ID
      */
-    registerAnimationFrame: (id) => {
+    registerAnimationFrame: id => {
       cleanupManager.animationFrames.add(id);
       return id;
     },
@@ -498,7 +498,7 @@ const YouTubeUtils = (() => {
      * Unregister specific animation frame
      * @param {number} id - Animation frame ID
      */
-    unregisterAnimationFrame: (id) => {
+    unregisterAnimationFrame: id => {
       cancelAnimationFrame(id);
       cleanupManager.animationFrames.delete(id);
     },
@@ -508,7 +508,7 @@ const YouTubeUtils = (() => {
      */
     cleanup: () => {
       // Disconnect all observers
-      cleanupManager.observers.forEach((obs) => {
+      cleanupManager.observers.forEach(obs => {
         try {
           obs.disconnect();
         } catch (e) {
@@ -528,15 +528,15 @@ const YouTubeUtils = (() => {
       cleanupManager.listeners.clear();
 
       // Clear all intervals
-      cleanupManager.intervals.forEach((id) => clearInterval(id));
+      cleanupManager.intervals.forEach(id => clearInterval(id));
       cleanupManager.intervals.clear();
 
       // Clear all timeouts
-      cleanupManager.timeouts.forEach((id) => clearTimeout(id));
+      cleanupManager.timeouts.forEach(id => clearTimeout(id));
       cleanupManager.timeouts.clear();
 
       // Cancel all animation frames
-      cleanupManager.animationFrames.forEach((id) => cancelAnimationFrame(id));
+      cleanupManager.animationFrames.forEach(id => cancelAnimationFrame(id));
       cleanupManager.animationFrames.clear();
     },
   };
@@ -706,27 +706,17 @@ const YouTubeUtils = (() => {
       }
 
       const {
-        type = 'info',
         duration = this.defaultDuration,
         position = null,
-        dismissible = true,
         action = null, // { text: string, callback: function }
       } = options;
 
       // Remove duplicate messages
-      this.activeNotifications.forEach((notif) => {
+      this.activeNotifications.forEach(notif => {
         if (notif.dataset.message === message) {
           this.remove(notif);
         }
       });
-
-      const colors = {
-        info: 'rgba(34, 197, 94, 0.9)',
-        error: 'rgba(220, 38, 38, 0.9)',
-        warning: 'rgba(251, 191, 36, 0.9)',
-        update: 'linear-gradient(135deg, rgba(255, 69, 0, 0.95), rgba(255, 140, 0, 0.95))',
-        success: 'rgba(34, 197, 94, 0.9)',
-      };
 
       const positions = {
         'top-right': { top: '20px', right: '20px' },
@@ -847,7 +837,7 @@ const YouTubeUtils = (() => {
      * Clear all notifications
      */
     clearAll() {
-      this.activeNotifications.forEach((notif) => {
+      this.activeNotifications.forEach(notif => {
         try {
           notif.remove();
         } catch (e) {
@@ -890,13 +880,13 @@ const YouTubeUtils = (() => {
   cleanupManager.registerInterval(cacheCleanupInterval);
 
   // Global error handler for uncaught promise rejections
-  window.addEventListener('unhandledrejection', (event) => {
+  window.addEventListener('unhandledrejection', event => {
     logError('Global', 'Unhandled promise rejection', event.reason);
     event.preventDefault(); // Prevent console spam
   });
 
   // Global error handler for uncaught errors
-  window.addEventListener('error', (event) => {
+  window.addEventListener('error', event => {
     // Only log errors from our script
     if (event.filename && event.filename.includes('youtube')) {
       logError(
@@ -914,6 +904,7 @@ const YouTubeUtils = (() => {
    * @returns {Function} Wrapped function
    */
   const measurePerformance = (label, fn) => {
+    /** @this {any} */
     return function (...args) {
       const start = performance.now();
       try {
@@ -937,6 +928,7 @@ const YouTubeUtils = (() => {
    * @returns {Function} Wrapped async function
    */
   const measurePerformanceAsync = (label, fn) => {
+    /** @this {any} */
     return async function (...args) {
       const start = performance.now();
       try {
@@ -986,7 +978,7 @@ const YouTubeUtils = (() => {
         return await fn();
       } catch (error) {
         if (i === retries - 1) throw error;
-        await new Promise((resolve) => setTimeout(resolve, delay * (i + 1)));
+        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
       }
     }
   };
@@ -1019,14 +1011,20 @@ const YouTubeUtils = (() => {
 
 // Make available globally
 if (typeof window !== 'undefined') {
-  window.YouTubeUtils = YouTubeUtils;
+  // Merge utilities into existing global YouTubeUtils without overwriting
+  /** @type {any} */ (window).YouTubeUtils = /** @type {any} */ (window).YouTubeUtils || {};
+  const existing = /** @type {any} */ (window).YouTubeUtils;
+  try {
+    for (const k of Object.keys(YouTubeUtils)) {
+      if (existing[k] === undefined) existing[k] = YouTubeUtils[k];
+    }
+  } catch {}
 
-  // Add initialization health check
-  console.log('[YouTube+ v2.0] Core utilities loaded successfully');
-  console.log('[YouTube+] Features: Performance monitoring, Memory management, Error recovery');
+  // Add initialization health check (non-intrusive)
+  console.log('[YouTube+ v2.0] Core utilities merged');
 
   // Expose debug info
-  window.YouTubePlusDebug = {
+  /** @type {any} */ (window).YouTubePlusDebug = {
     version: '2.0',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
@@ -1076,6 +1074,8 @@ if (typeof window !== 'undefined') {
       storageKey: 'youtube_playback_speed',
     },
 
+    _initialized: false,
+
     // Settings
     settings: {
       enableSpeedControl: true,
@@ -1103,27 +1103,6 @@ if (typeof window !== 'undefined') {
     // Cache DOM queries
     _cache: new Map(),
 
-    // Initialize everything
-    init() {
-      if (!/youtube\.com/.test(location.host)) return;
-
-      try {
-        this.loadSettings();
-        this.speedControl.currentSpeed = parseFloat(
-          localStorage.getItem(this.speedControl.storageKey) || 1
-        );
-
-        this.insertStyles();
-        this.addSettingsButtonToHeader();
-        this.setupNavigationObserver();
-        this.setupCurrentPage();
-
-        console.log('[YouTube+] YouTubeEnhancer v2.0 initialized successfully');
-      } catch (error) {
-        YouTubeUtils.logError('YouTubeEnhancer', 'Initialization failed', error);
-      }
-    },
-
     // Cached element getter
     getElement(selector, useCache = true) {
       if (useCache && this._cache.has(selector)) {
@@ -1144,6 +1123,34 @@ if (typeof window !== 'undefined') {
       } catch (e) {
         console.error('Error loading settings:', e);
       }
+    },
+
+    init() {
+      if (this._initialized) {
+        return;
+      }
+
+      this._initialized = true;
+
+      try {
+        this.loadSettings();
+      } catch (error) {
+        console.warn('[YouTube Enhancer] Failed to load settings during init:', error);
+      }
+
+      this.insertStyles();
+      this.addSettingsButtonToHeader();
+      this.setupNavigationObserver();
+
+      if (location.href.includes('watch?v=')) {
+        this.setupCurrentPage();
+      }
+
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && location.href.includes('watch?v=')) {
+          this.setupCurrentPage();
+        }
+      });
     },
 
     saveSettings() {
@@ -1297,7 +1304,7 @@ if (typeof window !== 'undefined') {
 
     addSettingsButtonToHeader() {
       this.waitForElement('ytd-masthead #end', 5000)
-        .then((headerEnd) => {
+        .then(headerEnd => {
           if (!this.getElement('.ytp-plus-settings-button')) {
             const settingsButton = document.createElement('div');
             settingsButton.className = 'ytp-plus-settings-button';
@@ -1407,10 +1414,10 @@ if (typeof window !== 'undefined') {
                         <div class="download-site-controls" style="display:${this.settings.downloadSites?.y2mate ? 'block' : 'none'};">
                           <input type="text" placeholder="Site name" value="${this.settings.downloadSiteCustomization?.y2mate?.name || 'Y2Mate'}" 
                               data-site="y2mate" data-field="name" class="download-site-input" 
-                              style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
+                              style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
                           <input type="text" placeholder="URL template (use {videoId} or {videoUrl})" value="${this.settings.downloadSiteCustomization?.y2mate?.url || 'https://www.y2mate.com/youtube/{videoId}'}" 
                             data-site="y2mate" data-field="url" class="download-site-input" 
-                            style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
+                            style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
                           <div class="download-site-cta">
                             <button class="glass-button" id="download-y2mate-save" style="padding:6px 10px;font-size:12px;">Save</button>
                             <button class="glass-button" id="download-y2mate-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">Reset</button>
@@ -1429,10 +1436,10 @@ if (typeof window !== 'undefined') {
                         <div class="download-site-controls" style="display:${this.settings.downloadSites?.xbbuddy ? 'block' : 'none'};">
                           <input type="text" placeholder="Site name" value="${this.settings.downloadSiteCustomization?.xbbuddy?.name || '9xbuddy'}" 
                             data-site="xbbuddy" data-field="name" class="download-site-input" 
-                            style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
+                            style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
                           <input type="text" placeholder="URL template (use {videoId} or {videoUrl})" value="${this.settings.downloadSiteCustomization?.xbbuddy?.url || 'https://9xbuddy.org/process?url={videoUrl}'}" 
                             data-site="xbbuddy" data-field="url" class="download-site-input" 
-                            style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
+                            style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
                           <div class="download-site-cta">
                             <button class="glass-button" id="download-xbbuddy-save" style="padding:6px 10px;font-size:12px;">Save</button>
                             <button class="glass-button" id="download-xbbuddy-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">Reset</button>
@@ -1478,61 +1485,73 @@ if (typeof window !== 'undefined') {
         `;
 
       // Event delegation for better performance
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.remove();
+      modal.addEventListener('click', e => {
+        const target = /** @type {HTMLElement} */ (e.target);
+        if (target === modal) modal.remove();
         if (
-          e.target.classList.contains('ytp-plus-settings-close') ||
-          e.target.closest('.ytp-plus-settings-close')
-        )
+          target.classList.contains('ytp-plus-settings-close') ||
+          target.closest('.ytp-plus-settings-close')
+        ) {
           modal.remove();
+        }
 
         // Обработка кнопки GitHub для YTDL
-        if (e.target.id === 'open-ytdl-github' || e.target.closest('#open-ytdl-github')) {
+        if (target.id === 'open-ytdl-github' || target.closest('#open-ytdl-github')) {
           window.open('https://github.com/diorhc/YouTube-Downloader', '_blank');
           return;
         }
 
-        if (e.target.classList.contains('ytp-plus-settings-nav-item')) {
+        if (target.classList.contains('ytp-plus-settings-nav-item')) {
           // Handle sidebar navigation
-          const section = e.target.dataset.section;
+          const section = /** @type {HTMLElement} */ (target).dataset.section;
           modal
             .querySelectorAll('.ytp-plus-settings-nav-item')
-            .forEach((item) => item.classList.remove('active'));
+            .forEach(item => item.classList.remove('active'));
           modal
             .querySelectorAll('.ytp-plus-settings-section')
-            .forEach((section) => section.classList.add('hidden'));
+            .forEach(section => section.classList.add('hidden'));
 
-          e.target.classList.add('active');
+          target.classList.add('active');
           modal
             .querySelector(`.ytp-plus-settings-section[data-section="${section}"]`)
             .classList.remove('hidden');
         }
 
-        if (e.target.classList.contains('ytp-plus-settings-checkbox')) {
-          const setting = e.target.dataset.setting;
+        if (target.classList.contains('ytp-plus-settings-checkbox')) {
+          const setting = /** @type {HTMLElement} */ (target).dataset.setting;
           if (!setting) return;
 
           // Сохранение простых настроек (enableSpeedControl, enableScreenshot, enableDownload)
           if (!setting.startsWith('downloadSite_')) {
-            this.settings[setting] = e.target.checked;
+            this.settings[setting] = /** @type {HTMLInputElement} */ (target).checked;
 
             // Показывать/скрывать сабменю при переключении Download
             if (setting === 'enableDownload') {
               const submenu = modal.querySelector('.download-submenu');
-              if (submenu) submenu.style.display = e.target.checked ? 'block' : 'none';
+              if (submenu) {
+                submenu.style.display = /** @type {HTMLInputElement} */ (target).checked
+                  ? 'block'
+                  : 'none';
+              }
             }
           } else {
             // Обработка чекбоксов в сабменю: data-setting = downloadSite_<key>
             const key = setting.replace('downloadSite_', '');
-            if (!this.settings.downloadSites) this.settings.downloadSites = {};
-            this.settings.downloadSites[key] = e.target.checked;
+            if (!this.settings.downloadSites) {
+              this.settings.downloadSites = { y2mate: true, xbbuddy: true };
+            }
+            const checkbox = /** @type {HTMLElement} */ (target);
+            this.settings.downloadSites[key] = /** @type {HTMLInputElement} */ (checkbox).checked;
             // Toggle visibility of controls for this site (if present in DOM)
             try {
-              const checkbox = e.target;
               const container = checkbox.closest('.download-site-option');
               if (container) {
                 const controls = container.querySelector('.download-site-controls');
-                if (controls) controls.style.display = e.target.checked ? 'block' : 'none';
+                if (controls) {
+                  controls.style.display = /** @type {HTMLInputElement} */ (checkbox).checked
+                    ? 'block'
+                    : 'none';
+                }
               }
             } catch (err) {
               console.warn('[YouTube+] toggle download-site-controls failed:', err);
@@ -1541,11 +1560,13 @@ if (typeof window !== 'undefined') {
             try {
               if (
                 typeof window !== 'undefined' &&
-                window.youtubePlus &&
-                typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+                /** @type {any} */ (window).youtubePlus &&
+                typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+                  'function'
               ) {
-                window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-                window.youtubePlus.rebuildDownloadDropdown();
+                /** @type {any} */ (window).youtubePlus.settings =
+                  /** @type {any} */ (window).youtubePlus.settings || this.settings;
+                /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
               }
             } catch (err) {
               console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -1554,58 +1575,74 @@ if (typeof window !== 'undefined') {
         }
 
         // Обработка кастомизации download сайтов
-        if (e.target.classList.contains('download-site-input')) {
-          const site = e.target.dataset.site;
-          const field = e.target.dataset.field;
+        if (target.classList.contains('download-site-input')) {
+          const site = /** @type {HTMLElement} */ (target).dataset.site;
+          const field = /** @type {HTMLElement} */ (target).dataset.field;
           if (!site || !field) return;
 
           if (!this.settings.downloadSiteCustomization) {
-            this.settings.downloadSiteCustomization = {};
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
           }
           if (!this.settings.downloadSiteCustomization[site]) {
             this.settings.downloadSiteCustomization[site] = { name: '', url: '' };
           }
 
-          this.settings.downloadSiteCustomization[site][field] = e.target.value;
+          this.settings.downloadSiteCustomization[site][field] = /** @type {HTMLInputElement} */ (
+            target
+          ).value;
 
           // Обновить имя в UI в реальном времени
           if (field === 'name') {
-            const nameDisplay = e.target
+            const nameDisplay = target
               .closest('.download-site-option')
               ?.querySelector('.download-site-name');
-            if (nameDisplay)
+            if (nameDisplay) {
               nameDisplay.textContent =
-                e.target.value || (site === 'y2mate' ? 'Y2Mate' : '9xbuddy');
+                /** @type {HTMLInputElement} */ (target).value ||
+                (site === 'y2mate' ? 'Y2Mate' : '9xbuddy');
+            }
           }
           // Rebuild dropdown if present so changes reflect immediately
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+                'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
           }
         }
 
-        if (e.target.id === 'ytp-plus-save-settings') {
+        if (target.id === 'ytp-plus-save-settings') {
           this.saveSettings();
           modal.remove();
           this.showNotification('Settings saved');
         }
         // Save specific Y2Mate customization
-        if (e.target.id === 'download-y2mate-save') {
+        if (target.id === 'download-y2mate-save') {
           // Ensure settings structure
-          if (!this.settings.downloadSiteCustomization)
-            this.settings.downloadSiteCustomization = {};
-          if (!this.settings.downloadSiteCustomization.y2mate)
-            this.settings.downloadSiteCustomization.y2mate = {};
+          if (!this.settings.downloadSiteCustomization) {
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
+          }
+          if (!this.settings.downloadSiteCustomization.y2mate) {
+            this.settings.downloadSiteCustomization.y2mate = { name: '', url: '' };
+          }
           // Read current inputs inside this download-site-option
-          const container = e.target.closest('.download-site-option');
+          const container = /** @type {HTMLElement|null} */ (
+            /** @type {unknown} */ (target.closest('.download-site-option'))
+          );
           if (container) {
             const nameInput = container.querySelector(
               'input.download-site-input[data-site="y2mate"][data-field="name"]'
@@ -1620,11 +1657,13 @@ if (typeof window !== 'undefined') {
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+                'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -1633,15 +1672,22 @@ if (typeof window !== 'undefined') {
         }
 
         // Reset Y2Mate to defaults
-        if (e.target.id === 'download-y2mate-reset') {
-          if (!this.settings.downloadSiteCustomization)
-            this.settings.downloadSiteCustomization = {};
+        if (target.id === 'download-y2mate-reset') {
+          if (!this.settings.downloadSiteCustomization) {
+            // Initialize with expected structure to satisfy type checks
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
+          }
           this.settings.downloadSiteCustomization.y2mate = {
             name: 'Y2Mate',
             url: 'https://www.y2mate.com/youtube/{videoId}',
           };
           // Update inputs in modal if present
-          const container = modal.querySelector('.download-site-option');
+          const container = /** @type {HTMLElement|null} */ (
+            /** @type {unknown} */ (modal.querySelector('.download-site-option'))
+          );
           if (container) {
             const nameInput = container.querySelector(
               'input.download-site-input[data-site="y2mate"][data-field="name"]'
@@ -1652,18 +1698,21 @@ if (typeof window !== 'undefined') {
             const nameDisplay = container.querySelector('.download-site-name');
             if (nameInput) nameInput.value = this.settings.downloadSiteCustomization.y2mate.name;
             if (urlInput) urlInput.value = this.settings.downloadSiteCustomization.y2mate.url;
-            if (nameDisplay)
+            if (nameDisplay) {
               nameDisplay.textContent = this.settings.downloadSiteCustomization.y2mate.name;
+            }
           }
           this.saveSettings();
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+                'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -1672,12 +1721,20 @@ if (typeof window !== 'undefined') {
         }
 
         // Save specific 9xBuddy customization
-        if (e.target.id === 'download-xbbuddy-save') {
-          if (!this.settings.downloadSiteCustomization)
-            this.settings.downloadSiteCustomization = {};
-          if (!this.settings.downloadSiteCustomization.xbbuddy)
-            this.settings.downloadSiteCustomization.xbbuddy = {};
-          const container = e.target.closest('.download-site-option');
+        if (target.id === 'download-xbbuddy-save') {
+          if (!this.settings.downloadSiteCustomization) {
+            // Initialize expected structure
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
+          }
+          if (!this.settings.downloadSiteCustomization.xbbuddy) {
+            this.settings.downloadSiteCustomization.xbbuddy = { name: '', url: '' };
+          }
+          const container = /** @type {HTMLElement|null} */ (
+            /** @type {unknown} */ (target.closest('.download-site-option'))
+          );
           if (container) {
             const nameInput = container.querySelector(
               'input.download-site-input[data-site="xbbuddy"][data-field="name"]'
@@ -1692,11 +1749,13 @@ if (typeof window !== 'undefined') {
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+                'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -1705,15 +1764,21 @@ if (typeof window !== 'undefined') {
         }
 
         // Reset 9xBuddy to defaults
-        if (e.target.id === 'download-xbbuddy-reset') {
-          if (!this.settings.downloadSiteCustomization)
-            this.settings.downloadSiteCustomization = {};
+        if (target.id === 'download-xbbuddy-reset') {
+          if (!this.settings.downloadSiteCustomization) {
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
+          }
           this.settings.downloadSiteCustomization.xbbuddy = {
             name: '9xbuddy',
             url: 'https://9xbuddy.org/process?url={videoUrl}',
           };
           // Update inputs in modal if present
-          const container = modal.querySelectorAll('.download-site-option')[1];
+          const container = /** @type {HTMLElement|null} */ (
+            /** @type {unknown} */ (modal.querySelectorAll('.download-site-option')[1])
+          );
           if (container) {
             const nameInput = container.querySelector(
               'input.download-site-input[data-site="xbbuddy"][data-field="name"]'
@@ -1724,18 +1789,21 @@ if (typeof window !== 'undefined') {
             const nameDisplay = container.querySelector('.download-site-name');
             if (nameInput) nameInput.value = this.settings.downloadSiteCustomization.xbbuddy.name;
             if (urlInput) urlInput.value = this.settings.downloadSiteCustomization.xbbuddy.url;
-            if (nameDisplay)
+            if (nameDisplay) {
               nameDisplay.textContent = this.settings.downloadSiteCustomization.xbbuddy.name;
+            }
           }
           this.saveSettings();
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+                'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -1745,39 +1813,49 @@ if (typeof window !== 'undefined') {
       });
 
       // Обработка изменений input полей для кастомизации
-      modal.addEventListener('input', (e) => {
-        if (e.target.classList.contains('download-site-input')) {
-          const site = e.target.dataset.site;
-          const field = e.target.dataset.field;
+      modal.addEventListener('input', e => {
+        const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+        if (target.classList.contains('download-site-input')) {
+          const site = /** @type {HTMLElement} */ (target).dataset.site;
+          const field = /** @type {HTMLElement} */ (target).dataset.field;
           if (!site || !field) return;
 
           if (!this.settings.downloadSiteCustomization) {
-            this.settings.downloadSiteCustomization = {};
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
           }
           if (!this.settings.downloadSiteCustomization[site]) {
             this.settings.downloadSiteCustomization[site] = { name: '', url: '' };
           }
 
-          this.settings.downloadSiteCustomization[site][field] = e.target.value;
+          this.settings.downloadSiteCustomization[site][field] = /** @type {HTMLInputElement} */ (
+            target
+          ).value;
 
           // Обновить имя в UI в реальном времени
           if (field === 'name') {
-            const nameDisplay = e.target
-              .closest('.download-site-option')
-              ?.querySelector('.download-site-name');
-            if (nameDisplay)
+            const nameDisplay = /** @type {HTMLElement|null} */ (
+              /** @type {unknown} */ (target.closest('.download-site-option'))
+            )?.querySelector('.download-site-name');
+            if (nameDisplay) {
               nameDisplay.textContent =
-                e.target.value || (site === 'y2mate' ? 'Y2Mate' : '9xbuddy');
+                /** @type {HTMLInputElement} */ (target).value ||
+                (site === 'y2mate' ? 'Y2Mate' : '9xbuddy');
+            }
           }
           // Rebuild dropdown if present so changes reflect immediately
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+                'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -1911,16 +1989,16 @@ if (typeof window !== 'undefined') {
           // Rebuild downloadSites from current settings
           const customizationNow =
             typeof window !== 'undefined' &&
-            window.youtubePlus &&
-            window.youtubePlus.settings &&
-            window.youtubePlus.settings.downloadSiteCustomization
-              ? window.youtubePlus.settings.downloadSiteCustomization
+            /** @type {any} */ (window).youtubePlus &&
+            /** @type {any} */ (window).youtubePlus.settings &&
+            /** @type {any} */ (window).youtubePlus.settings.downloadSiteCustomization
+              ? /** @type {any} */ (window).youtubePlus.settings.downloadSiteCustomization
               : customization;
           const videoIdNow = new URLSearchParams(location.search).get('v');
           const videoUrlNow = videoIdNow
             ? `https://www.youtube.com/watch?v=${videoIdNow}`
             : location.href;
-          const buildUrlNow = (template) =>
+          const buildUrlNow = template =>
             (template || '')
               .replace('{videoId}', videoIdNow || '')
               .replace('{videoUrl}', encodeURIComponent(videoUrlNow));
@@ -1947,13 +2025,13 @@ if (typeof window !== 'undefined') {
 
           const enabledSitesNow =
             typeof window !== 'undefined' &&
-            window.youtubePlus &&
-            window.youtubePlus.settings &&
-            window.youtubePlus.settings.downloadSites
-              ? window.youtubePlus.settings.downloadSites
+            /** @type {any} */ (window).youtubePlus &&
+            /** @type {any} */ (window).youtubePlus.settings &&
+            /** @type {any} */ (window).youtubePlus.settings.downloadSites
+              ? /** @type {any} */ (window).youtubePlus.settings.downloadSites
               : enabledSites;
 
-          const downloadSitesNow = baseSitesNow.filter((s) => {
+          const downloadSitesNow = baseSitesNow.filter(s => {
             if (s.key === 'ytdl') return true;
             return enabledSitesNow[s.key] !== false;
           });
@@ -1964,24 +2042,25 @@ if (typeof window !== 'undefined') {
             // Remove any existing clickable handlers on button
             button.replaceWith(button.cloneNode(true));
             const newButton = controls.querySelector('.ytp-download-button');
-            if (newButton)
+            if (newButton) {
               newButton.addEventListener('click', () =>
                 openDownloadSite(single.url, single.isYTDL)
               );
+            }
             return;
           }
 
           // Build new list
           const newList = document.createElement('div');
           newList.className = 'download-options-list';
-          downloadSitesNow.forEach((site) => {
+          downloadSitesNow.forEach(site => {
             const opt = document.createElement('div');
             opt.className = 'download-option-item';
             opt.textContent = site.name;
             opt.setAttribute('role', 'menuitem');
             opt.setAttribute('tabindex', '0');
             opt.addEventListener('click', () => openDownloadSite(site.url, site.isYTDL));
-            opt.addEventListener('keydown', (e) => {
+            opt.addEventListener('keydown', e => {
               if (e.key === 'Enter' || e.key === ' ') openDownloadSite(site.url, site.isYTDL);
             });
             newList.appendChild(opt);
@@ -2003,7 +2082,7 @@ if (typeof window !== 'undefined') {
       };
 
       // Функция для замены плейсхолдеров в URL
-      const buildUrl = (template) => {
+      const buildUrl = template => {
         return template
           .replace('{videoId}', videoId || '')
           .replace('{videoUrl}', encodeURIComponent(videoUrl));
@@ -2032,7 +2111,7 @@ if (typeof window !== 'undefined') {
           : { y2mate: true, xbbuddy: true };
 
       // YTDL всегда включён, фильтруем остальные по настройкам
-      const downloadSites = baseSites.filter((s) => {
+      const downloadSites = baseSites.filter(s => {
         if (s.key === 'ytdl') return true; // ytdl всегда включён
         return enabledSites[s.key] !== false;
       });
@@ -2050,14 +2129,14 @@ if (typeof window !== 'undefined') {
       const list = document.createElement('div');
       list.className = 'download-options-list';
 
-      downloadSites.forEach((site) => {
+      downloadSites.forEach(site => {
         const opt = document.createElement('div');
         opt.className = 'download-option-item';
         opt.textContent = site.name;
         opt.setAttribute('role', 'menuitem');
         opt.setAttribute('tabindex', '0');
         opt.addEventListener('click', () => openDownloadSite(site.url, site.isYTDL));
-        opt.addEventListener('keydown', (e) => {
+        opt.addEventListener('keydown', e => {
           if (e.key === 'Enter' || e.key === ' ') {
             openDownloadSite(site.url, site.isYTDL);
           }
@@ -2072,10 +2151,11 @@ if (typeof window !== 'undefined') {
       // Expose rebuild function globally (safe guard) so settings handlers can call it
       try {
         if (typeof window !== 'undefined') {
-          window.youtubePlus = window.youtubePlus || {};
-          window.youtubePlus.rebuildDownloadDropdown = rebuildDropdown;
+          /** @type {any} */ (window).youtubePlus = /** @type {any} */ (window).youtubePlus || {};
+          /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown = rebuildDropdown;
           // also store settings ref for rebuildDropdown to read
-          window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
+          /** @type {any} */ (window).youtubePlus.settings =
+            /** @type {any} */ (window).youtubePlus.settings || this.settings;
         }
       } catch (e) {
         console.warn('[YouTube+] expose rebuildDownloadDropdown failed:', e);
@@ -2098,7 +2178,7 @@ if (typeof window !== 'undefined') {
       button.addEventListener('mouseleave', hideDropdown);
       options.addEventListener('mouseenter', showDropdown);
       options.addEventListener('mouseleave', hideDropdown);
-      button.addEventListener('keydown', (e) => {
+      button.addEventListener('keydown', e => {
         if (e.key === 'Enter' || e.key === ' ') {
           if (options.classList.contains('visible')) {
             hideDropdown();
@@ -2119,11 +2199,11 @@ if (typeof window !== 'undefined') {
       const speedOptions = document.createElement('div');
       speedOptions.className = 'speed-options';
 
-      [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0].forEach((speed) => {
+      [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0].forEach(speed => {
         const option = document.createElement('div');
-        option.className = `speed-option-item${parseFloat(speed) === this.speedControl.currentSpeed ? ' speed-option-active' : ''}`;
+        option.className = `speed-option-item${Number(speed) === this.speedControl.currentSpeed ? ' speed-option-active' : ''}`;
         option.textContent = `${speed}x`;
-        option.dataset.speed = speed;
+        option.dataset.speed = String(speed);
         option.addEventListener('click', () => this.changeSpeed(speed));
         speedOptions.appendChild(option);
       });
@@ -2169,20 +2249,20 @@ if (typeof window !== 'undefined') {
 
     handleFullscreenChange() {
       const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
-      document.querySelectorAll('.ytp-screenshot-button, .ytp-cobalt-button').forEach((button) => {
+      document.querySelectorAll('.ytp-screenshot-button, .ytp-cobalt-button').forEach(button => {
         button.style.bottom = isFullscreen ? '15px' : '12px';
       });
     },
 
     changeSpeed(speed) {
-      speed = parseFloat(speed);
+      speed = Number(speed);
       this.speedControl.currentSpeed = speed;
-      localStorage.setItem(this.speedControl.storageKey, speed);
+      localStorage.setItem(this.speedControl.storageKey, String(speed));
 
       const speedBtn = this.getElement('.speed-control-btn span', false);
       if (speedBtn) speedBtn.textContent = `${speed}×`;
 
-      document.querySelectorAll('.speed-option-item').forEach((option) => {
+      document.querySelectorAll('.speed-option-item').forEach(option => {
         option.classList.toggle('speed-option-active', parseFloat(option.dataset.speed) === speed);
       });
 
@@ -2191,7 +2271,7 @@ if (typeof window !== 'undefined') {
     },
 
     applyCurrentSpeed() {
-      document.querySelectorAll('video').forEach((video) => {
+      document.querySelectorAll('video').forEach(video => {
         if (video && video.playbackRate !== this.speedControl.currentSpeed) {
           video.playbackRate = this.speedControl.currentSpeed;
         }
@@ -2228,7 +2308,15 @@ if (typeof window !== 'undefined') {
       });
 
       YouTubeUtils.cleanupManager.registerObserver(observer);
-      observer.observe(document.body, { childList: true, subtree: true });
+
+      // ✅ Safe observe with document.body check
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+      } else {
+        document.addEventListener('DOMContentLoaded', () => {
+          observer.observe(document.body, { childList: true, subtree: true });
+        });
+      }
     },
 
     showSpeedIndicator(speed) {
@@ -2245,12 +2333,12 @@ if (typeof window !== 'undefined') {
       indicator.style.display = 'block';
       indicator.style.opacity = '0.8';
 
-      let startTime = performance.now();
-      const fadeOut = (timestamp) => {
+      const startTime = performance.now();
+      const fadeOut = timestamp => {
         const elapsed = timestamp - startTime;
         const progress = Math.min(elapsed / 1500, 1);
 
-        indicator.style.opacity = 0.8 * (1 - progress);
+        indicator.style.opacity = String(0.8 * (1 - progress));
 
         if (progress < 1) {
           this.speedControl.activeAnimationId = YouTubeUtils.cleanupManager.registerAnimationFrame(
@@ -2268,7 +2356,13 @@ if (typeof window !== 'undefined') {
     },
   };
 
-  document.readyState === 'loading'
-    ? document.addEventListener('DOMContentLoaded', YouTubeEnhancer.init.bind(YouTubeEnhancer))
-    : YouTubeEnhancer.init();
+  // Save reference to init function BEFORE IIFE closes (critical for DOMContentLoaded)
+  const initFunction = YouTubeEnhancer.init.bind(YouTubeEnhancer);
+
+  // Initialize immediately or on DOMContentLoaded
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFunction);
+  } else {
+    initFunction();
+  }
 })();

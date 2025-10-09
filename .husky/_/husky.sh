@@ -1,7 +1,9 @@
-#!/bin/sh
-# Minimal husky helper stub for environments without husky install
-# If you have real husky installed, this file will be replaced by `husky install`.
-# This stub tries to preserve existing behavior by setting up environment.
+echo "husky - DEPRECATED
 
-# noop for now
-true
+Please remove the following two lines from $0:
+
+#!/usr/bin/env sh
+. \"\$(dirname -- \"\$0\")/_/husky.sh\"
+
+They WILL FAIL in v10.0.0
+"

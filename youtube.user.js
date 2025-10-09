@@ -1,12 +1,13 @@
 // ==UserScript==
-// @name            YouTube + UserScript
-// @name:en         YouTube + UserScript
+// @name            YouTube +
+// @name:en         YouTube +
 // @namespace       by
 // @version         2.0
 // @author          diorhc
 // @description     Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:en  Tabview YouTube and Download and others features ↴
 // @match           https://*.youtube.com/*
+// @match           https://music.youtube.com/*
 // @match           *://myactivity.google.com/*
 // @include         *://www.youtube.com/feed/history/*
 // @include         https://www.youtube.com
@@ -19,11 +20,933 @@
 // @icon            https://www.google.com/s2/favicons?sz=64&domain=youtube.com
 // @license         MIT
 // @grant           GM_xmlhttpRequest
+// @grant           unsafeWindow
 // @connect         api.livecounts.io
 // @connect         livecounts.io
+// @run-at          document-start
+// @homepageURL     https://github.com/diorhc/YoutubePlus
+// @supportURL      https://github.com/diorhc/YoutubePlus/issues
 // @downloadURL     https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js
 // @updateURL       https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js
 // ==/UserScript==
+
+// --- MODULE: utils.js ---
+
+// Shared utilities for YouTube+ modules
+(function () {
+  'use strict';
+
+  /**
+   * Logs an error message with module context
+   * @param {string} module - The module name where the error occurred
+   * @param {string} message - Description of the error
+   * @param {Error|*} error - The error object or value
+   */
+  const logError = (module, message, error) => {
+    try {
+      console.error(`[YouTube+][${module}] ${message}:`, error);
+    } catch { }
+  };
+
+  /**
+   * Creates a debounced function that delays invoking func until after wait milliseconds
+   * @template {Function} T
+   * @param {T} fn - The function to debounce
+   * @param {number} ms - The number of milliseconds to delay
+   * @param {{leading?: boolean}} [options={}] - Options object
+   * @returns {T & {cancel: () => void}} The debounced function with a cancel method
+   */
+  const debounce = (fn, ms, options = {}) => {
+    let timeout = null;
+    let lastArgs = null;
+    let lastThis = null;
+    /** @this {any} */
+    const debounced = function (...args) {
+      lastArgs = args;
+      lastThis = this;
+      clearTimeout(timeout);
+      if (options.leading && !timeout) {
+        /** @type {Function} */ (fn).apply(this, args);
+      }
+      timeout = setTimeout(() => {
+        if (!options.leading) /** @type {Function} */ (fn).apply(lastThis, lastArgs);
+        timeout = null;
+        lastArgs = null;
+        lastThis = null;
+      }, ms);
+    };
+    debounced.cancel = () => {
+      clearTimeout(timeout);
+      timeout = null;
+      lastArgs = null;
+      lastThis = null;
+    };
+    return /** @type {any} */ (debounced);
+  };
+
+  /**
+   * Creates a throttled function that only invokes func at most once per limit milliseconds
+   * @template {Function} T
+   * @param {T} fn - The function to throttle
+   * @param {number} limit - The number of milliseconds to throttle invocations to
+   * @returns {T} The throttled function
+   */
+  const throttle = (fn, limit) => {
+    let inThrottle = false;
+    let lastResult;
+    /** @this {any} */
+    const throttled = function (...args) {
+      if (!inThrottle) {
+        lastResult = /** @type {Function} */ (fn).apply(this, args);
+        inThrottle = true;
+        setTimeout(() => (inThrottle = false), limit);
+      }
+      return lastResult;
+    };
+    return /** @type {any} */ (throttled);
+  };
+
+  const StyleManager = (function () {
+    const styles = new Map();
+    return {
+      add(id, css) {
+        try {
+          let el = document.getElementById(id);
+          if (!el) {
+            el = document.createElement('style');
+            el.id = id;
+            document.head.appendChild(el);
+          }
+          styles.set(id, css);
+          el.textContent = Array.from(styles.values()).join('\n\n');
+        } catch (e) {
+          logError('StyleManager', 'add failed', e);
+        }
+      },
+      remove(id) {
+        try {
+          styles.delete(id);
+          const el = document.getElementById(id);
+          if (el) el.remove();
+        } catch (e) {
+          logError('StyleManager', 'remove failed', e);
+        }
+      },
+      clear() {
+        for (const id of Array.from(styles.keys())) this.remove(id);
+      },
+    };
+  })();
+
+  const cleanupManager = (function () {
+    const observers = new Set();
+    const listeners = new Map();
+    const intervals = new Set();
+    const timeouts = new Set();
+    const animationFrames = new Set();
+
+    return {
+      registerObserver(o) {
+        try {
+          observers.add(o);
+        } catch { }
+        return o;
+      },
+      registerListener(target, ev, fn, opts) {
+        try {
+          target.addEventListener(ev, fn, opts);
+          const key = Symbol();
+          listeners.set(key, { target, ev, fn, opts });
+          return key;
+        } catch (e) {
+          logError('cleanupManager', 'registerListener failed', e);
+          return null;
+        }
+      },
+      registerInterval(id) {
+        intervals.add(id);
+        return id;
+      },
+      registerTimeout(id) {
+        timeouts.add(id);
+        return id;
+      },
+      registerAnimationFrame(id) {
+        animationFrames.add(id);
+        return id;
+      },
+      cleanup() {
+        try {
+          for (const o of observers) {
+            try {
+              o.disconnect();
+            } catch { }
+          }
+          observers.clear();
+          for (const keyEntry of listeners.values()) {
+            try {
+              keyEntry.target.removeEventListener(keyEntry.ev, keyEntry.fn, keyEntry.opts);
+            } catch { }
+          }
+          listeners.clear();
+          for (const id of intervals) clearInterval(id);
+          intervals.clear();
+          for (const id of timeouts) clearTimeout(id);
+          timeouts.clear();
+          for (const id of animationFrames) cancelAnimationFrame(id);
+          animationFrames.clear();
+        } catch (e) {
+          logError('cleanupManager', 'cleanup failed', e);
+        }
+      },
+      // expose for debug
+      observers,
+      listeners,
+      intervals,
+      timeouts,
+      animationFrames,
+    };
+  })();
+
+  const createElement = (tag, props = {}, children = []) => {
+    try {
+      const element = document.createElement(tag);
+      Object.entries(props).forEach(([k, v]) => {
+        if (k === 'className') element.className = v;
+        else if (k === 'style' && typeof v === 'object') Object.assign(element.style, v);
+        else if (k === 'dataset' && typeof v === 'object') Object.assign(element.dataset, v);
+        else if (k.startsWith('on') && typeof v === 'function') {
+          element.addEventListener(k.slice(2), v);
+        } else element.setAttribute(k, v);
+      });
+      children.forEach(c => {
+        if (typeof c === 'string') element.appendChild(document.createTextNode(c));
+        else if (c instanceof Node) element.appendChild(c);
+      });
+      return element;
+    } catch (e) {
+      logError('createElement', 'failed', e);
+      return document.createElement('div');
+    }
+  };
+
+  const waitForElement = (selector, timeout = 5000, parent = document.body) =>
+    new Promise((resolve, reject) => {
+      if (!selector || typeof selector !== 'string') return reject(new Error('Invalid selector'));
+      try {
+        const el = parent.querySelector(selector);
+        if (el) return resolve(el);
+      } catch (e) {
+        return reject(e);
+      }
+      const obs = new MutationObserver(() => {
+        const el = parent.querySelector(selector);
+        if (el) {
+          try {
+            obs.disconnect();
+          } catch { }
+          resolve(el);
+        }
+      });
+      obs.observe(parent, { childList: true, subtree: true });
+      const id = setTimeout(() => {
+        try {
+          obs.disconnect();
+        } catch { }
+        reject(new Error('timeout'));
+      }, timeout);
+      cleanupManager.registerTimeout(id);
+    });
+
+  // Minimal storage wrapper
+  const storage = {
+    get(key, def = null) {
+      try {
+        const v = localStorage.getItem(key);
+        return v === null ? def : JSON.parse(v);
+      } catch {
+        return def;
+      }
+    },
+    set(key, val) {
+      try {
+        localStorage.setItem(key, JSON.stringify(val));
+        return true;
+      } catch {
+        return false;
+      }
+    },
+    remove(key) {
+      try {
+        localStorage.removeItem(key);
+      } catch { }
+    },
+  };
+
+  // Expose a global YouTubeUtils if not present (non-destructive)
+  if (typeof window !== 'undefined') {
+    /** @type {any} */ (window).YouTubeUtils = /** @type {any} */ (window).YouTubeUtils || {};
+    const U = /** @type {any} */ (window).YouTubeUtils;
+    U.logError = U.logError || logError;
+    U.debounce = U.debounce || debounce;
+    U.throttle = U.throttle || throttle;
+    U.StyleManager = U.StyleManager || StyleManager;
+    U.cleanupManager = U.cleanupManager || cleanupManager;
+    U.createElement = U.createElement || createElement;
+    U.waitForElement = U.waitForElement || waitForElement;
+    U.storage = U.storage || storage;
+  }
+})();
+
+// --- MODULE: error-boundary.js ---
+
+// Global error boundary for YouTube+ userscript
+(function () {
+  'use strict';
+
+  /**
+   * Error boundary configuration
+   */
+  const ErrorBoundaryConfig = {
+    maxErrors: 10,
+    errorWindow: 60000, // 1 minute
+    enableLogging: true,
+    enableRecovery: true,
+    storageKey: 'youtube_plus_errors',
+  };
+
+  /**
+   * Error tracking state
+   */
+  const errorState = {
+    errors: [],
+    errorCount: 0,
+    lastErrorTime: 0,
+    isRecovering: false,
+  };
+
+  /**
+   * Error severity levels
+   */
+  const ErrorSeverity = {
+    LOW: 'low',
+    MEDIUM: 'medium',
+    HIGH: 'high',
+    CRITICAL: 'critical',
+  };
+
+  /**
+   * Categorize error severity
+   * @param {Error} error - The error object
+   * @returns {string} Severity level
+   */
+  const categorizeSeverity = error => {
+    const message = error.message?.toLowerCase() || '';
+
+    if (
+      message.includes('cannot read') ||
+      message.includes('undefined') ||
+      message.includes('null')
+    ) {
+      return ErrorSeverity.MEDIUM;
+    }
+
+    if (message.includes('network') || message.includes('fetch') || message.includes('timeout')) {
+      return ErrorSeverity.LOW;
+    }
+
+    if (message.includes('syntax') || message.includes('reference') || message.includes('type')) {
+      return ErrorSeverity.HIGH;
+    }
+
+    if (message.includes('security') || message.includes('csp')) {
+      return ErrorSeverity.CRITICAL;
+    }
+
+    return ErrorSeverity.MEDIUM;
+  };
+
+  /**
+   * Log error with context
+   * @param {Error} error - The error object
+   * @param {Object} context - Additional context information
+   */
+  const logError = (error, context = {}) => {
+    if (!ErrorBoundaryConfig.enableLogging) return;
+
+    const fallbackMessage = error.message?.trim() || '(no message)';
+
+    const errorInfo = {
+      timestamp: new Date().toISOString(),
+      message: fallbackMessage,
+      stack: error.stack,
+      severity: categorizeSeverity(error),
+      context: {
+        url: window.location.href,
+        userAgent: navigator.userAgent,
+        ...context,
+      },
+    };
+
+    console.error(`[YouTube+ Error Boundary] ${errorInfo.message}`, errorInfo);
+
+    // Store error for analysis
+    errorState.errors.push(errorInfo);
+    if (errorState.errors.length > 50) {
+      errorState.errors.shift(); // Keep only last 50 errors
+    }
+
+    // Persist to localStorage for debugging
+    try {
+      const stored = JSON.parse(localStorage.getItem(ErrorBoundaryConfig.storageKey) || '[]');
+      stored.push(errorInfo);
+      if (stored.length > 20) stored.shift();
+      localStorage.setItem(ErrorBoundaryConfig.storageKey, JSON.stringify(stored));
+    } catch { }
+  };
+
+  /**
+   * Check if error rate is too high
+   * @returns {boolean} True if error rate exceeded
+   */
+  const isErrorRateExceeded = () => {
+    const now = Date.now();
+    const windowStart = now - ErrorBoundaryConfig.errorWindow;
+
+    // Count errors in the time window
+    const recentErrors = errorState.errors.filter(
+      e => new Date(e.timestamp).getTime() > windowStart
+    );
+
+    return recentErrors.length >= ErrorBoundaryConfig.maxErrors;
+  };
+
+  /**
+   * Attempt to recover from error
+   * @param {Error} error - The error that occurred
+   * @param {Object} context - Error context
+   */
+  const attemptRecovery = (error, context) => {
+    if (!ErrorBoundaryConfig.enableRecovery || errorState.isRecovering) return;
+
+    const severity = categorizeSeverity(error);
+
+    if (severity === ErrorSeverity.CRITICAL) {
+      console.error('[YouTube+] Critical error detected. Script may not function properly.');
+      return;
+    }
+
+    errorState.isRecovering = true;
+
+    try {
+      // Attempt recovery based on error type
+      if (context.module && window.YouTubeUtils?.cleanupManager) {
+        console.log(`[YouTube+] Attempting recovery for module: ${context.module}`);
+        // Could implement module-specific recovery here
+      }
+
+      setTimeout(() => {
+        errorState.isRecovering = false;
+      }, 5000);
+    } catch (recoveryError) {
+      console.error('[YouTube+] Recovery attempt failed:', recoveryError);
+      errorState.isRecovering = false;
+    }
+  };
+
+  /**
+   * Global error handler
+   * @param {ErrorEvent} event - The error event
+   */
+  const handleError = event => {
+    const error = event.error || new Error(event.message);
+
+    const message = (error.message || event.message || '').trim();
+    const source = event.filename || '';
+    const isCrossOriginSource =
+      source && !source.startsWith(window.location.origin) && !/YouTube\+/.test(source);
+
+    if (!message && isCrossOriginSource) {
+      // Ignore opaque cross-origin errors we can't introspect
+      return false;
+    }
+
+    // Track error
+    errorState.errorCount++;
+    errorState.lastErrorTime = Date.now();
+
+    // Log error
+    logError(error, {
+      type: 'uncaught',
+      filename: event.filename,
+      lineno: event.lineno,
+      colno: event.colno,
+    });
+
+    // Check error rate
+    if (isErrorRateExceeded()) {
+      console.error(
+        '[YouTube+] Error rate exceeded! Too many errors in short period. Some features may be disabled.'
+      );
+      return;
+    }
+
+    // Attempt recovery
+    attemptRecovery(error, { type: 'uncaught' });
+
+    // Don't prevent default error handling
+    return false;
+  };
+
+  /**
+   * Unhandled promise rejection handler
+   * @param {PromiseRejectionEvent} event - The rejection event
+   */
+  const handleUnhandledRejection = event => {
+    const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
+
+    logError(error, {
+      type: 'unhandledRejection',
+      promise: event.promise,
+    });
+
+    // Check error rate
+    if (isErrorRateExceeded()) {
+      console.error('[YouTube+] Promise rejection rate exceeded!');
+      return;
+    }
+
+    // Attempt recovery
+    attemptRecovery(error, { type: 'unhandledRejection' });
+  };
+
+  /**
+   * Safe function wrapper with error boundary
+   * @param {Function} fn - Function to wrap
+   * @param {string} context - Context identifier
+   * @returns {Function} Wrapped function
+   */
+  const withErrorBoundary = (fn, context = 'unknown') => {
+    /** @this {any} */
+    return function (...args) {
+      try {
+        const fnAny = /** @type {any} */ (fn);
+        return /** @this {any} */ fnAny.apply(this, args);
+      } catch (error) {
+        logError(error, { module: context, args });
+        attemptRecovery(error, { module: context });
+        return null;
+      }
+    };
+  };
+
+  /**
+   * Safe async function wrapper with error boundary
+   * @param {Function} fn - Async function to wrap
+   * @param {string} context - Context identifier
+   * @returns {Function} Wrapped async function
+   */
+  const withAsyncErrorBoundary = (fn, context = 'unknown') => {
+    /** @this {any} */
+    return async function (...args) {
+      try {
+        const fnAny = /** @type {any} */ (fn);
+        return /** @this {any} */ await fnAny.apply(this, args);
+      } catch (error) {
+        logError(error, { module: context, args });
+        attemptRecovery(error, { module: context });
+        return null;
+      }
+    };
+  };
+
+  /**
+   * Get error statistics
+   * @returns {Object} Error statistics
+   */
+  const getErrorStats = () => {
+    return {
+      totalErrors: errorState.errorCount,
+      recentErrors: errorState.errors.length,
+      lastErrorTime: errorState.lastErrorTime,
+      isRecovering: errorState.isRecovering,
+      errorsByType: errorState.errors.reduce((acc, e) => {
+        acc[e.severity] = (acc[e.severity] || 0) + 1;
+        return acc;
+      }, {}),
+    };
+  };
+
+  /**
+   * Clear stored errors
+   */
+  const clearErrors = () => {
+    errorState.errors = [];
+    try {
+      localStorage.removeItem(ErrorBoundaryConfig.storageKey);
+    } catch { }
+  };
+
+  // Install global error handlers
+  if (typeof window !== 'undefined') {
+    window.addEventListener('error', handleError, true);
+    window.addEventListener('unhandledrejection', handleUnhandledRejection, true);
+
+    // Expose error boundary utilities
+    window.YouTubeErrorBoundary = {
+      withErrorBoundary,
+      withAsyncErrorBoundary,
+      getErrorStats,
+      clearErrors,
+      logError,
+    };
+
+    console.log('[YouTube+] Error boundary initialized');
+  }
+})();
+
+// --- MODULE: performance.js ---
+
+// Performance monitoring for YouTube+ userscript
+(function () {
+  'use strict';
+
+  /**
+   * Performance monitoring configuration
+   */
+  const PerformanceConfig = {
+    enabled: true,
+    sampleRate: 1.0, // 100% sampling
+    storageKey: 'youtube_plus_performance',
+    metricsRetention: 100, // Keep last 100 metrics
+    enableConsoleOutput: false,
+  };
+
+  /**
+   * Performance metrics storage
+   */
+  const metrics = {
+    timings: new Map(),
+    marks: new Map(),
+    measures: [],
+    resources: [],
+  };
+
+  /**
+   * Create a performance mark
+   * @param {string} name - Mark name
+   */
+  const mark = name => {
+    if (!PerformanceConfig.enabled) return;
+
+    try {
+      if (typeof performance !== 'undefined' && performance.mark) {
+        performance.mark(name);
+      }
+      metrics.marks.set(name, Date.now());
+    } catch (e) {
+      console.warn('[YouTube+ Perf] Failed to create mark:', e);
+    }
+  };
+
+  /**
+   * Measure time between two marks
+   * @param {string} name - Measure name
+   * @param {string} startMark - Start mark name
+   * @param {string} endMark - End mark name (optional, defaults to now)
+   * @returns {number} Duration in milliseconds
+   */
+  const measure = (name, startMark, endMark) => {
+    if (!PerformanceConfig.enabled) return 0;
+
+    try {
+      const startTime = metrics.marks.get(startMark);
+      if (!startTime) {
+        console.warn(`[YouTube+ Perf] Start mark "${startMark}" not found`);
+        return 0;
+      }
+
+      const endTime = endMark ? metrics.marks.get(endMark) : Date.now();
+      const duration = endTime - startTime;
+
+      const measureData = {
+        name,
+        startMark,
+        endMark: endMark || 'now',
+        duration,
+        timestamp: Date.now(),
+      };
+
+      metrics.measures.push(measureData);
+
+      // Keep only recent measures
+      if (metrics.measures.length > PerformanceConfig.metricsRetention) {
+        metrics.measures.shift();
+      }
+
+      if (PerformanceConfig.enableConsoleOutput) {
+        console.log(`[YouTube+ Perf] ${name}: ${duration.toFixed(2)}ms`);
+      }
+
+      // Try native performance API
+      if (typeof performance !== 'undefined' && performance.measure) {
+        try {
+          performance.measure(name, startMark, endMark);
+        } catch { }
+      }
+
+      return duration;
+    } catch (e) {
+      console.warn('[YouTube+ Perf] Failed to measure:', e);
+      return 0;
+    }
+  };
+
+  /**
+   * Time a function execution
+   * @param {string} name - Timer name
+   * @param {Function} fn - Function to time
+   * @returns {Function} Wrapped function
+   */
+  const timeFunction = (name, fn) => {
+    if (!PerformanceConfig.enabled) return fn;
+
+    return /** @this {any} */ function (...args) {
+      const startMark = `${name}-start-${Date.now()}`;
+      mark(startMark);
+
+      try {
+        const fnAny = /** @type {any} */ (fn);
+        const result = fnAny.apply(this, args);
+
+        // Handle promises
+        if (result && typeof result.then === 'function') {
+          return result.finally(() => {
+            measure(name, startMark, undefined);
+          });
+        }
+
+        measure(name, startMark, undefined);
+        return result;
+      } catch (error) {
+        measure(name, startMark, undefined);
+        throw error;
+      }
+    };
+  };
+
+  /**
+   * Time an async function execution
+   * @param {string} name - Timer name
+   * @param {Function} fn - Async function to time
+   * @returns {Function} Wrapped async function
+   */
+  const timeAsyncFunction = (name, fn) => {
+    if (!PerformanceConfig.enabled) return fn;
+
+    return /** @this {any} */ async function (...args) {
+      const startMark = `${name}-start-${Date.now()}`;
+      mark(startMark);
+
+      try {
+        const fnAny = /** @type {any} */ (fn);
+        const result = await fnAny.apply(this, args);
+        measure(name, startMark, undefined);
+        return result;
+      } catch (error) {
+        measure(name, startMark, undefined);
+        throw error;
+      }
+    };
+  };
+
+  /**
+   * Record custom metric
+   * @param {string} name - Metric name
+   * @param {number} value - Metric value
+   * @param {Object} metadata - Additional metadata
+   */
+  const recordMetric = (name, value, metadata = {}) => {
+    if (!PerformanceConfig.enabled) return;
+
+    const metric = {
+      name,
+      value,
+      timestamp: Date.now(),
+      ...metadata,
+    };
+
+    metrics.timings.set(name, metric);
+
+    if (PerformanceConfig.enableConsoleOutput) {
+      console.log(`[YouTube+ Perf] ${name}: ${value}`, metadata);
+    }
+  };
+
+  /**
+   * Get performance statistics
+   * @param {string} metricName - Optional metric name filter
+   * @returns {Object} Performance statistics
+   */
+  const getStats = metricName => {
+    if (metricName) {
+      const filtered = metrics.measures.filter(m => m.name === metricName);
+      if (filtered.length === 0) return null;
+
+      const durations = filtered.map(m => m.duration);
+      return {
+        name: metricName,
+        count: durations.length,
+        min: Math.min(...durations),
+        max: Math.max(...durations),
+        avg: durations.reduce((a, b) => a + b, 0) / durations.length,
+        latest: durations[durations.length - 1],
+      };
+    }
+
+    // Get all stats
+    const allMetrics = {};
+    const metricNames = [...new Set(metrics.measures.map(m => m.name))];
+
+    metricNames.forEach(name => {
+      allMetrics[name] = getStats(name);
+    });
+
+    return {
+      metrics: allMetrics,
+      totalMeasures: metrics.measures.length,
+      totalMarks: metrics.marks.size,
+      customMetrics: Object.fromEntries(metrics.timings),
+    };
+  };
+
+  /**
+   * Export metrics to JSON
+   * @returns {string} JSON string of metrics
+   */
+  const exportMetrics = () => {
+    const data = {
+      timestamp: new Date().toISOString(),
+      userAgent: navigator.userAgent,
+      url: window.location.href,
+      stats: getStats(undefined),
+      measures: metrics.measures,
+      customMetrics: Object.fromEntries(metrics.timings),
+    };
+
+    return JSON.stringify(data, null, 2);
+  };
+
+  /**
+   * Clear all performance metrics
+   */
+  const clearMetrics = () => {
+    metrics.timings.clear();
+    metrics.marks.clear();
+    metrics.measures = [];
+    metrics.resources = [];
+
+    try {
+      localStorage.removeItem(PerformanceConfig.storageKey);
+    } catch { }
+
+    if (typeof performance !== 'undefined' && performance.clearMarks) {
+      try {
+        performance.clearMarks();
+        performance.clearMeasures();
+      } catch { }
+    }
+  };
+
+  /**
+   * Monitor DOM mutations performance
+   * @param {Element} element - Element to monitor
+   * @param {string} name - Monitor name
+   * @returns {MutationObserver} The observer instance
+   */
+  const monitorMutations = (element, name) => {
+    if (!PerformanceConfig.enabled) return null;
+
+    let mutationCount = 0;
+    const startTime = Date.now();
+
+    const observer = new MutationObserver(mutations => {
+      mutationCount += mutations.length;
+      recordMetric(`${name}-mutations`, mutationCount, {
+        elapsed: Date.now() - startTime,
+      });
+    });
+
+    observer.observe(element, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+    });
+
+    return observer;
+  };
+
+  /**
+   * Get browser performance entries
+   * @param {string} type - Entry type filter
+   * @returns {Array} Performance entries
+   */
+  const getPerformanceEntries = type => {
+    if (typeof performance === 'undefined' || !performance.getEntriesByType) {
+      return [];
+    }
+
+    try {
+      return performance.getEntriesByType(type);
+    } catch {
+      return [];
+    }
+  };
+
+  /**
+   * Log page load performance
+   */
+  const logPageLoadMetrics = () => {
+    if (!PerformanceConfig.enabled) return;
+
+    try {
+      const navigation = getPerformanceEntries('navigation')[0];
+      if (navigation) {
+        recordMetric('page-load-time', navigation.loadEventEnd - navigation.fetchStart);
+        recordMetric('dom-content-loaded', navigation.domContentLoadedEventEnd);
+        recordMetric('dom-interactive', navigation.domInteractive);
+      }
+    } catch (e) {
+      console.warn('[YouTube+ Perf] Failed to log page metrics:', e);
+    }
+  };
+
+  // Auto-log page load metrics
+  if (typeof window !== 'undefined') {
+    if (document.readyState === 'complete') {
+      logPageLoadMetrics();
+    } else {
+      window.addEventListener('load', logPageLoadMetrics, { once: true });
+    }
+
+    // Expose performance monitoring API
+    window.YouTubePerformance = {
+      mark,
+      measure,
+      timeFunction,
+      timeAsyncFunction,
+      recordMetric,
+      getStats,
+      exportMetrics,
+      clearMetrics,
+      monitorMutations,
+      getPerformanceEntries,
+      config: PerformanceConfig,
+    };
+
+    console.log('[YouTube+] Performance monitoring initialized');
+  }
+})();
 
 // --- MODULE: main.js ---
 
@@ -32,7 +955,9 @@
  * @param {*} value - The value to return
  * @returns {*} The same value
  */
-const identityFn = (value) => value; /**
+// @ts-nocheck
+
+const identityFn = value => value; /**
  * Ensure TrustedTypes policy exists for secure HTML handling
  * @returns {{createHTML: Function, error: Error|null}} Policy object with createHTML function and error status
  */
@@ -76,13 +1001,13 @@ function createNextBrowserTick(existing) {
     return existing;
   }
 
-  const SafePromise = (async () => {})().constructor;
+  const SafePromise = (async () => { })().constructor;
   const queue =
     typeof queueMicrotask === 'function'
-      ? (callback) => queueMicrotask(callback)
-      : (callback) => SafePromise.resolve().then(callback);
+      ? callback => queueMicrotask(callback)
+      : callback => SafePromise.resolve().then(callback);
 
-  const scheduler = (callback) => {
+  const scheduler = callback => {
     if (typeof callback === 'function') {
       queue(callback);
       return;
@@ -104,6 +1029,11 @@ if (trustHTMLErr) {
   throw new Error('CSP restriction - cannot initialize TrustedTypes');
 }
 
+// Export createHTML for use in modules if needed
+if (typeof window !== 'undefined') {
+  window._ytplusCreateHTML = createHTML;
+}
+
 const nextBrowserTick = createNextBrowserTick(
   (typeof window !== 'undefined' && window.nextBrowserTick) || undefined
 );
@@ -117,14 +1047,11 @@ if (
 
 // -----------------------------------------------------------------------------------------------------------------------------
 
-/** @const {number} Rounded corner radius value */
-const VAL_ROUNDED_A1 = 12;
-
 /**
  * Main execution script for YouTube tab view
- * @param {string} communicationKey - Unique key for cross-context communication
+ * @param {string} _communicationKey - Unique key for cross-context communication (reserved for future use)
  */
-const executionScript = (communicationKey) => {
+const executionScript = _communicationKey => {
   /** @const {boolean} Debug flag for attachment/detachment events */
   const DEBUG_5084 = false;
 
@@ -141,9 +1068,6 @@ const executionScript = (communicationKey) => {
   /** @const {number} Reset value when attribute exceeds max */
   const ATTRIBUTE_RESET_VALUE = 9;
 
-  /** @const {number} Random seed multiplier for unique ID generation */
-  const MAGIC_NUMBER_RANDOM_SEED = 314159265359;
-
   // Validate configuration
   if (
     MAX_ATTRIBUTE_VALUE <= 0 ||
@@ -154,7 +1078,7 @@ const executionScript = (communicationKey) => {
       '[YouTube+] Invalid configuration: MAX_ATTRIBUTE_VALUE and ATTRIBUTE_RESET_VALUE must be valid positive numbers'
     );
   } // Reuse utility functions from parent scope
-  const identityFn = (value) => value;
+  const identityFn = value => value;
   const ensureTrustedTypesPolicyLocal = () => {
     if (typeof trustedTypes === 'undefined') {
       return { createHTML: identityFn, error: null };
@@ -187,18 +1111,18 @@ const executionScript = (communicationKey) => {
    * @param {Function} existing - Existing scheduler to reuse if version compatible
    * @returns {Function} Scheduler function
    */
-  const createNextBrowserTickLocal = (existing) => {
+  const createNextBrowserTickLocal = existing => {
     if (existing?.version >= 2) {
       return existing;
     }
 
-    const SafePromise = (async () => {})().constructor;
+    const SafePromise = (async () => { })().constructor;
     const queue =
       typeof queueMicrotask === 'function'
-        ? (callback) => queueMicrotask(callback)
-        : (callback) => SafePromise.resolve().then(callback);
+        ? callback => queueMicrotask(callback)
+        : callback => SafePromise.resolve().then(callback);
 
-    const scheduler = (callback) => {
+    const scheduler = callback => {
       if (typeof callback === 'function') {
         queue(callback);
         return;
@@ -246,7 +1170,8 @@ const executionScript = (communicationKey) => {
      * Helps reduce DOM traversal overhead
      */
     const selectorCache = new Map();
-    const CACHE_MAX_SIZE = 50;
+    // eslint-disable-next-line no-unused-vars
+    const _CACHE_MAX_SIZE = 50; // Reserved for future cache implementation
     const CACHE_TTL = 5000; // 5 seconds
 
     /**
@@ -280,7 +1205,8 @@ const executionScript = (communicationKey) => {
      * @param {string} selector - CSS selector string
      * @returns {NodeListOf<Element>} NodeList of found elements
      */
-    const qsAll = (elm, selector) => {
+    // eslint-disable-next-line no-unused-vars
+    const _qsAll = (elm, selector) => {
       return HTMLElement_.prototype.querySelectorAll.call(elm, selector);
     };
 
@@ -426,7 +1352,7 @@ const executionScript = (communicationKey) => {
      *
      */
     (() => {
-      let e =
+      const e =
         'undefined' != typeof unsafeWindow ? unsafeWindow : this instanceof Window ? this : window;
       if (!e._ytConfigHacks) {
         let t = 4;
@@ -436,49 +1362,50 @@ const executionScript = (communicationKey) => {
             'function' == typeof e && super.add(e);
           }
         }
-        let a = (async () => {})().constructor,
-          i = (e._ytConfigHacks = new n()),
-          l = () => {
-            let t = e.ytcsi.originalYtcsi;
-            t && ((e.ytcsi = t), (l = null));
-          },
-          c = null,
-          o = () => {
-            if (t >= 1) {
-              let n = (e.yt || 0).config_ || (e.ytcfg || 0).data_ || 0;
-              if ('string' == typeof n.INNERTUBE_API_KEY && 'object' == typeof n.EXPERIMENT_FLAGS)
-                for (let a of (--t <= 0 && l && l(), (c = !0), i)) a(n);
+        const a = (async () => { })().constructor,
+          i = (e._ytConfigHacks = new n());
+        let l = () => {
+          const t = e.ytcsi.originalYtcsi;
+          t && ((e.ytcsi = t), (l = null));
+        };
+        let c = null;
+        const o = () => {
+          if (t >= 1) {
+            const n = (e.yt || 0).config_ || (e.ytcfg || 0).data_ || 0;
+            if ('string' == typeof n.INNERTUBE_API_KEY && 'object' == typeof n.EXPERIMENT_FLAGS) {
+              for (const a of (--t <= 0 && l && l(), (c = !0), i)) a(n);
             }
-          },
-          f = 1,
-          d = (t) => {
-            if ((t = t || e.ytcsi))
-              return (
-                (e.ytcsi = new Proxy(t, {
-                  get: (e, t, n) =>
-                    'originalYtcsi' === t ? e : (o(), c && --f <= 0 && l && l(), e[t]),
-                })),
-                !0
-              );
-          };
+          }
+        };
+        let f = 1;
+        const d = t => {
+          if ((t = t || e.ytcsi)) {
+            return (
+              (e.ytcsi = new Proxy(t, {
+                get: (e, t) => ('originalYtcsi' === t ? e : (o(), c && --f <= 0 && l && l(), e[t])),
+              })),
+              !0
+            );
+          }
+        };
         d() ||
           Object.defineProperty(e, 'ytcsi', {
-            get() {},
-            set: (t) => (t && (delete e.ytcsi, d(t)), !0),
+            get() { },
+            set: t => (t && (delete e.ytcsi, d(t)), !0),
             enumerable: !1,
             configurable: !0,
           });
-        let { addEventListener: s, removeEventListener: y } = Document.prototype;
+        const { addEventListener: s, removeEventListener: y } = Document.prototype;
         function r(t) {
           (o(), t && e.removeEventListener('DOMContentLoaded', r, !1));
         }
-        (new a((e) => {
-          if ('undefined' != typeof AbortSignal)
+        (new a(e => {
+          if ('undefined' != typeof AbortSignal) {
             (s.call(document, 'yt-page-data-fetched', e, { once: !0 }),
               s.call(document, 'yt-navigate-finish', e, { once: !0 }),
               s.call(document, 'spfdone', e, { once: !0 }));
-          else {
-            let t = () => {
+          } else {
+            const t = () => {
               (e(),
                 y.call(document, 'yt-page-data-fetched', t, !1),
                 y.call(document, 'yt-navigate-finish', t, !1),
@@ -489,11 +1416,11 @@ const executionScript = (communicationKey) => {
               s.call(document, 'spfdone', t, !1));
           }
         }).then(o),
-          new a((e) => {
-            if ('undefined' != typeof AbortSignal)
+          new a(e => {
+            if ('undefined' != typeof AbortSignal) {
               s.call(document, 'yt-action', e, { once: !0, capture: !0 });
-            else {
-              let t = () => {
+            } else {
+              const t = () => {
                 (e(), y.call(document, 'yt-action', t, !0));
               };
               s.call(document, 'yt-action', t, !0);
@@ -506,7 +1433,7 @@ const executionScript = (communicationKey) => {
     })();
 
     let configOnce = false;
-    window._ytConfigHacks.add((config_) => {
+    window._ytConfigHacks.add(config_ => {
       if (configOnce) return;
       configOnce = true;
 
@@ -538,28 +1465,28 @@ const executionScript = (communicationKey) => {
 
     /** @type {(o: Object | null) => WeakRef | null} */
     const mWeakRef =
-      typeof WeakRef === 'function' ? (o) => (o ? new WeakRef(o) : null) : (o) => o || null; // typeof InvalidVar == 'undefined'
+      typeof WeakRef === 'function' ? o => (o ? new WeakRef(o) : null) : o => o || null; // typeof InvalidVar == 'undefined'
 
     /** @type {(wr: Object | null) => Object | null} */
-    const kRef = (wr) => (wr && wr.deref ? wr.deref() : wr);
+    const kRef = wr => (wr && wr.deref ? wr.deref() : wr);
 
     /** @type {globalThis.PromiseConstructor} */
     /** @type {PromiseConstructor} Safe Promise constructor (YouTube hacks Promise in WaterFox Classic) */
-    const Promise = (async () => {})().constructor;
+    const Promise = (async () => { })().constructor;
 
     /**
      * Create a promise that resolves after a delay
      * @param {number} delay - Delay in milliseconds
      * @returns {Promise<void>} Promise that resolves after the delay
      */
-    const delayPn = (delay) => new Promise((fn) => setTimeout(fn, delay));
+    const delayPn = delay => new Promise(fn => setTimeout(fn, delay));
 
     /**
      * Get polymer controller or instance from element
      * @param {*} o - Element or object to inspect
      * @returns {*} Polymer controller, instance, or the object itself
      */
-    const insp = (o) => (o ? o.polymerController || o.inst || o || 0 : o || 0);
+    const insp = o => (o ? o.polymerController || o.inst || o || 0 : o || 0);
 
     /** @type {Function} Bound setTimeout to ensure correct context */
     const setTimeout_ = setTimeout.bind(window);
@@ -603,7 +1530,8 @@ const executionScript = (communicationKey) => {
     const isPassiveArgSupport = typeof IntersectionObserver === 'function';
 
     /** @const {Object|boolean} Event listener options for bubble phase with passive */
-    const bubblePassive = isPassiveArgSupport ? { capture: false, passive: true } : false;
+    // eslint-disable-next-line no-unused-vars
+    const _bubblePassive = isPassiveArgSupport ? { capture: false, passive: true } : false;
 
     /** @const {Object|boolean} Event listener options for capture phase with passive */
     const capturePassive = isPassiveArgSupport ? { capture: true, passive: true } : true;
@@ -693,7 +1621,8 @@ const executionScript = (communicationKey) => {
      * @param {Function} asyncFn - Async function to wrap
      * @returns {Function} Wrapped function
      */
-    const asyncWrap = (asyncFn) => {
+    // eslint-disable-next-line no-unused-vars
+    const _asyncWrap = asyncFn => {
       return () => {
         Promise.resolve().then(asyncFn);
       };
@@ -771,13 +1700,16 @@ const executionScript = (communicationKey) => {
     const svgPlayList =
       `<path d="M0 3h12v2H0zm0 4h12v2H0zm0 4h8v2H0zm16 0V7h-2v4h-4v2h4v4h2v-4h4v-2z"/>`.trim();
 
+    // eslint-disable-next-line no-unused-vars
     const svgDiag1 = `<svg stroke="currentColor" fill="none"><path d="M8 2h2v2M7 5l3-3m-6 8H2V8m0 2l3-3"/></svg>`;
+    // eslint-disable-next-line no-unused-vars
     const svgDiag2 = `<svg stroke="currentColor" fill="none"><path d="M7 3v2h2M7 5l3-3M5 9V7H3m-1 3l3-3"/></svg>`;
 
     /**
      * Get GMT offset for the current timezone
      * @returns {string} GMT offset string (e.g., "+9" or "-5")
      */
+    // eslint-disable-next-line no-unused-vars
     const getGMT = () => {
       const m = new Date('2023-01-01T00:00:00Z');
       return m.getDate() === 1 ? `+${m.getHours()}` : `-${24 - m.getHours()}`;
@@ -805,7 +1737,7 @@ const executionScript = (communicationKey) => {
     const svgElm = (w, h, vw, vh, p, m) =>
       `<svg${m ? ` class=${m}` : ''} width="${w}" height="${h}" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid meet">${p}</svg>`;
 
-    let hiddenTabsByUserCSS = 0;
+    const hiddenTabsByUserCSS = 0;
 
     /**
      * Generate HTML for tab buttons
@@ -817,14 +1749,14 @@ const executionScript = (communicationKey) => {
       const sTabBtnInfo = `${svgElm(16, 16, 60, 60, svgInfo)}<span>${getWord('info')}</span>`;
       const sTabBtnPlayList = `${svgElm(16, 16, 20, 20, svgPlayList)}<span>${getWord('playlist')}</span>`;
 
-      let str1 = `
+      const str1 = `
         <paper-ripple class="style-scope yt-icon-button">
             <div id="background" class="style-scope paper-ripple" style="opacity:0;"></div>
             <div id="waves" class="style-scope paper-ripple"></div>
         </paper-ripple>
         `;
 
-      let str_fbtns = `
+      const str_fbtns = `
     <div class="font-size-right">
     <div class="font-size-btn font-size-plus" tyt-di="8rdLQ">
     <svg width="12" height="12" viewbox="0 0 50 50" preserveAspectRatio="xMidYMid meet" 
@@ -847,7 +1779,7 @@ const executionScript = (communicationKey) => {
         `<a id="tab-btn5" tyt-di="q9Kjc" tyt-tab-content="#tab-list" class="tab-btn tab-btn-hidden">${sTabBtnPlayList}${str1}${str_fbtns}</a>`,
       ].join('');
 
-      let addHTML = `
+      const addHTML = `
         <div id="right-tabs">
             <tabview-view-pos-thead></tabview-view-pos-thead>
             <header>
@@ -906,7 +1838,7 @@ const executionScript = (communicationKey) => {
       get(target, prop) {
         return target[prop] || 0;
       },
-      set(target, prop, val) {
+      set(_target, _prop, _val) {
         return true;
       },
     });
@@ -916,7 +1848,7 @@ const executionScript = (communicationKey) => {
         if (target[prop] > MAX_ATTRIBUTE_VALUE) target[prop] = ATTRIBUTE_RESET_VALUE;
         return (target[prop] = (target[prop] || 0) + 1);
       },
-      set(target, prop, val) {
+      set(_target, _prop, _val) {
         return true;
       },
     });
@@ -939,34 +1871,35 @@ const executionScript = (communicationKey) => {
      * Add function to attribute change stack
      * @param {Function} f - Function to execute on attribute change
      */
-    const cmAttrStackPush = (f) => {
+    // eslint-disable-next-line no-unused-vars
+    const cmAttrStackPush = f => {
       cmAttrStack.push(f);
       cmAttr.data = `${(cmAttr.data & 7) + 1}`;
     };
 
     const cmAttrObs = new MutationObserver(() => {
-      cmAttrStack.forEach((fn) => fn());
+      cmAttrStack.forEach(fn => fn());
     });
     cmAttrObs.observe(cmAttr, { characterData: true });
 
     /**
      * Function to calculate if element can collapse
-     * @param {*} s - Parameter (unused but kept for compatibility)
+     * @param {*} _s - Parameter (unused but kept for compatibility)
      */
-    const funcCanCollapse = function (s) {
+    const funcCanCollapse = function (_s) {
       const content = this.content || this.$.content;
       this.canToggle =
         this.shouldUseNumberOfLines &&
-        (this.alwaysCollapsed || this.collapsed || this.isToggled === false)
+          (this.alwaysCollapsed || this.collapsed || this.isToggled === false)
           ? this.alwaysToggleable ||
-            this.isToggled ||
-            (content && content.offsetHeight < content.scrollHeight)
+          this.isToggled ||
+          (content && content.offsetHeight < content.scrollHeight)
           : this.alwaysToggleable ||
-            this.isToggled ||
-            (content && content.scrollHeight > this.collapsedHeight);
+          this.isToggled ||
+          (content && content.scrollHeight > this.collapsedHeight);
     };
 
-    const aoChatAttrChangeFn = async (lockId) => {
+    const aoChatAttrChangeFn = async lockId => {
       if (lockGet['aoChatAttrAsyncLock'] !== lockId) return;
 
       const chatElm = elements.chat;
@@ -983,7 +1916,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const aoPlayListAttrChangeFn = async (lockId) => {
+    const aoPlayListAttrChangeFn = async lockId => {
       if (lockGet['aoPlayListAttrAsyncLock'] !== lockId) return;
 
       const playlistElm = elements.playlist;
@@ -1002,16 +1935,16 @@ const executionScript = (communicationKey) => {
     const aoChat = new MutationObserver(() => {
       Promise.resolve(lockSet['aoChatAttrAsyncLock'])
         .then(aoChatAttrChangeFn)
-        .catch((err) => handlePromiseError(err, 'aoChatAttrChange'));
+        .catch(err => handlePromiseError(err, 'aoChatAttrChange'));
     });
 
     const aoPlayList = new MutationObserver(() => {
       Promise.resolve(lockSet['aoPlayListAttrAsyncLock'])
         .then(aoPlayListAttrChangeFn)
-        .catch((err) => handlePromiseError(err, 'aoPlayListAttrChange'));
+        .catch(err => handlePromiseError(err, 'aoPlayListAttrChange'));
     });
 
-    const aoComment = new MutationObserver(async (mutations) => {
+    const aoComment = new MutationObserver(async mutations => {
       const commentsArea = elements.comments;
       const ytdFlexyElm = elements.flexy;
 
@@ -1040,12 +1973,12 @@ const executionScript = (communicationKey) => {
         if (!commentsArea.hasAttribute000('hidden')) {
           Promise.resolve(commentsArea)
             .then(eventMap['settingCommentsVideoId'])
-            .catch((err) => handlePromiseError(err, 'settingCommentsVideoId'));
+            .catch(err => handlePromiseError(err, 'settingCommentsVideoId'));
         }
 
         Promise.resolve(lockSet['removeKeepCommentsScrollerLock'])
           .then(removeKeepCommentsScroller)
-          .catch((err) => handlePromiseError(err, 'removeKeepCommentsScroller'));
+          .catch(err => handlePromiseError(err, 'removeKeepCommentsScroller'));
       }
 
       if ((bfHidden || bfCommentsVideoId || bfCommentDisabled) && ytdFlexyElm) {
@@ -1058,7 +1991,7 @@ const executionScript = (communicationKey) => {
 
         Promise.resolve(lockSet['checkCommentsShouldBeHiddenLock'])
           .then(eventMap['checkCommentsShouldBeHidden'])
-          .catch((err) => handlePromiseError(err, 'checkCommentsShouldBeHidden'));
+          .catch(err => handlePromiseError(err, 'checkCommentsShouldBeHidden'));
 
         const lockId = lockSet['rightTabReadyLock01'];
         await rightTabsProvidedPromise.then();
@@ -1078,7 +2011,7 @@ const executionScript = (communicationKey) => {
     });
 
     const ioComment = new IntersectionObserver(
-      (entries) => {
+      entries => {
         for (const entry of entries) {
           const target = entry.target;
           const cnt = insp(target);
@@ -1108,7 +2041,7 @@ const executionScript = (communicationKey) => {
     let bFixForResizedTabLater = false;
     let lastRoRightTabsWidth = 0;
 
-    const roRightTabs = new ResizeObserver((entries) => {
+    const roRightTabs = new ResizeObserver(entries => {
       const entry = entries[entries.length - 1];
       const width = Math.round(entry.borderBoxSize.inlineSize);
 
@@ -1127,7 +2060,7 @@ const executionScript = (communicationKey) => {
      * Switch to specified tab
      * @param {string|Element} activeLink - Tab link selector or element
      */
-    const switchToTab = (activeLink) => {
+    const switchToTab = activeLink => {
       if (typeof activeLink === 'string') {
         activeLink = document.querySelector(`a[tyt-tab-content="${activeLink}"]`) || null;
       }
@@ -1232,7 +2165,9 @@ const executionScript = (communicationKey) => {
 
     /**
      * Enable theater mode
+     * @internal Reserved for future use
      */
+    // eslint-disable-next-line no-unused-vars
     function ytBtnSetTheater() {
       if (!isTheater()) {
         getTheaterButton()?.click();
@@ -1384,31 +2319,31 @@ const executionScript = (communicationKey) => {
     }
 
     /*
-        function ytBtnCloseEngagementPanel( s) {
-          //ePanel.setAttribute('visibility',"ENGAGEMENT_PANEL_VISIBILITY_HIDDEN");
-       
-          let panelId = s.getAttribute('target-id')
-          scriptletDeferred.debounce(() => {
-            document.dispatchEvent(new CustomEvent('tyt-engagement-panel-visibility-change', {
-              detail: {
-                panelId,
-                toHide: true
-              }
-            }))
-          })
-       
-        }
-    
-        /**
-         * Close all expanded YouTube engagement panels
-         */
+            function ytBtnCloseEngagementPanel( s) {
+              //ePanel.setAttribute('visibility',"ENGAGEMENT_PANEL_VISIBILITY_HIDDEN");
+           
+              let panelId = s.getAttribute('target-id')
+              scriptletDeferred.debounce(() => {
+                document.dispatchEvent(new CustomEvent('tyt-engagement-panel-visibility-change', {
+                  detail: {
+                    panelId,
+                    toHide: true
+                  }
+                }))
+              })
+           
+            }
+        
+            /**
+             * Close all expanded YouTube engagement panels
+             */
     function ytBtnCloseEngagementPanels() {
       const actions = [];
       for (const panelElm of document.querySelectorAll(
         `ytd-watch-flexy[flexy][tyt-tab] #panels.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility]:not([hidden])`
       )) {
         if (
-          panelElm.getAttribute('visibility') == 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
+          panelElm.getAttribute('visibility') === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
           !panelElm.closest('[hidden]')
         ) {
           actions.push({
@@ -1442,27 +2377,27 @@ const executionScript = (communicationKey) => {
 
     const updateChatLocation498 = function () {
       /*
-         
-                    updateChatLocation: function() {
-                    if (this.is !== "ytd-watch-grid" && y("web_watch_theater_chat")) {
-                        var a = T(this.hostElement).querySelector("#chat-container")
-                          , b = this.theater && (!this.fullscreen || y("web_watch_fullscreen_panels"));
-                        this.watchWhileWindowSizeSufficient && this.liveChatPresentAndExpanded && b ? y("web_watch_theater_chat_beside_player") ? (b = T(this.hostElement).querySelector("#panels-full-bleed-container"),
-                        (a == null ? void 0 : a.parentElement) !== b && b.append(a),
-                        this.panelsBesidePlayer = !0) : y("web_watch_theater_fixed_chat") && (b = T(this.hostElement).querySelector("#columns"),
-                        (a == null ? void 0 : a.parentElement) !== b && b.append(a),
-                        this.fixedPanels = !0) : (y("web_watch_theater_chat_beside_player") ? this.panelsBesidePlayer = !1 : y("web_watch_theater_fixed_chat") && (this.fixedPanels = !1),
-                        b = T(this.hostElement).querySelector("#playlist"),
-                        a && b ? Fh(a, b) : Gm(new zk("Missing element when updating chat location",{
-                            "chatContainer defined": !!a,
-                            "playlist defined": !!b
-                        })));
-                        this.updatePageMediaQueries();
-                        this.schedulePlayerSizeUpdate_()
-                    }
-                },
-         
-                */
+               
+                          updateChatLocation: function() {
+                          if (this.is !== "ytd-watch-grid" && y("web_watch_theater_chat")) {
+                              var a = T(this.hostElement).querySelector("#chat-container")
+                                , b = this.theater && (!this.fullscreen || y("web_watch_fullscreen_panels"));
+                              this.watchWhileWindowSizeSufficient && this.liveChatPresentAndExpanded && b ? y("web_watch_theater_chat_beside_player") ? (b = T(this.hostElement).querySelector("#panels-full-bleed-container"),
+                              (a == null ? void 0 : a.parentElement) !== b && b.append(a),
+                              this.panelsBesidePlayer = !0) : y("web_watch_theater_fixed_chat") && (b = T(this.hostElement).querySelector("#columns"),
+                              (a == null ? void 0 : a.parentElement) !== b && b.append(a),
+                              this.fixedPanels = !0) : (y("web_watch_theater_chat_beside_player") ? this.panelsBesidePlayer = !1 : y("web_watch_theater_fixed_chat") && (this.fixedPanels = !1),
+                              b = T(this.hostElement).querySelector("#playlist"),
+                              a && b ? Fh(a, b) : Gm(new zk("Missing element when updating chat location",{
+                                  "chatContainer defined": !!a,
+                                  "playlist defined": !!b
+                              })));
+                              this.updatePageMediaQueries();
+                              this.schedulePlayerSizeUpdate_()
+                          }
+                      },
+               
+                      */
 
       // console.log('updateChatLocation498')
       if (this.is !== 'ytd-watch-grid') {
@@ -1474,91 +2409,91 @@ const executionScript = (communicationKey) => {
     const mirrorNodeWS = new WeakMap();
 
     /*
-          const infoFix = () => {
-            const infoExpander = elements.infoExpander;
-            const ytdFlexyElm = elements.flexy;
-            if (!infoExpander || !ytdFlexyElm) return;
-            console.log(386, infoExpander, infoExpander.matches('#tab-info > [class]'))
-            if (!infoExpander.matches('#tab-info > [class]')) return;
-            // const elms = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"], ytd-watch-metadata.ytd-watch-flexy ytd-metadata-row-container-renderer')].filter(elm=>{
-            //   if(elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
-            //    return true;
-            // });
-        
-        
-        
-            const requireElements = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *')].filter(elm => {
-              return typeof elm.is == 'string'
-            }).map(elm => {
-              const is = elm.is;
-              while (elm instanceof HTMLElement_) {
-                const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
-                if (q.length >= 1) return q[0];
-                elm = elm.parentNode;
-              }
-            }).filter(elm => !!elm && typeof elm.is === 'string');
-            console.log(requireElements)
-        
-            const source = requireElements.map(entry=>({
-              data: insp(entry).data,
-              tag: insp(entry).is,
-              elm: entry
-            }))
-        
-            if (!document.querySelector('noscript#aythl')) {
-              const noscript = document.createElement('noscript')
-              noscript.id = 'aythl';
-              ytdFlexyElm.insertBefore000(noscript, ytdFlexyElm.firstChild);
-        
-            }
-            const noscript = document.querySelector('noscript#aythl');
-        
-            const clones = new Set();
-            for (const {data, tag, elm} of source) {
-        
-              // const cloneNode = document.createElement(tag);
-              let cloneNode = elm.cloneNode(true);
-              // noscript.appendChild(cloneNode);
-              // insp(cloneNode).data = null;
-              insp(cloneNode).data = data;
-              source.clone = cloneNode;
-              clones.add(cloneNode);
-            }
-        
-        
-            // const elms = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"]')].filter(elm => {
-            //   if (elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
-            //   return true;
-            // });
-        
-            // let arr = [];
-            // for(const elm of elms){
-            //   if(elm.hasAttribute('slot')) arr.push(...elm.childNodes);
-            //   else arr.push(elm);
-            // }
-            // arr = arr.filter(e=>e && e.nodeType === 1);
-            // console.log(386,arr)
-        
-            // const clones = arr.map(e=>e.cloneNode(true));
-        
-            // for(let node = infoExpander.nextSibling; node instanceof Node; node = node.nextSibling) node.remove();
-        
-            // infoExpander.parentNode.assignChildren111(null, infoExpander, [...clones]);
-            let removal = [];
-            for(let node = infoExpander.nextSibling; node instanceof Node; node = node.nextSibling)removal.push(node);
-            for(const node of removal) node.remove();
-            for(const node of clones) infoExpander.parentNode.appendChild(node);
+              const infoFix = () => {
+                const infoExpander = elements.infoExpander;
+                const ytdFlexyElm = elements.flexy;
+                if (!infoExpander || !ytdFlexyElm) return;
+                console.log(386, infoExpander, infoExpander.matches('#tab-info > [class]'))
+                if (!infoExpander.matches('#tab-info > [class]')) return;
+                // const elms = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"], ytd-watch-metadata.ytd-watch-flexy ytd-metadata-row-container-renderer')].filter(elm=>{
+                //   if(elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
+                //    return true;
+                // });
             
-        
-            for (const {data, tag, elm, clone} of source) {
-        
-              insp(clone).data = null;
-              insp(clone).data = data;
-            }
-        
-            // console.log(infoExpander.parentNode.childNodes)
-          }
-        */
+            
+            
+                const requireElements = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *')].filter(elm => {
+                  return typeof elm.is == 'string'
+                }).map(elm => {
+                  const is = elm.is;
+                  while (elm instanceof HTMLElement_) {
+                    const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
+                    if (q.length >= 1) return q[0];
+                    elm = elm.parentNode;
+                  }
+                }).filter(elm => !!elm && typeof elm.is === 'string');
+                console.log(requireElements)
+            
+                const source = requireElements.map(entry=>({
+                  data: insp(entry).data,
+                  tag: insp(entry).is,
+                  elm: entry
+                }))
+            
+                if (!document.querySelector('noscript#aythl')) {
+                  const noscript = document.createElement('noscript')
+                  noscript.id = 'aythl';
+                  ytdFlexyElm.insertBefore000(noscript, ytdFlexyElm.firstChild);
+            
+                }
+                const noscript = document.querySelector('noscript#aythl');
+            
+                const clones = new Set();
+                for (const {data, tag, elm} of source) {
+            
+                  // const cloneNode = document.createElement(tag);
+                  let cloneNode = elm.cloneNode(true);
+                  // noscript.appendChild(cloneNode);
+                  // insp(cloneNode).data = null;
+                  insp(cloneNode).data = data;
+                  source.clone = cloneNode;
+                  clones.add(cloneNode);
+                }
+            
+            
+                // const elms = [...document.querySelectorAll('ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"]')].filter(elm => {
+                //   if (elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
+                //   return true;
+                // });
+            
+                // let arr = [];
+                // for(const elm of elms){
+                //   if(elm.hasAttribute('slot')) arr.push(...elm.childNodes);
+                //   else arr.push(elm);
+                // }
+                // arr = arr.filter(e=>e && e.nodeType === 1);
+                // console.log(386,arr)
+            
+                // const clones = arr.map(e=>e.cloneNode(true));
+            
+                // for(let node = infoExpander.nextSibling; node instanceof Node; node = node.nextSibling) node.remove();
+            
+                // infoExpander.parentNode.assignChildren111(null, infoExpander, [...clones]);
+                let removal = [];
+                for(let node = infoExpander.nextSibling; node instanceof Node; node = node.nextSibling)removal.push(node);
+                for(const node of removal) node.remove();
+                for(const node of clones) infoExpander.parentNode.appendChild(node);
+                
+            
+                for (const {data, tag, elm, clone} of source) {
+            
+                  insp(clone).data = null;
+                  insp(clone).data = data;
+                }
+            
+                // console.log(infoExpander.parentNode.childNodes)
+              }
+            */
 
     const dummyNode = document.createElement('noscript');
 
@@ -1567,7 +2502,7 @@ const executionScript = (communicationKey) => {
     const __j5744__ = Symbol(); // original element
     const __j5733__ = Symbol(); // __lastChanged__
 
-    const monitorDataChangedByDOMMutation = async function (mutations) {
+    const monitorDataChangedByDOMMutation = async function (_mutations) {
       const nodeWR = this;
       const node = kRef(nodeWR);
       if (!node) return;
@@ -1619,61 +2554,61 @@ const executionScript = (communicationKey) => {
     };
 
     /*
-        const moChangeReflection = async function (mutations) {
-      
-          const nodeWR = this;
-          const node = kRef(nodeWR);
-          if (!node) return;
-          const originElement = kRef(node[__j5744__] || null) || null;
-          if (!originElement) return;
-      
-          const cnt = insp(node);
-          const oriCnt = insp(originElement);
-      
-          if(mutations){
-      
-            let bfDataChangeCounter = false;
-            for (const mutation of mutations) {
-              if (mutation.attributeName === 'tyt-data-change-counter' && mutation.target === originElement) {
-                bfDataChangeCounter = true;
+            const moChangeReflection = async function (mutations) {
+          
+              const nodeWR = this;
+              const node = kRef(nodeWR);
+              if (!node) return;
+              const originElement = kRef(node[__j5744__] || null) || null;
+              if (!originElement) return;
+          
+              const cnt = insp(node);
+              const oriCnt = insp(originElement);
+          
+              if(mutations){
+          
+                let bfDataChangeCounter = false;
+                for (const mutation of mutations) {
+                  if (mutation.attributeName === 'tyt-data-change-counter' && mutation.target === originElement) {
+                    bfDataChangeCounter = true;
+                  }
+                }
+                if(bfDataChangeCounter && oriCnt.data){
+                  node.replaceWith(dummyNode);
+                  cnt.data = Object.assign({}, oriCnt.data);
+                  dummyNode.replaceWith(node);
+                }
+          
+              } 
+          
+              // console.log(8348, originElement)
+          
+              if (cnt.isAttached === false) {
+                // do nothing
+                // don't call infoFix() as it shall be only called in ytd-expander::attached and yt-navigate-finish
+              } else if (oriCnt.isAttached === false && cnt.isAttached === true) {
+                if (node.isConnected && node.parentNode instanceof HTMLElement_) {
+                  node.parentNode.removeChild(node);
+                } else {
+                  node.remove();
+                }
+                if (oriCnt.data !== null) {
+                  cnt.data = null;
+                }
+              } else if (oriCnt.isAttached === true && cnt.isAttached === true) {
+                if (!oriCnt.data) {
+                  if(cnt.data){
+                    cnt.data = null;
+                  }
+                } else if (!cnt.data || oriCnt.data[__j4838__] !== cnt.data[__j4838__]) {
+                  oriCnt.data[__j4838__] = Date.now();
+                  await Promise.resolve(); // required for making sufficient delay for data rendering
+                  attributeInc(originElement, 'tyt-data-change-counter'); // next macro task
+                }
               }
-            }
-            if(bfDataChangeCounter && oriCnt.data){
-              node.replaceWith(dummyNode);
-              cnt.data = Object.assign({}, oriCnt.data);
-              dummyNode.replaceWith(node);
-            }
-      
-          } 
-      
-          // console.log(8348, originElement)
-      
-          if (cnt.isAttached === false) {
-            // do nothing
-            // don't call infoFix() as it shall be only called in ytd-expander::attached and yt-navigate-finish
-          } else if (oriCnt.isAttached === false && cnt.isAttached === true) {
-            if (node.isConnected && node.parentNode instanceof HTMLElement_) {
-              node.parentNode.removeChild(node);
-            } else {
-              node.remove();
-            }
-            if (oriCnt.data !== null) {
-              cnt.data = null;
-            }
-          } else if (oriCnt.isAttached === true && cnt.isAttached === true) {
-            if (!oriCnt.data) {
-              if(cnt.data){
-                cnt.data = null;
-              }
-            } else if (!cnt.data || oriCnt.data[__j4838__] !== cnt.data[__j4838__]) {
-              oriCnt.data[__j4838__] = Date.now();
-              await Promise.resolve(); // required for making sufficient delay for data rendering
-              attributeInc(originElement, 'tyt-data-change-counter'); // next macro task
-            }
-          }
-      
-        };
-        */
+          
+            };
+            */
 
     /**
      * Increment attribute value with overflow protection
@@ -1695,7 +2630,7 @@ const executionScript = (communicationKey) => {
      * @param {string} x - The string to validate
      * @returns {boolean} True if valid channel ID
      */
-    const isChannelId = (x) => {
+    const isChannelId = x => {
       return typeof x === 'string' && x.length === 24 && /^UC[-_a-zA-Z0-9+=.]{22}$/.test(x);
     };
 
@@ -1703,7 +2638,7 @@ const executionScript = (communicationKey) => {
      * Fix and organize info panel layout
      * @param {number|null} lockId - Lock identifier for concurrent execution control
      */
-    const infoFix = (lockId) => {
+    const infoFix = lockId => {
       if (lockId !== null && lockGet['infoFixLock'] !== lockId) return;
       const infoExpander = elements.infoExpander;
       const infoContainer =
@@ -1722,20 +2657,20 @@ const executionScript = (communicationKey) => {
           'ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *'
         ),
       ]
-        .filter((elm) => {
+        .filter(elm => {
           return typeof elm.is == 'string';
         })
-        .map((elm) => {
+        .map(elm => {
           const is = elm.is;
           while (elm instanceof HTMLElement_) {
-            const q = [...elm.querySelectorAll(is)].filter((e) => insp(e).data);
+            const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
             if (q.length >= 1) return q[0];
             elm = elm.parentNode;
           }
         })
-        .filter((elm) => !!elm && typeof elm.is === 'string');
+        .filter(elm => !!elm && typeof elm.is === 'string');
 
-      const source = requireElements.map((entry) => {
+      const source = requireElements.map(entry => {
         const inst = insp(entry);
         return {
           data: inst.data,
@@ -1812,7 +2747,7 @@ const executionScript = (communicationKey) => {
                   typeof cnt._dataChanged496k === 'function' &&
                   Promise.resolve(cnt)
                     .then(cnt._dataChanged496k)
-                    .catch((err) => handlePromiseError(err, 'setWithPath_dataChanged496k'));
+                    .catch(err => handlePromiseError(err, 'setWithPath_dataChanged496k'));
                 return this.setWithPath573(...arguments);
               };
               cProto._dataChanged496 = function () {
@@ -1822,7 +2757,7 @@ const executionScript = (communicationKey) => {
                   attributeInc(node, 'tyt-data-change-counter');
                 }
               };
-              cProto._dataChanged496k = (cnt) => cnt._dataChanged496();
+              cProto._dataChanged496k = cnt => cnt._dataChanged496();
             }
           }
 
@@ -1863,7 +2798,7 @@ const executionScript = (communicationKey) => {
         let e = infoExpander ? -1 : 0;
         // DOM Tree Check
         for (let n = targetParent.firstChild; n instanceof Node; n = n.nextSibling) {
-          let target = e < 0 ? infoExpander : mirroElmArr[e];
+          const target = e < 0 ? infoExpander : mirroElmArr[e];
           e++;
           if (n !== target) {
             // target can be undefined if index overflow
@@ -1898,7 +2833,7 @@ const executionScript = (communicationKey) => {
      * Fix and optimize secondary layout structure
      * @param {number} lockId - Lock identifier for concurrent execution control
      */
-    const layoutFix = (lockId) => {
+    const layoutFix = lockId => {
       if (lockGet['layoutFixLock'] !== lockId) return;
       // console.log('((layoutFix))')
 
@@ -1917,8 +2852,8 @@ const executionScript = (communicationKey) => {
           (chatContainer && !chatContainer.closest('secondary-wrapper'))
         ) {
           // console.log(38381)
-          let w = [];
-          let w2 = [];
+          const w = [];
+          const w2 = [];
           for (
             let node = secondaryInner.firstChild;
             node instanceof Node;
@@ -1976,10 +2911,10 @@ const executionScript = (communicationKey) => {
       // console.log(5094,3);
       Promise.resolve(lockSet['updateEgmPanelsLock'])
         .then(updateEgmPanels)
-        .catch((err) => handlePromiseError(err, 'aoEgmPanels_updateEgmPanels'));
+        .catch(err => handlePromiseError(err, 'aoEgmPanels_updateEgmPanels'));
     });
 
-    const removeKeepCommentsScroller = async (lockId) => {
+    const removeKeepCommentsScroller = async lockId => {
       if (lockGet['removeKeepCommentsScrollerLock'] !== lockId) return;
       await Promise.resolve();
       if (lockGet['removeKeepCommentsScrollerLock'] !== lockId) return;
@@ -1989,7 +2924,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const updateEgmPanels = async (lockId) => {
+    const updateEgmPanels = async lockId => {
       if (lockId !== lockGet['updateEgmPanelsLock']) return;
       await navigateFinishedPromise.then().catch(console.warn);
       if (lockId !== lockGet['updateEgmPanelsLock']) return;
@@ -2011,7 +2946,7 @@ const executionScript = (communicationKey) => {
           visibility === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
           !panelElm.closest('[hidden]')
         ) {
-          let visibleAt = panelElm.getAttribute000('tyt-visible-at');
+          const visibleAt = panelElm.getAttribute000('tyt-visible-at');
           if (!visibleAt) {
             panelElm.setAttribute111('tyt-visible-at', Date.now());
             newVisiblePanels.push(panelElm);
@@ -2062,11 +2997,11 @@ const executionScript = (communicationKey) => {
 
       function findLcComment(lc) {
         if (arguments.length === 1) {
-          let element = document.querySelector(
+          const element = document.querySelector(
             `#tab-comments ytd-comments ytd-comment-renderer #header-author a[href*="lc=${lc}"]`
           );
           if (element) {
-            let commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
+            const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
             if (commentRendererElm && lc) {
               return {
                 lc,
@@ -2075,18 +3010,18 @@ const executionScript = (communicationKey) => {
             }
           }
         } else if (arguments.length === 0) {
-          let element = document.querySelector(
+          const element = document.querySelector(
             `#tab-comments ytd-comments ytd-comment-renderer > #linked-comment-badge span:not(:empty)`
           );
           if (element) {
-            let commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
+            const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
             if (commentRendererElm) {
-              let header = _querySelector.call(commentRendererElm, '#header-author');
+              const header = _querySelector.call(commentRendererElm, '#header-author');
               if (header) {
-                let anchor = _querySelector.call(header, 'a[href*="lc="]');
+                const anchor = _querySelector.call(header, 'a[href*="lc="]');
                 if (anchor) {
-                  let href = anchor.getAttribute('href') || '';
-                  let m = /[&?]lc=([\w_.-]+)/.exec(href); // dot = sub-comment
+                  const href = anchor.getAttribute('href') || '';
+                  const m = /[&?]lc=([\w_.-]+)/.exec(href); // dot = sub-comment
                   if (m) {
                     lc = m[1];
                   }
@@ -2110,14 +3045,14 @@ const executionScript = (communicationKey) => {
         try {
           // console.log(currentLcId, targetLcId)
 
-          let r1 = findLcComment(currentLcId).commentRendererElm;
-          let r2 = findLcComment(targetLcId).commentRendererElm;
+          const r1 = findLcComment(currentLcId).commentRendererElm;
+          const r2 = findLcComment(targetLcId).commentRendererElm;
 
           if (
             typeof insp(r1).data.linkedCommentBadge === 'object' &&
             typeof insp(r2).data.linkedCommentBadge === 'undefined'
           ) {
-            let p = Object.assign({}, insp(r1).data.linkedCommentBadge);
+            const p = Object.assign({}, insp(r1).data.linkedCommentBadge);
 
             if (((p || 0).metadataBadgeRenderer || 0).trackingParams) {
               delete p.metadataBadgeRenderer.trackingParams;
@@ -2171,17 +3106,17 @@ const executionScript = (communicationKey) => {
       function lcSwapFuncB(targetLcId, currentLcId, _p) {
         let done = 0;
         try {
-          let r1 = findLcComment(currentLcId).commentRendererElm;
-          let r1cnt = insp(r1);
-          let r2 = findLcComment(targetLcId).commentRendererElm;
-          let r2cnt = insp(r2);
+          const r1 = findLcComment(currentLcId).commentRendererElm;
+          const r1cnt = insp(r1);
+          const r2 = findLcComment(targetLcId).commentRendererElm;
+          const r2cnt = insp(r2);
 
           const r1d = r1cnt.data;
-          let p = Object.assign({}, _p);
+          const p = Object.assign({}, _p);
           r1d.linkedCommentBadge = null;
           delete r1d.linkedCommentBadge;
 
-          let q = Object.assign({}, r1d);
+          const q = Object.assign({}, r1d);
           q.linkedCommentBadge = null;
           delete q.linkedCommentBadge;
 
@@ -2195,8 +3130,8 @@ const executionScript = (communicationKey) => {
         return done === 1;
       }
 
-      const loadStartFx = async (evt) => {
-        let media = (evt || 0).target || 0;
+      const loadStartFx = async evt => {
+        const media = (evt || 0).target || 0;
         if (media.nodeName === 'VIDEO' || media.nodeName === 'AUDIO') {
         } else return;
 
@@ -2209,27 +3144,27 @@ const executionScript = (communicationKey) => {
           if (newMedia !== media1 && media1.paused === false) {
             if (isVideoPlaying(media1)) {
               Promise.resolve(newMedia)
-                .then((video) => video.paused === false && video.pause())
+                .then(video => video.paused === false && video.pause())
                 .catch(console.warn);
             }
           } else if (newMedia === media1) {
             for (const s of media2) {
               if (s.paused === false) {
                 Promise.resolve(s)
-                  .then((s) => s.paused === false && s.pause())
+                  .then(s => s.paused === false && s.pause())
                   .catch(console.warn);
                 break;
               }
             }
           } else {
             Promise.resolve(media1)
-              .then((video1) => video1.paused === false && video1.pause())
+              .then(video1 => video1.paused === false && video1.pause())
               .catch(console.warn);
           }
         }
       };
 
-      const getBrowsableEndPoint = (req) => {
+      const getBrowsableEndPoint = req => {
         let valid = false;
         let endpoint = req ? req.command : null;
         if (
@@ -2237,25 +3172,25 @@ const executionScript = (communicationKey) => {
           (endpoint.commandMetadata || 0).webCommandMetadata &&
           endpoint.watchEndpoint
         ) {
-          let videoId = endpoint.watchEndpoint.videoId;
-          let url = endpoint.commandMetadata.webCommandMetadata.url;
+          const videoId = endpoint.watchEndpoint.videoId;
+          const url = endpoint.commandMetadata.webCommandMetadata.url;
 
           if (typeof videoId === 'string' && typeof url === 'string' && url.indexOf('lc=') > 0) {
-            let m = /^\/watch\?v=([\w_-]+)&lc=([\w_.-]+)$/.exec(url); // dot = sub-comment
+            const m = /^\/watch\?v=([\w_-]+)&lc=([\w_.-]+)$/.exec(url); // dot = sub-comment
             if (m && m[1] === videoId) {
               /*
-                            {
-                              "style": "BADGE_STYLE_TYPE_SIMPLE",
-                              "label": "注目のコメント",
-                              "trackingParams": "XXXXXX"
-                          }
-                            */
+                                          {
+                                            "style": "BADGE_STYLE_TYPE_SIMPLE",
+                                            "label": "注目のコメント",
+                                            "trackingParams": "XXXXXX"
+                                        }
+                                          */
 
-              let targetLc = findLcComment(m[2]);
-              let currentLc = targetLc ? findLcComment() : null;
+              const targetLc = findLcComment(m[2]);
+              const currentLc = targetLc ? findLcComment() : null;
 
               if (targetLc && currentLc) {
-                let done =
+                const done =
                   targetLc.lc === currentLc.lc ? 1 : lcSwapFuncA(targetLc.lc, currentLc.lc) ? 1 : 0;
 
                 if (done === 1) {
@@ -2268,17 +3203,17 @@ const executionScript = (communicationKey) => {
         }
 
         /*
-                    
-                    {
-                      "type": 0,
-                      "command": endpoint,
-                      "form": {
-                        "tempData": {},
-                        "reload": false
-                      }
-                    }
-          
-                */
+                            
+                            {
+                              "type": 0,
+                              "command": endpoint,
+                              "form": {
+                                "tempData": {},
+                                "reload": false
+                              }
+                            }
+                  
+                        */
 
         if (
           endpoint &&
@@ -2298,7 +3233,7 @@ const executionScript = (communicationKey) => {
             const playerMedia = common.getMediaElement(1);
             if (playerMedia && playerMedia.paused === false) valid = true; // home page
           } else if (endpoint.commandMetadata && endpoint.commandMetadata.webCommandMetadata) {
-            let meta = endpoint.commandMetadata.webCommandMetadata;
+            const meta = endpoint.commandMetadata.webCommandMetadata;
             if (meta && /*meta.apiUrl &&*/ meta.url && meta.webPageType) {
               valid = true;
             }
@@ -2318,7 +3253,7 @@ const executionScript = (communicationKey) => {
         if (isSubTypeExist) return true;
 
         const movie_player = [...document.querySelectorAll('#movie_player')].filter(
-          (e) => !e.closest('[hidden]')
+          e => !e.closest('[hidden]')
         )[0];
         if (movie_player) {
           const media = qsOne(movie_player, 'video[class], audio[class]');
@@ -2336,7 +3271,7 @@ const executionScript = (communicationKey) => {
         // return !!document.querySelector('ytd-page-manager#page-manager > ytd-browse[page-subtype]');
       };
 
-      const conditionFulfillment = (req) => {
+      const conditionFulfillment = req => {
         const endpoint = req ? req.command : null;
         if (!endpoint) return;
 
@@ -2364,17 +3299,17 @@ const executionScript = (communicationKey) => {
         if (!shouldUseMiniPlayer()) return false;
 
         /*
-                  // user would like to switch page immediately without playing the video;
-                  // attribute appear after playing video for more than 2s
-                  if (!document.head.dataset.viTime) return false;
-                  else {
-                    let currentVideo = common.getMediaElement(0);
-                    if (currentVideo && currentVideo.readyState > currentVideo.HAVE_CURRENT_DATA && currentVideo.currentTime > 2.2 && currentVideo.duration - 2.2 < currentVideo.currentTime) {
-                      // disable miniview browsing if the media is near to the end
-                      return false;
-                    }
-                  }
-                */
+                          // user would like to switch page immediately without playing the video;
+                          // attribute appear after playing video for more than 2s
+                          if (!document.head.dataset.viTime) return false;
+                          else {
+                            let currentVideo = common.getMediaElement(0);
+                            if (currentVideo && currentVideo.readyState > currentVideo.HAVE_CURRENT_DATA && currentVideo.currentTime > 2.2 && currentVideo.duration - 2.2 < currentVideo.currentTime) {
+                              // disable miniview browsing if the media is near to the end
+                              return false;
+                            }
+                          }
+                        */
 
         if (pageType !== 'watch') return false;
 
@@ -2391,7 +3326,7 @@ const executionScript = (communicationKey) => {
       };
 
       let u38 = 0;
-      const fixChannelAboutPopup = async (t38) => {
+      const fixChannelAboutPopup = async t38 => {
         let promise = new PromiseExternal();
         const f = () => {
           promise && promise.resolve();
@@ -2404,7 +3339,7 @@ const executionScript = (communicationKey) => {
         if (t38 !== u38) return;
         setTimeout(() => {
           const currentAbout = [...document.querySelectorAll('ytd-about-channel-renderer')].filter(
-            (e) => !e.closest('[hidden]')
+            e => !e.closest('[hidden]')
           )[0];
           let okay = false;
           if (!currentAbout) okay = true;
@@ -2415,7 +3350,7 @@ const executionScript = (communicationKey) => {
               let arr = null;
               try {
                 arr = cnt.handleGetOpenedPopupsAction_();
-              } catch (e) {}
+              } catch { }
               if (arr && arr.length === 0) okay = true;
             } else {
               okay = false;
@@ -2424,10 +3359,10 @@ const executionScript = (communicationKey) => {
           if (okay) {
             const descriptionModel = [
               ...document.querySelectorAll('yt-description-preview-view-model'),
-            ].filter((e) => !e.closest('[hidden]'))[0];
+            ].filter(e => !e.closest('[hidden]'))[0];
             if (descriptionModel) {
               const button = [...descriptionModel.querySelectorAll('button')].filter(
-                (e) => !e.closest('[hidden]') && `${e.textContent}`.trim().length > 0
+                e => !e.closest('[hidden]') && `${e.textContent}`.trim().length > 0
               )[0];
               if (button) {
                 button.click();
@@ -2436,7 +3371,7 @@ const executionScript = (communicationKey) => {
           }
         }, 80);
       };
-      const handleNavigateFactory = (handleNavigate) => {
+      const handleNavigateFactory = handleNavigate => {
         return function (req) {
           if (u38 > MAX_ATTRIBUTE_VALUE) u38 = ATTRIBUTE_RESET_VALUE;
           const t38 = ++u38;
@@ -2460,7 +3395,7 @@ const executionScript = (communicationKey) => {
           let object = null;
           try {
             object = ytdAppCnt.data.response.currentVideoEndpoint.watchEndpoint || null;
-          } catch (e) {
+          } catch {
             object = null;
           }
 
@@ -2476,18 +3411,18 @@ const executionScript = (communicationKey) => {
             let count = 0;
 
             /*
-                          
-                          rcb(b) => a = playlistId = undefinded
-                          
-                          var scb = function(a, b, c, d) {
-                                  a.isInitialized() && (B("kevlar_miniplayer_navigate_to_shorts_killswitch") ? c || d ? ("watch" !== Xu(b) && "shorts" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
-                                  qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
-                                  a.activateMiniplayer(b)) : c ? ("watch" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
-                                  qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : d ? qs(a.miniplayerEl, "yt-pause-miniplayer-action") : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
-                                  a.activateMiniplayer(b)))
-                              };
-                
-                        */
+                                      
+                                      rcb(b) => a = playlistId = undefinded
+                                      
+                                      var scb = function(a, b, c, d) {
+                                              a.isInitialized() && (B("kevlar_miniplayer_navigate_to_shorts_killswitch") ? c || d ? ("watch" !== Xu(b) && "shorts" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
+                                              qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
+                                              a.activateMiniplayer(b)) : c ? ("watch" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
+                                              qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : d ? qs(a.miniplayerEl, "yt-pause-miniplayer-action") : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
+                                              a.activateMiniplayer(b)))
+                                          };
+                            
+                                    */
 
             Object.defineProperty(kRef(wObject) || {}, 'playlistId', {
               get() {
@@ -2509,10 +3444,10 @@ const executionScript = (communicationKey) => {
 
             let timeoutid = 0;
             Promise.race([
-              new Promise((r) => {
+              new Promise(r => {
                 timeoutid = setTimeout(r, 4000);
               }),
-              new Promise((r) => {
+              new Promise(r => {
                 playlistClearout = () => {
                   if (timeoutid > 0) {
                     clearTimeout(timeoutid);
@@ -2531,7 +3466,7 @@ const executionScript = (communicationKey) => {
                 }
                 playlistClearout = null;
                 count = N - 1;
-                let object = kRef(wObject);
+                const object = kRef(wObject);
                 wObject = null;
                 return object ? object.playlistId : null;
               })
@@ -2562,9 +3497,9 @@ const executionScript = (communicationKey) => {
 
     const common = (() => {
       let mediaModeLock = 0;
-      const _getMediaElement = (i) => {
+      const _getMediaElement = i => {
         if (mediaModeLock === 0) {
-          let e =
+          const e =
             document.querySelector('.video-stream.html5-main-video') ||
             document.querySelector('#movie_player video, #movie_player audio') ||
             document.querySelector('body video[src], body audio[src]');
@@ -2602,7 +3537,7 @@ const executionScript = (communicationKey) => {
         xReplaceState(s, u) {
           try {
             history.replaceState(s, '', u);
-          } catch (e) {
+          } catch {
             // in case error occurs if replaceState is replaced by any external script / extension
           }
           if (s.endpoint) {
@@ -2610,16 +3545,16 @@ const executionScript = (communicationKey) => {
               const ytdAppElm = document.querySelector('ytd-app');
               const ytdAppCnt = insp(ytdAppElm);
               ytdAppCnt.replaceState(s.endpoint, '', u);
-            } catch (e) {}
+            } catch { }
           }
         },
         getMediaElement(i) {
-          let s = _getMediaElement(i) || '';
+          const s = _getMediaElement(i) || '';
           if (s) return document.querySelector(s);
           return null;
         },
         getMediaElements(i) {
-          let s = _getMediaElement(i) || '';
+          const s = _getMediaElement(i) || '';
           if (s) return document.querySelectorAll(s);
           return [];
         },
@@ -2639,16 +3574,21 @@ const executionScript = (communicationKey) => {
       return '';
     };
 
-    const holdInlineExpanderAlwaysExpanded = (inlineExpanderCnt) => {
+    // eslint-disable-next-line no-unused-vars
+    const holdInlineExpanderAlwaysExpanded = inlineExpanderCnt => {
       console.log('holdInlineExpanderAlwaysExpanded');
-      if (inlineExpanderCnt.alwaysShowExpandButton === true)
+      if (inlineExpanderCnt.alwaysShowExpandButton === true) {
         inlineExpanderCnt.alwaysShowExpandButton = false;
-      if (typeof (inlineExpanderCnt.collapseLabel || 0) === 'string')
+      }
+      if (typeof (inlineExpanderCnt.collapseLabel || 0) === 'string') {
         inlineExpanderCnt.collapseLabel = '';
-      if (typeof (inlineExpanderCnt.expandLabel || 0) === 'string')
+      }
+      if (typeof (inlineExpanderCnt.expandLabel || 0) === 'string') {
         inlineExpanderCnt.expandLabel = '';
-      if (inlineExpanderCnt.showCollapseButton === true)
+      }
+      if (inlineExpanderCnt.showCollapseButton === true) {
         inlineExpanderCnt.showCollapseButton = false;
+      }
       if (inlineExpanderCnt.showExpandButton === true) inlineExpanderCnt.showExpandButton = false;
       if (inlineExpanderCnt.expandButton instanceof HTMLElement_) {
         inlineExpanderCnt.expandButton = null;
@@ -2656,7 +3596,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const fixInlineExpanderDisplay = (inlineExpanderCnt) => {
+    const fixInlineExpanderDisplay = inlineExpanderCnt => {
       try {
         inlineExpanderCnt.updateIsAttributedExpanded();
       } catch (e) {
@@ -2679,7 +3619,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const fixInlineExpanderMethods = (inlineExpanderCnt) => {
+    const fixInlineExpanderMethods = inlineExpanderCnt => {
       if (inlineExpanderCnt && !inlineExpanderCnt.__$$idncjk8487$$__) {
         inlineExpanderCnt.__$$idncjk8487$$__ = true;
         inlineExpanderCnt.updateTextOnSnippetTypeChange = function () {
@@ -2764,7 +3704,7 @@ const executionScript = (communicationKey) => {
                 try {
                   insp(mainInfo).handleMoreTap(new Event('tap'));
                   success = true;
-                } catch (e) {}
+                } catch { }
                 if (success) mainInfo.setAttribute111('tyt-no-less-btn', '');
               }
               break;
@@ -2878,7 +3818,7 @@ const executionScript = (communicationKey) => {
               .then(this.moFn)
               .catch(console.warn);
           });
-          this.ro = new ResizeObserver((mutations) => {
+          this.ro = new ResizeObserver(mutations => {
             if (Date.now() > this.checkResize) return;
             for (const mutation of mutations) {
               const uploadInfo = mutation.target;
@@ -2902,20 +3842,21 @@ const executionScript = (communicationKey) => {
     // let shouldFixInfo = false;
     const __attachedSymbol__ = Symbol();
 
-    const makeInitAttached = (tag) => {
+    const makeInitAttached = tag => {
       const inPageRearrange_ = inPageRearrange;
       inPageRearrange = false;
       for (const elm of document.querySelectorAll(`${tag}`)) {
         const cnt = insp(elm) || 0;
-        if (typeof cnt.attached498 === 'function' && !elm[__attachedSymbol__])
+        if (typeof cnt.attached498 === 'function' && !elm[__attachedSymbol__]) {
           Promise.resolve(elm).then(eventMap[`${tag}::attached`]).catch(console.warn);
+        }
       }
       inPageRearrange = inPageRearrange_;
     };
 
     const getGeneralChatElement = async () => {
-      for (let i = 2; i-- > 0; ) {
-        let t = document.querySelector(
+      for (let i = 2; i-- > 0;) {
+        const t = document.querySelector(
           '#columns.style-scope.ytd-watch-flexy ytd-live-chat-frame#chat'
         );
         if (t instanceof Element) return t;
@@ -2945,7 +3886,7 @@ const executionScript = (communicationKey) => {
       return true;
     };
 
-    const invalidFlexyParent = (hostElement) => {
+    const invalidFlexyParent = hostElement => {
       if (hostElement instanceof HTMLElement) {
         const hasFlexyParent = HTMLElement.prototype.closest.call(hostElement, 'ytd-watch-flexy'); // eg short
         if (!hasFlexyParent) return true;
@@ -2977,7 +3918,7 @@ const executionScript = (communicationKey) => {
         retrieveCE('ytd-expander').then(eventMap['ytd-expander::defined']).catch(console.warn);
         retrieveCE('ytd-watch-next-secondary-results-renderer')
           .then(eventMap['ytd-watch-next-secondary-results-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn(
               '[YouTube+] retrieveCE ytd-watch-next-secondary-results-renderer failed:',
               err
@@ -2985,18 +3926,18 @@ const executionScript = (communicationKey) => {
           );
         retrieveCE('ytd-comments-header-renderer')
           .then(eventMap['ytd-comments-header-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn('[YouTube+] retrieveCE ytd-comments-header-renderer failed:', err)
           );
         retrieveCE('ytd-live-chat-frame')
           .then(eventMap['ytd-live-chat-frame::defined'])
-          .catch((err) => console.warn('[YouTube+] retrieveCE ytd-live-chat-frame failed:', err));
+          .catch(err => console.warn('[YouTube+] retrieveCE ytd-live-chat-frame failed:', err));
         retrieveCE('ytd-comments')
           .then(eventMap['ytd-comments::defined'])
-          .catch((err) => console.warn('[YouTube+] retrieveCE ytd-comments failed:', err));
+          .catch(err => console.warn('[YouTube+] retrieveCE ytd-comments failed:', err));
         retrieveCE('ytd-engagement-panel-section-list-renderer')
           .then(eventMap['ytd-engagement-panel-section-list-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn(
               '[YouTube+] retrieveCE ytd-engagement-panel-section-list-renderer failed:',
               err
@@ -3004,15 +3945,15 @@ const executionScript = (communicationKey) => {
           );
         retrieveCE('ytd-watch-metadata')
           .then(eventMap['ytd-watch-metadata::defined'])
-          .catch((err) => console.warn('[YouTube+] retrieveCE ytd-watch-metadata failed:', err));
+          .catch(err => console.warn('[YouTube+] retrieveCE ytd-watch-metadata failed:', err));
         retrieveCE('ytd-playlist-panel-renderer')
           .then(eventMap['ytd-playlist-panel-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn('[YouTube+] retrieveCE ytd-playlist-panel-renderer failed:', err)
           );
         retrieveCE('ytd-expandable-video-description-body-renderer')
           .then(eventMap['ytd-expandable-video-description-body-renderer::defined'])
-          .catch((err) =>
+          .catch(err =>
             console.warn(
               '[YouTube+] retrieveCE ytd-expandable-video-description-body-renderer failed:',
               err
@@ -3020,7 +3961,7 @@ const executionScript = (communicationKey) => {
           );
       },
 
-      fixForTabDisplay: (isResize) => {
+      fixForTabDisplay: isResize => {
         // isResize is true if the layout is resized (not due to tab switching)
         // youtube components shall handle the resize issue. can skip some checkings.
 
@@ -3080,7 +4021,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-watch-flexy::defined': (cProto) => {
+      'ytd-watch-flexy::defined': cProto => {
         if (
           !cProto.updateChatLocation498 &&
           typeof cProto.updateChatLocation === 'function' &&
@@ -3091,24 +4032,26 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-watch-next-secondary-results-renderer::defined': (cProto) => {
+      'ytd-watch-next-secondary-results-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-watch-next-secondary-results-renderer::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-watch-next-secondary-results-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3116,7 +4059,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-watch-next-secondary-results-renderer');
       },
 
-      'ytd-watch-next-secondary-results-renderer::attached': (hostElement) => {
+      'ytd-watch-next-secondary-results-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3126,8 +4069,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3144,7 +4088,7 @@ const executionScript = (communicationKey) => {
         // console.log('ytd-watch-next-secondary-results-renderer::attached', hostElement);
       },
 
-      'ytd-watch-next-secondary-results-renderer::detached': (hostElement) => {
+      'ytd-watch-next-secondary-results-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.log(5084, 'ytd-watch-next-secondary-results-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
@@ -3158,13 +4102,14 @@ const executionScript = (communicationKey) => {
         console.log('ytd-watch-next-secondary-results-renderer::detached', hostElement);
       },
 
-      settingCommentsVideoId: (hostElement) => {
+      settingCommentsVideoId: hostElement => {
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         const cnt = insp(hostElement);
         const commentsArea = elements.comments;
         if (
@@ -3173,8 +4118,9 @@ const executionScript = (communicationKey) => {
           cnt.isAttached !== true ||
           !cnt.data ||
           cnt.hidden !== false
-        )
+        ) {
           return;
+        }
         const ytdFlexyElm = elements.flexy;
         const ytdFlexyCnt = ytdFlexyElm ? insp(ytdFlexyElm) : null;
         if (ytdFlexyCnt && ytdFlexyCnt.videoId) {
@@ -3183,7 +4129,7 @@ const executionScript = (communicationKey) => {
           hostElement.removeAttribute000('tyt-comments-video-id');
         }
       },
-      checkCommentsShouldBeHidden: (lockId) => {
+      checkCommentsShouldBeHidden: lockId => {
         if (lockGet['checkCommentsShouldBeHiddenLock'] !== lockId) return;
 
         // commentsArea's attribute: tyt-comments-video-id
@@ -3202,14 +4148,15 @@ const executionScript = (communicationKey) => {
           }
         }
       },
-      'ytd-comments::defined': (cProto) => {
+      'ytd-comments::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-comments::attached'])
                 .catch(console.warn);
+            }
             // Promise.resolve(this.hostElement).then(eventMap['ytd-comments::dataChanged_']).catch(console.warn);
             return this.attached498();
           };
@@ -3217,10 +4164,11 @@ const executionScript = (communicationKey) => {
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-comments::detached'])
                 .catch(console.warn);
+            }
             // Promise.resolve(this.hostElement).then(eventMap['ytd-comments::dataChanged_']).catch(console.warn);
             return this.detached498();
           };
@@ -3245,7 +4193,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-comments');
       },
 
-      'ytd-comments::_dataChanged498': (hostElement) => {
+      'ytd-comments::_dataChanged498': hostElement => {
         // console.log(18984, hostElement.hasAttribute('tyt-comments-area'))
         if (!hostElement.hasAttribute000('tyt-comments-area')) return;
         let commentsDataStatus = 0;
@@ -3270,7 +4218,7 @@ const executionScript = (communicationKey) => {
         Promise.resolve(hostElement).then(eventMap['settingCommentsVideoId']).catch(console.warn);
       },
 
-      'ytd-comments::attached': async (hostElement) => {
+      'ytd-comments::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3280,8 +4228,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3325,7 +4274,7 @@ const executionScript = (communicationKey) => {
 
         TAB_AUTO_SWITCH_TO_COMMENTS && switchToTab('#tab-comments');
       },
-      'ytd-comments::detached': (hostElement) => {
+      'ytd-comments::detached': hostElement => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.log(5084, 'ytd-comments::detached');
         // console.log(858, hostElement)
@@ -3355,14 +4304,15 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-comments-header-renderer::defined': (cProto) => {
+      'ytd-comments-header-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-comments-header-renderer::attached'])
                 .catch(console.warn);
+            }
             Promise.resolve(this.hostElement)
               .then(eventMap['ytd-comments-header-renderer::dataChanged'])
               .catch(console.warn); // force dataChanged on attached
@@ -3372,10 +4322,11 @@ const executionScript = (communicationKey) => {
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-comments-header-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3393,7 +4344,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-comments-header-renderer');
       },
 
-      'ytd-comments-header-renderer::attached': (hostElement) => {
+      'ytd-comments-header-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3403,8 +4354,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3426,7 +4378,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-comments-header-renderer::detached': (hostElement) => {
+      'ytd-comments-header-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.log(5084, 'ytd-comments-header-renderer::detached');
 
@@ -3451,13 +4403,14 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-comments-header-renderer::dataChanged': (hostElement) => {
+      'ytd-comments-header-renderer::dataChanged': hostElement => {
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
 
         const ytdFlexyElm = elements.flexy;
 
@@ -3494,8 +4447,9 @@ const executionScript = (communicationKey) => {
             subtree: false,
             childList: true,
           });
-          if (!headerMutationTmpNode)
+          if (!headerMutationTmpNode) {
             headerMutationTmpNode = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
+          }
           const tmpNode = headerMutationTmpNode;
           hostElement.insertAdjacentElement('afterend', tmpNode);
           tmpNode.remove();
@@ -3519,24 +4473,24 @@ const executionScript = (communicationKey) => {
           ) {
             let max = -1;
             const z = data.commentsCount.runs
-              .map((e) => {
-                let c = e.text.replace(/\D+/g, '').length;
+              .map(e => {
+                const c = e.text.replace(/\D+/g, '').length;
                 if (c > max) max = c;
                 return [e.text, c];
               })
-              .filter((a) => a[1] === max);
+              .filter(a => a[1] === max);
             if (z.length >= 1) {
               ez = z[0][0];
             }
           } else if (data.countText && data.countText.runs && data.countText.runs.length >= 1) {
             let max = -1;
             const z = data.countText.runs
-              .map((e) => {
-                let c = e.text.replace(/\D+/g, '').length;
+              .map(e => {
+                const c = e.text.replace(/\D+/g, '').length;
                 if (c > max) max = c;
                 return [e.text, c];
               })
-              .filter((a) => a[1] === max);
+              .filter(a => a[1] === max);
             if (z.length >= 1) {
               ez = z[0][0];
             }
@@ -3553,24 +4507,26 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-expander::defined': (cProto) => {
+      'ytd-expander::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-expander::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-expander::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3590,20 +4546,20 @@ const executionScript = (communicationKey) => {
         }
 
         /*
-         
-                console.log('ytd-expander::defined 01');
-                
-                CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback = connectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback)
-                CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback = disconnectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback)
-                
-                console.log('ytd-expander::defined 02');
-         
-                */
+                 
+                        console.log('ytd-expander::defined 01');
+                        
+                        CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback = connectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback)
+                        CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback = disconnectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback)
+                        
+                        console.log('ytd-expander::defined 02');
+                 
+                        */
 
         makeInitAttached('ytd-expander');
       },
 
-      'ytd-expander::childrenChanged': (hostElement) => {
+      'ytd-expander::childrenChanged': hostElement => {
         if (
           hostElement instanceof Node &&
           hostElement.hasAttribute000('hidden') &&
@@ -3614,24 +4570,26 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-expandable-video-description-body-renderer::defined': (cProto) => {
+      'ytd-expandable-video-description-body-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-expandable-video-description-body-renderer::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-expandable-video-description-body-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3639,7 +4597,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-expandable-video-description-body-renderer');
       },
 
-      'ytd-expandable-video-description-body-renderer::attached': async (hostElement) => {
+      'ytd-expandable-video-description-body-renderer::attached': async hostElement => {
         if (
           hostElement instanceof HTMLElement_ &&
           isPageDOM(hostElement, '[tyt-info-renderer]') &&
@@ -3727,8 +4685,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
 
         if (isPageDOM(hostElement, '#tab-info [tyt-main-info]')) {
@@ -3773,7 +4732,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-expandable-video-description-body-renderer::detached': async (hostElement) => {
+      'ytd-expandable-video-description-body-renderer::detached': async hostElement => {
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -3787,7 +4746,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-expander::attached': async (hostElement) => {
+      'ytd-expander::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3796,8 +4755,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3847,7 +4807,7 @@ const executionScript = (communicationKey) => {
         // console.log('ytd-expander::attached', hostElement);
       },
 
-      'ytd-expander::detached': (hostElement) => {
+      'ytd-expander::detached': hostElement => {
         // if (inPageRearrange) return;
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
@@ -3865,7 +4825,8 @@ const executionScript = (communicationKey) => {
         // console.log('ytd-expander::detached', hostElement);
       },
 
-      'ytd-live-chat-frame::defined': (cProto) => {
+      'ytd-live-chat-frame::defined': cProto => {
+        // eslint-disable-next-line no-unused-vars
         let lastDomAction = 0;
 
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
@@ -3873,10 +4834,11 @@ const executionScript = (communicationKey) => {
           cProto.attached = function () {
             lastDomAction = Date.now();
             // console.log('chat868-attached', Date.now());
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-live-chat-frame::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
@@ -3885,10 +4847,11 @@ const executionScript = (communicationKey) => {
           cProto.detached = function () {
             lastDomAction = Date.now();
             // console.log('chat868-detached', Date.now());
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-live-chat-frame::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -3910,11 +4873,11 @@ const executionScript = (communicationKey) => {
                 await Promise.resolve('#').catch(console.warn);
                 if (t !== ath) return;
               }
-              await new Promise((resolve) => setTimeout_(resolve, 1)).catch(console.warn); // neccessary for Brave
+              await new Promise(resolve => setTimeout_(resolve, 1)).catch(console.warn); // neccessary for Brave
               if (t !== ath) return;
               const isBlankPage = !this.data || this.collapsed;
-              const p1 = new Promise((resolve) => setTimeout_(resolve, 706)).catch(console.warn);
-              const p2 = new Promise((resolve) => {
+              const p1 = new Promise(resolve => setTimeout_(resolve, 706)).catch(console.warn);
+              const p2 = new Promise(resolve => {
                 new IntersectionObserver((entries, observer) => {
                   for (const entry of entries) {
                     const rect = entry.boundingClientRect || 0;
@@ -3944,7 +4907,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-live-chat-frame');
       },
 
-      'ytd-live-chat-frame::attached': async (hostElement) => {
+      'ytd-live-chat-frame::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -3954,8 +4917,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -3997,7 +4961,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-live-chat-frame::detached': (hostElement) => {
+      'ytd-live-chat-frame::detached': hostElement => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.log(5084, 'ytd-live-chat-frame::detached');
 
@@ -4020,31 +4984,33 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::defined': (cProto) => {
+      'ytd-engagement-panel-section-list-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-engagement-panel-section-list-renderer::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-engagement-panel-section-list-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
         makeInitAttached('ytd-engagement-panel-section-list-renderer');
       },
 
-      'ytd-engagement-panel-section-list-renderer::bindTarget': (hostElement) => {
+      'ytd-engagement-panel-section-list-renderer::bindTarget': hostElement => {
         if (
           hostElement.matches(
             '#panels.ytd-watch-flexy > ytd-engagement-panel-section-list-renderer[target-id][visibility]'
@@ -4061,7 +5027,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::attached': (hostElement) => {
+      'ytd-engagement-panel-section-list-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -4072,8 +5038,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -4084,8 +5051,9 @@ const executionScript = (communicationKey) => {
           !hostElement.matches(
             '#panels.ytd-watch-flexy > ytd-engagement-panel-section-list-renderer'
           )
-        )
+        ) {
           return;
+        }
 
         if (hostElement.hasAttribute000('target-id') && hostElement.hasAttribute000('visibility')) {
           Promise.resolve(hostElement)
@@ -4100,7 +5068,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::detached': (hostElement) => {
+      'ytd-engagement-panel-section-list-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.log(5084, 'ytd-engagement-panel-section-list-renderer::detached');
@@ -4117,24 +5085,26 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'ytd-watch-metadata::defined': (cProto) => {
+      'ytd-watch-metadata::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-watch-metadata::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-watch-metadata::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -4142,7 +5112,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-watch-metadata');
       },
 
-      'ytd-watch-metadata::attached': (hostElement) => {
+      'ytd-watch-metadata::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -4153,17 +5123,19 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
 
-        if (plugin.fullChannelNameOnHover.activated)
+        if (plugin.fullChannelNameOnHover.activated) {
           plugin.fullChannelNameOnHover.onNavigateFinish();
+        }
       },
 
-      'ytd-watch-metadata::detached': (hostElement) => {
+      'ytd-watch-metadata::detached': hostElement => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.log(5084, 'ytd-watch-metadata::detached');
@@ -4173,24 +5145,26 @@ const executionScript = (communicationKey) => {
         // hostElement.__connectedFlg__ = 9;
       },
 
-      'ytd-playlist-panel-renderer::defined': (cProto) => {
+      'ytd-playlist-panel-renderer::defined': cProto => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-playlist-panel-renderer::attached'])
                 .catch(console.warn);
+            }
             return this.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
-            if (!inPageRearrange)
+            if (!inPageRearrange) {
               Promise.resolve(this.hostElement)
                 .then(eventMap['ytd-playlist-panel-renderer::detached'])
                 .catch(console.warn);
+            }
             return this.detached498();
           };
         }
@@ -4198,7 +5172,7 @@ const executionScript = (communicationKey) => {
         makeInitAttached('ytd-playlist-panel-renderer');
       },
 
-      'ytd-playlist-panel-renderer::attached': (hostElement) => {
+      'ytd-playlist-panel-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
@@ -4209,8 +5183,9 @@ const executionScript = (communicationKey) => {
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
           hostElement.closest('noscript')
-        )
+        ) {
           return;
+        }
         if (hostElement.isConnected !== true) return;
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
@@ -4224,7 +5199,7 @@ const executionScript = (communicationKey) => {
         hostElement.incAttribute111('attr-1y6nu');
       },
 
-      'ytd-playlist-panel-renderer::detached': (hostElement) => {
+      'ytd-playlist-panel-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.log(5084, 'ytd-playlist-panel-renderer::detached');
@@ -4238,7 +5213,7 @@ const executionScript = (communicationKey) => {
         mLoaded.flag |= 4;
         document.documentElement.setAttribute111('tabview-loaded', mLoaded.makeString());
       },
-      relatedElementProvided: (target) => {
+      relatedElementProvided: target => {
         if (target.closest('[hidden]')) return;
         elements.related = target;
         console.log('relatedElementProvided');
@@ -4252,18 +5227,18 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      refreshSecondaryInner: (lockId) => {
+      refreshSecondaryInner: lockId => {
         if (lockGet['refreshSecondaryInnerLock'] !== lockId) return;
         /*
-           
-                ytd-watch-flexy:not([panels-beside-player]):not([fixed-panels]) #panels-full-bleed-container.ytd-watch-flexy{
-                    display: none;}
-           
-          #player-full-bleed-container.ytd-watch-flexy{
-              position: relative;
-              flex: 1;}
-           
-                */
+                   
+                        ytd-watch-flexy:not([panels-beside-player]):not([fixed-panels]) #panels-full-bleed-container.ytd-watch-flexy{
+                            display: none;}
+                   
+                  #player-full-bleed-container.ytd-watch-flexy{
+                      position: relative;
+                      flex: 1;}
+                   
+                        */
 
         const ytdFlexyElm = elements.flexy;
         // if(ytdFlexyElm && ytdFlexyElm.matches('ytd-watch-flexy[fixed-panels][theater]')){
@@ -4311,7 +5286,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      'yt-navigate-finish': (evt) => {
+      'yt-navigate-finish': _evt => {
         const ytdAppElm = document.querySelector(
           'ytd-page-manager#page-manager.style-scope.ytd-app'
         );
@@ -4322,7 +5297,7 @@ const executionScript = (communicationKey) => {
         // shouldFixInfo = true;
         // console.log('yt-navigate-finish')
         const flexyArr = [...document.querySelectorAll('ytd-watch-flexy')].filter(
-          (e) => !e.closest('[hidden]') && e.querySelector('#player')
+          e => !e.closest('[hidden]') && e.querySelector('#player')
         );
         if (flexyArr.length === 1) {
           // const lockId = lockSet['yt-navigate-finish-videos'];
@@ -4349,8 +5324,9 @@ const executionScript = (communicationKey) => {
             Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn);
           }
           Promise.resolve(lockSet['layoutFixLock']).then(layoutFix);
-          if (plugin.fullChannelNameOnHover.activated)
+          if (plugin.fullChannelNameOnHover.activated) {
             plugin.fullChannelNameOnHover.onNavigateFinish();
+          }
         }
       },
 
@@ -4360,9 +5336,9 @@ const executionScript = (communicationKey) => {
         let rightTabs = document.querySelector('#right-tabs');
         if (!document.querySelector('#right-tabs') && related) {
           getLangForPage();
-          let docTmp = document.createElement('template');
+          const docTmp = document.createElement('template');
           docTmp.innerHTML = createHTML(getTabsHTML());
-          let newElm = docTmp.content.firstElementChild;
+          const newElm = docTmp.content.firstElementChild;
           if (newElm !== null) {
             inPageRearrange = true;
             related.parentNode.insertBefore000(newElm, related);
@@ -4394,7 +5370,7 @@ const executionScript = (communicationKey) => {
         if (rightTabs) {
           isRightTabsInserted = true;
           const ioTabBtns = new IntersectionObserver(
-            (entries) => {
+            entries => {
               for (const entry of entries) {
                 const rect = entry.boundingClientRect;
                 entry.target.classList.toggle('tab-btn-visible', rect.width && rect.height);
@@ -4454,7 +5430,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      twoColumnChanged10: (lockId) => {
+      twoColumnChanged10: lockId => {
         if (lockId !== lockGet['twoColumnChanged10Lock']) return;
         for (const continuation of document.querySelectorAll(
           '#tab-videos ytd-watch-next-secondary-results-renderer ytd-continuation-item-renderer'
@@ -4472,7 +5448,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      tabsStatusCorrection: (lockId) => {
+      tabsStatusCorrection: lockId => {
         if (lockId !== lockGet['tabsStatusCorrectionLock']) return;
         const ytdFlexyElm = elements.flexy;
         if (!ytdFlexyElm) return;
@@ -4488,8 +5464,8 @@ const executionScript = (communicationKey) => {
           } else if ((p & 8) === 0 && (q & 8) === 8) {
             lastPanel = 'chat';
           } else if (
-            (((p & 4) == 4 && (q & (4 | 8)) == (0 | 0)) ||
-              ((p & 8) == 8 && (q & (4 | 8)) === (0 | 0))) &&
+            (((p & 4) === 4 && (q & (4 | 8)) === (0 | 0)) ||
+              ((p & 8) === 8 && (q & (4 | 8)) === (0 | 0))) &&
             lastPanel === 'chat'
           ) {
             // 24 -> 16 = -8; 'd'
@@ -4561,13 +5537,13 @@ const executionScript = (communicationKey) => {
           }
 
           // p->q +128
-          if ((p & (1 | 16 | 128)) == (1 | 16) && (q & (1 | 16 | 128)) == (1 | 16 | 128)) {
+          if ((p & (1 | 16 | 128)) === (1 | 16) && (q & (1 | 16 | 128)) === (1 | 16 | 128)) {
             ytBtnCancelTheater();
             actioned = true;
           }
 
           // p->q +1
-          if ((p & (1 | 16 | 128)) == (16 | 128) && (q & (1 | 16 | 128)) == (1 | 16 | 128)) {
+          if ((p & (1 | 16 | 128)) === (16 | 128) && (q & (1 | 16 | 128)) === (1 | 16 | 128)) {
             lastPanel = lastTab || '';
             ytBtnClosePlaylist();
             actioned = true;
@@ -4575,7 +5551,7 @@ const executionScript = (communicationKey) => {
 
           if ((q & 64) === 64) {
             actioned = false;
-          } else if ((p & 64) == 64 && (q & 64) === 0) {
+          } else if ((p & 64) === 64 && (q & 64) === 0) {
             // p->q -64
 
             if ((q & 32) === 32) {
@@ -4725,7 +5701,7 @@ const executionScript = (communicationKey) => {
         }
       },
 
-      updateOnVideoIdChanged: (lockId) => {
+      updateOnVideoIdChanged: lockId => {
         if (lockId !== lockGet['updateOnVideoIdChangedLock']) return;
         const videoId = tmpLastVideoId;
         if (!videoId) return;
@@ -4744,7 +5720,7 @@ const executionScript = (communicationKey) => {
         Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn);
       },
 
-      fixInitialTabStateFn: async (lockId) => {
+      fixInitialTabStateFn: async lockId => {
         // console.log('fixInitialTabStateFn 0a');
         if (lockGet['fixInitialTabStateLock'] !== lockId) return;
         // console.log('fixInitialTabStateFn 0b');
@@ -4787,7 +5763,7 @@ const executionScript = (communicationKey) => {
         fixInitialTabStateK++;
       },
 
-      'tabs-btn-click': (evt) => {
+      'tabs-btn-click': evt => {
         const target = evt.target;
         if (
           target instanceof HTMLElement_ &&
@@ -4818,41 +5794,42 @@ const executionScript = (communicationKey) => {
 
     const promiseForCustomYtElementsReady = isCustomElementsProvided
       ? Promise.resolve(0)
-      : new Promise((callback) => {
-          const EVENT_KEY_ON_REGISTRY_READY = 'ytI-ce-registry-created';
-          if (typeof customElements === 'undefined') {
-            if (!('__CE_registry' in document)) {
-              // https://github.com/webcomponents/polyfills/
-              Object.defineProperty(document, '__CE_registry', {
-                get() {
-                  // return undefined
-                },
-                set(nv) {
-                  if (typeof nv == 'object') {
-                    delete this.__CE_registry;
-                    this.__CE_registry = nv;
-                    this.dispatchEvent(new CustomEvent(EVENT_KEY_ON_REGISTRY_READY));
-                  }
-                  return true;
-                },
-                enumerable: false,
-                configurable: true,
-              });
-            }
-            let eventHandler = (evt) => {
-              document.removeEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
-              const f = callback;
-              callback = null;
-              eventHandler = null;
-              f();
-            };
-            document.addEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
-          } else {
-            callback();
+      : new Promise(callback => {
+        const EVENT_KEY_ON_REGISTRY_READY = 'ytI-ce-registry-created';
+        if (typeof customElements === 'undefined') {
+          if (!('__CE_registry' in document)) {
+            // https://github.com/webcomponents/polyfills/
+            Object.defineProperty(document, '__CE_registry', {
+              get() {
+                // return undefined
+              },
+              set(nv) {
+                if (typeof nv == 'object') {
+                  delete this.__CE_registry;
+                  this.__CE_registry = nv;
+                  this.dispatchEvent(new CustomEvent(EVENT_KEY_ON_REGISTRY_READY));
+                }
+                return true;
+              },
+              enumerable: false,
+              configurable: true,
+            });
           }
-        });
+          let eventHandler = _evt => {
+            document.removeEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
+            const f = callback;
+            callback = null;
+            eventHandler = null;
+            f();
+          };
+          document.addEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
+        } else {
+          callback();
+        }
+      });
 
-    const _retrieveCE = async (nodeName) => {
+    // eslint-disable-next-line no-unused-vars
+    const _retrieveCE = async nodeName => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
         await customElements.whenDefined(nodeName);
@@ -4861,7 +5838,7 @@ const executionScript = (communicationKey) => {
       }
     };
 
-    const retrieveCE = async (nodeName) => {
+    const retrieveCE = async nodeName => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
         await customElements.whenDefined(nodeName);
@@ -4895,7 +5872,7 @@ const executionScript = (communicationKey) => {
 
     moOverall.observe(document, { subtree: true, childList: true });
 
-    const moEgmPanelReady = new MutationObserver((mutations) => {
+    const moEgmPanelReady = new MutationObserver(mutations => {
       for (const mutation of mutations) {
         const target = mutation.target;
         if (!target.hasAttribute000('tyt-egm-panel-jclmd')) continue;
@@ -4920,7 +5897,7 @@ const executionScript = (communicationKey) => {
 
     document.addEventListener(
       'animationstart',
-      (evt) => {
+      evt => {
         const f = eventMap[evt.animationName];
         if (typeof f === 'function') f(evt.target);
       },
@@ -4934,6 +5911,7 @@ const executionScript = (communicationKey) => {
 
     promiseForCustomYtElementsReady.then(eventMap['ceHack']).catch(console.warn);
 
+    // eslint-disable-next-line no-unused-vars
     executionFinished = 1;
   } catch (e) {
     console.log('error 0xF491');
@@ -5087,12 +6065,12 @@ ytd-watch-flexy[is-two-columns_]{contain:layout style;}
   const communicationKey = `ck-${Date.now()}-${Math.floor(Math.random() * 314159265359 + 314159265359).toString(36)}`;
 
   /** @type {globalThis.PromiseConstructor} */
-  const Promise = (async () => {})().constructor; // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
+  const Promise = (async () => { })().constructor; // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
 
   if (!document.documentElement) {
     await Promise.resolve(0);
     while (!document.documentElement) {
-      await new Promise((resolve) => nextBrowserTick(resolve)).then().catch(console.warn);
+      await new Promise(resolve => nextBrowserTick(resolve)).then().catch(console.warn);
     }
   }
   const sourceURL = 'debug://tabview-youtube/tabview.execution.js';
@@ -5118,279 +6096,10 @@ ytd-watch-flexy[is-two-columns_]{contain:layout style;}
   script.remove();
   script = null;
 
-  let style = document.createElement('style');
+  const style = document.createElement('style');
   const sourceURLMainCSS = 'debug://tabview-youtube/tabview.main.css';
   style.textContent = `${styles['main'].trim()}${'\n\n'}/*# sourceURL=${sourceURLMainCSS} */${'\n'}`;
   document.documentElement.appendChild(style);
-})();
-
-// --- MODULE: adblocker.js ---
-
-// Ad Blocker
-(function () {
-  'use strict';
-
-  const AdBlocker = {
-    config: {
-      skipInterval: 500,
-      removeInterval: 1500,
-      enableLogging: false,
-      maxRetries: 2,
-      enabled: true,
-      storageKey: 'youtube_adblocker_settings',
-    },
-
-    state: {
-      isYouTubeShorts: false,
-      isYouTubeMusic: location.hostname === 'music.youtube.com',
-      lastSkipAttempt: 0,
-      retryCount: 0,
-      initialized: false,
-    },
-
-    // Cached DOM queries for better performance
-    cache: {
-      moviePlayer: null,
-      ytdPlayer: null,
-      lastCacheTime: 0,
-      cacheTimeout: 5000,
-    },
-
-    // Optimized selectors
-    selectors: {
-      ads: '#player-ads,.ytp-ad-module,.ad-showing,.ytp-ad-timed-pie-countdown-container,.ytp-ad-survey-questions',
-      elements:
-        '#masthead-ad,ytd-merch-shelf-renderer,.yt-mealbar-promo-renderer,ytmusic-mealbar-promo-renderer,ytmusic-statement-banner-renderer,.ytp-featured-product',
-      video: 'video.html5-main-video',
-      removal: 'ytd-reel-video-renderer .ytd-ad-slot-renderer',
-    },
-
-    // Settings with localStorage caching
-    settings: {
-      load() {
-        try {
-          const saved = localStorage.getItem(AdBlocker.config.storageKey);
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            AdBlocker.config.enabled = parsed.enabled ?? true;
-            AdBlocker.config.enableLogging = parsed.enableLogging ?? false;
-          }
-        } catch (e) {}
-      },
-
-      save() {
-        try {
-          localStorage.setItem(
-            AdBlocker.config.storageKey,
-            JSON.stringify({
-              enabled: AdBlocker.config.enabled,
-              enableLogging: AdBlocker.config.enableLogging,
-            })
-          );
-        } catch (e) {}
-      },
-    },
-
-    // Cached player access
-    getPlayer() {
-      const now = Date.now();
-      if (now - AdBlocker.cache.lastCacheTime > AdBlocker.cache.cacheTimeout) {
-        AdBlocker.cache.moviePlayer = document.querySelector('#movie_player');
-        AdBlocker.cache.ytdPlayer = document.querySelector('#ytd-player');
-        AdBlocker.cache.lastCacheTime = now;
-      }
-
-      const playerEl = AdBlocker.cache.ytdPlayer;
-      return {
-        element: AdBlocker.cache.moviePlayer,
-        player: playerEl?.getPlayer?.() || playerEl,
-      };
-    },
-
-    // Streamlined ad detection and skipping
-    skipAd() {
-      if (!AdBlocker.config.enabled) return;
-
-      const now = Date.now();
-      if (now - AdBlocker.state.lastSkipAttempt < 300) return;
-      AdBlocker.state.lastSkipAttempt = now;
-
-      if (location.pathname.startsWith('/shorts/')) return;
-
-      // Fast ad detection
-      const adElement = document.querySelector(
-        '.ad-showing, .ytp-ad-timed-pie-countdown-container'
-      );
-      if (!adElement) {
-        AdBlocker.state.retryCount = 0;
-        return;
-      }
-
-      try {
-        const { element: moviePlayer, player } = AdBlocker.getPlayer();
-        if (!player) return;
-
-        const video = document.querySelector(AdBlocker.selectors.video);
-
-        // Mute ad immediately
-        if (video) video.muted = true;
-
-        // Skip logic based on platform
-        if (AdBlocker.state.isYouTubeMusic && video) {
-          video.currentTime = video.duration || 999;
-        } else if (typeof player.getVideoData === 'function') {
-          const videoData = player.getVideoData();
-          if (videoData?.video_id) {
-            const currentTime = Math.floor(player.getCurrentTime?.() || 0);
-
-            // Use most efficient skip method
-            if (typeof player.loadVideoById === 'function') {
-              player.loadVideoById(videoData.video_id, currentTime);
-            }
-          }
-        }
-
-        AdBlocker.state.retryCount = 0;
-      } catch (error) {
-        if (AdBlocker.state.retryCount < AdBlocker.config.maxRetries) {
-          AdBlocker.state.retryCount++;
-          setTimeout(AdBlocker.skipAd, 800);
-        }
-      }
-    },
-
-    // Minimal CSS injection
-    addCss() {
-      if (document.querySelector('#yt-ab-styles') || !AdBlocker.config.enabled) return;
-
-      // ✅ Use StyleManager instead of createElement('style')
-      const styles = `${AdBlocker.selectors.ads},${AdBlocker.selectors.elements}{display:none!important;}`;
-      YouTubeUtils.StyleManager.add('yt-ab-styles', styles);
-    },
-
-    removeCss() {
-      YouTubeUtils.StyleManager.remove('yt-ab-styles');
-    },
-
-    // Batched element removal
-    removeElements() {
-      if (!AdBlocker.config.enabled || AdBlocker.state.isYouTubeMusic) return;
-
-      // Use requestIdleCallback for non-blocking removal
-      const remove = () => {
-        const elements = document.querySelectorAll(AdBlocker.selectors.removal);
-        elements.forEach((el) => el.closest('ytd-reel-video-renderer')?.remove());
-      };
-
-      if (window.requestIdleCallback) {
-        requestIdleCallback(remove, { timeout: 100 });
-      } else {
-        setTimeout(remove, 0);
-      }
-    },
-
-    // Optimized settings UI
-    addSettingsUI() {
-      const section = document.querySelector('.ytp-plus-settings-section[data-section="basic"]');
-      if (!section || section.querySelector('.ab-settings')) return;
-
-      try {
-        const item = document.createElement('div');
-        item.className = 'ytp-plus-settings-item ab-settings';
-        item.innerHTML = `
-          <div>
-            <label class="ytp-plus-settings-item-label">Ad Blocker</label>
-            <div class="ytp-plus-settings-item-description">Skip ads and remove ad elements automatically</div>
-          </div>
-          <input type="checkbox" class="ytp-plus-settings-checkbox" ${AdBlocker.config.enabled ? 'checked' : ''}>
-        `;
-
-        section.appendChild(item);
-
-        item.querySelector('input').addEventListener('change', (e) => {
-          AdBlocker.config.enabled = e.target.checked;
-          AdBlocker.settings.save();
-          AdBlocker.config.enabled ? AdBlocker.addCss() : AdBlocker.removeCss();
-        });
-      } catch (error) {
-        YouTubeUtils.logError('AdBlocker', 'Failed to add settings UI', error);
-      }
-    },
-
-    // Streamlined initialization
-    init() {
-      if (AdBlocker.state.initialized) return;
-      AdBlocker.state.initialized = true;
-
-      AdBlocker.settings.load();
-
-      if (AdBlocker.config.enabled) {
-        AdBlocker.addCss();
-        AdBlocker.removeElements();
-      }
-
-      // Start optimized intervals with cleanup registration
-      const skipInterval = setInterval(AdBlocker.skipAd, AdBlocker.config.skipInterval);
-      const removeInterval = setInterval(AdBlocker.removeElements, AdBlocker.config.removeInterval);
-
-      // ✅ Register intervals in cleanupManager
-      YouTubeUtils.cleanupManager.registerInterval(skipInterval);
-      YouTubeUtils.cleanupManager.registerInterval(removeInterval);
-
-      // Navigation handling
-      const handleNavigation = () => {
-        AdBlocker.state.isYouTubeShorts = location.pathname.startsWith('/shorts/');
-        AdBlocker.cache.lastCacheTime = 0; // Reset cache
-      };
-
-      // Override pushState for SPA navigation
-      const originalPushState = history.pushState;
-      history.pushState = function () {
-        const result = originalPushState.apply(this, arguments);
-        setTimeout(handleNavigation, 50);
-        return result;
-      };
-
-      // Settings modal integration
-      const settingsObserver = new MutationObserver((mutations) => {
-        for (const { addedNodes } of mutations) {
-          for (const node of addedNodes) {
-            if (node.classList?.contains('ytp-plus-settings-modal')) {
-              setTimeout(AdBlocker.addSettingsUI, 50);
-              return;
-            }
-          }
-        }
-      });
-
-      // ✅ Register observer in cleanupManager
-      YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-      settingsObserver.observe(document.body, { childList: true });
-
-      // ✅ Register global click listener in cleanupManager
-      const clickHandler = (e) => {
-        if (e.target.dataset?.section === 'basic') {
-          setTimeout(AdBlocker.addSettingsUI, 25);
-        }
-      };
-      YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, {
-        passive: true,
-        capture: true,
-      });
-
-      // Initial skip attempt
-      if (AdBlocker.config.enabled) {
-        setTimeout(AdBlocker.skipAd, 200);
-      }
-    },
-  };
-
-  // Initialize
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', AdBlocker.init, { once: true });
-  } else {
-    AdBlocker.init();
-  }
 })();
 
 // --- MODULE: basic.js ---
@@ -5415,6 +6124,7 @@ const YouTubeUtils = (() => {
    * @returns {Function} Wrapped function
    */
   const safeExecute = (fn, context = 'Unknown') => {
+    /** @this {any} */
     return function (...args) {
       try {
         return fn.apply(this, args);
@@ -5432,6 +6142,7 @@ const YouTubeUtils = (() => {
    * @returns {Function} Wrapped async function
    */
   const safeExecuteAsync = (fn, context = 'Unknown') => {
+    /** @this {any} */
     return async function (...args) {
       try {
         return await fn.apply(this, args);
@@ -5447,7 +6158,7 @@ const YouTubeUtils = (() => {
    * @param {string} html - HTML string to sanitize
    * @returns {string} Sanitized HTML
    */
-  const sanitizeHTML = (html) => {
+  const sanitizeHTML = html => {
     if (typeof html !== 'string') return '';
 
     const map = {
@@ -5459,7 +6170,7 @@ const YouTubeUtils = (() => {
       '/': '&#x2F;',
     };
 
-    return html.replace(/[<>&"'\/]/g, (char) => map[char]);
+    return html.replace(/[<>&"'\/]/g, char => map[char]);
   };
 
   /**
@@ -5467,7 +6178,7 @@ const YouTubeUtils = (() => {
    * @param {string} url - URL to validate
    * @returns {boolean} Whether URL is safe
    */
-  const isValidURL = (url) => {
+  const isValidURL = url => {
     if (typeof url !== 'string') return false;
     try {
       const parsed = new URL(url);
@@ -5526,7 +6237,7 @@ const YouTubeUtils = (() => {
      * Remove item from localStorage
      * @param {string} key - Storage key
      */
-    remove: (key) => {
+    remove: key => {
       try {
         if (typeof key !== 'string' || !key) {
           logError('Storage', 'Invalid storage key', new Error('Key must be a non-empty string'));
@@ -5539,66 +6250,60 @@ const YouTubeUtils = (() => {
     },
   };
 
-  /**
-   * Optimized debounce function with cleanup
-   * @param {Function} func - Function to debounce
-   * @param {number} wait - Wait time in ms
-   * @param {Object} options - Options {leading: boolean}
-   * @returns {Function} Debounced function with cancel method
-   */
-  const debounce = (func, wait, options = {}) => {
-    let timeout;
-    let lastArgs;
-    let lastThis;
+  // Use shared debounce and throttle from YouTubeUtils (defined in utils.js)
+  const debounce =
+    /** @type {any} */ (window).YouTubeUtils?.debounce ||
+    ((func, wait, options = {}) => {
+      let timeout;
+      let lastArgs;
+      let lastThis;
 
-    const debounced = function (...args) {
-      lastArgs = args;
-      lastThis = this;
-      clearTimeout(timeout);
+      /** @this {any} */
+      const debounced = function (...args) {
+        lastArgs = args;
+        lastThis = this;
+        clearTimeout(timeout);
 
-      if (options.leading && !timeout) {
-        func.apply(this, args);
-      }
-
-      timeout = setTimeout(() => {
-        if (!options.leading) {
-          func.apply(lastThis, lastArgs);
+        if (options.leading && !timeout) {
+          /** @type {Function} */ (func).apply(this, args);
         }
+
+        timeout = setTimeout(() => {
+          if (!options.leading) {
+            /** @type {Function} */ (func).apply(lastThis, lastArgs);
+          }
+          timeout = null;
+          lastArgs = null;
+          lastThis = null;
+        }, wait);
+      };
+
+      debounced.cancel = () => {
+        clearTimeout(timeout);
         timeout = null;
         lastArgs = null;
         lastThis = null;
-      }, wait);
-    };
+      };
 
-    debounced.cancel = () => {
-      clearTimeout(timeout);
-      timeout = null;
-      lastArgs = null;
-      lastThis = null;
-    };
+      return debounced;
+    });
 
-    return debounced;
-  };
+  const throttle =
+    /** @type {any} */ (window).YouTubeUtils?.throttle ||
+    ((func, limit) => {
+      let inThrottle;
+      let lastResult;
 
-  /**
-   * Throttle function for rate limiting
-   * @param {Function} func - Function to throttle
-   * @param {number} limit - Time limit in ms
-   * @returns {Function} Throttled function
-   */
-  const throttle = (func, limit) => {
-    let inThrottle;
-    let lastResult;
-
-    return function (...args) {
-      if (!inThrottle) {
-        lastResult = func.apply(this, args);
-        inThrottle = true;
-        setTimeout(() => (inThrottle = false), limit);
-      }
-      return lastResult;
-    };
-  };
+      /** @this {any} */
+      return function (...args) {
+        if (!inThrottle) {
+          lastResult = /** @type {Function} */ (func).apply(this, args);
+          inThrottle = true;
+          setTimeout(() => (inThrottle = false), limit);
+        }
+        return lastResult;
+      };
+    });
 
   /**
    * Safe DOM element creation with props and children
@@ -5642,7 +6347,7 @@ const YouTubeUtils = (() => {
       }
     });
 
-    children.forEach((child) => {
+    children.forEach(child => {
       if (typeof child === 'string') {
         element.appendChild(document.createTextNode(child));
       } else if (child instanceof Node) {
@@ -5721,16 +6426,16 @@ const YouTubeUtils = (() => {
       try {
         const element = parent.querySelector(selector);
         if (element) {
-          resolve(element);
+          resolve(/** @type {HTMLElement} */(/** @type {unknown} */ (element)));
           return;
         }
-      } catch (e) {
+      } catch {
         reject(new Error(`Invalid selector: ${selector}`));
         return;
       }
 
       const controller = new AbortController();
-      let observer;
+      let observer = null;
 
       const timeoutId = setTimeout(() => {
         controller.abort();
@@ -5750,7 +6455,7 @@ const YouTubeUtils = (() => {
           if (element) {
             clearTimeout(timeoutId);
             observer.disconnect();
-            resolve(element);
+            resolve(/** @type {HTMLElement} */(/** @type {unknown} */ (element)));
           }
         } catch (e) {
           logError('waitForElement', 'Observer callback error', e);
@@ -5758,18 +6463,18 @@ const YouTubeUtils = (() => {
       });
 
       try {
-        observer.observe(parent, {
-          childList: true,
-          subtree: true,
-          signal: controller.signal,
-        });
-      } catch (e) {
+        // Ensure parent supports observe/querySelector
+        if (!(parent instanceof Element) && parent !== document) {
+          throw new Error('Parent does not support observation');
+        }
+        observer.observe(parent, { childList: true, subtree: true });
+      } catch {
         // Fallback for browsers without signal support
         try {
           observer.observe(parent, { childList: true, subtree: true });
-        } catch (observeError) {
+        } catch {
           clearTimeout(timeoutId);
-          reject(new Error('Failed to observe DOM: ' + observeError.message));
+          reject(new Error('Failed to observe DOM'));
         }
       }
     });
@@ -5791,7 +6496,7 @@ const YouTubeUtils = (() => {
      * @param {MutationObserver} observer - Observer to register
      * @returns {MutationObserver} Registered observer
      */
-    registerObserver: (observer) => {
+    registerObserver: observer => {
       cleanupManager.observers.add(observer);
       return observer;
     },
@@ -5800,7 +6505,7 @@ const YouTubeUtils = (() => {
      * Unregister and disconnect specific observer
      * @param {MutationObserver} observer - Observer to unregister
      */
-    unregisterObserver: (observer) => {
+    unregisterObserver: observer => {
       if (observer) {
         try {
           observer.disconnect();
@@ -5813,16 +6518,20 @@ const YouTubeUtils = (() => {
 
     /**
      * Register event listener for cleanup
-     * @param {HTMLElement} element - Target element
+     * @param {EventTarget|Document|Window} element - Target element
      * @param {string} event - Event name
-     * @param {Function} handler - Event handler
+     * @param {EventListener|EventListenerObject} handler - Event handler
      * @param {Object} options - Event listener options
      * @returns {Symbol} Listener key for later removal
      */
     registerListener: (element, event, handler, options) => {
       const key = Symbol('listener');
       cleanupManager.listeners.set(key, { element, event, handler, options });
-      element.addEventListener(event, handler, options);
+      try {
+        element.addEventListener(event, /** @type {EventListener} */(handler), options);
+      } catch {
+        // best-effort: if addEventListener fails, still register the listener record
+      }
       return key;
     },
 
@@ -5830,7 +6539,7 @@ const YouTubeUtils = (() => {
      * Unregister specific listener
      * @param {Symbol} key - Listener key
      */
-    unregisterListener: (key) => {
+    unregisterListener: key => {
       const listener = cleanupManager.listeners.get(key);
       if (listener) {
         const { element, event, handler, options } = listener;
@@ -5845,10 +6554,10 @@ const YouTubeUtils = (() => {
 
     /**
      * Register interval for cleanup
-     * @param {number} id - Interval ID
-     * @returns {number} Interval ID
+     * @param {TimerId} id - Interval ID
+     * @returns {TimerId} Interval ID
      */
-    registerInterval: (id) => {
+    registerInterval: id => {
       cleanupManager.intervals.add(id);
       return id;
     },
@@ -5857,17 +6566,17 @@ const YouTubeUtils = (() => {
      * Unregister specific interval
      * @param {number} id - Interval ID
      */
-    unregisterInterval: (id) => {
+    unregisterInterval: id => {
       clearInterval(id);
       cleanupManager.intervals.delete(id);
     },
 
     /**
      * Register timeout for cleanup
-     * @param {number} id - Timeout ID
-     * @returns {number} Timeout ID
+     * @param {TimerId} id - Timeout ID
+     * @returns {TimerId} Timeout ID
      */
-    registerTimeout: (id) => {
+    registerTimeout: id => {
       cleanupManager.timeouts.add(id);
       return id;
     },
@@ -5876,7 +6585,7 @@ const YouTubeUtils = (() => {
      * Unregister specific timeout
      * @param {number} id - Timeout ID
      */
-    unregisterTimeout: (id) => {
+    unregisterTimeout: id => {
       clearTimeout(id);
       cleanupManager.timeouts.delete(id);
     },
@@ -5886,7 +6595,7 @@ const YouTubeUtils = (() => {
      * @param {number} id - Animation frame ID
      * @returns {number} Animation frame ID
      */
-    registerAnimationFrame: (id) => {
+    registerAnimationFrame: id => {
       cleanupManager.animationFrames.add(id);
       return id;
     },
@@ -5895,7 +6604,7 @@ const YouTubeUtils = (() => {
      * Unregister specific animation frame
      * @param {number} id - Animation frame ID
      */
-    unregisterAnimationFrame: (id) => {
+    unregisterAnimationFrame: id => {
       cancelAnimationFrame(id);
       cleanupManager.animationFrames.delete(id);
     },
@@ -5905,7 +6614,7 @@ const YouTubeUtils = (() => {
      */
     cleanup: () => {
       // Disconnect all observers
-      cleanupManager.observers.forEach((obs) => {
+      cleanupManager.observers.forEach(obs => {
         try {
           obs.disconnect();
         } catch (e) {
@@ -5925,15 +6634,15 @@ const YouTubeUtils = (() => {
       cleanupManager.listeners.clear();
 
       // Clear all intervals
-      cleanupManager.intervals.forEach((id) => clearInterval(id));
+      cleanupManager.intervals.forEach(id => clearInterval(id));
       cleanupManager.intervals.clear();
 
       // Clear all timeouts
-      cleanupManager.timeouts.forEach((id) => clearTimeout(id));
+      cleanupManager.timeouts.forEach(id => clearTimeout(id));
       cleanupManager.timeouts.clear();
 
       // Cancel all animation frames
-      cleanupManager.animationFrames.forEach((id) => cancelAnimationFrame(id));
+      cleanupManager.animationFrames.forEach(id => cancelAnimationFrame(id));
       cleanupManager.animationFrames.clear();
     },
   };
@@ -6103,27 +6812,17 @@ const YouTubeUtils = (() => {
       }
 
       const {
-        type = 'info',
         duration = this.defaultDuration,
         position = null,
-        dismissible = true,
         action = null, // { text: string, callback: function }
       } = options;
 
       // Remove duplicate messages
-      this.activeNotifications.forEach((notif) => {
+      this.activeNotifications.forEach(notif => {
         if (notif.dataset.message === message) {
           this.remove(notif);
         }
       });
-
-      const colors = {
-        info: 'rgba(34, 197, 94, 0.9)',
-        error: 'rgba(220, 38, 38, 0.9)',
-        warning: 'rgba(251, 191, 36, 0.9)',
-        update: 'linear-gradient(135deg, rgba(255, 69, 0, 0.95), rgba(255, 140, 0, 0.95))',
-        success: 'rgba(34, 197, 94, 0.9)',
-      };
 
       const positions = {
         'top-right': { top: '20px', right: '20px' },
@@ -6244,7 +6943,7 @@ const YouTubeUtils = (() => {
      * Clear all notifications
      */
     clearAll() {
-      this.activeNotifications.forEach((notif) => {
+      this.activeNotifications.forEach(notif => {
         try {
           notif.remove();
         } catch (e) {
@@ -6287,13 +6986,13 @@ const YouTubeUtils = (() => {
   cleanupManager.registerInterval(cacheCleanupInterval);
 
   // Global error handler for uncaught promise rejections
-  window.addEventListener('unhandledrejection', (event) => {
+  window.addEventListener('unhandledrejection', event => {
     logError('Global', 'Unhandled promise rejection', event.reason);
     event.preventDefault(); // Prevent console spam
   });
 
   // Global error handler for uncaught errors
-  window.addEventListener('error', (event) => {
+  window.addEventListener('error', event => {
     // Only log errors from our script
     if (event.filename && event.filename.includes('youtube')) {
       logError(
@@ -6311,6 +7010,7 @@ const YouTubeUtils = (() => {
    * @returns {Function} Wrapped function
    */
   const measurePerformance = (label, fn) => {
+    /** @this {any} */
     return function (...args) {
       const start = performance.now();
       try {
@@ -6334,6 +7034,7 @@ const YouTubeUtils = (() => {
    * @returns {Function} Wrapped async function
    */
   const measurePerformanceAsync = (label, fn) => {
+    /** @this {any} */
     return async function (...args) {
       const start = performance.now();
       try {
@@ -6383,7 +7084,7 @@ const YouTubeUtils = (() => {
         return await fn();
       } catch (error) {
         if (i === retries - 1) throw error;
-        await new Promise((resolve) => setTimeout(resolve, delay * (i + 1)));
+        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
       }
     }
   };
@@ -6416,14 +7117,20 @@ const YouTubeUtils = (() => {
 
 // Make available globally
 if (typeof window !== 'undefined') {
-  window.YouTubeUtils = YouTubeUtils;
+  // Merge utilities into existing global YouTubeUtils without overwriting
+  /** @type {any} */ (window).YouTubeUtils = /** @type {any} */ (window).YouTubeUtils || {};
+  const existing = /** @type {any} */ (window).YouTubeUtils;
+  try {
+    for (const k of Object.keys(YouTubeUtils)) {
+      if (existing[k] === undefined) existing[k] = YouTubeUtils[k];
+    }
+  } catch { }
 
-  // Add initialization health check
-  console.log('[YouTube+ v2.0] Core utilities loaded successfully');
-  console.log('[YouTube+] Features: Performance monitoring, Memory management, Error recovery');
+  // Add initialization health check (non-intrusive)
+  console.log('[YouTube+ v2.0] Core utilities merged');
 
   // Expose debug info
-  window.YouTubePlusDebug = {
+  /** @type {any} */ (window).YouTubePlusDebug = {
     version: '2.0',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
@@ -6473,6 +7180,8 @@ if (typeof window !== 'undefined') {
       storageKey: 'youtube_playback_speed',
     },
 
+    _initialized: false,
+
     // Settings
     settings: {
       enableSpeedControl: true,
@@ -6500,27 +7209,6 @@ if (typeof window !== 'undefined') {
     // Cache DOM queries
     _cache: new Map(),
 
-    // Initialize everything
-    init() {
-      if (!/youtube\.com/.test(location.host)) return;
-
-      try {
-        this.loadSettings();
-        this.speedControl.currentSpeed = parseFloat(
-          localStorage.getItem(this.speedControl.storageKey) || 1
-        );
-
-        this.insertStyles();
-        this.addSettingsButtonToHeader();
-        this.setupNavigationObserver();
-        this.setupCurrentPage();
-
-        console.log('[YouTube+] YouTubeEnhancer v2.0 initialized successfully');
-      } catch (error) {
-        YouTubeUtils.logError('YouTubeEnhancer', 'Initialization failed', error);
-      }
-    },
-
     // Cached element getter
     getElement(selector, useCache = true) {
       if (useCache && this._cache.has(selector)) {
@@ -6541,6 +7229,34 @@ if (typeof window !== 'undefined') {
       } catch (e) {
         console.error('Error loading settings:', e);
       }
+    },
+
+    init() {
+      if (this._initialized) {
+        return;
+      }
+
+      this._initialized = true;
+
+      try {
+        this.loadSettings();
+      } catch (error) {
+        console.warn('[YouTube Enhancer] Failed to load settings during init:', error);
+      }
+
+      this.insertStyles();
+      this.addSettingsButtonToHeader();
+      this.setupNavigationObserver();
+
+      if (location.href.includes('watch?v=')) {
+        this.setupCurrentPage();
+      }
+
+      document.addEventListener('visibilitychange', () => {
+        if (!document.hidden && location.href.includes('watch?v=')) {
+          this.setupCurrentPage();
+        }
+      });
     },
 
     saveSettings() {
@@ -6596,7 +7312,7 @@ if (typeof window !== 'undefined') {
           this.updatePageBasedOnSettings();
           this.refreshDownloadButton();
         })
-        .catch(() => {});
+        .catch(() => { });
     },
 
     insertStyles() {
@@ -6694,7 +7410,7 @@ if (typeof window !== 'undefined') {
 
     addSettingsButtonToHeader() {
       this.waitForElement('ytd-masthead #end', 5000)
-        .then((headerEnd) => {
+        .then(headerEnd => {
           if (!this.getElement('.ytp-plus-settings-button')) {
             const settingsButton = document.createElement('div');
             settingsButton.className = 'ytp-plus-settings-button';
@@ -6715,7 +7431,7 @@ if (typeof window !== 'undefined') {
             }
           }
         })
-        .catch(() => {});
+        .catch(() => { });
     },
 
     createSettingsModal() {
@@ -6804,10 +7520,10 @@ if (typeof window !== 'undefined') {
                         <div class="download-site-controls" style="display:${this.settings.downloadSites?.y2mate ? 'block' : 'none'};">
                           <input type="text" placeholder="Site name" value="${this.settings.downloadSiteCustomization?.y2mate?.name || 'Y2Mate'}" 
                               data-site="y2mate" data-field="name" class="download-site-input" 
-                              style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
+                              style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
                           <input type="text" placeholder="URL template (use {videoId} or {videoUrl})" value="${this.settings.downloadSiteCustomization?.y2mate?.url || 'https://www.y2mate.com/youtube/{videoId}'}" 
                             data-site="y2mate" data-field="url" class="download-site-input" 
-                            style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
+                            style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
                           <div class="download-site-cta">
                             <button class="glass-button" id="download-y2mate-save" style="padding:6px 10px;font-size:12px;">Save</button>
                             <button class="glass-button" id="download-y2mate-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">Reset</button>
@@ -6826,10 +7542,10 @@ if (typeof window !== 'undefined') {
                         <div class="download-site-controls" style="display:${this.settings.downloadSites?.xbbuddy ? 'block' : 'none'};">
                           <input type="text" placeholder="Site name" value="${this.settings.downloadSiteCustomization?.xbbuddy?.name || '9xbuddy'}" 
                             data-site="xbbuddy" data-field="name" class="download-site-input" 
-                            style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
+                            style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
                           <input type="text" placeholder="URL template (use {videoId} or {videoUrl})" value="${this.settings.downloadSiteCustomization?.xbbuddy?.url || 'https://9xbuddy.org/process?url={videoUrl}'}" 
                             data-site="xbbuddy" data-field="url" class="download-site-input" 
-                            style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.5);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
+                            style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
                           <div class="download-site-cta">
                             <button class="glass-button" id="download-xbbuddy-save" style="padding:6px 10px;font-size:12px;">Save</button>
                             <button class="glass-button" id="download-xbbuddy-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">Reset</button>
@@ -6875,61 +7591,73 @@ if (typeof window !== 'undefined') {
         `;
 
       // Event delegation for better performance
-      modal.addEventListener('click', (e) => {
-        if (e.target === modal) modal.remove();
+      modal.addEventListener('click', e => {
+        const target = /** @type {HTMLElement} */ (e.target);
+        if (target === modal) modal.remove();
         if (
-          e.target.classList.contains('ytp-plus-settings-close') ||
-          e.target.closest('.ytp-plus-settings-close')
-        )
+          target.classList.contains('ytp-plus-settings-close') ||
+          target.closest('.ytp-plus-settings-close')
+        ) {
           modal.remove();
+        }
 
         // Обработка кнопки GitHub для YTDL
-        if (e.target.id === 'open-ytdl-github' || e.target.closest('#open-ytdl-github')) {
+        if (target.id === 'open-ytdl-github' || target.closest('#open-ytdl-github')) {
           window.open('https://github.com/diorhc/YouTube-Downloader', '_blank');
           return;
         }
 
-        if (e.target.classList.contains('ytp-plus-settings-nav-item')) {
+        if (target.classList.contains('ytp-plus-settings-nav-item')) {
           // Handle sidebar navigation
-          const section = e.target.dataset.section;
+          const section = /** @type {HTMLElement} */ (target).dataset.section;
           modal
             .querySelectorAll('.ytp-plus-settings-nav-item')
-            .forEach((item) => item.classList.remove('active'));
+            .forEach(item => item.classList.remove('active'));
           modal
             .querySelectorAll('.ytp-plus-settings-section')
-            .forEach((section) => section.classList.add('hidden'));
+            .forEach(section => section.classList.add('hidden'));
 
-          e.target.classList.add('active');
+          target.classList.add('active');
           modal
             .querySelector(`.ytp-plus-settings-section[data-section="${section}"]`)
             .classList.remove('hidden');
         }
 
-        if (e.target.classList.contains('ytp-plus-settings-checkbox')) {
-          const setting = e.target.dataset.setting;
+        if (target.classList.contains('ytp-plus-settings-checkbox')) {
+          const setting = /** @type {HTMLElement} */ (target).dataset.setting;
           if (!setting) return;
 
           // Сохранение простых настроек (enableSpeedControl, enableScreenshot, enableDownload)
           if (!setting.startsWith('downloadSite_')) {
-            this.settings[setting] = e.target.checked;
+            this.settings[setting] = /** @type {HTMLInputElement} */ (target).checked;
 
             // Показывать/скрывать сабменю при переключении Download
             if (setting === 'enableDownload') {
               const submenu = modal.querySelector('.download-submenu');
-              if (submenu) submenu.style.display = e.target.checked ? 'block' : 'none';
+              if (submenu) {
+                submenu.style.display = /** @type {HTMLInputElement} */ (target).checked
+                  ? 'block'
+                  : 'none';
+              }
             }
           } else {
             // Обработка чекбоксов в сабменю: data-setting = downloadSite_<key>
             const key = setting.replace('downloadSite_', '');
-            if (!this.settings.downloadSites) this.settings.downloadSites = {};
-            this.settings.downloadSites[key] = e.target.checked;
+            if (!this.settings.downloadSites) {
+              this.settings.downloadSites = { y2mate: true, xbbuddy: true };
+            }
+            const checkbox = /** @type {HTMLElement} */ (target);
+            this.settings.downloadSites[key] = /** @type {HTMLInputElement} */ (checkbox).checked;
             // Toggle visibility of controls for this site (if present in DOM)
             try {
-              const checkbox = e.target;
               const container = checkbox.closest('.download-site-option');
               if (container) {
                 const controls = container.querySelector('.download-site-controls');
-                if (controls) controls.style.display = e.target.checked ? 'block' : 'none';
+                if (controls) {
+                  controls.style.display = /** @type {HTMLInputElement} */ (checkbox).checked
+                    ? 'block'
+                    : 'none';
+                }
               }
             } catch (err) {
               console.warn('[YouTube+] toggle download-site-controls failed:', err);
@@ -6938,11 +7666,13 @@ if (typeof window !== 'undefined') {
             try {
               if (
                 typeof window !== 'undefined' &&
-                window.youtubePlus &&
-                typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+                /** @type {any} */ (window).youtubePlus &&
+                typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+                'function'
               ) {
-                window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-                window.youtubePlus.rebuildDownloadDropdown();
+                /** @type {any} */ (window).youtubePlus.settings =
+                  /** @type {any} */ (window).youtubePlus.settings || this.settings;
+                /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
               }
             } catch (err) {
               console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -6951,58 +7681,74 @@ if (typeof window !== 'undefined') {
         }
 
         // Обработка кастомизации download сайтов
-        if (e.target.classList.contains('download-site-input')) {
-          const site = e.target.dataset.site;
-          const field = e.target.dataset.field;
+        if (target.classList.contains('download-site-input')) {
+          const site = /** @type {HTMLElement} */ (target).dataset.site;
+          const field = /** @type {HTMLElement} */ (target).dataset.field;
           if (!site || !field) return;
 
           if (!this.settings.downloadSiteCustomization) {
-            this.settings.downloadSiteCustomization = {};
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
           }
           if (!this.settings.downloadSiteCustomization[site]) {
             this.settings.downloadSiteCustomization[site] = { name: '', url: '' };
           }
 
-          this.settings.downloadSiteCustomization[site][field] = e.target.value;
+          this.settings.downloadSiteCustomization[site][field] = /** @type {HTMLInputElement} */ (
+            target
+          ).value;
 
           // Обновить имя в UI в реальном времени
           if (field === 'name') {
-            const nameDisplay = e.target
+            const nameDisplay = target
               .closest('.download-site-option')
               ?.querySelector('.download-site-name');
-            if (nameDisplay)
+            if (nameDisplay) {
               nameDisplay.textContent =
-                e.target.value || (site === 'y2mate' ? 'Y2Mate' : '9xbuddy');
+                /** @type {HTMLInputElement} */ (target).value ||
+                (site === 'y2mate' ? 'Y2Mate' : '9xbuddy');
+            }
           }
           // Rebuild dropdown if present so changes reflect immediately
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+              'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
           }
         }
 
-        if (e.target.id === 'ytp-plus-save-settings') {
+        if (target.id === 'ytp-plus-save-settings') {
           this.saveSettings();
           modal.remove();
           this.showNotification('Settings saved');
         }
         // Save specific Y2Mate customization
-        if (e.target.id === 'download-y2mate-save') {
+        if (target.id === 'download-y2mate-save') {
           // Ensure settings structure
-          if (!this.settings.downloadSiteCustomization)
-            this.settings.downloadSiteCustomization = {};
-          if (!this.settings.downloadSiteCustomization.y2mate)
-            this.settings.downloadSiteCustomization.y2mate = {};
+          if (!this.settings.downloadSiteCustomization) {
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
+          }
+          if (!this.settings.downloadSiteCustomization.y2mate) {
+            this.settings.downloadSiteCustomization.y2mate = { name: '', url: '' };
+          }
           // Read current inputs inside this download-site-option
-          const container = e.target.closest('.download-site-option');
+          const container = /** @type {HTMLElement|null} */ (
+            /** @type {unknown} */ (target.closest('.download-site-option'))
+          );
           if (container) {
             const nameInput = container.querySelector(
               'input.download-site-input[data-site="y2mate"][data-field="name"]'
@@ -7017,11 +7763,13 @@ if (typeof window !== 'undefined') {
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+              'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -7030,15 +7778,22 @@ if (typeof window !== 'undefined') {
         }
 
         // Reset Y2Mate to defaults
-        if (e.target.id === 'download-y2mate-reset') {
-          if (!this.settings.downloadSiteCustomization)
-            this.settings.downloadSiteCustomization = {};
+        if (target.id === 'download-y2mate-reset') {
+          if (!this.settings.downloadSiteCustomization) {
+            // Initialize with expected structure to satisfy type checks
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
+          }
           this.settings.downloadSiteCustomization.y2mate = {
             name: 'Y2Mate',
             url: 'https://www.y2mate.com/youtube/{videoId}',
           };
           // Update inputs in modal if present
-          const container = modal.querySelector('.download-site-option');
+          const container = /** @type {HTMLElement|null} */ (
+            /** @type {unknown} */ (modal.querySelector('.download-site-option'))
+          );
           if (container) {
             const nameInput = container.querySelector(
               'input.download-site-input[data-site="y2mate"][data-field="name"]'
@@ -7049,18 +7804,21 @@ if (typeof window !== 'undefined') {
             const nameDisplay = container.querySelector('.download-site-name');
             if (nameInput) nameInput.value = this.settings.downloadSiteCustomization.y2mate.name;
             if (urlInput) urlInput.value = this.settings.downloadSiteCustomization.y2mate.url;
-            if (nameDisplay)
+            if (nameDisplay) {
               nameDisplay.textContent = this.settings.downloadSiteCustomization.y2mate.name;
+            }
           }
           this.saveSettings();
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+              'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -7069,12 +7827,20 @@ if (typeof window !== 'undefined') {
         }
 
         // Save specific 9xBuddy customization
-        if (e.target.id === 'download-xbbuddy-save') {
-          if (!this.settings.downloadSiteCustomization)
-            this.settings.downloadSiteCustomization = {};
-          if (!this.settings.downloadSiteCustomization.xbbuddy)
-            this.settings.downloadSiteCustomization.xbbuddy = {};
-          const container = e.target.closest('.download-site-option');
+        if (target.id === 'download-xbbuddy-save') {
+          if (!this.settings.downloadSiteCustomization) {
+            // Initialize expected structure
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
+          }
+          if (!this.settings.downloadSiteCustomization.xbbuddy) {
+            this.settings.downloadSiteCustomization.xbbuddy = { name: '', url: '' };
+          }
+          const container = /** @type {HTMLElement|null} */ (
+            /** @type {unknown} */ (target.closest('.download-site-option'))
+          );
           if (container) {
             const nameInput = container.querySelector(
               'input.download-site-input[data-site="xbbuddy"][data-field="name"]'
@@ -7089,11 +7855,13 @@ if (typeof window !== 'undefined') {
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+              'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -7102,15 +7870,21 @@ if (typeof window !== 'undefined') {
         }
 
         // Reset 9xBuddy to defaults
-        if (e.target.id === 'download-xbbuddy-reset') {
-          if (!this.settings.downloadSiteCustomization)
-            this.settings.downloadSiteCustomization = {};
+        if (target.id === 'download-xbbuddy-reset') {
+          if (!this.settings.downloadSiteCustomization) {
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
+          }
           this.settings.downloadSiteCustomization.xbbuddy = {
             name: '9xbuddy',
             url: 'https://9xbuddy.org/process?url={videoUrl}',
           };
           // Update inputs in modal if present
-          const container = modal.querySelectorAll('.download-site-option')[1];
+          const container = /** @type {HTMLElement|null} */ (
+            /** @type {unknown} */ (modal.querySelectorAll('.download-site-option')[1])
+          );
           if (container) {
             const nameInput = container.querySelector(
               'input.download-site-input[data-site="xbbuddy"][data-field="name"]'
@@ -7121,18 +7895,21 @@ if (typeof window !== 'undefined') {
             const nameDisplay = container.querySelector('.download-site-name');
             if (nameInput) nameInput.value = this.settings.downloadSiteCustomization.xbbuddy.name;
             if (urlInput) urlInput.value = this.settings.downloadSiteCustomization.xbbuddy.url;
-            if (nameDisplay)
+            if (nameDisplay) {
               nameDisplay.textContent = this.settings.downloadSiteCustomization.xbbuddy.name;
+            }
           }
           this.saveSettings();
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+              'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -7142,39 +7919,49 @@ if (typeof window !== 'undefined') {
       });
 
       // Обработка изменений input полей для кастомизации
-      modal.addEventListener('input', (e) => {
-        if (e.target.classList.contains('download-site-input')) {
-          const site = e.target.dataset.site;
-          const field = e.target.dataset.field;
+      modal.addEventListener('input', e => {
+        const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+        if (target.classList.contains('download-site-input')) {
+          const site = /** @type {HTMLElement} */ (target).dataset.site;
+          const field = /** @type {HTMLElement} */ (target).dataset.field;
           if (!site || !field) return;
 
           if (!this.settings.downloadSiteCustomization) {
-            this.settings.downloadSiteCustomization = {};
+            this.settings.downloadSiteCustomization = {
+              y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+              xbbuddy: { name: '9xbuddy', url: 'https://9xbuddy.org/process?url={videoUrl}' },
+            };
           }
           if (!this.settings.downloadSiteCustomization[site]) {
             this.settings.downloadSiteCustomization[site] = { name: '', url: '' };
           }
 
-          this.settings.downloadSiteCustomization[site][field] = e.target.value;
+          this.settings.downloadSiteCustomization[site][field] = /** @type {HTMLInputElement} */ (
+            target
+          ).value;
 
           // Обновить имя в UI в реальном времени
           if (field === 'name') {
-            const nameDisplay = e.target
-              .closest('.download-site-option')
-              ?.querySelector('.download-site-name');
-            if (nameDisplay)
+            const nameDisplay = /** @type {HTMLElement|null} */ (
+              /** @type {unknown} */ (target.closest('.download-site-option'))
+            )?.querySelector('.download-site-name');
+            if (nameDisplay) {
               nameDisplay.textContent =
-                e.target.value || (site === 'y2mate' ? 'Y2Mate' : '9xbuddy');
+                /** @type {HTMLInputElement} */ (target).value ||
+                (site === 'y2mate' ? 'Y2Mate' : '9xbuddy');
+            }
           }
           // Rebuild dropdown if present so changes reflect immediately
           try {
             if (
               typeof window !== 'undefined' &&
-              window.youtubePlus &&
-              typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
+              /** @type {any} */ (window).youtubePlus &&
+              typeof (/** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown) ===
+              'function'
             ) {
-              window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
-              window.youtubePlus.rebuildDownloadDropdown();
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || this.settings;
+              /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown();
             }
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
@@ -7308,16 +8095,16 @@ if (typeof window !== 'undefined') {
           // Rebuild downloadSites from current settings
           const customizationNow =
             typeof window !== 'undefined' &&
-            window.youtubePlus &&
-            window.youtubePlus.settings &&
-            window.youtubePlus.settings.downloadSiteCustomization
-              ? window.youtubePlus.settings.downloadSiteCustomization
+            /** @type {any} */ (window).youtubePlus &&
+            /** @type {any} */ (window).youtubePlus.settings &&
+            /** @type {any} */ (window).youtubePlus.settings.downloadSiteCustomization
+              ? /** @type {any} */ (window).youtubePlus.settings.downloadSiteCustomization
               : customization;
           const videoIdNow = new URLSearchParams(location.search).get('v');
           const videoUrlNow = videoIdNow
             ? `https://www.youtube.com/watch?v=${videoIdNow}`
             : location.href;
-          const buildUrlNow = (template) =>
+          const buildUrlNow = template =>
             (template || '')
               .replace('{videoId}', videoIdNow || '')
               .replace('{videoUrl}', encodeURIComponent(videoUrlNow));
@@ -7344,13 +8131,13 @@ if (typeof window !== 'undefined') {
 
           const enabledSitesNow =
             typeof window !== 'undefined' &&
-            window.youtubePlus &&
-            window.youtubePlus.settings &&
-            window.youtubePlus.settings.downloadSites
-              ? window.youtubePlus.settings.downloadSites
+            /** @type {any} */ (window).youtubePlus &&
+            /** @type {any} */ (window).youtubePlus.settings &&
+            /** @type {any} */ (window).youtubePlus.settings.downloadSites
+              ? /** @type {any} */ (window).youtubePlus.settings.downloadSites
               : enabledSites;
 
-          const downloadSitesNow = baseSitesNow.filter((s) => {
+          const downloadSitesNow = baseSitesNow.filter(s => {
             if (s.key === 'ytdl') return true;
             return enabledSitesNow[s.key] !== false;
           });
@@ -7361,24 +8148,25 @@ if (typeof window !== 'undefined') {
             // Remove any existing clickable handlers on button
             button.replaceWith(button.cloneNode(true));
             const newButton = controls.querySelector('.ytp-download-button');
-            if (newButton)
+            if (newButton) {
               newButton.addEventListener('click', () =>
                 openDownloadSite(single.url, single.isYTDL)
               );
+            }
             return;
           }
 
           // Build new list
           const newList = document.createElement('div');
           newList.className = 'download-options-list';
-          downloadSitesNow.forEach((site) => {
+          downloadSitesNow.forEach(site => {
             const opt = document.createElement('div');
             opt.className = 'download-option-item';
             opt.textContent = site.name;
             opt.setAttribute('role', 'menuitem');
             opt.setAttribute('tabindex', '0');
             opt.addEventListener('click', () => openDownloadSite(site.url, site.isYTDL));
-            opt.addEventListener('keydown', (e) => {
+            opt.addEventListener('keydown', e => {
               if (e.key === 'Enter' || e.key === ' ') openDownloadSite(site.url, site.isYTDL);
             });
             newList.appendChild(opt);
@@ -7400,7 +8188,7 @@ if (typeof window !== 'undefined') {
       };
 
       // Функция для замены плейсхолдеров в URL
-      const buildUrl = (template) => {
+      const buildUrl = template => {
         return template
           .replace('{videoId}', videoId || '')
           .replace('{videoUrl}', encodeURIComponent(videoUrl));
@@ -7429,7 +8217,7 @@ if (typeof window !== 'undefined') {
           : { y2mate: true, xbbuddy: true };
 
       // YTDL всегда включён, фильтруем остальные по настройкам
-      const downloadSites = baseSites.filter((s) => {
+      const downloadSites = baseSites.filter(s => {
         if (s.key === 'ytdl') return true; // ytdl всегда включён
         return enabledSites[s.key] !== false;
       });
@@ -7447,14 +8235,14 @@ if (typeof window !== 'undefined') {
       const list = document.createElement('div');
       list.className = 'download-options-list';
 
-      downloadSites.forEach((site) => {
+      downloadSites.forEach(site => {
         const opt = document.createElement('div');
         opt.className = 'download-option-item';
         opt.textContent = site.name;
         opt.setAttribute('role', 'menuitem');
         opt.setAttribute('tabindex', '0');
         opt.addEventListener('click', () => openDownloadSite(site.url, site.isYTDL));
-        opt.addEventListener('keydown', (e) => {
+        opt.addEventListener('keydown', e => {
           if (e.key === 'Enter' || e.key === ' ') {
             openDownloadSite(site.url, site.isYTDL);
           }
@@ -7469,10 +8257,11 @@ if (typeof window !== 'undefined') {
       // Expose rebuild function globally (safe guard) so settings handlers can call it
       try {
         if (typeof window !== 'undefined') {
-          window.youtubePlus = window.youtubePlus || {};
-          window.youtubePlus.rebuildDownloadDropdown = rebuildDropdown;
+          /** @type {any} */ (window).youtubePlus = /** @type {any} */ (window).youtubePlus || {};
+          /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown = rebuildDropdown;
           // also store settings ref for rebuildDropdown to read
-          window.youtubePlus.settings = window.youtubePlus.settings || this.settings;
+          /** @type {any} */ (window).youtubePlus.settings =
+            /** @type {any} */ (window).youtubePlus.settings || this.settings;
         }
       } catch (e) {
         console.warn('[YouTube+] expose rebuildDownloadDropdown failed:', e);
@@ -7495,7 +8284,7 @@ if (typeof window !== 'undefined') {
       button.addEventListener('mouseleave', hideDropdown);
       options.addEventListener('mouseenter', showDropdown);
       options.addEventListener('mouseleave', hideDropdown);
-      button.addEventListener('keydown', (e) => {
+      button.addEventListener('keydown', e => {
         if (e.key === 'Enter' || e.key === ' ') {
           if (options.classList.contains('visible')) {
             hideDropdown();
@@ -7516,11 +8305,11 @@ if (typeof window !== 'undefined') {
       const speedOptions = document.createElement('div');
       speedOptions.className = 'speed-options';
 
-      [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0].forEach((speed) => {
+      [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0].forEach(speed => {
         const option = document.createElement('div');
-        option.className = `speed-option-item${parseFloat(speed) === this.speedControl.currentSpeed ? ' speed-option-active' : ''}`;
+        option.className = `speed-option-item${Number(speed) === this.speedControl.currentSpeed ? ' speed-option-active' : ''}`;
         option.textContent = `${speed}x`;
-        option.dataset.speed = speed;
+        option.dataset.speed = String(speed);
         option.addEventListener('click', () => this.changeSpeed(speed));
         speedOptions.appendChild(option);
       });
@@ -7566,20 +8355,20 @@ if (typeof window !== 'undefined') {
 
     handleFullscreenChange() {
       const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
-      document.querySelectorAll('.ytp-screenshot-button, .ytp-cobalt-button').forEach((button) => {
+      document.querySelectorAll('.ytp-screenshot-button, .ytp-cobalt-button').forEach(button => {
         button.style.bottom = isFullscreen ? '15px' : '12px';
       });
     },
 
     changeSpeed(speed) {
-      speed = parseFloat(speed);
+      speed = Number(speed);
       this.speedControl.currentSpeed = speed;
-      localStorage.setItem(this.speedControl.storageKey, speed);
+      localStorage.setItem(this.speedControl.storageKey, String(speed));
 
       const speedBtn = this.getElement('.speed-control-btn span', false);
       if (speedBtn) speedBtn.textContent = `${speed}×`;
 
-      document.querySelectorAll('.speed-option-item').forEach((option) => {
+      document.querySelectorAll('.speed-option-item').forEach(option => {
         option.classList.toggle('speed-option-active', parseFloat(option.dataset.speed) === speed);
       });
 
@@ -7588,7 +8377,7 @@ if (typeof window !== 'undefined') {
     },
 
     applyCurrentSpeed() {
-      document.querySelectorAll('video').forEach((video) => {
+      document.querySelectorAll('video').forEach(video => {
         if (video && video.playbackRate !== this.speedControl.currentSpeed) {
           video.playbackRate = this.speedControl.currentSpeed;
         }
@@ -7625,7 +8414,15 @@ if (typeof window !== 'undefined') {
       });
 
       YouTubeUtils.cleanupManager.registerObserver(observer);
-      observer.observe(document.body, { childList: true, subtree: true });
+
+      // ✅ Safe observe with document.body check
+      if (document.body) {
+        observer.observe(document.body, { childList: true, subtree: true });
+      } else {
+        document.addEventListener('DOMContentLoaded', () => {
+          observer.observe(document.body, { childList: true, subtree: true });
+        });
+      }
     },
 
     showSpeedIndicator(speed) {
@@ -7642,12 +8439,12 @@ if (typeof window !== 'undefined') {
       indicator.style.display = 'block';
       indicator.style.opacity = '0.8';
 
-      let startTime = performance.now();
-      const fadeOut = (timestamp) => {
+      const startTime = performance.now();
+      const fadeOut = timestamp => {
         const elapsed = timestamp - startTime;
         const progress = Math.min(elapsed / 1500, 1);
 
-        indicator.style.opacity = 0.8 * (1 - progress);
+        indicator.style.opacity = String(0.8 * (1 - progress));
 
         if (progress < 1) {
           this.speedControl.activeAnimationId = YouTubeUtils.cleanupManager.registerAnimationFrame(
@@ -7665,301 +8462,753 @@ if (typeof window !== 'undefined') {
     },
   };
 
-  document.readyState === 'loading'
-    ? document.addEventListener('DOMContentLoaded', YouTubeEnhancer.init.bind(YouTubeEnhancer))
-    : YouTubeEnhancer.init();
+  // Save reference to init function BEFORE IIFE closes (critical for DOMContentLoaded)
+  const initFunction = YouTubeEnhancer.init.bind(YouTubeEnhancer);
+
+  // Initialize immediately or on DOMContentLoaded
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', initFunction);
+  } else {
+    initFunction();
+  }
 })();
 
-// --- MODULE: comment.js ---
+// --- MODULE: enhanced.js ---
 
-// Commment Manager
+// Enhanced Tabviews
 (function () {
   'use strict';
 
-  // Streamlined configuration
-  const CONFIG = {
-    selectors: {
-      deleteButtons: 'div[class^="VfPpkd-Bz112c-"]',
-      menuButton: '[aria-haspopup="menu"]',
-    },
-    classes: {
-      checkbox: 'comment-checkbox',
-      container: 'comment-controls-container',
-    },
-    debounceDelay: 100,
-    deleteDelay: 200,
+  /**
+   * Configuration object for scroll-to-top button
+   * @type {Object}
+   * @property {boolean} enabled - Whether the feature is enabled
+   * @property {string} storageKey - LocalStorage key for settings
+   */
+  const config = {
     enabled: true,
-    storageKey: 'youtube_comment_manager_settings',
+    storageKey: 'youtube_top_button_settings',
   };
 
-  // State management
+  /**
+   * Adds CSS styles for scroll-to-top button and scrollbars
+   * @returns {void}
+   */
+  const addStyles = () => {
+    if (document.getElementById('custom-styles')) return;
+
+    const style = document.createElement('style');
+    style.id = 'custom-styles';
+    style.textContent = `
+      :root{--scrollbar-width:8px;--scrollbar-track:transparent;--scrollbar-thumb:rgba(144,144,144,.5);--scrollbar-thumb-hover:rgba(170,170,170,.7);--scrollbar-thumb-active:rgba(190,190,190,.9);}
+      ::-webkit-scrollbar{width:var(--scrollbar-width)!important;height:var(--scrollbar-width)!important;}
+      ::-webkit-scrollbar-track{background:var(--scrollbar-track)!important;border-radius:4px!important;}
+      ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb)!important;border-radius:4px!important;transition:background .2s!important;}
+      ::-webkit-scrollbar-thumb:hover{background:var(--scrollbar-thumb-hover)!important;}
+      ::-webkit-scrollbar-thumb:active{background:var(--scrollbar-thumb-active)!important;}
+      ::-webkit-scrollbar-corner{background:transparent!important;}
+      *{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track);}
+      html[dark]{--scrollbar-thumb:rgba(144,144,144,.4);--scrollbar-thumb-hover:rgba(170,170,170,.6);--scrollbar-thumb-active:rgba(190,190,190,.8);}
+      .top-button{position:absolute;bottom:16px;right:16px;width:40px;height:40px;background:var(--yt-top-btn-bg,rgba(0,0,0,.7));color:var(--yt-top-btn-color,#fff);border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:1000;opacity:0;visibility:hidden;transition:all .3s;backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid var(--yt-top-btn-border,rgba(255,255,255,.1));background:rgba(255,255,255,.12);box-shadow:0 8px 32px 0 rgba(31,38,135,.18);}
+      .top-button:hover{background:var(--yt-top-btn-hover,rgba(0,0,0,.15));transform:translateY(-2px) scale(1.07);box-shadow:0 8px 32px rgba(0,0,0,.25);}
+      .top-button.visible{opacity:1;visibility:visible;}
+      .top-button svg{transition:transform .2s;}
+      .top-button:hover svg{transform:translateY(-1px) scale(1.1);}
+      html[dark]{--yt-top-btn-bg:rgba(255,255,255,.10);--yt-top-btn-color:#fff;--yt-top-btn-border:rgba(255,255,255,.18);--yt-top-btn-hover:rgba(255,255,255,.18);}
+      html:not([dark]){--yt-top-btn-bg:rgba(255,255,255,.12);--yt-top-btn-color:#222;--yt-top-btn-border:rgba(0,0,0,.08);--yt-top-btn-hover:rgba(255,255,255,.18);}
+      ytd-watch-flexy:not([tyt-tab^="#"]) .top-button{display:none;}
+        `;
+    document.head.appendChild(style);
+  };
+
+  /**
+   * Updates button visibility based on scroll position
+   * @param {HTMLElement} scrollContainer - The container being scrolled
+   * @returns {void}
+   */
+  const handleScroll = scrollContainer => {
+    const button = document.getElementById('right-tabs-top-button');
+    if (!button || !scrollContainer) return;
+    button.classList.toggle('visible', scrollContainer.scrollTop > 100);
+  };
+
+  /**
+   * Sets up scroll event listener on active tab
+   * @returns {void}
+   */
+  const setupScrollListener = () => {
+    document.querySelectorAll('.tab-content-cld').forEach(tab => {
+      tab.removeEventListener('scroll', tab._topButtonScrollHandler);
+    });
+
+    const activeTab = document.querySelector(
+      '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
+    );
+    if (activeTab) {
+      const scrollHandler = () => handleScroll(activeTab);
+      activeTab._topButtonScrollHandler = scrollHandler;
+      activeTab.addEventListener('scroll', scrollHandler, { passive: true });
+      handleScroll(activeTab);
+    }
+  };
+
+  /**
+   * Creates and appends scroll-to-top button
+   * @returns {void}
+   */
+  const createButton = () => {
+    const rightTabs = document.querySelector('#right-tabs');
+    if (!rightTabs || document.getElementById('right-tabs-top-button')) return;
+    if (!config.enabled) return;
+
+    const button = document.createElement('button');
+    button.id = 'right-tabs-top-button';
+    button.className = 'top-button';
+    button.title = 'Scroll to top';
+    button.innerHTML =
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+
+    button.addEventListener('click', () => {
+      const activeTab = document.querySelector(
+        '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
+      );
+      if (activeTab) activeTab.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+
+    rightTabs.style.position = 'relative';
+    rightTabs.appendChild(button);
+    setupScrollListener();
+  };
+
+  /**
+   * Observes DOM changes to detect tab switches
+   * @returns {void}
+   */
+  const observeTabChanges = () => {
+    const observer = new MutationObserver(mutations => {
+      if (
+        mutations.some(
+          m =>
+            m.type === 'attributes' &&
+            m.attributeName === 'class' &&
+            m.target instanceof Element &&
+            m.target.classList.contains('tab-content-cld')
+        )
+      ) {
+        setTimeout(setupScrollListener, 100);
+      }
+    });
+
+    const rightTabs = document.querySelector('#right-tabs');
+    if (rightTabs) {
+      observer.observe(rightTabs, {
+        attributes: true,
+        subtree: true,
+        attributeFilter: ['class'],
+      });
+    }
+  };
+
+  // Events
+  const setupEvents = () => {
+    document.addEventListener(
+      'click',
+      e => {
+        const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+        if (target.closest && target.closest('.tab-btn[tyt-tab-content]')) {
+          setTimeout(setupScrollListener, 100);
+        }
+      },
+      true
+    );
+  };
+
+  // Initialize
+  const init = () => {
+    addStyles();
+    setupEvents();
+
+    const checkForTabs = () => {
+      if (document.querySelector('#right-tabs')) {
+        createButton();
+        observeTabChanges();
+      } else {
+        setTimeout(checkForTabs, 500);
+      }
+    };
+
+    checkForTabs();
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
+})();
+
+// YouTube End Screen Remover
+(function () {
+  'use strict';
+
+  // Optimized configuration
+  const CONFIG = {
+    enabled: true,
+    storageKey: 'youtube_endscreen_settings',
+    selectors:
+      '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.ytp-cards-button,.iv-drawer,.video-annotations',
+    debounceMs: 32,
+    batchSize: 20,
+  };
+
+  // Minimal state with better tracking
   const state = {
     observer: null,
-    isProcessing: false,
+    styleEl: null,
+    isActive: false,
+    removeCount: 0,
+    lastCheck: 0,
+    ytNavigateListenerKey: null,
     settingsNavListenerKey: null,
   };
 
-  // Optimized settings
+  // High-performance utilities: use shared debounce when available
+  const debounce = (fn, ms) => {
+    try {
+      return (
+        (window.YouTubeUtils && window.YouTubeUtils.debounce) ||
+        ((f, t) => {
+          let id;
+          return (...args) => {
+            clearTimeout(id);
+            id = setTimeout(() => f(...args), t);
+          };
+        })(fn, ms)
+      );
+    } catch {
+      let id;
+      return (...args) => {
+        clearTimeout(id);
+        id = setTimeout(() => fn(...args), ms);
+      };
+    }
+  };
+
+  const fastRemove = elements => {
+    const len = Math.min(elements.length, CONFIG.batchSize);
+    for (let i = 0; i < len; i++) {
+      const el = elements[i];
+      if (el?.isConnected) {
+        el.style.cssText = 'display:none!important;visibility:hidden!important';
+        try {
+          el.remove();
+          state.removeCount++;
+        } catch { }
+      }
+    }
+  };
+
+  // Settings with caching
   const settings = {
     load: () => {
       try {
-        const saved = localStorage.getItem(CONFIG.storageKey);
-        if (saved) CONFIG.enabled = JSON.parse(saved).enabled ?? true;
-      } catch (e) {}
+        const data = localStorage.getItem(CONFIG.storageKey);
+        CONFIG.enabled = data ? (JSON.parse(data).enabled ?? true) : true;
+      } catch {
+        CONFIG.enabled = true;
+      }
     },
+
     save: () => {
       try {
         localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
-      } catch (e) {}
+      } catch { }
+      settings.apply();
     },
+
+    apply: () => (CONFIG.enabled ? init() : cleanup()),
   };
 
-  // Utility functions
-  const debounce = (func, wait) => {
-    let timeout;
-    return (...args) => {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func(...args), wait);
-    };
-  };
-
-  const $ = (selector) => document.querySelector(selector);
-  const $$ = (selector) => document.querySelectorAll(selector);
-
-  // Core functionality
-  const addCheckboxes = () => {
-    if (!CONFIG.enabled || state.isProcessing) return;
-
-    const deleteButtons = $$(CONFIG.selectors.deleteButtons);
-
-    deleteButtons.forEach((button) => {
-      if (
-        button.closest(CONFIG.selectors.menuButton) ||
-        button.parentNode.querySelector(`.${CONFIG.classes.checkbox}`)
-      )
-        return;
-
-      const commentElement =
-        button.closest('[class*="comment"]') ||
-        button.closest('[role="article"]') ||
-        button.parentNode;
-
-      if (commentElement && !commentElement.hasAttribute('data-comment-text')) {
-        commentElement.setAttribute('data-comment-text', commentElement.textContent.toLowerCase());
-      }
-
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.className = CONFIG.classes.checkbox;
-      checkbox.style.cssText =
-        'appearance:none;width:20px;height:20px;border:2px solid rgba(221,221,221,0.5);border-radius:6px;cursor:pointer;transition:all 0.2s ease;background:rgba(0,0,0,0.9);position:relative;margin-right:8px;';
-
-      checkbox.addEventListener('change', updateDeleteButtonState);
-      checkbox.addEventListener('click', (e) => e.stopPropagation());
-
-      // Optimized positioning
-      const dateElement = commentElement.querySelector(
-        '[class*="date"],[class*="time"],time,[title*="20"],[aria-label*="ago"]'
-      );
-
-      if (dateElement) {
-        dateElement.style.cssText += 'position:relative;';
-        checkbox.style.cssText += 'position:absolute;right:-30px;top:0px;';
-        dateElement.appendChild(checkbox);
-      } else {
-        button.parentNode.insertBefore(checkbox, button);
-      }
-    });
-  };
-
-  const addControlButtons = () => {
-    if (!CONFIG.enabled || $(`.${CONFIG.classes.container}`)) return;
-
-    const deleteButtons = $$(CONFIG.selectors.deleteButtons);
-    if (!deleteButtons.length) return;
-
-    const container = deleteButtons[0].parentNode.parentNode;
-    const buttonsContainer = document.createElement('div');
-    buttonsContainer.className = CONFIG.classes.container;
-    buttonsContainer.style.cssText =
-      'position:fixed;top:50%;right:20px;transform:translateY(-50%);display:flex;flex-direction:column;gap:12px;z-index:9999;';
-
-    const buttonStyles =
-      'padding:16px 24px;border:none;border-radius:16px;cursor:pointer;font-weight:600;font-size:14px;transition:all 0.3s ease;min-width:180px;text-align:center;backdrop-filter:blur(15px);-webkit-backdrop-filter:blur(15px);';
-
-    // Delete All Button
-    const deleteAllButton = document.createElement('button');
-    deleteAllButton.textContent = 'Delete Selected';
-    deleteAllButton.className = 'delete-all-button';
-    deleteAllButton.disabled = true;
-    deleteAllButton.style.cssText =
-      buttonStyles +
-      'background:rgba(244,67,54,0.2);color:#f44336;border:1px solid rgba(244,67,54,0.3);';
-    deleteAllButton.addEventListener('click', deleteSelectedComments);
-
-    // Select All Button
-    const selectAllButton = document.createElement('button');
-    selectAllButton.textContent = 'Select All';
-    selectAllButton.style.cssText =
-      buttonStyles +
-      'background:rgba(33,150,243,0.2);color:#2196f3;border:1px solid rgba(33,150,243,0.3);';
-    selectAllButton.addEventListener('click', () => {
-      $$(`.${CONFIG.classes.checkbox}`).forEach((cb) => (cb.checked = true));
-      updateDeleteButtonState();
-    });
-
-    // Clear All Button
-    const clearAllButton = document.createElement('button');
-    clearAllButton.textContent = 'Clear All';
-    clearAllButton.style.cssText =
-      buttonStyles +
-      'background:rgba(76,175,80,0.2);color:#4caf50;border:1px solid rgba(76,175,80,0.3);';
-    clearAllButton.addEventListener('click', () => {
-      $$(`.${CONFIG.classes.checkbox}`).forEach((cb) => (cb.checked = false));
-      updateDeleteButtonState();
-    });
-
-    buttonsContainer.append(deleteAllButton, selectAllButton, clearAllButton);
-    container.insertBefore(buttonsContainer, deleteButtons[0].parentNode);
-  };
-
-  const updateDeleteButtonState = () => {
-    const deleteAllButton = $('.delete-all-button');
-    if (!deleteAllButton) return;
-
-    const hasChecked = Array.from($$(`.${CONFIG.classes.checkbox}`)).some((cb) => cb.checked);
-    deleteAllButton.disabled = !hasChecked;
-    deleteAllButton.style.opacity = hasChecked ? '1' : '0.6';
-  };
-
-  const deleteSelectedComments = () => {
-    const checkedBoxes = Array.from($$(`.${CONFIG.classes.checkbox}`)).filter((cb) => cb.checked);
-
-    if (!checkedBoxes.length || !confirm(`Delete ${checkedBoxes.length} comment(s)?`)) return;
-
-    state.isProcessing = true;
-    checkedBoxes.forEach((checkbox, index) => {
-      setTimeout(() => {
-        const deleteButton =
-          checkbox.nextElementSibling ||
-          checkbox.parentNode.querySelector(CONFIG.selectors.deleteButtons);
-        deleteButton?.click();
-      }, index * CONFIG.deleteDelay);
-    });
-
-    setTimeout(() => (state.isProcessing = false), checkedBoxes.length * CONFIG.deleteDelay + 1000);
-  };
-
-  const cleanup = () => {
-    $$(`.${CONFIG.classes.checkbox}`).forEach((el) => el.remove());
-    $(`.${CONFIG.classes.container}`)?.remove();
-  };
-
-  const initializeScript = () => {
-    if (CONFIG.enabled) {
-      addCheckboxes();
-      addControlButtons();
-      updateDeleteButtonState();
-    } else {
-      cleanup();
-    }
-  };
-
-  // Enhanced styles with better performance
-  const addStyles = () => {
-    if ($('#comment-delete-styles')) return;
+  // Optimized core functions
+  const injectCSS = () => {
+    if (state.styleEl || !CONFIG.enabled) return;
 
     // ✅ Use StyleManager instead of createElement('style')
-    const styles = `
-        .${CONFIG.classes.checkbox}:hover{border-color:rgba(33,150,243,0.7);background:rgba(245,245,245,0.3);transform:scale(1.1)}
-        .${CONFIG.classes.checkbox}:checked{background:rgba(33,150,243,0.3);border-color:rgba(33,150,243,0.7);box-shadow:0 4px 12px rgba(33,150,243,0.2)}
-        .${CONFIG.classes.checkbox}:checked::after{content:'✓';position:absolute;top:50%;left:50%;transform:translate(-50%,-50%);color:#2196f3;font-size:14px;font-weight:bold}
-        .delete-all-button:hover:not(:disabled){background:rgba(244,67,54,0.3)!important;transform:translateY(-3px);box-shadow:0 8px 24px rgba(244,67,54,0.2)}
-      `;
-    YouTubeUtils.StyleManager.add('comment-delete-styles', styles);
+    const styles = `${CONFIG.selectors}{display:none!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;transform:scale(0)!important}`;
+    YouTubeUtils.StyleManager.add('end-screen-remover', styles);
+    state.styleEl = true; // Mark as added
   };
 
-  // Settings integration
-  const addCommentManagerSettings = () => {
-    const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
-    if (!advancedSection || $('.comment-manager-settings-item')) return;
+  const removeEndScreens = () => {
+    if (!CONFIG.enabled) return;
+    const now = performance.now();
+    if (now - state.lastCheck < CONFIG.debounceMs) return;
+    state.lastCheck = now;
 
-    const settingsItem = document.createElement('div');
-    settingsItem.className = 'ytp-plus-settings-item comment-manager-settings-item';
-    settingsItem.innerHTML = `
-        <div>
-          <label class="ytp-plus-settings-item-label">Comment Manager</label>
-          <div class="ytp-plus-settings-item-description">Add bulk delete functionality for managing comments on YouTube</div>
-        </div>
-        <button class="ytp-plus-button" id="open-comment-history-page" style="margin:0 0 0 30px;padding:12px 16px;font-size:13px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="gray" stroke-width="2">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-            <polyline points="15,3 21,3 21,9"/>
-            <line x1="10" y1="14" x2="21" y2="3"/>
-          </svg>
-        </button>
-      `;
+    const elements = document.querySelectorAll(CONFIG.selectors);
+    if (elements.length) fastRemove(elements);
+  };
 
-    advancedSection.appendChild(settingsItem);
+  const setupWatcher = () => {
+    if (state.observer || !CONFIG.enabled) return;
 
-    $('#open-comment-history-page').addEventListener('click', () => {
-      window.open('https://www.youtube.com/feed/history/comment_history', '_blank');
+    const throttledRemove = debounce(removeEndScreens, CONFIG.debounceMs);
+
+    state.observer = new MutationObserver(mutations => {
+      let hasRelevantChanges = false;
+      for (const { addedNodes } of mutations) {
+        for (const node of addedNodes) {
+          if (
+            node instanceof Element &&
+            (node.className?.includes('ytp-') || node.querySelector?.('.ytp-ce-element'))
+          ) {
+            hasRelevantChanges = true;
+            break;
+          }
+        }
+        if (hasRelevantChanges) break;
+      }
+      if (hasRelevantChanges) throttledRemove();
     });
-  };
-
-  // Optimized initialization
-  const init = () => {
-    settings.load();
-    addStyles();
-
-    // Setup observer with throttling
-    state.observer?.disconnect();
-    state.observer = new MutationObserver(debounce(initializeScript, CONFIG.debounceDelay));
 
     // ✅ Register observer in cleanupManager
     YouTubeUtils.cleanupManager.registerObserver(state.observer);
-    state.observer.observe(document.body, { childList: true, subtree: true });
 
-    // Initial setup
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initializeScript);
-    } else {
-      initializeScript();
-    }
-
-    // Settings modal integration
-    const settingsObserver = new MutationObserver((mutations) => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node.classList?.contains('ytp-plus-settings-modal')) {
-            setTimeout(addCommentManagerSettings, 100);
-            return;
-          }
-        }
-      }
+    const target = document.querySelector('#movie_player') || document.body;
+    state.observer.observe(target, {
+      childList: true,
+      subtree: true,
+      attributeFilter: ['class', 'style'],
     });
+  };
 
-    // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-    settingsObserver.observe(document.body, { childList: true, subtree: true });
+  const cleanup = () => {
+    state.observer?.disconnect();
+    state.observer = null;
+    state.styleEl?.remove();
+    state.styleEl = null;
+    state.isActive = false;
+  };
 
-    const handleAdvancedNavClick = (e) => {
-      if (e.target.dataset?.section === 'advanced') {
-        setTimeout(addCommentManagerSettings, 50);
-      }
-    };
+  const init = () => {
+    if (state.isActive || !CONFIG.enabled) return;
+    state.isActive = true;
+    injectCSS();
+    removeEndScreens();
+    setupWatcher();
+  };
 
-    if (!state.settingsNavListenerKey) {
-      state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
-        document,
-        'click',
-        handleAdvancedNavClick,
-        { passive: true, capture: true }
-      );
+  // Streamlined settings UI
+  const addSettingsUI = () => {
+    const section = document.querySelector('.ytp-plus-settings-section[data-section="advanced"]');
+    if (!section || section.querySelector('.endscreen-settings')) return;
+
+    const container = document.createElement('div');
+    container.className = 'ytp-plus-settings-item endscreen-settings';
+    container.innerHTML = `
+        <div>
+          <label class="ytp-plus-settings-item-label">Hide End Screens & Cards</label>
+          <div class="ytp-plus-settings-item-description">Remove end screen suggestions and info cards${state.removeCount ? ` (${state.removeCount} removed)` : ''}</div>
+        </div>
+        <input type="checkbox" class="ytp-plus-settings-checkbox" ${CONFIG.enabled ? 'checked' : ''}>
+      `;
+
+    section.appendChild(container);
+
+    container.querySelector('input').addEventListener(
+      'change',
+      e => {
+        const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+        CONFIG.enabled = target.checked;
+        settings.save();
+      },
+      { passive: true }
+    );
+  };
+
+  // Optimized navigation handler
+  const handlePageChange = debounce(() => {
+    if (location.pathname === '/watch') {
+      cleanup();
+      requestIdleCallback ? requestIdleCallback(init) : setTimeout(init, 1);
+    }
+  }, 50);
+
+  // Initialize
+  settings.load();
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init, { once: true });
+  } else {
+    init();
+  }
+
+  const handleSettingsNavClick = e => {
+    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+    if (target.dataset?.section === 'advanced') {
+      setTimeout(addSettingsUI, 10);
     }
   };
 
-  init();
+  if (!state.ytNavigateListenerKey) {
+    state.ytNavigateListenerKey = YouTubeUtils.cleanupManager.registerListener(
+      document,
+      'yt-navigate-finish',
+      handlePageChange,
+      { passive: true }
+    );
+  }
+
+  // Settings modal integration
+  const settingsObserver = new MutationObserver(mutations => {
+    for (const { addedNodes } of mutations) {
+      for (const node of addedNodes) {
+        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
+          setTimeout(addSettingsUI, 25);
+          return;
+        }
+      }
+    }
+  });
+
+  // ✅ Register observer in cleanupManager
+  YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
+
+  // ✅ Safe observe with document.body check
+  if (document.body) {
+    settingsObserver.observe(document.body, { childList: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      settingsObserver.observe(document.body, { childList: true });
+    });
+  }
+
+  if (!state.settingsNavListenerKey) {
+    state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
+      document,
+      'click',
+      handleSettingsNavClick,
+      { passive: true, capture: true }
+    );
+  }
+})();
+
+// --- MODULE: adblocker.js ---
+
+// Ad Blocker
+(function () {
+  'use strict';
+
+  /**
+   * Ad blocking functionality for YouTube
+   * @namespace AdBlocker
+   */
+  const AdBlocker = {
+    /**
+     * Configuration settings
+     * @type {Object}
+     */
+    config: {
+      skipInterval: 500,
+      removeInterval: 1500,
+      enableLogging: false,
+      maxRetries: 2,
+      enabled: true,
+      storageKey: 'youtube_adblocker_settings',
+    },
+
+    /**
+     * Current state tracking
+     * @type {Object}
+     */
+    state: {
+      isYouTubeShorts: false,
+      isYouTubeMusic: location.hostname === 'music.youtube.com',
+      lastSkipAttempt: 0,
+      retryCount: 0,
+      initialized: false,
+    },
+
+    /**
+     * Cached DOM queries for performance
+     * @type {Object}
+     */
+    cache: {
+      moviePlayer: null,
+      ytdPlayer: null,
+      lastCacheTime: 0,
+      cacheTimeout: 5000,
+    },
+
+    /**
+     * Optimized CSS selectors for ad elements
+     * @type {Object}
+     */
+    selectors: {
+      ads: '#player-ads,.ytp-ad-module,.ad-showing,.ytp-ad-timed-pie-countdown-container,.ytp-ad-survey-questions',
+      elements:
+        '#masthead-ad,ytd-merch-shelf-renderer,.yt-mealbar-promo-renderer,ytmusic-mealbar-promo-renderer,ytmusic-statement-banner-renderer,.ytp-featured-product',
+      video: 'video.html5-main-video',
+      removal: 'ytd-reel-video-renderer .ytd-ad-slot-renderer',
+    },
+
+    /**
+     * Settings management with localStorage persistence
+     * @type {Object}
+     */
+    settings: {
+      /**
+       * Load settings from localStorage
+       * @returns {void}
+       */
+      load() {
+        try {
+          const saved = localStorage.getItem(AdBlocker.config.storageKey);
+          if (saved) {
+            const parsed = JSON.parse(saved);
+            AdBlocker.config.enabled = parsed.enabled ?? true;
+            AdBlocker.config.enableLogging = parsed.enableLogging ?? false;
+          }
+        } catch {
+          // Silently fail if localStorage is unavailable
+        }
+      },
+
+      /**
+       * Save settings to localStorage
+       * @returns {void}
+       */
+      save() {
+        try {
+          localStorage.setItem(
+            AdBlocker.config.storageKey,
+            JSON.stringify({
+              enabled: AdBlocker.config.enabled,
+              enableLogging: AdBlocker.config.enableLogging,
+            })
+          );
+        } catch {
+          // Silently fail if localStorage is unavailable
+        }
+      },
+    },
+
+    /**
+     * Get cached player elements
+     * @returns {Object} Object containing player element and controller
+     */
+    getPlayer() {
+      const now = Date.now();
+      if (now - AdBlocker.cache.lastCacheTime > AdBlocker.cache.cacheTimeout) {
+        AdBlocker.cache.moviePlayer = document.querySelector('#movie_player');
+        AdBlocker.cache.ytdPlayer = document.querySelector('#ytd-player');
+        AdBlocker.cache.lastCacheTime = now;
+      }
+
+      const playerEl = AdBlocker.cache.ytdPlayer;
+      return {
+        element: AdBlocker.cache.moviePlayer,
+        player: playerEl?.getPlayer?.() || playerEl,
+      };
+    },
+
+    /**
+     * Skip current ad by seeking to end
+     * @returns {void}
+     */
+    skipAd() {
+      if (!AdBlocker.config.enabled) return;
+
+      const now = Date.now();
+      if (now - AdBlocker.state.lastSkipAttempt < 300) return;
+      AdBlocker.state.lastSkipAttempt = now;
+
+      if (location.pathname.startsWith('/shorts/')) return;
+
+      // Fast ad detection
+      const adElement = document.querySelector(
+        '.ad-showing, .ytp-ad-timed-pie-countdown-container'
+      );
+      if (!adElement) {
+        AdBlocker.state.retryCount = 0;
+        return;
+      }
+
+      try {
+        const { player } = AdBlocker.getPlayer();
+        if (!player) return;
+
+        const video = document.querySelector(AdBlocker.selectors.video);
+
+        // Mute ad immediately
+        if (video) video.muted = true;
+
+        // Skip logic based on platform
+        if (AdBlocker.state.isYouTubeMusic && video) {
+          /** @type {HTMLVideoElement} */ (video).currentTime = video.duration || 999;
+        } else if (typeof player.getVideoData === 'function') {
+          const videoData = player.getVideoData();
+          if (videoData?.video_id) {
+            const currentTime = Math.floor(player.getCurrentTime?.() || 0);
+
+            // Use most efficient skip method
+            if (typeof player.loadVideoById === 'function') {
+              player.loadVideoById(videoData.video_id, currentTime);
+            }
+          }
+        }
+
+        AdBlocker.state.retryCount = 0;
+      } catch {
+        if (AdBlocker.state.retryCount < AdBlocker.config.maxRetries) {
+          AdBlocker.state.retryCount++;
+          setTimeout(AdBlocker.skipAd, 800);
+        }
+      }
+    },
+
+    // Minimal CSS injection
+    addCss() {
+      if (document.querySelector('#yt-ab-styles') || !AdBlocker.config.enabled) return;
+
+      // ✅ Use StyleManager instead of createElement('style')
+      const styles = `${AdBlocker.selectors.ads},${AdBlocker.selectors.elements}{display:none!important;}`;
+      YouTubeUtils.StyleManager.add('yt-ab-styles', styles);
+    },
+
+    removeCss() {
+      YouTubeUtils.StyleManager.remove('yt-ab-styles');
+    },
+
+    // Batched element removal
+    removeElements() {
+      if (!AdBlocker.config.enabled || AdBlocker.state.isYouTubeMusic) return;
+
+      // Use requestIdleCallback for non-blocking removal
+      const remove = () => {
+        const elements = document.querySelectorAll(AdBlocker.selectors.removal);
+        elements.forEach(el => el.closest('ytd-reel-video-renderer')?.remove());
+      };
+
+      if (window.requestIdleCallback) {
+        requestIdleCallback(remove, { timeout: 100 });
+      } else {
+        setTimeout(remove, 0);
+      }
+    },
+
+    // Optimized settings UI
+    addSettingsUI() {
+      const section = document.querySelector('.ytp-plus-settings-section[data-section="basic"]');
+      if (!section || section.querySelector('.ab-settings')) return;
+
+      try {
+        const item = document.createElement('div');
+        item.className = 'ytp-plus-settings-item ab-settings';
+        item.innerHTML = `
+          <div>
+            <label class="ytp-plus-settings-item-label">Ad Blocker</label>
+            <div class="ytp-plus-settings-item-description">Skip ads and remove ad elements automatically</div>
+          </div>
+          <input type="checkbox" class="ytp-plus-settings-checkbox" ${AdBlocker.config.enabled ? 'checked' : ''}>
+        `;
+
+        section.appendChild(item);
+
+        item.querySelector('input').addEventListener('change', e => {
+          const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+          AdBlocker.config.enabled = target.checked;
+          AdBlocker.settings.save();
+          AdBlocker.config.enabled ? AdBlocker.addCss() : AdBlocker.removeCss();
+        });
+      } catch (error) {
+        YouTubeUtils.logError('AdBlocker', 'Failed to add settings UI', error);
+      }
+    },
+
+    // Streamlined initialization
+    init() {
+      if (AdBlocker.state.initialized) return;
+      AdBlocker.state.initialized = true;
+
+      AdBlocker.settings.load();
+
+      if (AdBlocker.config.enabled) {
+        AdBlocker.addCss();
+        AdBlocker.removeElements();
+      }
+
+      // Start optimized intervals with cleanup registration
+      const skipInterval = setInterval(AdBlocker.skipAd, AdBlocker.config.skipInterval);
+      const removeInterval = setInterval(AdBlocker.removeElements, AdBlocker.config.removeInterval);
+
+      // ✅ Register intervals in cleanupManager
+      YouTubeUtils.cleanupManager.registerInterval(skipInterval);
+      YouTubeUtils.cleanupManager.registerInterval(removeInterval);
+
+      // Navigation handling
+      const handleNavigation = () => {
+        AdBlocker.state.isYouTubeShorts = location.pathname.startsWith('/shorts/');
+        AdBlocker.cache.lastCacheTime = 0; // Reset cache
+      };
+
+      // Override pushState for SPA navigation
+      const originalPushState = history.pushState;
+      history.pushState = function () {
+        const result = originalPushState.apply(this, arguments);
+        setTimeout(handleNavigation, 50);
+        return result;
+      };
+
+      // Settings modal integration
+      const settingsObserver = new MutationObserver(_mutations => {
+        for (const { addedNodes } of _mutations) {
+          for (const node of addedNodes) {
+            if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
+              setTimeout(AdBlocker.addSettingsUI, 50);
+              return;
+            }
+          }
+        }
+      });
+
+      // ✅ Register observer in cleanupManager
+      YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
+
+      // ✅ Safe observe with document.body check
+      if (document.body) {
+        settingsObserver.observe(document.body, { childList: true });
+      } else {
+        document.addEventListener('DOMContentLoaded', () => {
+          settingsObserver.observe(document.body, { childList: true });
+        });
+      }
+
+      // ✅ Register global click listener in cleanupManager
+      const clickHandler = e => {
+        const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+        if (target.dataset?.section === 'basic') {
+          setTimeout(AdBlocker.addSettingsUI, 25);
+        }
+      };
+      YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, {
+        passive: true,
+        capture: true,
+      });
+
+      // Initial skip attempt
+      if (AdBlocker.config.enabled) {
+        setTimeout(AdBlocker.skipAd, 200);
+      }
+    },
+  };
+
+  // Initialize
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', AdBlocker.init, { once: true });
+  } else {
+    AdBlocker.init();
+  }
 })();
 
 // --- MODULE: count.js ---
@@ -8013,38 +9262,31 @@ if (typeof window !== 'undefined') {
       console.error(`[YouTube Enhancer] ${message}`, ...args);
     },
 
-    debounce: (func, wait) => {
-      let timeout;
-      return function executedFunction(...args) {
-        const later = () => {
+    // Use shared debounce from YouTubeUtils
+    debounce:
+      window.YouTubeUtils?.debounce ||
+      ((func, wait) => {
+        let timeout;
+        return function executedFunction(...args) {
+          const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+          };
           clearTimeout(timeout);
-          func(...args);
+          timeout = setTimeout(later, wait);
         };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-      };
-    },
+      }),
   };
 
   const OPTIONS = CONFIG.OPTIONS;
   const FONT_LINK = CONFIG.FONT_LINK;
   const STATS_API_URL = CONFIG.STATS_API_URL;
-  const DEFAULT_UPDATE_INTERVAL = CONFIG.DEFAULT_UPDATE_INTERVAL;
-  const DEFAULT_OVERLAY_OPACITY = CONFIG.DEFAULT_OVERLAY_OPACITY;
 
-  let {
-    overlay,
-    isUpdating,
-    intervalId,
-    currentChannelName,
-    updateInterval,
-    overlayOpacity,
-    lastSuccessfulStats,
-    previousStats,
-    previousUrl,
-    isChecking,
-  } = state;
-
+  /**
+   * Fetches channel data from YouTube
+   * @param {string} url - The channel URL to fetch
+   * @returns {Promise<Object|null>} The parsed channel data or null on error
+   */
   async function fetchChannel(url) {
     if (state.isChecking) return null;
     state.isChecking = true;
@@ -8076,7 +9318,7 @@ if (typeof window !== 'undefined') {
       const channelId = data?.metadata?.channelMetadataRenderer?.externalId || null;
 
       return { channelName, channelId };
-    } catch (e) {
+    } catch {
       return null;
     }
   }
@@ -8101,6 +9343,7 @@ if (typeof window !== 'undefined') {
   }
 
   history.pushState = (function (f) {
+    /** @this {any} */
     return function () {
       f.apply(this, arguments);
       checkUrlChange();
@@ -8108,6 +9351,7 @@ if (typeof window !== 'undefined') {
   })(history.pushState);
 
   history.replaceState = (function (f) {
+    /** @this {any} */
     return function () {
       f.apply(this, arguments);
       checkUrlChange();
@@ -8147,7 +9391,7 @@ if (typeof window !== 'undefined') {
   }
 
   function initializeLocalStorage() {
-    OPTIONS.forEach((option) => {
+    OPTIONS.forEach(option => {
       if (localStorage.getItem(`show-${option}`) === null) {
         localStorage.setItem(`show-${option}`, 'true');
       }
@@ -8231,7 +9475,7 @@ if (typeof window !== 'undefined') {
     displayLabel.style.fontWeight = 'bold';
     displaySection.appendChild(displayLabel);
 
-    OPTIONS.forEach((option) => {
+    OPTIONS.forEach(option => {
       const checkboxContainer = document.createElement('div');
       checkboxContainer.style.display = 'flex';
       checkboxContainer.style.alignItems = 'center';
@@ -8253,7 +9497,7 @@ if (typeof window !== 'undefined') {
       checkboxLabel.style.marginLeft = '8px';
 
       checkbox.addEventListener('change', () => {
-        localStorage.setItem(`show-${option}`, checkbox.checked);
+        localStorage.setItem(`show-${option}`, String(checkbox.checked));
         updateDisplayState();
       });
 
@@ -8288,7 +9532,7 @@ if (typeof window !== 'undefined') {
       { name: 'Tahoma', value: 'Tahoma, Geneva, sans-serif' },
     ];
     const savedFont = localStorage.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif';
-    fonts.forEach((f) => {
+    fonts.forEach(f => {
       const opt = document.createElement('option');
       opt.value = f.value;
       opt.textContent = f.name;
@@ -8296,14 +9540,15 @@ if (typeof window !== 'undefined') {
       fontSelect.appendChild(opt);
     });
 
-    fontSelect.addEventListener('change', (e) => {
-      localStorage.setItem('youtubeEnhancerFontFamily', e.target.value);
+    fontSelect.addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
+      localStorage.setItem('youtubeEnhancerFontFamily', target.value);
       if (state.overlay) {
         // Only update .subscribers-number, .views-number, .videos-number
         state.overlay
           .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-          .forEach((el) => {
-            el.style.fontFamily = e.target.value;
+          .forEach(el => {
+            el.style.fontFamily = target.value;
           });
       }
     });
@@ -8330,15 +9575,16 @@ if (typeof window !== 'undefined') {
     fontSizeValue.style.fontSize = '14px';
     fontSizeValue.style.marginBottom = '15px';
 
-    fontSizeSlider.addEventListener('input', (e) => {
-      fontSizeValue.textContent = `${e.target.value}px`;
-      localStorage.setItem('youtubeEnhancerFontSize', e.target.value);
+    fontSizeSlider.addEventListener('input', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      fontSizeValue.textContent = `${target.value}px`;
+      localStorage.setItem('youtubeEnhancerFontSize', target.value);
       if (state.overlay) {
         // Only update .subscribers-number, .views-number, .videos-number
         state.overlay
           .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-          .forEach((el) => {
-            el.style.fontSize = `${e.target.value}px`;
+          .forEach(el => {
+            el.style.fontSize = `${target.value}px`;
           });
       }
     });
@@ -8355,7 +9601,7 @@ if (typeof window !== 'undefined') {
     intervalSlider.type = 'range';
     intervalSlider.min = '2';
     intervalSlider.max = '10';
-    intervalSlider.value = state.updateInterval / 1000;
+    intervalSlider.value = String(state.updateInterval / 1000);
     intervalSlider.step = '1';
     intervalSlider.className = 'interval-slider';
 
@@ -8365,11 +9611,12 @@ if (typeof window !== 'undefined') {
     intervalValue.style.marginBottom = '15px';
     intervalValue.style.fontSize = '14px';
 
-    intervalSlider.addEventListener('input', (e) => {
-      const newInterval = parseInt(e.target.value) * 1000;
-      intervalValue.textContent = `${e.target.value}s`;
+    intervalSlider.addEventListener('input', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      const newInterval = parseInt(target.value) * 1000;
+      intervalValue.textContent = `${target.value}s`;
       state.updateInterval = newInterval;
-      localStorage.setItem('youtubeEnhancerInterval', newInterval);
+      localStorage.setItem('youtubeEnhancerInterval', String(newInterval));
 
       if (state.intervalId) {
         clearInterval(state.intervalId);
@@ -8393,7 +9640,7 @@ if (typeof window !== 'undefined') {
     opacitySlider.type = 'range';
     opacitySlider.min = '50';
     opacitySlider.max = '90';
-    opacitySlider.value = state.overlayOpacity * 100;
+    opacitySlider.value = String(state.overlayOpacity * 100);
     opacitySlider.step = '5';
     opacitySlider.className = 'opacity-slider';
 
@@ -8402,11 +9649,12 @@ if (typeof window !== 'undefined') {
     opacityValue.textContent = `${opacitySlider.value}%`;
     opacityValue.style.fontSize = '14px';
 
-    opacitySlider.addEventListener('input', (e) => {
-      const newOpacity = parseInt(e.target.value) / 100;
-      opacityValue.textContent = `${e.target.value}%`;
+    opacitySlider.addEventListener('input', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      const newOpacity = parseInt(target.value) / 100;
+      opacityValue.textContent = `${target.value}%`;
       state.overlayOpacity = newOpacity;
-      localStorage.setItem('youtubeEnhancerOpacity', newOpacity);
+      localStorage.setItem('youtubeEnhancerOpacity', String(newOpacity));
 
       if (state.overlay) {
         state.overlay.style.backgroundColor = `rgba(0, 0, 0, ${newOpacity})`;
@@ -8605,7 +9853,7 @@ if (typeof window !== 'undefined') {
     overlay.appendChild(settingsMenu);
 
     // Enhanced event handling with keyboard support
-    const toggleMenu = (show) => {
+    const toggleMenu = show => {
       settingsMenu.classList.toggle('show', show);
       settingsButton.setAttribute('aria-expanded', show);
       if (show) {
@@ -8613,12 +9861,12 @@ if (typeof window !== 'undefined') {
       }
     };
 
-    settingsButton.addEventListener('click', (e) => {
+    settingsButton.addEventListener('click', e => {
       e.stopPropagation();
       toggleMenu(!settingsMenu.classList.contains('show'));
     });
 
-    settingsButton.addEventListener('keydown', (e) => {
+    settingsButton.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         toggleMenu(!settingsMenu.classList.contains('show'));
@@ -8626,8 +9874,9 @@ if (typeof window !== 'undefined') {
     });
 
     // Close menu when clicking outside or pressing escape
-    const documentClickHandler = (e) => {
-      if (!settingsMenu.contains(e.target) && !settingsButton.contains(e.target)) {
+    const documentClickHandler = e => {
+      const target = /** @type {EventTarget & Node} */ (e.target);
+      if (!settingsMenu.contains(target) && !settingsButton.contains(target)) {
         toggleMenu(false);
       }
     };
@@ -8638,7 +9887,7 @@ if (typeof window !== 'undefined') {
     );
     state.documentListenerKeys.add(clickListenerKey);
 
-    const documentKeydownHandler = (e) => {
+    const documentKeydownHandler = e => {
       if (e.key === 'Escape' && settingsMenu.classList.contains('show')) {
         toggleMenu(false);
         settingsButton.focus();
@@ -8681,15 +9930,16 @@ if (typeof window !== 'undefined') {
       Accept: 'application/json',
       ...headers,
     };
-
-    if (typeof GM_xmlhttpRequest === 'function') {
+    // Access GM_xmlhttpRequest via window to avoid TS "Cannot find name" when d.ts isn't picked up
+    const gm = /** @type {any} */ (window).GM_xmlhttpRequest;
+    if (typeof gm === 'function') {
       return new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
+        gm({
           method: 'GET',
           url,
           headers: requestHeaders,
           timeout: 10000,
-          onload: (response) => {
+          onload: response => {
             if (response.status >= 200 && response.status < 300) {
               try {
                 resolve(JSON.parse(response.responseText));
@@ -8700,7 +9950,7 @@ if (typeof window !== 'undefined') {
               reject(new Error(`Failed to fetch: ${response.status}`));
             }
           },
-          onerror: (error) => reject(error),
+          onerror: error => reject(error),
           ontimeout: () => reject(new Error('Request timed out')),
         });
       });
@@ -8713,19 +9963,19 @@ if (typeof window !== 'undefined') {
       credentials: 'omit',
       mode: 'cors',
     })
-      .then((response) => {
+      .then(response => {
         if (!response.ok) {
           throw new Error(`Failed to fetch: ${response.status}`);
         }
         return response.json();
       })
-      .catch((error) => {
+      .catch(error => {
         utils.error('Fallback fetch failed:', error);
         throw error;
       });
   }
 
-  async function fetchChannelId(channelName) {
+  async function fetchChannelId(_channelName) {
     // Try meta tag first
     const metaTag = document.querySelector('meta[itemprop="channelId"]');
     if (metaTag && metaTag.content) return metaTag.content;
@@ -8737,14 +9987,12 @@ if (typeof window !== 'undefined') {
     // Try ytInitialData
     const channelInfo = await getChannelInfo(window.location.href);
     if (channelInfo && channelInfo.channelId) return channelInfo.channelId;
-
     throw new Error('Could not determine channel ID');
   }
 
   async function fetchChannelStats(channelId) {
     try {
       let retries = CONFIG.MAX_RETRIES;
-      let lastError;
 
       while (retries > 0) {
         try {
@@ -8765,11 +10013,11 @@ if (typeof window !== 'undefined') {
           });
           return stats;
         } catch (e) {
-          lastError = e;
+          utils.warn('Fetch attempt failed:', e.message);
           retries--;
           if (retries > 0) {
             // Exponential backoff for retries
-            await new Promise((resolve) =>
+            await new Promise(resolve =>
               setTimeout(resolve, 1000 * (CONFIG.MAX_RETRIES - retries + 1))
             );
           }
@@ -8808,16 +10056,18 @@ if (typeof window !== 'undefined') {
           const subText = subCountElem.textContent || subCountElem.innerText || '';
           const subMatch = subText.match(/[\d,\.]+[KMB]?/);
           if (subMatch) {
-            let count = subMatch[0].replace(/,/g, '');
-            // Handle K, M, B suffixes
-            if (count.includes('K')) {
-              count = parseFloat(count) * 1000;
-            } else if (count.includes('M')) {
-              count = parseFloat(count) * 1000000;
-            } else if (count.includes('B')) {
-              count = parseFloat(count) * 1000000000;
+            const raw = subMatch[0].replace(/,/g, '');
+            // parse into number safely
+            let numCount = Number(raw.replace(/[KMB]/, '')) || 0;
+            if (raw.includes('K')) {
+              numCount = numCount * 1000;
+            } else if (raw.includes('M')) {
+              numCount = numCount * 1000000;
+            } else if (raw.includes('B')) {
+              numCount = numCount * 1000000000;
             }
-            fallbackStats.followerCount = Math.floor(count);
+            // Ensure followerCount is a number
+            fallbackStats.followerCount = Math.floor(numCount);
             utils.log('Extracted fallback subscriber count:', fallbackStats.followerCount);
             break;
           }
@@ -8841,8 +10091,8 @@ if (typeof window !== 'undefined') {
     if (existingOverlay) {
       try {
         existingOverlay.remove();
-      } catch (e) {
-        console.warn('[YouTube+] Failed to remove overlay:', e);
+      } catch {
+        console.warn('[YouTube+] Failed to remove overlay');
       }
     }
     if (state.intervalId) {
@@ -8850,17 +10100,17 @@ if (typeof window !== 'undefined') {
         clearInterval(state.intervalId);
         // ✅ Unregister from cleanupManager if it was registered
         YouTubeUtils.cleanupManager.unregisterInterval(state.intervalId);
-      } catch (e) {
-        console.warn('[YouTube+] Failed to clear interval:', e);
+      } catch {
+        console.warn('[YouTube+] Failed to clear interval');
       }
       state.intervalId = null;
     }
     if (state.documentListenerKeys && state.documentListenerKeys.size) {
-      state.documentListenerKeys.forEach((key) => {
+      state.documentListenerKeys.forEach(key => {
         try {
           YouTubeUtils.cleanupManager.unregisterListener(key);
-        } catch (e) {
-          console.warn('[YouTube+] Failed to unregister listener:', e);
+        } catch {
+          console.warn('[YouTube+] Failed to unregister listener');
         }
       });
       state.documentListenerKeys.clear();
@@ -8919,15 +10169,12 @@ if (typeof window !== 'undefined') {
       container.removeChild(container.firstChild);
     }
 
-    let digitIndex = 0;
-
     for (let i = 0; i < digits.length; i++) {
       const group = digits[i];
       for (let j = 0; j < group.length; j++) {
         const digitElement = createDigitElement();
         digitElement.textContent = group[j];
         container.appendChild(digitElement);
-        digitIndex++;
       }
       if (i < digits.length - 1) {
         container.appendChild(createCommaElement());
@@ -8979,12 +10226,12 @@ if (typeof window !== 'undefined') {
     }
 
     const containers = overlay.querySelectorAll('div[style*="visibility: hidden"]');
-    containers.forEach((container) => {
+    containers.forEach(container => {
       container.style.visibility = 'visible';
     });
 
     const icons = overlay.querySelectorAll('svg[style*="display: none"]');
-    icons.forEach((icon) => {
+    icons.forEach(icon => {
       icon.style.display = 'block';
     });
   }
@@ -9017,7 +10264,7 @@ if (typeof window !== 'undefined') {
     let visibleCount = 0;
     const visibleContainers = [];
 
-    statContainers.forEach((container) => {
+    statContainers.forEach(container => {
       const numberContainer = container.querySelector('[class$="-number"]');
       if (!numberContainer) return;
 
@@ -9034,7 +10281,7 @@ if (typeof window !== 'undefined') {
       }
     });
 
-    visibleContainers.forEach((container) => {
+    visibleContainers.forEach(container => {
       container.style.width = '';
       container.style.margin = '';
 
@@ -9056,7 +10303,7 @@ if (typeof window !== 'undefined') {
     // Only update font size and font family for .subscribers-number, .views-number, .videos-number
     const fontSize = localStorage.getItem('youtubeEnhancerFontSize') || '24';
     const fontFamily = localStorage.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif';
-    overlay.querySelectorAll('.subscribers-number,.views-number,.videos-number').forEach((el) => {
+    overlay.querySelectorAll('.subscribers-number,.views-number,.videos-number').forEach(el => {
       el.style.fontSize = `${fontSize}px`;
       el.style.fontFamily = fontFamily;
     });
@@ -9080,7 +10327,7 @@ if (typeof window !== 'undefined') {
 
       if (stats.error) {
         const containers = overlay.querySelectorAll('[class$="-number"]');
-        containers.forEach((container) => {
+        containers.forEach(container => {
           if (container.classList.contains('subscribers-number') && stats.followerCount > 0) {
             updateDigits(container, stats.followerCount);
           } else {
@@ -9126,7 +10373,7 @@ if (typeof window !== 'undefined') {
     } catch (error) {
       utils.error('Failed to update overlay content:', error);
       const containers = overlay.querySelectorAll('[class$="-number"]');
-      containers.forEach((container) => {
+      containers.forEach(container => {
         container.textContent = '---';
       });
     } finally {
@@ -9152,8 +10399,9 @@ if (typeof window !== 'undefined') {
       `;
     section.appendChild(item);
 
-    item.querySelector('input').addEventListener('change', (e) => {
-      state.enabled = e.target.checked;
+    item.querySelector('input').addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      state.enabled = target.checked;
       localStorage.setItem(CONFIG.STORAGE_KEY, state.enabled ? 'true' : 'false');
       if (!state.enabled) {
         clearExistingOverlay();
@@ -9171,10 +10419,10 @@ if (typeof window !== 'undefined') {
   }
 
   // Observe settings modal for experimental section
-  const settingsObserver = new MutationObserver((mutations) => {
+  const settingsObserver = new MutationObserver(mutations => {
     for (const { addedNodes } of mutations) {
       for (const node of addedNodes) {
-        if (node.classList?.contains('ytp-plus-settings-modal')) {
+        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
           setTimeout(addSettingsUI, 100);
           return;
         }
@@ -9185,12 +10433,21 @@ if (typeof window !== 'undefined') {
     }
   });
   YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-  settingsObserver.observe(document.body, { childList: true, subtree: true });
 
-  const experimentalNavClickHandler = (e) => {
+  // ✅ Safe observe with document.body check
+  if (document.body) {
+    settingsObserver.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      settingsObserver.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+
+  const experimentalNavClickHandler = e => {
+    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
     if (
-      e.target.classList?.contains('ytp-plus-settings-nav-item') &&
-      e.target.dataset.section === 'experimental'
+      target.classList?.contains('ytp-plus-settings-nav-item') &&
+      target.dataset?.section === 'experimental'
     ) {
       setTimeout(addSettingsUI, 50);
     }
@@ -9273,14 +10530,14 @@ if (typeof window !== 'undefined') {
     if (!state.enabled) return;
 
     // More robust banner detection with multiple fallback selectors
-    const observer = new MutationObserver((mutations) => {
+    const observer = new MutationObserver(_mutations => {
       // Throttle observations for better performance
-      if (observer._timeout) {
-        YouTubeUtils.cleanupManager.unregisterTimeout(observer._timeout);
-        clearTimeout(observer._timeout);
+      if (/** @type {any} */ (observer)._timeout) {
+        YouTubeUtils.cleanupManager.unregisterTimeout(/** @type {any} */(observer)._timeout);
+        clearTimeout(/** @type {any} */(observer)._timeout);
       }
 
-      observer._timeout = YouTubeUtils.cleanupManager.registerTimeout(
+      /** @type {any} */ (observer)._timeout = YouTubeUtils.cleanupManager.registerTimeout(
         setTimeout(() => {
           let bannerElement = document.getElementById('page-header-banner-sizer');
 
@@ -9314,14 +10571,25 @@ if (typeof window !== 'undefined') {
       ); // Small delay to batch rapid changes
     });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: false, // Reduce observation scope for performance
-    });
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: false, // Reduce observation scope for performance
+      });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: false,
+        });
+      });
+    }
 
     // Store timeout reference for cleanup
-    observer._timeout = null;
+    /** @type {any} */ (observer)._timeout = null;
 
     // Store observer for cleanup on page unload
     if (typeof state.observers === 'undefined') {
@@ -9354,7 +10622,7 @@ if (typeof window !== 'undefined') {
   function cleanup() {
     // Disconnect all observers
     if (state.observers && Array.isArray(state.observers)) {
-      state.observers.forEach((observer) => {
+      state.observers.forEach(observer => {
         try {
           observer.disconnect();
         } catch (e) {
@@ -9376,490 +10644,1760 @@ if (typeof window !== 'undefined') {
   init();
 })();
 
-// --- MODULE: endscr.js ---
+// --- MODULE: pip.js ---
 
-// YouTube End Screen Remover
+// YouTube Picture-in-Picture settings
 (function () {
   'use strict';
 
-  // Optimized configuration
-  const CONFIG = {
+  /**
+   * PiP settings configuration
+   * @type {Object}
+   * @property {boolean} enabled - Whether PiP is enabled
+   * @property {Object} shortcut - Keyboard shortcut configuration
+   * @property {string} storageKey - LocalStorage key for persistence
+   */
+  const pipSettings = {
     enabled: true,
-    storageKey: 'youtube_endscreen_settings',
-    selectors:
-      '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.ytp-cards-button,.iv-drawer,.video-annotations',
-    debounceMs: 32,
-    batchSize: 20,
+    shortcut: { key: 'P', shiftKey: true, altKey: false, ctrlKey: false },
+    storageKey: 'youtube_pip_settings',
   };
 
-  // Minimal state with better tracking
-  const state = {
-    observer: null,
-    styleEl: null,
-    isActive: false,
-    removeCount: 0,
-    lastCheck: 0,
-    ytNavigateListenerKey: null,
-    settingsNavListenerKey: null,
-  };
+  const PIP_SESSION_KEY = 'youtube_plus_pip_session';
 
-  // High-performance utilities
-  const debounce = (fn, ms) => {
-    let id;
-    return (...args) => {
-      clearTimeout(id);
-      id = setTimeout(() => fn(...args), ms);
-    };
-  };
+  const getVideoElement = () => {
+    const candidate =
+      (typeof YouTubeUtils?.querySelector === 'function' && YouTubeUtils.querySelector('video')) ||
+      document.querySelector('video');
 
-  const fastRemove = (elements) => {
-    const len = Math.min(elements.length, CONFIG.batchSize);
-    for (let i = 0; i < len; i++) {
-      const el = elements[i];
-      if (el?.isConnected) {
-        el.style.cssText = 'display:none!important;visibility:hidden!important';
-        try {
-          el.remove();
-          state.removeCount++;
-        } catch (e) {}
-      }
+    if (candidate && candidate.tagName && candidate.tagName.toLowerCase() === 'video') {
+      return /** @type {HTMLVideoElement} */ (candidate);
     }
+
+    return null;
   };
 
-  // Settings with caching
-  const settings = {
-    load: () => {
-      try {
-        const data = localStorage.getItem(CONFIG.storageKey);
-        CONFIG.enabled = data ? (JSON.parse(data).enabled ?? true) : true;
-      } catch (e) {
-        CONFIG.enabled = true;
-      }
-    },
+  const waitForMetadata = video => {
+    if (!video) return Promise.reject(new Error('No video element available'));
 
-    save: () => {
-      try {
-        localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
-      } catch (e) {}
-      settings.apply();
-    },
+    if (video.readyState >= 1 && !video.seeking) {
+      return Promise.resolve();
+    }
 
-    apply: () => (CONFIG.enabled ? init() : cleanup()),
-  };
+    return new Promise((resolve, reject) => {
+      let settled = false;
 
-  // Optimized core functions
-  const injectCSS = () => {
-    if (state.styleEl || !CONFIG.enabled) return;
-
-    // ✅ Use StyleManager instead of createElement('style')
-    const styles = `${CONFIG.selectors}{display:none!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;transform:scale(0)!important}`;
-    YouTubeUtils.StyleManager.add('end-screen-remover', styles);
-    state.styleEl = true; // Mark as added
-  };
-
-  const removeEndScreens = () => {
-    if (!CONFIG.enabled) return;
-    const now = performance.now();
-    if (now - state.lastCheck < CONFIG.debounceMs) return;
-    state.lastCheck = now;
-
-    const elements = document.querySelectorAll(CONFIG.selectors);
-    if (elements.length) fastRemove(elements);
-  };
-
-  const setupWatcher = () => {
-    if (state.observer || !CONFIG.enabled) return;
-
-    const throttledRemove = debounce(removeEndScreens, CONFIG.debounceMs);
-
-    state.observer = new MutationObserver((mutations) => {
-      let hasRelevantChanges = false;
-      for (const { addedNodes } of mutations) {
-        for (const node of addedNodes) {
-          if (
-            node.nodeType === 1 &&
-            (node.className?.includes('ytp-') || node.querySelector?.('.ytp-ce-element'))
-          ) {
-            hasRelevantChanges = true;
-            break;
-          }
+      const cleanup = () => {
+        video.removeEventListener('loadedmetadata', onLoaded);
+        video.removeEventListener('error', onError);
+        if (timeoutId) {
+          clearTimeout(timeoutId);
         }
-        if (hasRelevantChanges) break;
+      };
+
+      const onLoaded = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        resolve();
+      };
+
+      const onError = () => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('Video metadata failed to load'));
+      };
+
+      let timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        reject(new Error('Timed out waiting for video metadata'));
+      }, 3000);
+
+      const registeredTimeout = YouTubeUtils?.cleanupManager?.registerTimeout?.(timeoutId);
+      if (registeredTimeout) {
+        timeoutId = registeredTimeout;
       }
-      if (hasRelevantChanges) throttledRemove();
-    });
 
-    // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(state.observer);
-
-    const target = document.querySelector('#movie_player') || document.body;
-    state.observer.observe(target, {
-      childList: true,
-      subtree: true,
-      attributeFilter: ['class', 'style'],
+      video.addEventListener('loadedmetadata', onLoaded, { once: true });
+      video.addEventListener('error', onError, { once: true });
     });
   };
 
-  const cleanup = () => {
-    state.observer?.disconnect();
-    state.observer = null;
-    state.styleEl?.remove();
-    state.styleEl = null;
-    state.isActive = false;
+  const setSessionActive = isActive => {
+    try {
+      if (isActive) {
+        sessionStorage.setItem(PIP_SESSION_KEY, 'true');
+      } else {
+        sessionStorage.removeItem(PIP_SESSION_KEY);
+      }
+    } catch { }
   };
 
-  const init = () => {
-    if (state.isActive || !CONFIG.enabled) return;
-    state.isActive = true;
-    injectCSS();
-    removeEndScreens();
-    setupWatcher();
-  };
-
-  // Streamlined settings UI
-  const addSettingsUI = () => {
-    const section = document.querySelector('.ytp-plus-settings-section[data-section="advanced"]');
-    if (!section || section.querySelector('.endscreen-settings')) return;
-
-    const container = document.createElement('div');
-    container.className = 'ytp-plus-settings-item endscreen-settings';
-    container.innerHTML = `
-        <div>
-          <label class="ytp-plus-settings-item-label">Hide End Screens & Cards</label>
-          <div class="ytp-plus-settings-item-description">Remove end screen suggestions and info cards${state.removeCount ? ` (${state.removeCount} removed)` : ''}</div>
-        </div>
-        <input type="checkbox" class="ytp-plus-settings-checkbox" ${CONFIG.enabled ? 'checked' : ''}>
-      `;
-
-    section.appendChild(container);
-
-    container.querySelector('input').addEventListener(
-      'change',
-      (e) => {
-        CONFIG.enabled = e.target.checked;
-        settings.save();
-      },
-      { passive: true }
-    );
-  };
-
-  // Optimized navigation handler
-  const handlePageChange = debounce(() => {
-    if (location.pathname === '/watch') {
-      cleanup();
-      requestIdleCallback ? requestIdleCallback(init) : setTimeout(init, 1);
+  const wasSessionActive = () => {
+    try {
+      return sessionStorage.getItem(PIP_SESSION_KEY) === 'true';
+    } catch {
+      return false;
     }
-  }, 50);
+  };
+
+  /**
+   * Load settings from localStorage
+   * @returns {void}
+   */
+  const loadSettings = () => {
+    try {
+      const saved = localStorage.getItem(pipSettings.storageKey);
+      if (saved) Object.assign(pipSettings, JSON.parse(saved));
+    } catch (e) {
+      console.error('Error loading PiP settings:', e);
+    }
+  };
+
+  /**
+   * Save settings to localStorage
+   * @returns {void}
+   */
+  const saveSettings = () => {
+    try {
+      localStorage.setItem(pipSettings.storageKey, JSON.stringify(pipSettings));
+    } catch (e) {
+      console.error('Error saving PiP settings:', e);
+    }
+  };
+
+  /**
+   * Get current PiP element as HTMLVideoElement when available
+   * @returns {HTMLVideoElement|null}
+   */
+  const getCurrentPiPElement = () => {
+    const current = document.pictureInPictureElement;
+    if (current && typeof current === 'object' && 'tagName' in current) {
+      const tag = /** @type {{ tagName?: string }} */ (current).tagName;
+      if (typeof tag === 'string' && tag.toLowerCase() === 'video') {
+        return /** @type {HTMLVideoElement} */ (/** @type {unknown} */ (current));
+      }
+    }
+    return null;
+  };
+
+  /**
+   * Toggle Picture-in-Picture mode
+   * @param {HTMLVideoElement} video - The video element
+   * @returns {Promise<void>}
+   */
+  const togglePictureInPicture = async video => {
+    if (!pipSettings.enabled || !video) return;
+
+    try {
+      const currentPiP = getCurrentPiPElement();
+
+      if (currentPiP && currentPiP !== video) {
+        await document.exitPictureInPicture();
+        setSessionActive(false);
+      }
+
+      if (getCurrentPiPElement() === video) {
+        await document.exitPictureInPicture();
+        setSessionActive(false);
+        return;
+      }
+
+      if (video.disablePictureInPicture) {
+        throw new Error('Picture-in-Picture is disabled by the video element');
+      }
+
+      await waitForMetadata(video);
+
+      await video.requestPictureInPicture();
+      setSessionActive(true);
+    } catch (error) {
+      console.error('[YouTube+][PiP] Failed to toggle Picture-in-Picture:', error);
+    }
+  };
+
+  /**
+   * Add PiP settings UI to advanced settings modal
+   * @returns {void}
+   */
+  const addPipSettingsToModal = () => {
+    // ✅ Use cached querySelector
+    const advancedSection = YouTubeUtils.querySelector(
+      '.ytp-plus-settings-section[data-section="advanced"]'
+    );
+    if (!advancedSection || YouTubeUtils.querySelector('.pip-settings-item')) return;
+
+    // Add styles if they don't exist
+    // ✅ Use StyleManager instead of createElement('style')
+    if (!document.getElementById('pip-styles')) {
+      const styles = `
+          .pip-shortcut-editor { display: flex; align-items: center; gap: 8px; }
+          .pip-shortcut-editor select, #pip-key {background: rgba(34, 34, 34, var(--yt-header-bg-opacity)); color: var(--yt-spec-text-primary); border: 1px solid var(--yt-spec-10-percent-layer); border-radius: var(--yt-radius-sm); padding: 4px;}
+        `;
+      YouTubeUtils.StyleManager.add('pip-styles', styles);
+    }
+
+    // Enable/disable toggle
+    const enableItem = document.createElement('div');
+    enableItem.className = 'ytp-plus-settings-item pip-settings-item';
+    enableItem.innerHTML = `
+        <div>
+          <label class="ytp-plus-settings-item-label">Picture-in-Picture</label>
+          <div class="ytp-plus-settings-item-description">Add Picture-in-Picture functionality with keyboard shortcut</div>
+        </div>
+        <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enablePiP" id="pip-enable-checkbox" ${pipSettings.enabled ? 'checked' : ''}>
+      `;
+    advancedSection.appendChild(enableItem);
+
+    // Shortcut settings
+    const shortcutItem = document.createElement('div');
+    shortcutItem.className = 'ytp-plus-settings-item pip-shortcut-item';
+    shortcutItem.style.display = pipSettings.enabled ? 'flex' : 'none';
+
+    const { ctrlKey, altKey, shiftKey } = pipSettings.shortcut;
+    const modifierValue =
+      ctrlKey && altKey && shiftKey
+        ? 'ctrl+alt+shift'
+        : ctrlKey && altKey
+          ? 'ctrl+alt'
+          : ctrlKey && shiftKey
+            ? 'ctrl+shift'
+            : altKey && shiftKey
+              ? 'alt+shift'
+              : ctrlKey
+                ? 'ctrl'
+                : altKey
+                  ? 'alt'
+                  : shiftKey
+                    ? 'shift'
+                    : 'none';
+
+    shortcutItem.innerHTML = `
+        <div>
+          <label class="ytp-plus-settings-item-label">PiP Keyboard Shortcut</label>
+          <div class="ytp-plus-settings-item-description">Customize keyboard combination to toggle PiP mode</div>
+        </div>
+        <div class="pip-shortcut-editor">
+          <select id="pip-modifier-combo">
+            ${[
+        'none',
+        'ctrl',
+        'alt',
+        'shift',
+        'ctrl+alt',
+        'ctrl+shift',
+        'alt+shift',
+        'ctrl+alt+shift',
+      ]
+        .map(
+          v =>
+            `<option value="${v}" ${v === modifierValue ? 'selected' : ''}>${v === 'none'
+              ? 'None'
+              : v
+                .replace(/\+/g, '+')
+                .split('+')
+                .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+                .join('+')
+            }</option>`
+        )
+        .join('')}
+          </select>
+          <span>+</span>
+          <input type="text" id="pip-key" value="${pipSettings.shortcut.key}" maxlength="1" style="width: 30px; text-align: center;">
+        </div>
+      `;
+    advancedSection.appendChild(shortcutItem);
+
+    // Event listeners
+    document.getElementById('pip-enable-checkbox').addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      pipSettings.enabled = target.checked;
+      shortcutItem.style.display = pipSettings.enabled ? 'flex' : 'none';
+      saveSettings();
+    });
+
+    document.getElementById('pip-modifier-combo').addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
+      const value = target.value;
+      pipSettings.shortcut.ctrlKey = value.includes('ctrl');
+      pipSettings.shortcut.altKey = value.includes('alt');
+      pipSettings.shortcut.shiftKey = value.includes('shift');
+      saveSettings();
+    });
+
+    document.getElementById('pip-key').addEventListener('input', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      if (target.value) {
+        pipSettings.shortcut.key = target.value.toUpperCase();
+        saveSettings();
+      }
+    });
+
+    document.getElementById('pip-key').addEventListener('keydown', e => e.stopPropagation());
+  };
 
   // Initialize
-  settings.load();
+  loadSettings();
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
-  } else {
-    init();
-  }
-
-  const handleSettingsNavClick = (e) => {
-    if (e.target.dataset?.section === 'advanced') {
-      setTimeout(addSettingsUI, 10);
+  // Event listeners
+  document.addEventListener('keydown', e => {
+    if (!pipSettings.enabled) return;
+    const { shiftKey, altKey, ctrlKey, key } = pipSettings.shortcut;
+    if (
+      e.shiftKey === shiftKey &&
+      e.altKey === altKey &&
+      e.ctrlKey === ctrlKey &&
+      e.key.toUpperCase() === key
+    ) {
+      // ✅ Use cached querySelector and guard by tagName to avoid referencing DOM lib types in TS
+      const video = getVideoElement();
+      if (video) {
+        void togglePictureInPicture(video);
+      }
+      e.preventDefault();
     }
-  };
+  });
 
-  if (!state.ytNavigateListenerKey) {
-    state.ytNavigateListenerKey = YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'yt-navigate-finish',
-      handlePageChange,
-      { passive: true }
-    );
-  }
+  window.addEventListener('storage', e => {
+    if (e.key === pipSettings.storageKey) {
+      loadSettings();
+    }
+  });
 
-  // Settings modal integration
-  const settingsObserver = new MutationObserver((mutations) => {
-    for (const { addedNodes } of mutations) {
-      for (const node of addedNodes) {
-        if (node.classList?.contains('ytp-plus-settings-modal')) {
-          setTimeout(addSettingsUI, 25);
-          return;
+  window.addEventListener('load', () => {
+    if (!pipSettings.enabled || !wasSessionActive() || document.pictureInPictureElement) {
+      return;
+    }
+
+    const resumePiP = () => {
+      const video = getVideoElement();
+      if (!video) return;
+
+      togglePictureInPicture(video).catch(() => {
+        // If resume fails we reset the session flag to avoid loops
+        setSessionActive(false);
+      });
+    };
+
+    const ensureCleanup = handler => {
+      if (!handler) return;
+      try {
+        document.removeEventListener('pointerdown', handler, true);
+      } catch { }
+    };
+
+    const cleanupListeners = () => {
+      ensureCleanup(pointerListener);
+      ensureCleanup(keyListener);
+    };
+
+    const pointerListener = () => {
+      cleanupListeners();
+      resumePiP();
+    };
+
+    const keyListener = () => {
+      cleanupListeners();
+      resumePiP();
+    };
+
+    document.addEventListener('pointerdown', pointerListener, { once: true, capture: true });
+    document.addEventListener('keydown', keyListener, { once: true, capture: true });
+  });
+
+  // DOM observers for the settings modal
+  const observer = new MutationObserver(mutations => {
+    for (const mutation of mutations) {
+      for (const node of mutation.addedNodes) {
+        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
+          setTimeout(addPipSettingsToModal, 100);
         }
+      }
+    }
+
+    document.addEventListener('leavepictureinpicture', () => {
+      setSessionActive(false);
+    });
+    // Check for section changes - ✅ Use cached querySelector
+    if (YouTubeUtils.querySelector('.ytp-plus-settings-nav-item[data-section="advanced"].active')) {
+      // If advanced section is active and our settings aren't there yet, add them
+      if (!YouTubeUtils.querySelector('.pip-settings-item')) {
+        setTimeout(addPipSettingsToModal, 50);
       }
     }
   });
 
   // ✅ Register observer in cleanupManager
-  YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-  settingsObserver.observe(document.body, { childList: true });
+  YouTubeUtils.cleanupManager.registerObserver(observer);
 
-  if (!state.settingsNavListenerKey) {
-    state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'click',
-      handleSettingsNavClick,
-      { passive: true, capture: true }
-    );
+  // ✅ Safe observe with document.body check
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
   }
+
+  // ✅ Register global click listener in cleanupManager
+  const clickHandler = e => {
+    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+    if (target.classList && target.classList.contains('ytp-plus-settings-nav-item')) {
+      if (target.dataset?.section === 'advanced') {
+        setTimeout(addPipSettingsToModal, 50);
+      }
+    }
+  };
+  YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
 })();
 
-// --- MODULE: enhanced.js ---
+// --- MODULE: timecode.js ---
 
-// Enhanced Tabviews
+// YouTube Timecode Panel
 (function () {
   'use strict';
+
+  // Early exit for embeds to prevent duplicate panels - ✅ Use cached querySelector
+  if (window.location.hostname !== 'www.youtube.com' || window.frameElement) {
+    return;
+  }
+
+  // Prevent multiple initializations
+  if (window._timecodeModuleInitialized) return;
+  window._timecodeModuleInitialized = true;
 
   // Configuration
   const config = {
     enabled: true,
-    storageKey: 'youtube_top_button_settings',
+    autoDetect: true,
+    shortcut: { key: 'T', shiftKey: true, altKey: false, ctrlKey: false },
+    storageKey: 'youtube_timecode_settings',
+    autoSave: true,
+    autoTrackPlayback: true,
+    panelPosition: null,
+    export: true,
   };
 
-  let activeScrollContainer = null;
-  let activeScrollListenerKey = null;
-  let activeResizeObserver = null;
-  let activeMutationObserver = null;
-
-  const teardownActiveContainer = () => {
-    if (activeScrollListenerKey) {
-      YouTubeUtils.cleanupManager.unregisterListener(activeScrollListenerKey);
-      activeScrollListenerKey = null;
-    }
-    if (activeResizeObserver) {
-      YouTubeUtils.cleanupManager.unregisterObserver(activeResizeObserver);
-      activeResizeObserver = null;
-    }
-    if (activeMutationObserver) {
-      YouTubeUtils.cleanupManager.unregisterObserver(activeMutationObserver);
-      activeMutationObserver = null;
-    }
-    activeScrollContainer = null;
+  // State management
+  const state = {
+    timecodes: new Map(),
+    dom: {},
+    isReloading: false,
+    activeIndex: null,
+    trackingId: 0,
+    dragging: false,
+    editingIndex: null,
+    resizeListenerKey: null,
   };
 
-  // Styles
-  const addStyles = () => {
-    if (document.getElementById('custom-styles')) return;
+  let initStarted = false;
 
-    // ✅ Use StyleManager instead of createElement('style')
-    const styles = `
-      :root{--scrollbar-width:8px;--scrollbar-track:transparent;--scrollbar-thumb:rgba(144,144,144,.5);--scrollbar-thumb-hover:rgba(170,170,170,.7);--scrollbar-thumb-active:rgba(190,190,190,.9);}
-      ::-webkit-scrollbar{width:var(--scrollbar-width)!important;height:var(--scrollbar-width)!important;}
-      ::-webkit-scrollbar-track{background:var(--scrollbar-track)!important;border-radius:4px!important;}
-      ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb)!important;border-radius:4px!important;transition:background .2s!important;}
-      ::-webkit-scrollbar-thumb:hover{background:var(--scrollbar-thumb-hover)!important;}
-      ::-webkit-scrollbar-thumb:active{background:var(--scrollbar-thumb-active)!important;}
-      ::-webkit-scrollbar-corner{background:transparent!important;}
-      *{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track);}
-      html[dark]{--scrollbar-thumb:rgba(144,144,144,.4);--scrollbar-thumb-hover:rgba(170,170,170,.6);--scrollbar-thumb-active:rgba(190,190,190,.8);}
-      .top-button{position:absolute;bottom:16px;right:16px;width:44px;height:44px;background:var(--yt-glass-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:1000;opacity:0;visibility:hidden;transition:all .3s cubic-bezier(.4,0,.2,1);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);box-shadow:var(--yt-glass-shadow);}
-      .top-button:hover{background:var(--yt-hover-bg);transform:translateY(-2px) scale(1.08);box-shadow:0 12px 40px rgba(0,0,0,.3);}
-      .top-button[data-disabled="true"]{opacity:0;visibility:hidden;pointer-events:none;}
-      .top-button.visible{opacity:1;visibility:visible;}
-      .top-button svg{transition:transform .2s cubic-bezier(.4,0,.2,1);}
-      .top-button:hover svg{transform:translateY(-2px) scale(1.1);}
-      html[dark]{--yt-top-btn-bg:var(--yt-glass-bg);--yt-top-btn-color:#fff;--yt-top-btn-border:var(--yt-glass-border);--yt-top-btn-hover:var(--yt-hover-bg);}
-      html:not([dark]){--yt-top-btn-bg:var(--yt-glass-bg);--yt-top-btn-color:#222;--yt-top-btn-border:var(--yt-glass-border);--yt-top-btn-hover:var(--yt-hover-bg);}
-        `;
-    YouTubeUtils.StyleManager.add('custom-styles', styles);
+  const scheduleInitRetry = () => {
+    const timeoutId = setTimeout(init, 250);
+    YouTubeUtils.cleanupManager?.registerTimeout?.(timeoutId);
   };
 
-  // Button functionality
-  const handleScroll = (scrollContainer) => {
-    const button = document.getElementById('right-tabs-top-button');
-    if (!button || !scrollContainer) return;
-
-    if (!scrollContainer.isConnected) {
-      teardownActiveContainer();
-      button.classList.remove('visible');
-      button.setAttribute('data-disabled', 'true');
-      return;
-    }
-
-    const canScroll = scrollContainer.scrollHeight - scrollContainer.clientHeight > 24;
-
-    if (!canScroll) {
-      button.classList.remove('visible');
-      button.setAttribute('data-disabled', 'true');
-      return;
-    }
-
-    button.removeAttribute('data-disabled');
-    button.classList.toggle('visible', scrollContainer.scrollTop > 100);
+  // Utilities
+  const loadSettings = () => {
+    try {
+      const saved = localStorage.getItem(config.storageKey);
+      if (saved) Object.assign(config, JSON.parse(saved));
+    } catch { }
   };
 
-  const setupScrollListener = () => {
-    const button = document.getElementById('right-tabs-top-button');
-    const scrollContainer = YouTubeUtils.querySelector(
-      '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
-    );
+  const saveSettings = () => {
+    try {
+      localStorage.setItem(config.storageKey, JSON.stringify(config));
+    } catch { }
+  };
 
-    if (!scrollContainer) {
-      teardownActiveContainer();
-      if (button) {
-        button.classList.remove('visible');
-        button.setAttribute('data-disabled', 'true');
-      }
-      return;
-    }
+  const clampPanelPosition = (panel, left, top) => {
+    if (!panel) return { left: 0, top: 0 };
 
-    if (activeScrollContainer !== scrollContainer) {
-      teardownActiveContainer();
-      activeScrollContainer = scrollContainer;
+    const rect = panel.getBoundingClientRect();
+    const width = rect.width || panel.offsetWidth || 0;
+    const height = rect.height || panel.offsetHeight || 0;
 
-      const updateVisibility = () => handleScroll(scrollContainer);
-      const throttledScroll = YouTubeUtils.throttle(updateVisibility, 100);
-      const observerUpdate = YouTubeUtils.throttle(updateVisibility, 150);
+    const maxLeft = Math.max(0, window.innerWidth - width);
+    const maxTop = Math.max(0, window.innerHeight - height);
 
-      activeScrollListenerKey = YouTubeUtils.cleanupManager.registerListener(
-        scrollContainer,
-        'scroll',
-        throttledScroll,
-        { passive: true }
+    return {
+      left: Math.min(Math.max(0, left), maxLeft),
+      top: Math.min(Math.max(0, top), maxTop),
+    };
+  };
+
+  const savePanelPosition = (left, top) => {
+    config.panelPosition = { left, top };
+    saveSettings();
+  };
+
+  const applySavedPanelPosition = panel => {
+    if (!panel || !config.panelPosition) return;
+
+    requestAnimationFrame(() => {
+      const { left, top } = clampPanelPosition(
+        panel,
+        config.panelPosition.left,
+        config.panelPosition.top
       );
-
-      if (typeof ResizeObserver === 'function') {
-        activeResizeObserver = new ResizeObserver(() => observerUpdate());
-        activeResizeObserver.observe(scrollContainer);
-        YouTubeUtils.cleanupManager.registerObserver(activeResizeObserver);
-      }
-
-      activeMutationObserver = new MutationObserver(() => observerUpdate());
-      activeMutationObserver.observe(scrollContainer, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        characterData: true,
-      });
-      YouTubeUtils.cleanupManager.registerObserver(activeMutationObserver);
-    }
-
-    handleScroll(scrollContainer);
-  };
-
-  const scheduleScrollSetup = (delay = 100) => {
-    const timeoutId = setTimeout(() => {
-      YouTubeUtils.cleanupManager.unregisterTimeout(timeoutId);
-      setupScrollListener();
-    }, delay);
-    YouTubeUtils.cleanupManager.registerTimeout(timeoutId);
-  };
-
-  const createButton = () => {
-    // ✅ Use cached querySelector
-    const rightTabs = YouTubeUtils.querySelector('#right-tabs');
-    if (!rightTabs || document.getElementById('right-tabs-top-button')) return;
-    if (!config.enabled) return;
-
-    const button = document.createElement('button');
-    button.id = 'right-tabs-top-button';
-    button.className = 'top-button';
-    button.title = 'Scroll to top';
-    button.innerHTML =
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
-
-    button.addEventListener('click', () => {
-      // ✅ Use cached querySelector
-      const activeTab = YouTubeUtils.querySelector(
-        '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
-      );
-      if (activeTab) activeTab.scrollTo({ top: 0, behavior: 'smooth' });
+      panel.style.left = `${left}px`;
+      panel.style.top = `${top}px`;
+      panel.style.right = 'auto';
     });
-
-    rightTabs.style.position = 'relative';
-    rightTabs.appendChild(button);
-    setupScrollListener();
-    scheduleScrollSetup(200);
   };
 
-  // Observers
-  const observeTabChanges = () => {
-    const observer = new MutationObserver((mutations) => {
-      let shouldRescan = false;
+  const showNotification = (message, duration = 2000, type = 'info') => {
+    YouTubeUtils.NotificationManager.show(message, { duration, type });
+  };
 
-      for (const mutation of mutations) {
-        if (
-          mutation.type === 'attributes' &&
-          mutation.attributeName === 'class' &&
-          mutation.target.classList.contains('tab-content-cld')
-        ) {
-          shouldRescan = true;
-          break;
-        }
+  // Time utilities
+  const formatTime = seconds => {
+    if (isNaN(seconds)) return '00:00';
+    seconds = Math.round(seconds);
+    const h = Math.floor(seconds / 3600);
+    const m = Math.floor((seconds % 3600) / 60);
+    const s = seconds % 60;
+    return h > 0
+      ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
+      : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
 
-        if (mutation.type === 'childList') {
-          const added = Array.from(mutation.addedNodes || []);
-          if (
-            added.some(
-              (node) =>
-                node instanceof HTMLElement &&
-                (node.classList.contains('tab-content-cld') || node.closest?.('.tab-content-cld'))
-            )
-          ) {
-            shouldRescan = true;
-            break;
+  const parseTime = timeStr => {
+    if (!timeStr) return null;
+    const str = timeStr.trim();
+
+    // Handle HH:MM:SS format
+    let match = str.match(/^(\d+):(\d{1,2}):(\d{2})$/);
+    if (match) {
+      const [, h, m, s] = match.map(Number);
+      return m < 60 && s < 60 ? h * 3600 + m * 60 + s : null;
+    }
+
+    // Handle MM:SS format
+    match = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (match) {
+      const [, m, s] = match.map(Number);
+      return m < 60 && s < 60 ? m * 60 + s : null;
+    }
+
+    return null;
+  };
+
+  // Timecode extraction
+  const extractTimecodes = text => {
+    if (!text) return [];
+
+    const timecodes = [];
+    const seen = new Set();
+    const patterns = [
+      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]\s*(.+?)$/gm,
+      /^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)$/gm,
+      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—:]\s*([^\n\r]{1,100}?)(?=\s*\d{1,2}:\d{2}|\s*$)/g,
+      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[–—-]\s*([^\n]+)/gm,
+      /^(\d{1,2}:\d{2}(?::\d{2})?)\s*(.+)$/gm,
+    ];
+
+    for (const pattern of patterns) {
+      let match;
+      while ((match = pattern.exec(text)) !== null) {
+        const time = parseTime(match[1]);
+        if (time !== null && !seen.has(time)) {
+          seen.add(time);
+          const label = (match[2] || formatTime(time))
+            .trim()
+            .replace(/^\d+[\.\)]\s*/, '')
+            .substring(0, 100);
+          if (label) {
+            timecodes.push({ time, label, originalText: match[1] });
           }
         }
       }
+    }
 
-      if (shouldRescan) {
-        scheduleScrollSetup();
+    return timecodes.sort((a, b) => a.time - b.time);
+  };
+
+  const DESCRIPTION_SELECTORS = [
+    '#description-inline-expander yt-attributed-string',
+    '#description-inline-expander yt-formatted-string',
+    '#description-inline-expander ytd-text-inline-expander',
+    '#description-inline-expander .yt-core-attributed-string',
+    '#description ytd-text-inline-expander',
+    '#description ytd-expandable-video-description-body-renderer',
+    '#description.ytd-watch-metadata yt-formatted-string',
+    '#description.ytd-watch-metadata #description-inline-expander',
+    '#tab-info ytd-expandable-video-description-body-renderer yt-formatted-string',
+    '#tab-info ytd-expandable-video-description-body-renderer yt-attributed-string',
+    '#structured-description ytd-text-inline-expander',
+    '#structured-description yt-formatted-string',
+    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"] yt-formatted-string',
+    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"] yt-attributed-string',
+    'ytd-watch-metadata #description',
+    'ytd-watch-metadata #description-inline-expander',
+    '#description',
+  ];
+
+  const DESCRIPTION_SELECTOR_COMBINED = DESCRIPTION_SELECTORS.join(',');
+
+  const DESCRIPTION_EXPANDERS = [
+    '#description-inline-expander yt-button-shape button',
+    '#description-inline-expander tp-yt-paper-button#expand',
+    '#description-inline-expander tp-yt-paper-button[aria-label]',
+    'ytd-watch-metadata #description-inline-expander yt-button-shape button',
+    'ytd-text-inline-expander[collapsed] yt-button-shape button',
+    'ytd-text-inline-expander[collapsed] tp-yt-paper-button#expand',
+    'ytd-expandable-video-description-body-renderer #expand',
+    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"] #expand',
+  ];
+
+  const sleep = (ms = 250) => new Promise(resolve => setTimeout(resolve, ms));
+
+  const collectDescriptionText = () => {
+    const snippets = [];
+    DESCRIPTION_SELECTORS.forEach(selector => {
+      document.querySelectorAll(selector).forEach(node => {
+        const text = node?.textContent?.trim();
+        if (text) {
+          snippets.push(text);
+        }
+      });
+    });
+    return snippets.join('\n');
+  };
+
+  const expandDescriptionIfNeeded = async () => {
+    for (const selector of DESCRIPTION_EXPANDERS) {
+      const button = document.querySelector(selector);
+      if (!button) continue;
+
+      const ariaExpanded = button.getAttribute('aria-expanded');
+      if (ariaExpanded === 'true') return false;
+
+      const ariaLabel = button.getAttribute('aria-label')?.toLowerCase();
+      if (ariaLabel && ariaLabel.includes('less')) return false;
+
+      if (button.offsetParent !== null) {
+        try {
+          /** @type {HTMLElement} */ (button).click();
+          await sleep(400);
+          return true;
+        } catch (error) {
+          console.warn('[Timecode] Failed to click expand button:', error);
+        }
+      }
+    }
+
+    const inlineExpander = document.querySelector('ytd-text-inline-expander[collapsed]');
+    if (inlineExpander) {
+      try {
+        inlineExpander.removeAttribute('collapsed');
+      } catch (error) {
+        YouTubeUtils.logError('TimecodePanel', 'Failed to expand description', error);
+      }
+      await sleep(300);
+      return true;
+    }
+
+    return false;
+  };
+
+  const ensureDescriptionReady = async () => {
+    const initialText = collectDescriptionText();
+    if (initialText) return;
+
+    const maxAttempts = 3;
+    for (let attempt = 0; attempt < maxAttempts; attempt++) {
+      try {
+        await YouTubeUtils.waitForElement(DESCRIPTION_SELECTOR_COMBINED, 1500);
+      } catch {
+        // Continue trying
+      }
+
+      await sleep(200);
+      const expanded = await expandDescriptionIfNeeded();
+
+      await sleep(expanded ? 500 : 200);
+      const text = collectDescriptionText();
+
+      if (text && text.length > initialText.length) {
+        return;
+      }
+    }
+  };
+  const getCurrentVideoId = () => new URLSearchParams(window.location.search).get('v');
+
+  // Detection
+  const detectTimecodes = async (options = {}) => {
+    const { force = false } = options;
+
+    if (!config.enabled) return [];
+    if (!force && !config.autoDetect) return [];
+
+    const videoId = getCurrentVideoId();
+    if (!videoId) return [];
+
+    const cacheKey = `detect_${videoId}`;
+    if (!force && state.timecodes.has(cacheKey)) {
+      const cached = state.timecodes.get(cacheKey);
+      if (Array.isArray(cached) && cached.length) {
+        return cached;
+      }
+      state.timecodes.delete(cacheKey);
+    }
+
+    await ensureDescriptionReady();
+
+    const uniqueMap = new Map();
+    const descriptionText = collectDescriptionText();
+
+    if (descriptionText) {
+      const extracted = extractTimecodes(descriptionText);
+      extracted.forEach(tc => {
+        if (tc.time >= 0 && tc.label?.trim()) {
+          uniqueMap.set(tc.time.toString(), tc);
+        }
+      });
+    }
+
+    // Get native chapters
+    const chapters = getYouTubeChapters();
+
+    chapters.forEach(chapter => {
+      if (chapter.time >= 0 && chapter.label?.trim()) {
+        uniqueMap.set(chapter.time.toString(), chapter);
+      }
+    });
+
+    const result = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+    const hadExistingItems = state.dom.list?.childElementCount > 0;
+
+    if (result.length > 0) {
+      updateTimecodePanel(result);
+      state.timecodes.set(cacheKey, result);
+      if (config.autoSave) saveTimecodesToStorage(result);
+    } else {
+      if (force || !hadExistingItems) {
+        updateTimecodePanel([]);
+      }
+      if (force) {
+        state.timecodes.delete(cacheKey);
+      }
+    }
+
+    return result;
+  };
+
+  const reloadTimecodes = async (buttonOverride = null) => {
+    const button =
+      buttonOverride || state.dom.reloadButton || document.getElementById('timecode-reload');
+
+    if (state.isReloading || !config.enabled) return;
+
+    state.isReloading = true;
+    if (button) {
+      button.disabled = true;
+      button.classList.add('loading');
+    }
+
+    try {
+      const result = await detectTimecodes({ force: true });
+
+      if (Array.isArray(result) && result.length) {
+        showNotification(`Найдено таймкодов: ${result.length}`);
+      } else {
+        updateTimecodePanel([]);
+        showNotification('Таймкоды не найдены');
+      }
+    } catch (error) {
+      YouTubeUtils.logError('TimecodePanel', 'Reload failed', error);
+      showNotification('Ошибка при обновлении таймкодов');
+    } finally {
+      if (button) {
+        button.disabled = false;
+        button.classList.remove('loading');
+      }
+      state.isReloading = false;
+    }
+  };
+
+  const getYouTubeChapters = () => {
+    // Расширенный поиск глав/эпизодов
+    const selectors = [
+      'ytd-macro-markers-list-item-renderer',
+      'ytd-chapter-renderer',
+      'ytd-engagement-panel-section-list-renderer[target-id*="description-chapters"] ytd-macro-markers-list-item-renderer',
+      'ytd-engagement-panel-section-list-renderer[target-id*="description-chapters"] #details',
+      '#structured-description ytd-horizontal-card-list-renderer ytd-macro-markers-list-item-renderer',
+    ];
+
+    const items = document.querySelectorAll(selectors.join(', '));
+    const chapters = new Map();
+
+    items.forEach(item => {
+      // Попробуем разные способы извлечения времени и заголовка
+      const timeSelectors = ['.time-info', '.timestamp', '#time', 'span[id*="time"]'];
+      const titleSelectors = ['.marker-title', '.chapter-title', '#details', 'h4', '.title'];
+
+      let timeText = null;
+      for (const sel of timeSelectors) {
+        const el = item.querySelector(sel);
+        if (el?.textContent) {
+          timeText = el.textContent;
+          break;
+        }
+      }
+
+      let titleText = null;
+      for (const sel of titleSelectors) {
+        const el = item.querySelector(sel);
+        if (el?.textContent) {
+          titleText = el.textContent;
+          break;
+        }
+      }
+
+      if (timeText) {
+        const time = parseTime(timeText.trim());
+        if (time !== null) {
+          // Очищаем заголовок от лишних пробелов и переносов строк
+          const cleanTitle = titleText?.trim().replace(/\s+/g, ' ') || formatTime(time);
+          chapters.set(time.toString(), {
+            time,
+            label: cleanTitle,
+            isChapter: true,
+          });
+        }
+      }
+    });
+    const result = Array.from(chapters.values()).sort((a, b) => a.time - b.time);
+    return result;
+  };
+
+  // Settings panel
+  const addTimecodePanelSettings = () => {
+    // ✅ Use cached querySelector
+    const advancedSection = YouTubeUtils.querySelector(
+      '.ytp-plus-settings-section[data-section="advanced"]'
+    );
+    if (!advancedSection || YouTubeUtils.querySelector('.timecode-settings-item')) return;
+
+    const { ctrlKey, altKey, shiftKey } = config.shortcut;
+    const modifierValue =
+      [
+        ctrlKey && altKey && shiftKey && 'ctrl+alt+shift',
+        ctrlKey && altKey && 'ctrl+alt',
+        ctrlKey && shiftKey && 'ctrl+shift',
+        altKey && shiftKey && 'alt+shift',
+        ctrlKey && 'ctrl',
+        altKey && 'alt',
+        shiftKey && 'shift',
+      ].find(Boolean) || 'none';
+
+    const enableDiv = document.createElement('div');
+    enableDiv.className = 'ytp-plus-settings-item timecode-settings-item';
+    enableDiv.innerHTML = `
+        <div>
+          <label class="ytp-plus-settings-item-label">Timecode Panel</label>
+          <div class="ytp-plus-settings-item-description">Enable video timecode/chapter panel with quick navigation</div>
+        </div>
+        <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enabled" ${config.enabled ? 'checked' : ''}>
+      `;
+
+    const shortcutDiv = document.createElement('div');
+    shortcutDiv.className = 'ytp-plus-settings-item timecode-settings-item timecode-shortcut-item';
+    shortcutDiv.style.display = config.enabled ? 'flex' : 'none';
+    shortcutDiv.innerHTML = `
+        <div>
+          <label class="ytp-plus-settings-item-label">Keyboard Shortcut</label>
+          <div class="ytp-plus-settings-item-description">Customize keyboard combination to toggle Timecode Panel</div>
+        </div>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <select id="timecode-modifier-combo" style="background: rgba(34, 34, 34, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
+            ${[
+        'none',
+        'ctrl',
+        'alt',
+        'shift',
+        'ctrl+alt',
+        'ctrl+shift',
+        'alt+shift',
+        'ctrl+alt+shift',
+      ]
+        .map(
+          v =>
+            `<option value="${v}" ${v === modifierValue ? 'selected' : ''}>${v === 'none'
+              ? 'None'
+              : v
+                .split('+')
+                .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+                .join('+')
+            }</option>`
+        )
+        .join('')}
+          </select>
+          <span>+</span>
+          <input type="text" id="timecode-key" value="${config.shortcut.key}" maxlength="1" style="width: 30px; text-align: center; background: rgba(34, 34, 34, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
+        </div>
+      `;
+
+    advancedSection.append(enableDiv, shortcutDiv);
+
+    // Event listeners
+    advancedSection.addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (target.matches && target.matches('.ytp-plus-settings-checkbox[data-setting="enabled"]')) {
+        config.enabled = /** @type {HTMLInputElement} */ (target).checked;
+        shortcutDiv.style.display = config.enabled ? 'flex' : 'none';
+        toggleTimecodePanel(config.enabled);
+        saveSettings();
+      }
+    });
+
+    document.getElementById('timecode-modifier-combo')?.addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
+      const value = target.value;
+      config.shortcut.ctrlKey = value.includes('ctrl');
+      config.shortcut.altKey = value.includes('alt');
+      config.shortcut.shiftKey = value.includes('shift');
+      saveSettings();
+    });
+
+    document.getElementById('timecode-key')?.addEventListener('input', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      if (target.value) {
+        config.shortcut.key = target.value.toUpperCase();
+        saveSettings();
+      }
+    });
+  };
+
+  // CSS
+  const insertTimecodeStyles = () => {
+    if (document.getElementById('timecode-panel-styles')) return;
+
+    // ✅ Use StyleManager instead of createElement('style')
+    const styles = `
+                #timecode-panel{position:fixed;right:20px;top:80px;background:rgba(34,34,34,.9);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.4);width:250px;max-height:70vh;z-index:9999;color:#fff;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.1);transition:transform .3s,opacity .3s;overflow:hidden;display:flex;flex-direction:column}
+                #timecode-panel.hidden{transform:translateX(270px);opacity:0;pointer-events:none}
+                #timecode-panel.auto-tracking{border-color:rgba(255,0,0,.5)}
+                #timecode-header{display:flex;justify-content:space-between;align-items:center;padding:12px;border-bottom:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.3);cursor:move}
+                #timecode-title{font-weight:500;margin:0;font-size:14px;user-select:none;display:flex;align-items:center;gap:8px}
+                #timecode-tracking-indicator{width:8px;height:8px;background:red;border-radius:50%;opacity:0;transition:opacity .3s}
+                #timecode-panel.auto-tracking #timecode-tracking-indicator{opacity:1}
+                #timecode-current-time{font-family:monospace;font-size:12px;padding:2px 6px;background:rgba(255,0,0,.3);border-radius:3px;margin-left:auto}
+                #timecode-header-controls{display:flex;align-items:center;gap:6px}
+                #timecode-reload,#timecode-close{background:0 0;border:none;color:rgba(255,255,255,.7);cursor:pointer;width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;transition:color .2s}
+                #timecode-reload:hover,#timecode-close:hover{color:#fff}
+                #timecode-reload.loading{animation:timecode-spin .8s linear infinite}
+                #timecode-list{overflow-y:auto;padding:8px 0;max-height:calc(70vh - 80px);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
+                #timecode-list::-webkit-scrollbar{width:6px}
+                #timecode-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
+                .timecode-item{padding:8px 12px;display:flex;align-items:center;cursor:pointer;transition:background-color .2s;border-left:3px solid transparent;position:relative}
+                .timecode-item:hover{background:rgba(255,255,255,.1)}
+                .timecode-item:hover .timecode-actions{opacity:1}
+                .timecode-item.active{background:rgba(255,0,0,.25);border-left-color:red}
+                .timecode-item.active.pulse{animation:pulse .8s ease-out}
+                .timecode-item.editing{background:rgba(255,255,0,.15);border-left-color:#ffaa00}
+                .timecode-item.editing .timecode-actions{opacity:1}
+                @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
+                @keyframes timecode-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+                .timecode-time{font-family:monospace;margin-right:10px;color:rgba(255,255,255,.8);font-size:13px;min-width:45px}
+                .timecode-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;flex:1}
+                .timecode-item.has-chapter .timecode-time{color:#ff4444}
+                .timecode-progress{width:0;height:2px;background:#ff4444;position:absolute;bottom:0;left:0;transition:width .3s;opacity:.8}
+                .timecode-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:4px;opacity:0;transition:opacity .2s;background:rgba(0,0,0,.8);border-radius:4px;padding:2px}
+                .timecode-action{background:none;border:none;color:rgba(255,255,255,.8);cursor:pointer;padding:4px;font-size:12px;border-radius:2px;transition:color .2s,background-color .2s}
+                .timecode-action:hover{color:#fff;background:rgba(255,255,255,.2)}
+                .timecode-action.edit:hover{color:#ffaa00}
+                .timecode-action.delete:hover{color:#ff4444}
+                #timecode-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;color:rgba(255,255,255,.7);font-size:13px}
+                #timecode-form{padding:10px;border-top:1px solid rgba(255,255,255,.1);display:none}
+                #timecode-form.visible{display:block}
+                #timecode-form input{width:100%;margin-bottom:8px;padding:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:4px;color:#fff;font-size:13px}
+                #timecode-form input::placeholder{color:rgba(255,255,255,.6)}
+                #timecode-form-buttons{display:flex;gap:8px;justify-content:flex-end}
+                #timecode-form-buttons button{padding:6px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s}
+                #timecode-form-cancel{background:rgba(255,255,255,.2);color:#fff}
+                #timecode-form-cancel:hover{background:rgba(255,255,255,.3)}
+                #timecode-form-save{background:#ff4444;color:#fff}
+                #timecode-form-save:hover{background:#ff6666}
+                #timecode-actions{padding:8px;border-top:1px solid rgba(255,255,255,.1);display:flex;gap:8px;background:rgba(0,0,0,.2)}
+                #timecode-actions button{padding:6px 10px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s;background:rgba(255,255,255,.2);color:#fff}
+                #timecode-actions button:hover{background:rgba(255,255,255,.3)}
+                #timecode-track-toggle.active{background:#ff4444!important}
+            `;
+    YouTubeUtils.StyleManager.add('timecode-panel-styles', styles);
+  };
+
+  // Panel creation
+  const createTimecodePanel = () => {
+    if (state.dom.panel) return state.dom.panel;
+
+    // Remove any existing panels (for redundancy)
+    document.querySelectorAll('#timecode-panel').forEach(p => p.remove());
+
+    const panel = document.createElement('div');
+    panel.id = 'timecode-panel';
+    panel.className = config.enabled ? '' : 'hidden';
+    if (config.autoTrackPlayback) panel.classList.add('auto-tracking');
+
+    panel.innerHTML = `
+        <div id="timecode-header">
+          <h3 id="timecode-title">
+            <div id="timecode-tracking-indicator"></div>
+            Timecodes
+            <span id="timecode-current-time"></span>
+          </h3>
+          <div id="timecode-header-controls">
+            <button id="timecode-reload" title="Reload timecodes" aria-label="Reload timecodes">⟳</button>
+            <button id="timecode-close" title="Close" aria-label="Close timecode panel">×</button>
+          </div>
+        </div>
+        <div id="timecode-list"></div>
+        <div id="timecode-empty">
+          <div>No timecodes found</div>
+          <div style="margin-top:5px;font-size:12px">Click + to add current time</div>
+        </div>
+        <div id="timecode-form">
+          <input type="text" id="timecode-form-time" placeholder="Time (e.g., 1:30)">
+          <input type="text" id="timecode-form-label" placeholder="Label (optional)">
+          <div id="timecode-form-buttons">
+            <button type="button" id="timecode-form-cancel">Cancel</button>
+            <button type="button" id="timecode-form-save" class="save">Save</button>
+          </div>
+        </div>
+        <div id="timecode-actions">
+          <button id="timecode-add-btn">+ Add</button>
+          <button id="timecode-export-btn" ${config.export ? '' : 'style="display:none"'}>Export</button>
+          <button id="timecode-track-toggle" class="${config.autoTrackPlayback ? 'active' : ''}">${config.autoTrackPlayback ? 'Tracking' : 'Track'}</button>
+        </div>
+      `;
+
+    // Cache DOM elements
+    state.dom = {
+      panel,
+      list: panel.querySelector('#timecode-list'),
+      empty: panel.querySelector('#timecode-empty'),
+      form: panel.querySelector('#timecode-form'),
+      timeInput: panel.querySelector('#timecode-form-time'),
+      labelInput: panel.querySelector('#timecode-form-label'),
+      currentTime: panel.querySelector('#timecode-current-time'),
+      trackToggle: panel.querySelector('#timecode-track-toggle'),
+      reloadButton: panel.querySelector('#timecode-reload'),
+    };
+
+    // Event delegation
+    panel.addEventListener('click', handlePanelClick);
+    makeDraggable(panel);
+
+    document.body.appendChild(panel);
+    applySavedPanelPosition(panel);
+    return panel;
+  };
+
+  // Event handling
+  const handlePanelClick = e => {
+    const { target } = e;
+    const item = target.closest('.timecode-item');
+
+    const reloadButton =
+      target.id === 'timecode-reload' ? target : target.closest('#timecode-reload');
+    if (reloadButton) {
+      e.preventDefault();
+      reloadTimecodes(reloadButton);
+      return;
+    }
+
+    if (target.id === 'timecode-close') {
+      toggleTimecodePanel(false);
+    } else if (target.id === 'timecode-add-btn') {
+      // ✅ Use cached querySelector
+      const video = YouTubeUtils.querySelector('video');
+      if (video) showTimecodeForm(video.currentTime);
+    } else if (target.id === 'timecode-track-toggle') {
+      config.autoTrackPlayback = !config.autoTrackPlayback;
+      target.textContent = config.autoTrackPlayback ? 'Tracking' : 'Track';
+      target.classList.toggle('active', config.autoTrackPlayback);
+      state.dom.panel.classList.toggle('auto-tracking', config.autoTrackPlayback);
+      saveSettings();
+      if (config.autoTrackPlayback) startTracking();
+    } else if (target.id === 'timecode-export-btn') {
+      exportTimecodes();
+    } else if (target.id === 'timecode-form-cancel') {
+      hideTimecodeForm();
+    } else if (target.id === 'timecode-form-save') {
+      saveTimecodeForm();
+    } else if (target.classList.contains('timecode-action')) {
+      e.stopPropagation();
+      const action = target.dataset.action;
+      const index = parseInt(target.closest('.timecode-item').dataset.index);
+
+      if (action === 'edit') {
+        editTimecode(index);
+      } else if (action === 'delete') {
+        deleteTimecode(index);
+      }
+    } else if (item && !target.closest('.timecode-actions')) {
+      const time = parseFloat(item.dataset.time);
+      const video = document.querySelector('video');
+      if (video && !isNaN(time)) {
+        /** @type {HTMLVideoElement} */ (video).currentTime = time;
+        if (video.paused) video.play();
+        updateActiveItem(item);
+      }
+    }
+  };
+
+  // Edit timecode
+  const editTimecode = index => {
+    const timecodes = getCurrentTimecodes();
+    if (index < 0 || index >= timecodes.length) return;
+
+    const timecode = timecodes[index];
+    state.editingIndex = index;
+
+    // Update item appearance
+    const item = state.dom.list.querySelector(`.timecode-item[data-index="${index}"]`);
+    if (item) {
+      item.classList.add('editing');
+      // Hide other editing items
+      state.dom.list.querySelectorAll('.timecode-item.editing').forEach(el => {
+        if (el !== item) el.classList.remove('editing');
+      });
+    }
+
+    showTimecodeForm(timecode.time, timecode.label);
+  };
+
+  // Delete timecode
+  const deleteTimecode = index => {
+    const timecodes = getCurrentTimecodes();
+    if (index < 0 || index >= timecodes.length) return;
+
+    const timecode = timecodes[index];
+
+    // Don't allow deletion of native YouTube chapters
+    if (timecode.isChapter && !timecode.isUserAdded) {
+      showNotification('Cannot delete YouTube chapters');
+      return;
+    }
+
+    // Confirm deletion
+    if (!confirm(`Delete timecode "${timecode.label}"?`)) return;
+
+    timecodes.splice(index, 1);
+    updateTimecodePanel(timecodes);
+    saveTimecodesToStorage(timecodes);
+    showNotification('Timecode deleted');
+  };
+
+  // Form handling
+  const showTimecodeForm = (currentTime, existingLabel = '') => {
+    const { form, timeInput, labelInput } = state.dom;
+    form.classList.add('visible');
+    timeInput.value = formatTime(currentTime);
+    labelInput.value = existingLabel;
+    requestAnimationFrame(() => labelInput.focus());
+  };
+
+  const hideTimecodeForm = () => {
+    state.dom.form.classList.remove('visible');
+    state.editingIndex = null;
+    // Remove editing class from all items
+    state.dom.list?.querySelectorAll('.timecode-item.editing').forEach(el => {
+      el.classList.remove('editing');
+    });
+  };
+
+  const saveTimecodeForm = () => {
+    const { timeInput, labelInput } = state.dom;
+    const timeValue = timeInput.value.trim();
+    const labelValue = labelInput.value.trim();
+
+    const time = parseTime(timeValue);
+    if (time === null) {
+      showNotification('Invalid time format');
+      return;
+    }
+
+    const timecodes = getCurrentTimecodes();
+    const newTimecode = {
+      time,
+      label: labelValue || formatTime(time),
+      isUserAdded: true,
+      isChapter: false,
+    };
+
+    if (state.editingIndex !== null) {
+      // Editing existing timecode
+      const oldTimecode = timecodes[state.editingIndex];
+      if (oldTimecode.isChapter && !oldTimecode.isUserAdded) {
+        showNotification('Cannot edit YouTube chapters');
+        hideTimecodeForm();
+        return;
+      }
+
+      timecodes[state.editingIndex] = { ...oldTimecode, ...newTimecode };
+      showNotification('Timecode updated');
+    } else {
+      // Adding new timecode
+      timecodes.push(newTimecode);
+      showNotification('Timecode added');
+    }
+
+    const sorted = timecodes.sort((a, b) => a.time - b.time);
+    updateTimecodePanel(sorted);
+    saveTimecodesToStorage(sorted);
+    hideTimecodeForm();
+  };
+
+  // Export
+  const exportTimecodes = () => {
+    const timecodes = getCurrentTimecodes();
+    if (!timecodes.length) {
+      showNotification('No timecodes to export');
+      return;
+    }
+
+    const exportBtn = state.dom.panel?.querySelector('#timecode-export-btn');
+    if (exportBtn) {
+      exportBtn.textContent = 'Copied!';
+      exportBtn.style.backgroundColor = 'rgba(0,220,0,0.8)';
+      setTimeout(() => {
+        exportBtn.textContent = 'Export';
+        exportBtn.style.backgroundColor = '';
+      }, 2000);
+    }
+
+    const videoTitle = document.title.replace(/\s-\sYouTube$/, '');
+    let content = `${videoTitle}\n\nTimecodes:\n`;
+    timecodes.forEach(tc => (content += `${formatTime(tc.time)} - ${tc.label}\n`));
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(content).then(() => {
+        showNotification('Timecodes copied to clipboard');
+      });
+    }
+  };
+
+  // Panel updates
+  const updateTimecodePanel = timecodes => {
+    const { list, empty } = state.dom;
+    if (!list || !empty) return;
+
+    const isEmpty = !timecodes.length;
+    empty.style.display = isEmpty ? 'flex' : 'none';
+    list.style.display = isEmpty ? 'none' : 'block';
+
+    if (isEmpty) {
+      list.innerHTML = '';
+      return;
+    }
+
+    list.innerHTML = timecodes
+      .map((tc, i) => {
+        const timeStr = formatTime(tc.time);
+        const label = (tc.label?.trim() || timeStr).replace(
+          /[<>&"']/g,
+          c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' })[c]
+        );
+        const isEditable = !tc.isChapter || tc.isUserAdded;
+
+        return `
+          <div class="timecode-item ${tc.isChapter ? 'has-chapter' : ''}" data-time="${tc.time}" data-index="${i}">
+            <div class="timecode-time">${timeStr}</div>
+            <div class="timecode-label" title="${label}">${label}</div>
+            <div class="timecode-progress"></div>
+            ${isEditable
+            ? `
+              <div class="timecode-actions">
+                <button class="timecode-action edit" data-action="edit" title="Edit">✎</button>
+                <button class="timecode-action delete" data-action="delete" title="Delete">✕</button>
+              </div>
+            `
+            : ''
+          }
+          </div>
+        `;
+      })
+      .join('');
+  };
+
+  const updateActiveItem = activeItem => {
+    const items = state.dom.list?.querySelectorAll('.timecode-item');
+    if (!items) return;
+
+    items.forEach(item => item.classList.remove('active', 'pulse'));
+    if (activeItem) {
+      activeItem.classList.add('active', 'pulse');
+      setTimeout(() => activeItem.classList.remove('pulse'), 800);
+    }
+  };
+
+  // Tracking
+  const startTracking = () => {
+    if (state.trackingId) return;
+
+    const track = () => {
+      try {
+        const video = document.querySelector('video');
+        const { panel, currentTime, list } = state.dom;
+
+        // Stop tracking if essential elements are missing or panel is hidden
+        if (!video || !panel || panel.classList.contains('hidden') || !config.autoTrackPlayback) {
+          if (state.trackingId) {
+            cancelAnimationFrame(state.trackingId);
+            state.trackingId = 0;
+          }
+          return;
+        }
+
+        // Update current time display
+        if (currentTime && !isNaN(video.currentTime)) {
+          currentTime.textContent = formatTime(video.currentTime);
+        }
+
+        // Update active item
+        const items = list?.querySelectorAll('.timecode-item');
+        if (items?.length) {
+          let activeIndex = -1;
+          let nextIndex = -1;
+
+          for (let i = 0; i < items.length; i++) {
+            const timeData = items[i].dataset.time;
+            if (!timeData) continue;
+
+            const time = parseFloat(timeData);
+            if (isNaN(time)) continue;
+
+            if (video.currentTime >= time) {
+              activeIndex = i;
+            } else if (nextIndex === -1) {
+              nextIndex = i;
+            }
+          }
+
+          // Update active state
+          if (state.activeIndex !== activeIndex) {
+            // Remove previous active state
+            if (state.activeIndex !== null && state.activeIndex >= 0 && items[state.activeIndex]) {
+              items[state.activeIndex].classList.remove('active');
+            }
+
+            // Set new active state
+            if (activeIndex >= 0 && items[activeIndex]) {
+              items[activeIndex].classList.add('active');
+              try {
+                items[activeIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
+              } catch {
+                // Fallback for browsers that don't support smooth scrolling
+                items[activeIndex].scrollIntoView(false);
+              }
+            }
+
+            state.activeIndex = activeIndex;
+          }
+
+          // Update progress bar
+          if (activeIndex >= 0 && nextIndex >= 0 && items[activeIndex]) {
+            const currentTimeData = items[activeIndex].dataset.time;
+            const nextTimeData = items[nextIndex].dataset.time;
+
+            if (currentTimeData && nextTimeData) {
+              const current = parseFloat(currentTimeData);
+              const next = parseFloat(nextTimeData);
+
+              if (!isNaN(current) && !isNaN(next) && next > current) {
+                const progress = ((video.currentTime - current) / (next - current)) * 100;
+                const progressEl = items[activeIndex].querySelector('.timecode-progress');
+                if (progressEl) {
+                  const clampedProgress = Math.min(100, Math.max(0, progress));
+                  progressEl.style.width = `${clampedProgress}%`;
+                }
+              }
+            }
+          }
+        }
+
+        // Continue tracking if enabled
+        if (config.autoTrackPlayback) {
+          state.trackingId = requestAnimationFrame(track);
+        }
+      } catch (error) {
+        console.warn('Timecode tracking error:', error);
+        // Stop tracking on error to prevent infinite error loops
+        if (state.trackingId) {
+          cancelAnimationFrame(state.trackingId);
+          state.trackingId = 0;
+        }
+      }
+    };
+
+    state.trackingId = requestAnimationFrame(track);
+  };
+
+  // Stop tracking function
+  const stopTracking = () => {
+    if (state.trackingId) {
+      cancelAnimationFrame(state.trackingId);
+      state.trackingId = 0;
+    }
+  };
+
+  // Drag functionality
+  const makeDraggable = panel => {
+    const header = panel.querySelector('#timecode-header');
+    if (!header) return;
+
+    let startX, startY, startLeft, startTop;
+
+    const mouseDownHandler = e => {
+      if (e.button !== 0) return;
+
+      state.dragging = true;
+      startX = e.clientX;
+      startY = e.clientY;
+
+      const rect = panel.getBoundingClientRect();
+
+      if (!panel.style.left) {
+        panel.style.left = `${rect.left}px`;
+      }
+      if (!panel.style.top) {
+        panel.style.top = `${rect.top}px`;
+      }
+
+      panel.style.right = 'auto';
+
+      startLeft = parseFloat(panel.style.left) || rect.left;
+      startTop = parseFloat(panel.style.top) || rect.top;
+
+      const handleMove = event => {
+        if (!state.dragging) return;
+
+        const deltaX = event.clientX - startX;
+        const deltaY = event.clientY - startY;
+        const { left, top } = clampPanelPosition(panel, startLeft + deltaX, startTop + deltaY);
+
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+        panel.style.right = 'auto';
+      };
+
+      const handleUp = () => {
+        if (!state.dragging) return;
+
+        state.dragging = false;
+        document.removeEventListener('mousemove', handleMove);
+        document.removeEventListener('mouseup', handleUp);
+
+        const rectAfter = panel.getBoundingClientRect();
+        const { left, top } = clampPanelPosition(panel, rectAfter.left, rectAfter.top);
+
+        panel.style.left = `${left}px`;
+        panel.style.top = `${top}px`;
+        panel.style.right = 'auto';
+
+        savePanelPosition(left, top);
+      };
+
+      document.addEventListener('mousemove', handleMove);
+      document.addEventListener('mouseup', handleUp);
+    };
+
+    // ✅ Register the mousedown listener for cleanup
+    YouTubeUtils.cleanupManager.registerListener(header, 'mousedown', mouseDownHandler);
+  };
+
+  // Storage
+  const saveTimecodesToStorage = timecodes => {
+    const videoId = new URLSearchParams(window.location.search).get('v');
+    if (!videoId) return;
+
+    try {
+      const minimal = timecodes.map(tc => ({
+        t: tc.time,
+        l: tc.label?.trim() || formatTime(tc.time),
+        c: tc.isChapter || false,
+        u: tc.isUserAdded || false,
+      }));
+      localStorage.setItem(`yt_tc_${videoId}`, JSON.stringify(minimal));
+    } catch { }
+  };
+
+  const loadTimecodesFromStorage = () => {
+    const videoId = new URLSearchParams(window.location.search).get('v');
+    if (!videoId) return null;
+
+    try {
+      const data = localStorage.getItem(`yt_tc_${videoId}`);
+      return data
+        ? JSON.parse(data)
+          .map(tc => ({
+            time: tc.t,
+            label: tc.l,
+            isChapter: tc.c,
+            isUserAdded: tc.u || false,
+          }))
+          .sort((a, b) => a.time - b.time)
+        : null;
+    } catch {
+      return null;
+    }
+  };
+
+  const getCurrentTimecodes = () => {
+    const items = state.dom.list?.querySelectorAll('.timecode-item');
+    if (!items) return [];
+
+    return Array.from(items)
+      .map(item => ({
+        time: parseFloat(item.dataset.time),
+        label:
+          item.querySelector('.timecode-label')?.textContent ||
+          formatTime(parseFloat(item.dataset.time)),
+        isChapter: item.classList.contains('has-chapter'),
+        isUserAdded: !item.classList.contains('has-chapter') || false,
+      }))
+      .sort((a, b) => a.time - b.time);
+  };
+
+  // Toggle panel
+  const toggleTimecodePanel = show => {
+    // Close any existing panels first (cleanup)
+    document.querySelectorAll('#timecode-panel').forEach(panel => {
+      if (panel !== state.dom.panel) panel.remove();
+    });
+
+    const panel = state.dom.panel || createTimecodePanel();
+    if (show === undefined) show = panel.classList.contains('hidden');
+
+    panel.classList.toggle('hidden', !show);
+
+    if (show) {
+      applySavedPanelPosition(panel);
+
+      const saved = loadTimecodesFromStorage();
+      if (saved?.length) {
+        updateTimecodePanel(saved);
+      } else if (config.autoDetect) {
+        detectTimecodes().catch(err => console.error('[Timecode] Detection failed:', err));
+      }
+
+      if (config.autoTrackPlayback) startTracking();
+    } else if (state.trackingId) {
+      cancelAnimationFrame(state.trackingId);
+      state.trackingId = 0;
+    }
+  };
+
+  // Navigation handling
+  const setupNavigation = () => {
+    let currentVideoId = new URLSearchParams(window.location.search).get('v');
+
+    const handleNavigationChange = () => {
+      const newVideoId = new URLSearchParams(window.location.search).get('v');
+      if (newVideoId === currentVideoId || window.location.pathname !== '/watch') return;
+
+      currentVideoId = newVideoId;
+      state.activeIndex = null;
+      state.editingIndex = null;
+      state.timecodes.clear();
+
+      if (config.enabled && state.dom.panel && !state.dom.panel.classList.contains('hidden')) {
+        const saved = loadTimecodesFromStorage();
+        if (saved?.length) {
+          updateTimecodePanel(saved);
+        } else if (config.autoDetect) {
+          setTimeout(
+            () =>
+              detectTimecodes().catch(err => console.error('[Timecode] Detection failed:', err)),
+            500
+          );
+        }
+        if (config.autoTrackPlayback) startTracking();
+      }
+    };
+
+    document.addEventListener('yt-navigate-finish', handleNavigationChange);
+
+    // Also watch for URL changes using MutationObserver as a fallback
+    const observer = new MutationObserver(() => {
+      const newVideoId = new URLSearchParams(window.location.search).get('v');
+      if (newVideoId !== currentVideoId) {
+        handleNavigationChange();
       }
     });
 
     // ✅ Register observer in cleanupManager
     YouTubeUtils.cleanupManager.registerObserver(observer);
 
-    // ✅ Use cached querySelector
-    const rightTabs = YouTubeUtils.querySelector('#right-tabs');
-    if (rightTabs) {
-      observer.observe(rightTabs, {
-        attributes: true,
-        childList: true,
-        subtree: true,
-        attributeFilter: ['class'],
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      observer.observe(document.body, { subtree: true, childList: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, { subtree: true, childList: true });
       });
     }
   };
 
-  // Events
-  const setupEvents = () => {
-    // ✅ Register global click listener in cleanupManager
-    const clickHandler = (e) => {
-      if (e.target.closest('.tab-btn[tyt-tab-content]')) {
-        scheduleScrollSetup();
-      }
-    };
-    YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
+  // Keyboard shortcuts
+  const setupKeyboard = () => {
+    document.addEventListener('keydown', e => {
+      // ✅ Проверяем, включена ли функция в настройках
+      if (!config.enabled) return;
 
-    if (typeof window !== 'undefined') {
-      YouTubeUtils.cleanupManager.registerListener(window, 'resize', () => scheduleScrollSetup(60));
-      YouTubeUtils.cleanupManager.registerListener(window, 'yt-navigate-finish', () =>
-        scheduleScrollSetup(150)
-      );
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (target.matches && target.matches('input, textarea, [contenteditable]')) return;
+
+      const { key, shiftKey, altKey, ctrlKey } = config.shortcut;
+      if (
+        e.key.toUpperCase() === key &&
+        e.shiftKey === shiftKey &&
+        e.altKey === altKey &&
+        e.ctrlKey === ctrlKey
+      ) {
+        e.preventDefault();
+        toggleTimecodePanel();
+      }
+    });
+  };
+
+  // Cleanup on unload
+  const cleanup = () => {
+    stopTracking();
+    if (state.dom.panel) {
+      state.dom.panel.remove();
+      state.dom.panel = null;
     }
   };
 
   // Initialize
   const init = () => {
-    addStyles();
-    setupEvents();
+    if (initStarted) return;
 
-    const checkForTabs = () => {
-      // ✅ Use cached querySelector
-      if (YouTubeUtils.querySelector('#right-tabs')) {
-        createButton();
-        observeTabChanges();
-      } else {
-        setTimeout(checkForTabs, 500);
+    const appRoot =
+      (typeof YouTubeUtils?.querySelector === 'function' &&
+        YouTubeUtils.querySelector('ytd-app')) ||
+      document.querySelector('ytd-app');
+
+    if (!appRoot) {
+      scheduleInitRetry();
+      return;
+    }
+
+    initStarted = true;
+
+    loadSettings();
+    insertTimecodeStyles();
+    setupKeyboard();
+    setupNavigation();
+
+    // Settings modal observer
+    const observer = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
+            setTimeout(addTimecodePanelSettings, 100);
+            return;
+          }
+        }
+      }
+
+      if (
+        document.querySelector(
+          '.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)'
+        ) &&
+        !document.querySelector('.timecode-settings-item')
+      ) {
+        setTimeout(addTimecodePanelSettings, 50);
+      }
+    });
+
+    // ✅ Register observer in cleanupManager
+    YouTubeUtils.cleanupManager.registerObserver(observer);
+
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+        attributeFilter: ['class'],
+      });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['class'],
+        });
+      });
+    }
+
+    // ✅ Register global click listener in cleanupManager
+    const clickHandler = e => {
+      if (
+        /** @type {HTMLElement} */ (e.target).classList?.contains('ytp-plus-settings-nav-item') &&
+        /** @type {HTMLElement} */ (e.target).dataset.section === 'advanced'
+      ) {
+        setTimeout(addTimecodePanelSettings, 50);
       }
     };
+    YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
 
-    checkForTabs();
+    if (config.enabled) {
+      createTimecodePanel();
+
+      if (!state.resizeListenerKey) {
+        const onResize = YouTubeUtils.throttle(() => {
+          if (!state.dom.panel) return;
+
+          const rect = state.dom.panel.getBoundingClientRect();
+          const { left, top } = clampPanelPosition(state.dom.panel, rect.left, rect.top);
+
+          state.dom.panel.style.left = `${left}px`;
+          state.dom.panel.style.top = `${top}px`;
+          state.dom.panel.style.right = 'auto';
+
+          savePanelPosition(left, top);
+        }, 200);
+
+        state.resizeListenerKey = YouTubeUtils.cleanupManager.registerListener(
+          window,
+          'resize',
+          onResize
+        );
+      }
+
+      const saved = loadTimecodesFromStorage();
+      if (saved?.length) {
+        updateTimecodePanel(saved);
+      } else if (config.autoDetect) {
+        setTimeout(
+          () => detectTimecodes().catch(err => console.error('[Timecode] Detection failed:', err)),
+          1500
+        );
+      }
+      if (config.autoTrackPlayback) startTracking();
+    }
   };
 
+  // Start on document ready
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', init, { once: true });
   } else {
     init();
   }
+
+  // Cleanup on beforeunload
+  window.addEventListener('beforeunload', cleanup);
 })();
 
 // --- MODULE: shorts.js ---
@@ -9930,7 +12468,7 @@ if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem(config.storageKey);
         if (saved) Object.assign(config, JSON.parse(saved));
-      } catch (e) {}
+      } catch { }
     },
 
     saveSettings: () => {
@@ -9942,7 +12480,7 @@ if (typeof window !== 'undefined') {
             shortcuts: config.shortcuts,
           })
         );
-      } catch (e) {}
+      } catch { }
     },
 
     getDefaultShortcuts: () => ({
@@ -9986,7 +12524,7 @@ if (typeof window !== 'undefined') {
     };
 
     return {
-      show: (text) => {
+      show: text => {
         state.lastAction = text;
         clearTimeout(state.actionTimeout);
 
@@ -10062,13 +12600,16 @@ if (typeof window !== 'undefined') {
 
       panel = document.createElement('div');
       panel.id = 'shorts-keyboard-help';
-      panel.className = 'shorts-help-panel';
+      panel.className = 'glass-panel shorts-help-panel';
+      panel.setAttribute('role', 'dialog');
+      panel.setAttribute('aria-modal', 'true');
+      panel.tabIndex = -1;
 
       const render = () => {
         panel.innerHTML = `
             <div class="help-header">
               <h3>Keyboard Shortcuts</h3>
-              <button class="help-close">
+              <button class="ytp-plus-settings-close help-close" type="button" aria-label="Close">
                 <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
                 </svg>
@@ -10076,17 +12617,17 @@ if (typeof window !== 'undefined') {
             </div>
             <div class="help-content">
               ${Object.entries(config.shortcuts)
-                .map(
-                  ([action, shortcut]) =>
-                    `<div class="help-item">
+            .map(
+              ([action, shortcut]) =>
+                `<div class="help-item">
                   <kbd data-action="${action}" ${shortcut.editable === false ? 'class="non-editable"' : ''}>${shortcut.key === ' ' ? 'Space' : shortcut.key}</kbd>
                   <span>${shortcut.description}</span>
                 </div>`
-                )
-                .join('')}
+            )
+            .join('')}
             </div>
             <div class="help-footer">
-              <button class="reset-all-shortcuts">Reset All</button>
+              <button class="ytp-plus-button ytp-plus-button-primary reset-all-shortcuts">Reset All</button>
             </div>
           `;
 
@@ -10100,7 +12641,7 @@ if (typeof window !== 'undefined') {
           }
         };
 
-        panel.querySelectorAll('kbd[data-action]:not(.non-editable)').forEach((kbd) => {
+        panel.querySelectorAll('kbd[data-action]:not(.non-editable)').forEach(kbd => {
           kbd.onclick = () =>
             editShortcut(kbd.dataset.action, config.shortcuts[kbd.dataset.action].key);
         });
@@ -10140,26 +12681,28 @@ if (typeof window !== 'undefined') {
   // Shortcut editing
   const editShortcut = (actionKey, currentKey) => {
     const dialog = document.createElement('div');
-    dialog.className = 'shortcut-edit-dialog';
+    dialog.className = 'glass-modal shortcut-edit-dialog';
+    dialog.setAttribute('role', 'dialog');
+    dialog.setAttribute('aria-modal', 'true');
     dialog.innerHTML = `
-        <div class="shortcut-edit-content">
+        <div class="glass-panel shortcut-edit-content">
           <h4>Edit: ${config.shortcuts[actionKey].description}</h4>
           <p>Press any key to set as new shortcut</p>
           <div class="current-shortcut">Current: <kbd>${currentKey === ' ' ? 'Space' : currentKey}</kbd></div>
-          <button class="shortcut-cancel">Cancel</button>
+          <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">Cancel</button>
         </div>
       `;
 
     document.body.appendChild(dialog);
     state.editingShortcut = actionKey;
 
-    const handleKey = (e) => {
+    const handleKey = e => {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === 'Escape') return cleanup();
 
       const conflict = Object.keys(config.shortcuts).find(
-        (key) => key !== actionKey && config.shortcuts[key].key === e.key
+        key => key !== actionKey && config.shortcuts[key].key === e.key
       );
       if (conflict) {
         feedback.show(`Key "${e.key}" already used`);
@@ -10180,7 +12723,10 @@ if (typeof window !== 'undefined') {
     };
 
     dialog.querySelector('.shortcut-cancel').onclick = cleanup;
-    dialog.onclick = (e) => e.target === dialog && cleanup();
+    dialog.onclick = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (target === dialog) cleanup();
+    };
     document.addEventListener('keydown', handleKey, true);
   };
 
@@ -10193,38 +12739,37 @@ if (typeof window !== 'undefined') {
                 :root{--shorts-feedback-bg:rgba(255,255,255,.15);--shorts-feedback-border:rgba(255,255,255,.2);--shorts-feedback-color:#fff;--shorts-help-bg:rgba(255,255,255,.15);--shorts-help-border:rgba(255,255,255,.2);--shorts-help-color:#fff;}
                 html[dark],body[dark]{--shorts-feedback-bg:rgba(34,34,34,.7);--shorts-feedback-border:rgba(255,255,255,.15);--shorts-feedback-color:#fff;--shorts-help-bg:rgba(34,34,34,.7);--shorts-help-border:rgba(255,255,255,.1);--shorts-help-color:#fff;}
                 html:not([dark]){--shorts-feedback-bg:rgba(255,255,255,.95);--shorts-feedback-border:rgba(0,0,0,.08);--shorts-feedback-color:#222;--shorts-help-bg:rgba(255,255,255,.98);--shorts-help-border:rgba(0,0,0,.08);--shorts-help-color:#222;}
-                .shorts-help-panel{position:fixed;top:50%;left:25%;transform:translate(-50%,-50%) scale(.9);background:var(--shorts-help-bg,rgba(255,255,255,.15));backdrop-filter:blur(15px) saturate(180%);-webkit-backdrop-filter:blur(15px) saturate(180%);border:1px solid var(--shorts-help-border,rgba(255,255,255,.2));color:var(--shorts-help-color,#fff);border-radius:20px;box-shadow:0 8px 32px rgba(0,0,0,.5);z-index:10001;opacity:0;visibility:hidden;transition:all .3s ease;width:340px;max-width:95vw;max-height:80vh;overflow:hidden;outline:none}
-                .shorts-help-panel.visible{opacity:1;visibility:visible;transform:translate(-50%,-50%) scale(1)}
-                .help-header{display:flex;justify-content:space-between;align-items:center;padding:24px 24px 12px 24px;border-bottom:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05)}
-                .help-header h3{margin:0;font-size:20px;font-weight:700}
-                .help-close{background:none;border:none;color:inherit;font-size:26px;cursor:pointer;padding:4px 8px;border-radius:6px;transition:background-color .2s}
-                .help-close:hover{color:var(--yt-accent,#ff0000);}
-                .help-content{padding:18px 24px;max-height:400px;overflow-y:auto}
-                .help-item{display:flex;align-items:center;margin-bottom:14px;gap:18px}
-                .help-item kbd{background:rgba(255,255,255,.15);color:inherit;padding:7px 14px;border-radius:8px;font-family:monospace;font-size:15px;font-weight:700;min-width:60px;text-align:center;border:1.5px solid rgba(255,255,255,.2);cursor:pointer;transition:all .2s;position:relative}
+                .shorts-help-panel{position:fixed;top:50%;left:25%;transform:translate(-50%,-50%) scale(.9);z-index:10001;opacity:0;visibility:hidden;transition:all .3s ease;width:340px;max-width:95vw;max-height:80vh;overflow:hidden;outline:none;color:var(--shorts-help-color,#fff);}
+                .shorts-help-panel.visible{opacity:1;visibility:visible;transform:translate(-50%,-50%) scale(1);}
+                .help-header{display:flex;justify-content:space-between;align-items:center;padding:24px 24px 12px;border-bottom:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);}
+                html:not([dark]) .help-header{background:rgba(0,0,0,.04);border-bottom:1px solid rgba(0,0,0,.08);}
+                .help-header h3{margin:0;font-size:20px;font-weight:700;}
+                .help-close{display:flex;align-items:center;justify-content:center;padding:4px;}
+                .help-content{padding:18px 24px;max-height:400px;overflow-y:auto;}
+                .help-item{display:flex;align-items:center;margin-bottom:14px;gap:18px;}
+                .help-item kbd{background:rgba(255,255,255,.15);color:inherit;padding:7px 14px;border-radius:8px;font-family:monospace;font-size:15px;font-weight:700;min-width:60px;text-align:center;border:1.5px solid rgba(255,255,255,.2);cursor:pointer;transition:all .2s;position:relative;}
                 html:not([dark]) .help-item kbd{background:rgba(0,0,0,.06);color:#222;border:1.5px solid rgba(0,0,0,.08);}
-                .help-item kbd:hover{background:rgba(255,255,255,.22);transform:scale(1.07)}
-                .help-item kbd:after{content:"✎";position:absolute;top:-7px;right:-7px;font-size:11px;opacity:0;transition:opacity .2s}
-                .help-item kbd:hover:after{opacity:.7}
-                .help-item kbd.non-editable{cursor:default;opacity:.7}
-                .help-item kbd.non-editable:hover{background:rgba(255,255,255,.15);transform:none}
-                .help-item kbd.non-editable:after{display:none}
-                .help-item span{font-size:15px;color:rgba(255,255,255,.92)}
+                .help-item kbd:hover{background:rgba(255,255,255,.22);transform:scale(1.07);}
+                .help-item kbd:after{content:"✎";position:absolute;top:-7px;right:-7px;font-size:11px;opacity:0;transition:opacity .2s;}
+                .help-item kbd:hover:after{opacity:.7;}
+                .help-item kbd.non-editable{cursor:default;opacity:.7;}
+                .help-item kbd.non-editable:hover{background:rgba(255,255,255,.15);transform:none;}
+                .help-item kbd.non-editable:after{display:none;}
+                .help-item span{font-size:15px;color:rgba(255,255,255,.92);}
                 html:not([dark]) .help-item span{color:#222;}
-                .help-footer{padding:16px 24px 20px 24px;border-top:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);text-align:center}
-                .reset-all-shortcuts{background:rgba(255,255,255,.15);color:inherit;border:1.5px solid rgba(255,255,255,.2);padding:7px 18px;border-radius:8px;font-size:13px;cursor:pointer;transition:all .2s}
-                .reset-all-shortcuts:hover{border:1.5px solid rgba(255,69,69,.3);background:rgba(255,69,69,.3)}
-                .shortcut-edit-dialog{position:fixed;top:0;left:0;width:100%;height:100%;background:rgba(0,0,0,.7);display:flex;align-items:center;justify-content:center;z-index:10002;backdrop-filter:blur(5px)}
-                .shortcut-edit-content{background:rgba(255,255,255,.15);color:inherit;padding:28px 32px;border-radius:18px;backdrop-filter:blur(15px) saturate(180%);-webkit-backdrop-filter:blur(15px) saturate(180%);border:1.5px solid rgba(255,255,255,.2);text-align:center;min-width:320px;box-shadow:0 4px 32px rgba(0,0,0,.3)}
-                html:not([dark]) .shortcut-edit-content{background:rgba(255,255,255,.98);color:#222;border:1.5px solid rgba(0,0,0,.08);}
-                .shortcut-edit-content h4{margin:0 0 14px;font-size:17px;font-weight:700}
-                .shortcut-edit-content p{margin:0 0 18px;font-size:15px;color:rgba(255,255,255,.85)}
+                .help-footer{padding:16px 24px 20px;border-top:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);text-align:center;}
+                html:not([dark]) .help-footer{background:rgba(0,0,0,.04);border-top:1px solid rgba(0,0,0,.08);}
+                .reset-all-shortcuts{display:inline-flex;align-items:center;justify-content:center;gap:var(--yt-space-sm);}
+                .shortcut-edit-dialog{z-index:10002;}
+                .shortcut-edit-content{padding:28px 32px;min-width:320px;text-align:center;display:flex;flex-direction:column;gap:var(--yt-space-md);color:inherit;}
+                html:not([dark]) .shortcut-edit-content{color:#222;}
+                .shortcut-edit-content h4{margin:0 0 14px;font-size:17px;font-weight:700;}
+                .shortcut-edit-content p{margin:0 0 18px;font-size:15px;color:rgba(255,255,255,.85);}
                 html:not([dark]) .shortcut-edit-content p{color:#222;}
-                .current-shortcut{margin:18px 0;font-size:15px}
-                .current-shortcut kbd{background:rgba(255,255,255,.15);padding:5px 12px;border-radius:6px;font-family:monospace;border:1.5px solid rgba(255,255,255,.2)}
+                .current-shortcut{margin:18px 0;font-size:15px;}
+                .current-shortcut kbd{background:rgba(255,255,255,.15);padding:5px 12px;border-radius:6px;font-family:monospace;border:1.5px solid rgba(255,255,255,.2);}
                 html:not([dark]) .current-shortcut kbd{background:rgba(0,0,0,.06);color:#222;border:1.5px solid rgba(0,0,0,.08);}
-                .shortcut-cancel{padding:7px 18px;border-radius:8px;border:1.5px solid rgba(255,255,255,.2);background:rgba(255,255,255,.15);color:inherit;font-size:13px;cursor:pointer;transition:all .2s}
-                .shortcut-cancel:hover{background:rgba(255,255,255,.22)}
+                .shortcut-cancel{display:inline-flex;align-items:center;justify-content:center;gap:var(--yt-space-sm);}
                 @media(max-width:480px){.shorts-help-panel{width:98vw;max-height:85vh}.help-header{padding:16px 10px 8px 10px}.help-content{padding:12px 10px}.help-item{gap:10px}.help-item kbd{min-width:44px;font-size:13px;padding:5px 7px}.shortcut-edit-content{margin:20px;min-width:auto}}
                 #shorts-keyboard-feedback{background:var(--shorts-feedback-bg,rgba(255,255,255,.15));color:var(--shorts-feedback-color,#fff);border:1.5px solid var(--shorts-feedback-border,rgba(255,255,255,.2));border-radius:20px;box-shadow:0 8px 32px 0 rgba(31,38,135,.37);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);}
                 html:not([dark]) #shorts-keyboard-feedback{background:var(--shorts-feedback-bg,rgba(255,255,255,.95));color:var(--shorts-feedback-color,#222);border:1.5px solid var(--shorts-feedback-border,rgba(0,0,0,.08));}
@@ -10233,20 +12778,21 @@ if (typeof window !== 'undefined') {
   };
 
   // Main keyboard handler
-  const handleKeydown = (e) => {
+  const handleKeydown = e => {
     if (
       !config.enabled ||
       !utils.isInShortsPage() ||
       utils.isInputFocused() ||
       state.editingShortcut
-    )
+    ) {
       return;
+    }
 
     let key = e.key;
     if (e.code === 'NumpadAdd') key = '+';
     else if (e.code === 'NumpadSubtract') key = '-';
 
-    const action = Object.keys(config.shortcuts).find((k) => config.shortcuts[k].key === key);
+    const action = Object.keys(config.shortcuts).find(k => config.shortcuts[k].key === key);
     if (action && actions[action]) {
       e.preventDefault();
       e.stopPropagation();
@@ -10262,14 +12808,15 @@ if (typeof window !== 'undefined') {
     // ✅ Register listeners in cleanupManager
     YouTubeUtils.cleanupManager.registerListener(document, 'keydown', handleKeydown, true);
 
-    const clickHandler = (e) => {
-      if (state.helpVisible && !e.target.closest('#shorts-keyboard-help')) {
+    const clickHandler = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (state.helpVisible && target.closest && !target.closest('#shorts-keyboard-help')) {
         helpPanel.hide();
       }
     };
     YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler);
 
-    document.addEventListener('keydown', (e) => {
+    document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && state.helpVisible) {
         e.preventDefault();
         helpPanel.hide();
@@ -10381,7 +12928,7 @@ if (typeof window !== 'undefined') {
       let hasStreams = false;
       let hasShorts = false;
 
-      tabs.forEach((tab) => {
+      tabs.forEach(tab => {
         const tabUrl = tab?.tabRenderer?.endpoint?.commandMetadata?.webCommandMetadata?.url;
         if (tabUrl) {
           if (/\/streams$/.test(tabUrl)) hasStreams = true;
@@ -10399,7 +12946,7 @@ if (typeof window !== 'undefined') {
         existingMenu.remove();
         createStatsMenu();
       }
-    } catch (e) {
+    } catch {
     } finally {
       isChecking = false;
     }
@@ -10542,7 +13089,7 @@ if (typeof window !== 'undefined') {
   }
 
   function openStatsModal(url, titleText) {
-    document.querySelectorAll('.stats-modal-overlay').forEach((m) => m.remove());
+    document.querySelectorAll('.stats-modal-overlay').forEach(m => m.remove());
 
     const overlay = document.createElement('div');
     overlay.className = 'stats-modal-overlay';
@@ -10575,8 +13122,9 @@ if (typeof window !== 'undefined') {
     content.append(closeBtn, title, iframe);
     overlay.appendChild(content);
 
-    overlay.onclick = (e) => {
-      if (e.target === overlay) overlay.remove();
+    overlay.onclick = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (target === overlay) overlay.remove();
     };
     document.addEventListener(
       'keydown',
@@ -10793,13 +13341,14 @@ if (typeof window !== 'undefined') {
       `;
     section.appendChild(item);
 
-    item.querySelector('input').addEventListener('change', (e) => {
-      statsButtonEnabled = e.target.checked;
+    item.querySelector('input').addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      statsButtonEnabled = target.checked;
       localStorage.setItem(SETTINGS_KEY, statsButtonEnabled ? 'true' : 'false');
       // Remove all stats buttons and menus
       document
         .querySelectorAll('.videoStats,.shortsStats,.stats-menu-container')
-        .forEach((el) => el.remove());
+        .forEach(el => el.remove());
       if (statsButtonEnabled) {
         checkAndInsertIcon();
         checkAndAddMenu();
@@ -10808,10 +13357,10 @@ if (typeof window !== 'undefined') {
   }
 
   // Observe settings modal for experimental section
-  const settingsObserver = new MutationObserver((mutations) => {
+  const settingsObserver = new MutationObserver(mutations => {
     for (const { addedNodes } of mutations) {
       for (const node of addedNodes) {
-        if (node.classList?.contains('ytp-plus-settings-modal')) {
+        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
           setTimeout(addSettingsUI, 50);
         }
       }
@@ -10823,12 +13372,21 @@ if (typeof window !== 'undefined') {
 
   // ✅ Register observer in cleanupManager
   YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-  settingsObserver.observe(document.body, { childList: true, subtree: true });
 
-  const handleExperimentalNavClick = (e) => {
+  // ✅ Safe observe with document.body check
+  if (document.body) {
+    settingsObserver.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      settingsObserver.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+
+  const handleExperimentalNavClick = e => {
+    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
     if (
-      e.target.classList?.contains('ytp-plus-settings-nav-item') &&
-      e.target.dataset.section === 'experimental'
+      target.classList?.contains('ytp-plus-settings-nav-item') &&
+      target.dataset?.section === 'experimental'
     ) {
       setTimeout(addSettingsUI, 50);
     }
@@ -10851,16 +13409,20 @@ if (typeof window !== 'undefined') {
     }
 
     history.pushState = (function (f) {
+      /** @this {any} */
       return function () {
-        const result = f.apply(this, arguments);
+        const fAny = /** @type {any} */ (f);
+        const result = fAny.apply(this, arguments);
         checkUrlChange();
         return result;
       };
     })(history.pushState);
 
     history.replaceState = (function (f) {
+      /** @this {any} */
       return function () {
-        const result = f.apply(this, arguments);
+        const fAny = /** @type {any} */ (f);
+        const result = fAny.apply(this, arguments);
         checkUrlChange();
         return result;
       };
@@ -10873,8 +13435,8 @@ if (typeof window !== 'undefined') {
     }
   }
 
-  const observer = new MutationObserver((mutations) => {
-    for (let mutation of mutations) {
+  const observer = new MutationObserver(mutations => {
+    for (const mutation of mutations) {
       if (mutation.type === 'childList') {
         if (statsButtonEnabled) {
           checkAndInsertIcon();
@@ -10884,7 +13446,14 @@ if (typeof window !== 'undefined') {
     }
   });
 
-  observer.observe(document.body, { childList: true, subtree: true });
+  // ✅ Safe observe with document.body check
+  if (document.body) {
+    observer.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      observer.observe(document.body, { childList: true, subtree: true });
+    });
+  }
 
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
@@ -10903,7 +13472,8 @@ if (typeof window !== 'undefined') {
   });
 
   document.addEventListener('yt-action', function (event) {
-    if (event.detail && event.detail.actionName === 'yt-reload-continuation-items-command') {
+    const ev = /** @type {CustomEvent<any>} */ (event);
+    if (ev.detail && ev.detail.actionName === 'yt-reload-continuation-items-command') {
       if (statsButtonEnabled) {
         checkAndInsertIcon();
         checkAndAddMenu();
@@ -10936,8 +13506,8 @@ if (typeof window !== 'undefined') {
       } else {
         return true;
       }
-    } catch (error) {
-      return new Promise((resolve) => {
+    } catch {
+      return new Promise(resolve => {
         const img = document.createElement('img');
         img.style.display = 'none';
 
@@ -11008,16 +13578,18 @@ if (typeof window !== 'undefined') {
         const isOarDefaultAvailable = await checkImageExists(oardefaultUrl);
 
         if (isOarDefaultAvailable) {
-          window.open(oardefaultUrl, '_blank');
+          showImageModal(oardefaultUrl);
         } else {
-          window.open(`https://i.ytimg.com/vi/${videoId}/oar2.jpg`, '_blank');
+          showImageModal(`https://i.ytimg.com/vi/${videoId}/oar2.jpg`);
         }
       } finally {
         overlayElement.replaceChild(originalSvg, spinner);
       }
     } else {
+      // For non-shorts thumbnails: capture original svg, show spinner while checking
       const originalSvg = overlayElement.querySelector('svg');
       const spinner = createSpinner();
+      // replace original with spinner
       overlayElement.replaceChild(spinner, originalSvg);
 
       try {
@@ -11025,14 +13597,183 @@ if (typeof window !== 'undefined') {
         const isMaxResAvailable = await checkImageExists(maxresdefaultUrl);
 
         if (isMaxResAvailable) {
-          window.open(maxresdefaultUrl, '_blank');
+          showImageModal(maxresdefaultUrl);
         } else {
-          window.open(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`, '_blank');
+          showImageModal(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`);
         }
       } finally {
-        overlayElement.replaceChild(originalSvg, spinner);
+        // restore original svg
+        try {
+          overlayElement.replaceChild(originalSvg, spinner);
+        } catch {
+          // fallback: remove spinner if original not found
+          if (spinner && spinner.parentNode) spinner.parentNode.removeChild(spinner);
+        }
       }
     }
+  }
+
+  // Inject CSS styles via StyleManager (if available) to match base theme
+  (function addThumbnailStyles() {
+    try {
+      const css = `
+    :root {
+        --thumbnail-btn-bg-light: rgba(255, 255, 255, 0.85);
+        --thumbnail-btn-bg-dark: rgba(0, 0, 0, 0.7);
+        --thumbnail-btn-hover-bg-light: rgba(255, 255, 255, 1);
+        --thumbnail-btn-hover-bg-dark: rgba(0, 0, 0, 0.9);
+        --thumbnail-btn-color-light: #222;
+        --thumbnail-btn-color-dark: #fff;
+        --thumbnail-modal-bg-light: rgba(255, 255, 255, 0.95);
+        --thumbnail-modal-bg-dark: rgba(34, 34, 34, 0.85);
+        --thumbnail-modal-title-light: #222;
+        --thumbnail-modal-title-dark: #fff;
+        --thumbnail-modal-btn-bg-light: rgba(0, 0, 0, 0.08);
+        --thumbnail-modal-btn-bg-dark: rgba(255, 255, 255, 0.08);
+        --thumbnail-modal-btn-hover-bg-light: rgba(0, 0, 0, 0.18);
+        --thumbnail-modal-btn-hover-bg-dark: rgba(255, 255, 255, 0.18);
+        --thumbnail-modal-btn-color-light: #222;
+        --thumbnail-modal-btn-color-dark: #fff;
+        --thumbnail-modal-btn-hover-color-light: #ff4444;
+        --thumbnail-modal-btn-hover-color-dark: #ff4444;
+        --thumbnail-glass-blur: blur(18px) saturate(180%);
+        --thumbnail-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
+        --thumbnail-glass-border: rgba(255, 255, 255, 0.2);
+    }
+
+    html[dark],
+    body[dark] {
+        --thumbnail-btn-bg: var(--thumbnail-btn-bg-dark);
+        --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-dark);
+        --thumbnail-btn-color: var(--thumbnail-btn-color-dark);
+        --thumbnail-modal-bg: var(--thumbnail-modal-bg-dark);
+        --thumbnail-modal-title: var(--thumbnail-modal-title-dark);
+        --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-dark);
+        --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-dark);
+        --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-dark);
+        --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-dark);
+    }
+
+    html:not([dark]) {
+        --thumbnail-btn-bg: var(--thumbnail-btn-bg-light);
+        --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-light);
+        --thumbnail-btn-color: var(--thumbnail-btn-color-light);
+        --thumbnail-modal-bg: var(--thumbnail-modal-bg-light);
+        --thumbnail-modal-title: var(--thumbnail-modal-title-light);
+        --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-light);
+        --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-light);
+        --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-light);
+        --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-light);
+    }
+
+    .thumbnail-overlay-container { position: absolute; bottom: 8px; left: 8px; z-index: 9999; opacity: 0; transition: opacity 0.2s ease; }
+    .thumbnail-overlay-button { width: 28px; height: 28px; background: var(--thumbnail-btn-bg); border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--thumbnail-btn-color); position: relative; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+    .thumbnail-overlay-button:hover { background: var(--thumbnail-btn-hover-bg); }
+    .thumbnail-dropdown { position: absolute; bottom: 100%; left: 0; background: var(--thumbnail-btn-hover-bg); border-radius: 8px; padding: 4px; margin-bottom: 4px; display: none; flex-direction: column; min-width: 140px; box-shadow: var(--thumbnail-glass-shadow); z-index: 10000; backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+    .thumbnail-dropdown.show { display: flex !important; }
+    .thumbnail-dropdown-item { background: none; border: none; color: var(--thumbnail-btn-color); padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 12px; text-align: left; white-space: nowrap; transition: background-color 0.2s ease; }
+    .thumbnail-dropdown-item:hover { background: rgba(255,255,255,0.06); }
+    .thumbnailPreview-button { position: absolute; bottom: 10px; left: 5px; background-color: var(--thumbnail-btn-bg); color: var(--thumbnail-btn-color); border: none; border-radius: 6px; padding: 3px; font-size: 18px; cursor: pointer; z-index: 2000; opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+    .thumbnailPreview-container { position: relative; }
+    .thumbnailPreview-container:hover .thumbnailPreview-button { opacity: 1; }
+    .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 99999; display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.2s; backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); }
+    .thumbnail-modal-content { background: var(--thumbnail-modal-bg); border-radius: 18px; box-shadow: var(--thumbnail-glass-shadow); max-width: 75vw; max-height: 90vh; overflow: auto; position: relative; padding: 24px 0 16px 0; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.2s; border: 1px solid var(--thumbnail-glass-border); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); }
+    .thumbnail-modal-close { position: absolute; top: 12px; right: 18px; background: transparent; color: #fff; border: none; font-size: 28px; line-height: 1; width: 36px; height: 36px; cursor: pointer; transition: background 0.2s; z-index: 2; display: flex; align-items: center; justify-content: center; }
+    .thumbnail-modal-close:hover { color: #ff4444; transform: rotate(90deg) scale(1.25); }
+    .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; margin-bottom: 12px; box-shadow: var(--thumbnail-glass-shadow); background: #222; border: 1px solid var(--thumbnail-glass-border); }
+    .thumbnail-modal-options { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; justify-content: center; }
+    .thumbnail-modal-option-btn { background: var(--thumbnail-modal-btn-bg); color: var(--thumbnail-modal-btn-color); border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s; margin-bottom: 6px; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+    .thumbnail-modal-option-btn:hover { background: var(--thumbnail-modal-btn-hover-bg); color: var(--thumbnail-modal-btn-hover-color); }
+    .thumbnail-modal-title { font-size: 18px; font-weight: 600; color: var(--thumbnail-modal-title); margin-bottom: 10px; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+    @keyframes fadeInModal { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes scaleInModal { from { transform: scale(0.95); } to { transform: scale(1); } }
+            `;
+
+      if (
+        window.YouTubeUtils &&
+        YouTubeUtils.StyleManager &&
+        typeof YouTubeUtils.StyleManager.add === 'function'
+      ) {
+        YouTubeUtils.StyleManager.add('thumbnail-viewer-styles', css);
+      } else {
+        const s = document.createElement('style');
+        s.id = 'ytplus-thumbnail-styles';
+        s.textContent = css;
+        document.head.appendChild(s);
+      }
+    } catch {
+      // fallback: inject minimal styles
+      if (!document.getElementById('ytplus-thumbnail-styles')) {
+        const s = document.createElement('style');
+        s.id = 'ytplus-thumbnail-styles';
+        s.textContent = '.thumbnail-modal-img{max-width:72vw;max-height:70vh;}';
+        document.head.appendChild(s);
+      }
+    }
+  })();
+
+  // Modal image viewer (class-based, uses injected CSS)
+  function showImageModal(url, titleText) {
+    // remove existing
+    document.querySelectorAll('.thumbnail-modal-overlay').forEach(m => m.remove());
+
+    const overlay = document.createElement('div');
+    overlay.className = 'thumbnail-modal-overlay';
+
+    const content = document.createElement('div');
+    content.className = 'thumbnail-modal-content';
+
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'thumbnail-modal-close';
+    closeBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `;
+    closeBtn.title = 'Close';
+    closeBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      overlay.remove();
+    });
+
+    const title = document.createElement('div');
+    title.className = 'thumbnail-modal-title';
+    title.textContent = titleText || 'Thumbnail Preview';
+
+    const img = document.createElement('img');
+    img.className = 'thumbnail-modal-img';
+    img.src = url;
+    img.alt = 'Thumbnail Preview';
+    img.title = 'Click to open in new tab';
+    img.style.cursor = 'pointer';
+    img.addEventListener('click', () => window.open(img.src, '_blank'));
+
+    const optionsDiv = document.createElement('div');
+    optionsDiv.className = 'thumbnail-modal-options';
+
+    content.appendChild(closeBtn);
+    content.appendChild(title);
+    content.appendChild(img);
+    content.appendChild(optionsDiv);
+    overlay.appendChild(content);
+
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) overlay.remove();
+    });
+
+    function escHandler(e) {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        window.removeEventListener('keydown', escHandler, true);
+      }
+    }
+    window.addEventListener('keydown', escHandler, true);
+
+    img.addEventListener('error', () => {
+      const err = document.createElement('div');
+      err.textContent = 'Не удалось загрузить изображение';
+      err.style.color = 'white';
+      content.appendChild(err);
+    });
+
+    document.body.appendChild(overlay);
   }
 
   let thumbnailPreviewCurrentVideoId = '';
@@ -11062,19 +13803,9 @@ if (typeof window !== 'undefined') {
     thumbnailPreviewCurrentVideoId = newVideoId;
 
     function attemptInsertion() {
-      const targetElement = document.querySelector('#secondary-inner #panels');
-      const existingContainer = document.getElementById('thumbnailPreview-custom-container');
-
-      if (existingContainer) {
-        const existingImg = existingContainer.querySelector('img');
-        if (existingImg) {
-          existingImg.src = `https://i.ytimg.com/vi/${thumbnailPreviewCurrentVideoId}/mqdefault.jpg`;
-        }
-        thumbnailInsertionAttempts = 0;
-        return;
-      }
-
-      if (!targetElement) {
+      const player =
+        document.querySelector('#movie_player') || document.querySelector('ytd-player');
+      if (!player) {
         thumbnailInsertionAttempts++;
         if (thumbnailInsertionAttempts < MAX_ATTEMPTS) {
           setTimeout(attemptInsertion, RETRY_DELAY);
@@ -11084,90 +13815,43 @@ if (typeof window !== 'undefined') {
         return;
       }
 
-      const container = document.createElement('div');
-      container.id = 'thumbnailPreview-custom-container';
-      container.style.cssText = `
-                position: relative;
-                width: 100%;
-                margin-bottom: 10px;
-                box-sizing: border-box;
-            `;
+      // Add or update a small overlay icon at top-left of the player
+      const overlayId = 'thumbnailPreview-player-overlay';
+      let overlay = player.querySelector(`#${overlayId}`);
 
-      const img = document.createElement('img');
-      img.src = `https://i.ytimg.com/vi/${thumbnailPreviewCurrentVideoId}/mqdefault.jpg`;
-      img.style.cssText = `
-                width: 100%;
-                height: auto;
-                border-radius: 10px;
-                cursor: pointer;
-                display: block;
-            `;
+      if (!overlay) {
+        // create a standard thumb-overlay and adapt it for the top-left player position
+        overlay = /** @type {any} */ (
+          createThumbnailOverlay(thumbnailPreviewCurrentVideoId, player)
+        );
+        overlay.id = overlayId;
+        // override position/size for player overlay (top-left)
+        overlay.style.cssText = `
+                    position: absolute;
+                    top: 8px;
+                    left: 8px;
+                    width: 36px;
+                    height: 36px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    border-radius: 6px;
+                    cursor: pointer;
+                    z-index: 1001;
+                    transition: all 0.15s ease;
+                    opacity: 0.5;
+                `;
 
-      img.addEventListener('click', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
+        // ensure the player is positioned to allow absolute child
+        const playerAny = /** @type {any} */ (player);
+        if (/** @type {any} */ (getComputedStyle(playerAny)).position === 'static') {
+          playerAny.style.position = 'relative';
+        }
+        playerAny.appendChild(overlay);
+      } else {
+        // overlay already exists — keep it updated (no img src needed, overlay contains svg)
+      }
 
-        const maxResUrl = `https://i.ytimg.com/vi/${thumbnailPreviewCurrentVideoId}/maxresdefault.jpg`;
-        window.open(maxResUrl, '_blank');
-      });
-
-      const closeButton = document.createElement('div');
-      closeButton.style.cssText = `
-                position: absolute;
-                top: 8px;
-                right: 8px;
-                background: rgba(0, 0, 0, 0.7);
-                color: white;
-                width: 32px;
-                height: 32px;
-                border-radius: 50%;
-                display: flex;
-                align-items: center;
-                justify-content: center;
-                cursor: pointer;
-                z-index: 1001;
-                transition: all 0.2s ease;
-            `;
-
-      const closeSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      closeSvg.setAttribute('width', '20');
-      closeSvg.setAttribute('height', '20');
-      closeSvg.setAttribute('viewBox', '0 0 24 24');
-      closeSvg.setAttribute('fill', 'none');
-      closeSvg.setAttribute('stroke', 'currentColor');
-      closeSvg.setAttribute('stroke-width', '2');
-      closeSvg.setAttribute('stroke-linecap', 'round');
-      closeSvg.setAttribute('stroke-linejoin', 'round');
-
-      const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-      circle.setAttribute('cx', '12');
-      circle.setAttribute('cy', '12');
-      circle.setAttribute('r', '10');
-      closeSvg.appendChild(circle);
-
-      const path1 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path1.setAttribute('d', 'm15 9-6 6');
-      closeSvg.appendChild(path1);
-
-      const path2 = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-      path2.setAttribute('d', 'm9 9 6 6');
-      closeSvg.appendChild(path2);
-
-      closeButton.appendChild(closeSvg);
-
-      closeButton.onmouseenter = () => (closeSvg.style.stroke = '#f50057');
-      closeButton.onmouseleave = () => (closeSvg.style.stroke = 'currentColor');
-
-      closeButton.addEventListener('click', function (e) {
-        e.preventDefault();
-        e.stopPropagation();
-        thumbnailPreviewClosed = true;
-        container.remove();
-      });
-
-      container.appendChild(img);
-      container.appendChild(closeButton);
-      targetElement.parentNode.insertBefore(container, targetElement);
       thumbnailInsertionAttempts = 0;
     }
 
@@ -11234,7 +13918,7 @@ if (typeof window !== 'undefined') {
       svg.style.stroke = 'white';
     };
 
-    overlay.onclick = async (e) => {
+    overlay.onclick = async e => {
       e.preventDefault();
       e.stopPropagation();
 
@@ -11358,11 +14042,11 @@ if (typeof window !== 'undefined') {
     const overlay = createAvatarOverlay();
     overlay.className = 'avatar-overlay';
 
-    overlay.onclick = (e) => {
+    overlay.onclick = e => {
       e.preventDefault();
       e.stopPropagation();
       const highResUrl = img.src.replace(/=s\d+-c-k-c0x00ffffff-no-rj.*/, '=s0');
-      window.open(highResUrl, '_blank');
+      showImageModal(highResUrl);
     };
 
     container.appendChild(overlay);
@@ -11446,11 +14130,11 @@ if (typeof window !== 'undefined') {
     const overlay = createBannerOverlay();
     overlay.className = 'banner-overlay';
 
-    overlay.onclick = (e) => {
+    overlay.onclick = e => {
       e.preventDefault();
       e.stopPropagation();
       const highResUrl = img.src.replace(/=w\d+-.*/, '=s0');
-      window.open(highResUrl, '_blank');
+      showImageModal(highResUrl);
     };
 
     container.appendChild(overlay);
@@ -11467,8 +14151,8 @@ if (typeof window !== 'undefined') {
       '.ytd-video-owner-renderer img[src*="yt"]',
     ];
 
-    avatarSelectors.forEach((selector) => {
-      document.querySelectorAll(selector).forEach((img) => {
+    avatarSelectors.forEach(selector => {
+      document.querySelectorAll(selector).forEach(img => {
         if (img.src && img.src.includes('yt') && !img.closest('.avatar-overlay')) {
           addAvatarOverlay(img);
         }
@@ -11483,8 +14167,8 @@ if (typeof window !== 'undefined') {
       '#channel-header img[src*="banner"]',
     ];
 
-    bannerSelectors.forEach((selector) => {
-      document.querySelectorAll(selector).forEach((img) => {
+    bannerSelectors.forEach(selector => {
+      document.querySelectorAll(selector).forEach(img => {
         if (
           img.src &&
           (img.src.includes('banner') || img.src.includes('yt')) &&
@@ -11517,10 +14201,20 @@ if (typeof window !== 'undefined') {
       setTimeout(processAll, 50);
     });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-    });
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+        });
+      });
+    }
   }
 
   function setupUrlChangeDetection() {
@@ -11588,1306 +14282,508 @@ if (typeof window !== 'undefined') {
   initialize();
 })();
 
-// --- MODULE: timecode.js ---
+// --- MODULE: comment.js ---
 
-// YouTube Timecode Panel
+/**
+ * Comment Manager Module
+ * Provides bulk delete functionality and comment management tools for YouTube
+ * @module CommentManager
+ */
 (function () {
   'use strict';
 
-  // Early exit for embeds to prevent duplicate panels - ✅ Use cached querySelector
-  if (
-    window.location.hostname !== 'www.youtube.com' ||
-    window.frameElement ||
-    YouTubeUtils.querySelector('ytd-app') === null
-  ) {
-    return;
-  }
-
-  // Prevent multiple initializations
-  if (window._timecodeModuleInitialized) return;
-  window._timecodeModuleInitialized = true;
-
-  // Configuration
-  const config = {
+  /**
+   * Configuration object for comment manager
+   * @const {Object}
+   */
+  const CONFIG = {
+    selectors: {
+      deleteButtons: 'div[class^="VfPpkd-Bz112c-"]',
+      menuButton: '[aria-haspopup="menu"]',
+    },
+    classes: {
+      checkbox: 'comment-checkbox',
+      checkboxAnchor: 'comment-checkbox-anchor',
+      checkboxFloating: 'comment-checkbox-floating',
+      container: 'comment-controls-container',
+      panel: 'comment-controls-panel',
+      header: 'comment-controls-header',
+      title: 'comment-controls-title',
+      actions: 'comment-controls-actions',
+      button: 'comment-controls-button',
+      buttonDanger: 'comment-controls-button--danger',
+      buttonPrimary: 'comment-controls-button--primary',
+      buttonSuccess: 'comment-controls-button--success',
+      close: 'comment-controls-close',
+      deleteButton: 'comment-controls-button-delete',
+    },
+    debounceDelay: 100,
+    deleteDelay: 200,
     enabled: true,
-    autoDetect: true,
-    shortcut: { key: 'T', shiftKey: true, altKey: false, ctrlKey: false },
-    storageKey: 'youtube_timecode_settings',
-    autoSave: true,
-    autoTrackPlayback: true,
-    panelPosition: null,
-    export: true,
+    storageKey: 'youtube_comment_manager_settings',
   };
 
   // State management
   const state = {
-    timecodes: new Map(),
-    dom: {},
-    isReloading: false,
-    activeIndex: null,
-    trackingId: 0,
-    dragging: false,
-    editingIndex: null,
-    resizeListenerKey: null,
+    observer: null,
+    isProcessing: false,
+    settingsNavListenerKey: null,
+    panelCollapsed: false,
   };
 
-  // Utilities
-  const loadSettings = () => {
+  // Optimized settings
+  const settings = {
+    load: () => {
+      try {
+        const saved = localStorage.getItem(CONFIG.storageKey);
+        if (saved) CONFIG.enabled = JSON.parse(saved).enabled ?? true;
+      } catch { }
+    },
+    save: () => {
+      try {
+        localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
+      } catch { }
+    },
+  };
+
+  // Utility functions: use shared debounce when available
+  const debounce = (func, wait) => {
     try {
-      const saved = localStorage.getItem(config.storageKey);
-      if (saved) Object.assign(config, JSON.parse(saved));
-    } catch (e) {}
-  };
-
-  const saveSettings = () => {
-    try {
-      localStorage.setItem(config.storageKey, JSON.stringify(config));
-    } catch (e) {}
-  };
-
-  const clampPanelPosition = (panel, left, top) => {
-    if (!panel) return { left: 0, top: 0 };
-
-    const rect = panel.getBoundingClientRect();
-    const width = rect.width || panel.offsetWidth || 0;
-    const height = rect.height || panel.offsetHeight || 0;
-
-    const maxLeft = Math.max(0, window.innerWidth - width);
-    const maxTop = Math.max(0, window.innerHeight - height);
-
-    return {
-      left: Math.min(Math.max(0, left), maxLeft),
-      top: Math.min(Math.max(0, top), maxTop),
-    };
-  };
-
-  const savePanelPosition = (left, top) => {
-    config.panelPosition = { left, top };
-    saveSettings();
-  };
-
-  const applySavedPanelPosition = (panel) => {
-    if (!panel || !config.panelPosition) return;
-
-    requestAnimationFrame(() => {
-      const { left, top } = clampPanelPosition(
-        panel,
-        config.panelPosition.left,
-        config.panelPosition.top
+      return (
+        (window.YouTubeUtils && window.YouTubeUtils.debounce) ||
+        ((f, w) => {
+          let timeout;
+          return (...args) => {
+            clearTimeout(timeout);
+            timeout = setTimeout(() => f(...args), w);
+          };
+        })(func, wait)
       );
-      panel.style.left = `${left}px`;
-      panel.style.top = `${top}px`;
-      panel.style.right = 'auto';
-    });
-  };
-
-  const showNotification = (message, duration = 2000, type = 'info') => {
-    YouTubeUtils.NotificationManager.show(message, { duration, type });
-  };
-
-  // Time utilities
-  const formatTime = (seconds) => {
-    if (isNaN(seconds)) return '00:00';
-    seconds = Math.round(seconds);
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return h > 0
-      ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-      : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
-
-  const parseTime = (timeStr) => {
-    if (!timeStr) return null;
-    const str = timeStr.trim();
-
-    // Handle HH:MM:SS format
-    let match = str.match(/^(\d+):(\d{1,2}):(\d{2})$/);
-    if (match) {
-      const [, h, m, s] = match.map(Number);
-      return m < 60 && s < 60 ? h * 3600 + m * 60 + s : null;
+    } catch {
+      // fallback
+      let timeout;
+      return (...args) => {
+        clearTimeout(timeout);
+        timeout = setTimeout(() => func(...args), wait);
+      };
     }
+  };
 
-    // Handle MM:SS format
-    match = str.match(/^(\d{1,2}):(\d{2})$/);
-    if (match) {
-      const [, m, s] = match.map(Number);
-      return m < 60 && s < 60 ? m * 60 + s : null;
+  /**
+   * Safely query a single element
+   * @param {string} selector - CSS selector
+   * @returns {HTMLElement|null} The first matching element or null
+   */
+  const $ = selector => /** @type {HTMLElement|null} */(document.querySelector(selector));
+
+  /**
+   * Safely query multiple elements
+   * @param {string} selector - CSS selector
+   * @returns {NodeListOf<HTMLElement>} NodeList of matching elements
+   */
+  const $$ = selector =>
+    /** @type {NodeListOf<HTMLElement>} */(document.querySelectorAll(selector));
+
+  /**
+   * Log error with error boundary integration
+   * @param {string} context - Error context
+   * @param {Error|string|unknown} error - Error object or message
+   */
+  const logError = (context, error) => {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    if (window.YouTubeErrorBoundary) {
+      window.YouTubeErrorBoundary.logError(errorObj, { context });
+    } else {
+      console.error(`[YouTube+][CommentManager] ${context}:`, error);
     }
-
-    return null;
   };
 
-  // Timecode extraction
-  const extractTimecodes = (text) => {
-    if (!text) return [];
-
-    const timecodes = [];
-    const seen = new Set();
-    const patterns = [
-      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]\s*(.+?)$/gm,
-      /^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)$/gm,
-      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—:]\s*([^\n\r]{1,100}?)(?=\s*\d{1,2}:\d{2}|\s*$)/g,
-      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[–—-]\s*([^\n]+)/gm,
-      /^(\d{1,2}:\d{2}(?::\d{2})?)\s*(.+)$/gm,
-    ];
-
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
-        const time = parseTime(match[1]);
-        if (time !== null && !seen.has(time)) {
-          seen.add(time);
-          const label = (match[2] || formatTime(time))
-            .trim()
-            .replace(/^\d+[\.\)]\s*/, '')
-            .substring(0, 100);
-          if (label) {
-            timecodes.push({ time, label, originalText: match[1] });
-          }
-        }
-      }
+  /**
+   * Wraps function with error boundary protection
+   * @template {Function} T
+   * @param {T} fn - Function to wrap
+   * @param {string} context - Error context for debugging
+   * @returns {T} Wrapped function
+   */
+  const withErrorBoundary = (fn, context) => {
+    if (window.YouTubeErrorBoundary?.withErrorBoundary) {
+      return /** @type {T} */ (window.YouTubeErrorBoundary.withErrorBoundary(fn, 'CommentManager'));
     }
-
-    return timecodes.sort((a, b) => a.time - b.time);
-  };
-
-  const DESCRIPTION_SELECTORS = [
-    '#description-inline-expander yt-attributed-string',
-    '#description-inline-expander yt-formatted-string',
-    '#description-inline-expander ytd-text-inline-expander',
-    '#description-inline-expander .yt-core-attributed-string',
-    '#description ytd-text-inline-expander',
-    '#description ytd-expandable-video-description-body-renderer',
-    '#description.ytd-watch-metadata yt-formatted-string',
-    '#description.ytd-watch-metadata #description-inline-expander',
-    '#tab-info ytd-expandable-video-description-body-renderer yt-formatted-string',
-    '#tab-info ytd-expandable-video-description-body-renderer yt-attributed-string',
-    '#structured-description ytd-text-inline-expander',
-    '#structured-description yt-formatted-string',
-    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"] yt-formatted-string',
-    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"] yt-attributed-string',
-    'ytd-watch-metadata #description',
-    'ytd-watch-metadata #description-inline-expander',
-    '#description',
-  ];
-
-  const DESCRIPTION_SELECTOR_COMBINED = DESCRIPTION_SELECTORS.join(',');
-
-  const DESCRIPTION_EXPANDERS = [
-    '#description-inline-expander yt-button-shape button',
-    '#description-inline-expander tp-yt-paper-button#expand',
-    '#description-inline-expander tp-yt-paper-button[aria-label]',
-    'ytd-watch-metadata #description-inline-expander yt-button-shape button',
-    'ytd-text-inline-expander[collapsed] yt-button-shape button',
-    'ytd-text-inline-expander[collapsed] tp-yt-paper-button#expand',
-    'ytd-expandable-video-description-body-renderer #expand',
-    'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"] #expand',
-  ];
-
-  const sleep = (ms = 250) => new Promise((resolve) => setTimeout(resolve, ms));
-
-  const collectDescriptionText = () => {
-    const snippets = [];
-    DESCRIPTION_SELECTORS.forEach((selector) => {
-      document.querySelectorAll(selector).forEach((node) => {
-        const text = node?.textContent?.trim();
-        if (text) {
-          snippets.push(text);
-        }
-      });
-    });
-    return snippets.join('\n');
-  };
-
-  const expandDescriptionIfNeeded = async () => {
-    for (const selector of DESCRIPTION_EXPANDERS) {
-      const button = document.querySelector(selector);
-      if (!button) continue;
-
-      const ariaExpanded = button.getAttribute('aria-expanded');
-      if (ariaExpanded === 'true') return false;
-
-      const ariaLabel = button.getAttribute('aria-label')?.toLowerCase();
-      if (ariaLabel && ariaLabel.includes('less')) return false;
-
-      if (button.offsetParent !== null) {
+    return /** @type {any} */ (
+      (...args) => {
         try {
-          button.click();
-          await sleep(400);
-          return true;
+          return fn(...args);
         } catch (error) {
-          console.warn('[Timecode] Failed to click expand button:', error);
+          logError(context, error);
+          return null;
         }
       }
-    }
-
-    const inlineExpander = document.querySelector('ytd-text-inline-expander[collapsed]');
-    if (inlineExpander) {
-      try {
-        inlineExpander.removeAttribute('collapsed');
-      } catch (error) {
-        YouTubeUtils.logError('TimecodePanel', 'Failed to expand description', error);
-      }
-      await sleep(300);
-      return true;
-    }
-
-    return false;
-  };
-
-  const ensureDescriptionReady = async () => {
-    const initialText = collectDescriptionText();
-    if (initialText) return;
-
-    const maxAttempts = 3;
-    for (let attempt = 0; attempt < maxAttempts; attempt++) {
-      try {
-        await YouTubeUtils.waitForElement(DESCRIPTION_SELECTOR_COMBINED, 1500);
-      } catch (error) {
-        // Continue trying
-      }
-
-      await sleep(200);
-      const expanded = await expandDescriptionIfNeeded();
-
-      await sleep(expanded ? 500 : 200);
-      const text = collectDescriptionText();
-
-      if (text && text.length > initialText.length) {
-        return;
-      }
-    }
-  };
-  const getCurrentVideoId = () => new URLSearchParams(window.location.search).get('v');
-
-  // Detection
-  const detectTimecodes = async (options = {}) => {
-    const { force = false } = options;
-
-    if (!config.enabled) return [];
-    if (!force && !config.autoDetect) return [];
-
-    const videoId = getCurrentVideoId();
-    if (!videoId) return [];
-
-    const cacheKey = `detect_${videoId}`;
-    if (!force && state.timecodes.has(cacheKey)) {
-      const cached = state.timecodes.get(cacheKey);
-      if (Array.isArray(cached) && cached.length) {
-        return cached;
-      }
-      state.timecodes.delete(cacheKey);
-    }
-
-    await ensureDescriptionReady();
-
-    const uniqueMap = new Map();
-    const descriptionText = collectDescriptionText();
-
-    if (descriptionText) {
-      const extracted = extractTimecodes(descriptionText);
-      extracted.forEach((tc) => {
-        if (tc.time >= 0 && tc.label?.trim()) {
-          uniqueMap.set(tc.time.toString(), tc);
-        }
-      });
-    }
-
-    // Get native chapters
-    const chapters = getYouTubeChapters();
-
-    chapters.forEach((chapter) => {
-      if (chapter.time >= 0 && chapter.label?.trim()) {
-        uniqueMap.set(chapter.time.toString(), chapter);
-      }
-    });
-
-    const result = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
-    const hadExistingItems = state.dom.list?.childElementCount > 0;
-
-    if (result.length > 0) {
-      updateTimecodePanel(result);
-      state.timecodes.set(cacheKey, result);
-      if (config.autoSave) saveTimecodesToStorage(result);
-    } else {
-      if (force || !hadExistingItems) {
-        updateTimecodePanel([]);
-      }
-      if (force) {
-        state.timecodes.delete(cacheKey);
-      }
-    }
-
-    return result;
-  };
-
-  const reloadTimecodes = async (buttonOverride = null) => {
-    const button =
-      buttonOverride || state.dom.reloadButton || document.getElementById('timecode-reload');
-
-    if (state.isReloading || !config.enabled) return;
-
-    state.isReloading = true;
-    if (button) {
-      button.disabled = true;
-      button.classList.add('loading');
-    }
-
-    try {
-      const result = await detectTimecodes({ force: true });
-
-      if (Array.isArray(result) && result.length) {
-        showNotification(`Найдено таймкодов: ${result.length}`);
-      } else {
-        updateTimecodePanel([]);
-        showNotification('Таймкоды не найдены');
-      }
-    } catch (error) {
-      YouTubeUtils.logError('TimecodePanel', 'Reload failed', error);
-      showNotification('Ошибка при обновлении таймкодов');
-    } finally {
-      if (button) {
-        button.disabled = false;
-        button.classList.remove('loading');
-      }
-      state.isReloading = false;
-    }
-  };
-
-  const getYouTubeChapters = () => {
-    // Расширенный поиск глав/эпизодов
-    const selectors = [
-      'ytd-macro-markers-list-item-renderer',
-      'ytd-chapter-renderer',
-      'ytd-engagement-panel-section-list-renderer[target-id*="description-chapters"] ytd-macro-markers-list-item-renderer',
-      'ytd-engagement-panel-section-list-renderer[target-id*="description-chapters"] #details',
-      '#structured-description ytd-horizontal-card-list-renderer ytd-macro-markers-list-item-renderer',
-    ];
-
-    const items = document.querySelectorAll(selectors.join(', '));
-    const chapters = new Map();
-
-    items.forEach((item) => {
-      // Попробуем разные способы извлечения времени и заголовка
-      const timeSelectors = ['.time-info', '.timestamp', '#time', 'span[id*="time"]'];
-      const titleSelectors = ['.marker-title', '.chapter-title', '#details', 'h4', '.title'];
-
-      let timeText = null;
-      for (const sel of timeSelectors) {
-        const el = item.querySelector(sel);
-        if (el?.textContent) {
-          timeText = el.textContent;
-          break;
-        }
-      }
-
-      let titleText = null;
-      for (const sel of titleSelectors) {
-        const el = item.querySelector(sel);
-        if (el?.textContent) {
-          titleText = el.textContent;
-          break;
-        }
-      }
-
-      if (timeText) {
-        const time = parseTime(timeText.trim());
-        if (time !== null) {
-          // Очищаем заголовок от лишних пробелов и переносов строк
-          const cleanTitle = titleText?.trim().replace(/\s+/g, ' ') || formatTime(time);
-          chapters.set(time.toString(), {
-            time,
-            label: cleanTitle,
-            isChapter: true,
-          });
-        }
-      }
-    });
-    const result = Array.from(chapters.values()).sort((a, b) => a.time - b.time);
-    return result;
-  };
-
-  // Settings panel
-  const addTimecodePanelSettings = () => {
-    // ✅ Use cached querySelector
-    const advancedSection = YouTubeUtils.querySelector(
-      '.ytp-plus-settings-section[data-section="advanced"]'
     );
-    if (!advancedSection || YouTubeUtils.querySelector('.timecode-settings-item')) return;
-
-    const { ctrlKey, altKey, shiftKey } = config.shortcut;
-    const modifierValue =
-      [
-        ctrlKey && altKey && shiftKey && 'ctrl+alt+shift',
-        ctrlKey && altKey && 'ctrl+alt',
-        ctrlKey && shiftKey && 'ctrl+shift',
-        altKey && shiftKey && 'alt+shift',
-        ctrlKey && 'ctrl',
-        altKey && 'alt',
-        shiftKey && 'shift',
-      ].find(Boolean) || 'none';
-
-    const enableDiv = document.createElement('div');
-    enableDiv.className = 'ytp-plus-settings-item timecode-settings-item';
-    enableDiv.innerHTML = `
-        <div>
-          <label class="ytp-plus-settings-item-label">Timecode Panel</label>
-          <div class="ytp-plus-settings-item-description">Enable video timecode/chapter panel with quick navigation</div>
-        </div>
-        <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enabled" ${config.enabled ? 'checked' : ''}>
-      `;
-
-    const shortcutDiv = document.createElement('div');
-    shortcutDiv.className = 'ytp-plus-settings-item timecode-settings-item timecode-shortcut-item';
-    shortcutDiv.style.display = config.enabled ? 'flex' : 'none';
-    shortcutDiv.innerHTML = `
-        <div>
-          <label class="ytp-plus-settings-item-label">Keyboard Shortcut</label>
-          <div class="ytp-plus-settings-item-description">Customize keyboard combination to toggle Timecode Panel</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <select id="timecode-modifier-combo" style="background: rgba(34, 34, 34, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
-            ${[
-              'none',
-              'ctrl',
-              'alt',
-              'shift',
-              'ctrl+alt',
-              'ctrl+shift',
-              'alt+shift',
-              'ctrl+alt+shift',
-            ]
-              .map(
-                (v) =>
-                  `<option value="${v}" ${v === modifierValue ? 'selected' : ''}>${
-                    v === 'none'
-                      ? 'None'
-                      : v
-                          .split('+')
-                          .map((k) => k.charAt(0).toUpperCase() + k.slice(1))
-                          .join('+')
-                  }</option>`
-              )
-              .join('')}
-          </select>
-          <span>+</span>
-          <input type="text" id="timecode-key" value="${config.shortcut.key}" maxlength="1" style="width: 30px; text-align: center; background: rgba(34, 34, 34, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
-        </div>
-      `;
-
-    advancedSection.append(enableDiv, shortcutDiv);
-
-    // Event listeners
-    advancedSection.addEventListener('change', (e) => {
-      if (e.target.matches('.ytp-plus-settings-checkbox[data-setting="enabled"]')) {
-        config.enabled = e.target.checked;
-        shortcutDiv.style.display = config.enabled ? 'flex' : 'none';
-        toggleTimecodePanel(config.enabled);
-        saveSettings();
-      }
-    });
-
-    document.getElementById('timecode-modifier-combo')?.addEventListener('change', (e) => {
-      const value = e.target.value;
-      config.shortcut.ctrlKey = value.includes('ctrl');
-      config.shortcut.altKey = value.includes('alt');
-      config.shortcut.shiftKey = value.includes('shift');
-      saveSettings();
-    });
-
-    document.getElementById('timecode-key')?.addEventListener('input', (e) => {
-      if (e.target.value) {
-        config.shortcut.key = e.target.value.toUpperCase();
-        saveSettings();
-      }
-    });
   };
 
-  // CSS
-  const insertTimecodeStyles = () => {
-    if (document.getElementById('timecode-panel-styles')) return;
+  /**
+   * Add checkboxes to comment elements for selection
+   * Core functionality for bulk operations
+   */
+  const addCheckboxes = withErrorBoundary(() => {
+    if (!CONFIG.enabled || state.isProcessing) return;
 
-    // ✅ Use StyleManager instead of createElement('style')
-    const styles = `
-                #timecode-panel{position:fixed;right:20px;top:80px;background:rgba(34,34,34,.9);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.4);width:250px;max-height:70vh;z-index:9999;color:#fff;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.1);transition:transform .3s,opacity .3s;overflow:hidden;display:flex;flex-direction:column}
-                #timecode-panel.hidden{transform:translateX(270px);opacity:0;pointer-events:none}
-                #timecode-panel.auto-tracking{border-color:rgba(255,0,0,.5)}
-                #timecode-header{display:flex;justify-content:space-between;align-items:center;padding:12px;border-bottom:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.3);cursor:move}
-                #timecode-title{font-weight:500;margin:0;font-size:14px;user-select:none;display:flex;align-items:center;gap:8px}
-                #timecode-tracking-indicator{width:8px;height:8px;background:red;border-radius:50%;opacity:0;transition:opacity .3s}
-                #timecode-panel.auto-tracking #timecode-tracking-indicator{opacity:1}
-                #timecode-current-time{font-family:monospace;font-size:12px;padding:2px 6px;background:rgba(255,0,0,.3);border-radius:3px;margin-left:auto}
-                #timecode-header-controls{display:flex;align-items:center;gap:6px}
-                #timecode-reload,#timecode-close{background:0 0;border:none;color:rgba(255,255,255,.7);cursor:pointer;width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;transition:color .2s}
-                #timecode-reload:hover,#timecode-close:hover{color:#fff}
-                #timecode-reload.loading{animation:timecode-spin .8s linear infinite}
-                #timecode-list{overflow-y:auto;padding:8px 0;max-height:calc(70vh - 80px);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
-                #timecode-list::-webkit-scrollbar{width:6px}
-                #timecode-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
-                .timecode-item{padding:8px 12px;display:flex;align-items:center;cursor:pointer;transition:background-color .2s;border-left:3px solid transparent;position:relative}
-                .timecode-item:hover{background:rgba(255,255,255,.1)}
-                .timecode-item:hover .timecode-actions{opacity:1}
-                .timecode-item.active{background:rgba(255,0,0,.25);border-left-color:red}
-                .timecode-item.active.pulse{animation:pulse .8s ease-out}
-                .timecode-item.editing{background:rgba(255,255,0,.15);border-left-color:#ffaa00}
-                .timecode-item.editing .timecode-actions{opacity:1}
-                @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
-                @keyframes timecode-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-                .timecode-time{font-family:monospace;margin-right:10px;color:rgba(255,255,255,.8);font-size:13px;min-width:45px}
-                .timecode-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;flex:1}
-                .timecode-item.has-chapter .timecode-time{color:#ff4444}
-                .timecode-progress{width:0;height:2px;background:#ff4444;position:absolute;bottom:0;left:0;transition:width .3s;opacity:.8}
-                .timecode-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:4px;opacity:0;transition:opacity .2s;background:rgba(0,0,0,.8);border-radius:4px;padding:2px}
-                .timecode-action{background:none;border:none;color:rgba(255,255,255,.8);cursor:pointer;padding:4px;font-size:12px;border-radius:2px;transition:color .2s,background-color .2s}
-                .timecode-action:hover{color:#fff;background:rgba(255,255,255,.2)}
-                .timecode-action.edit:hover{color:#ffaa00}
-                .timecode-action.delete:hover{color:#ff4444}
-                #timecode-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;color:rgba(255,255,255,.7);font-size:13px}
-                #timecode-form{padding:10px;border-top:1px solid rgba(255,255,255,.1);display:none}
-                #timecode-form.visible{display:block}
-                #timecode-form input{width:100%;margin-bottom:8px;padding:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:4px;color:#fff;font-size:13px}
-                #timecode-form input::placeholder{color:rgba(255,255,255,.6)}
-                #timecode-form-buttons{display:flex;gap:8px;justify-content:flex-end}
-                #timecode-form-buttons button{padding:6px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s}
-                #timecode-form-cancel{background:rgba(255,255,255,.2);color:#fff}
-                #timecode-form-cancel:hover{background:rgba(255,255,255,.3)}
-                #timecode-form-save{background:#ff4444;color:#fff}
-                #timecode-form-save:hover{background:#ff6666}
-                #timecode-actions{padding:8px;border-top:1px solid rgba(255,255,255,.1);display:flex;gap:8px;background:rgba(0,0,0,.2)}
-                #timecode-actions button{padding:6px 10px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s;background:rgba(255,255,255,.2);color:#fff}
-                #timecode-actions button:hover{background:rgba(255,255,255,.3)}
-                #timecode-track-toggle.active{background:#ff4444!important}
-            `;
-    YouTubeUtils.StyleManager.add('timecode-panel-styles', styles);
-  };
+    const deleteButtons = $$(CONFIG.selectors.deleteButtons);
 
-  // Panel creation
-  const createTimecodePanel = () => {
-    if (state.dom.panel) return state.dom.panel;
-
-    // Remove any existing panels (for redundancy)
-    document.querySelectorAll('#timecode-panel').forEach((p) => p.remove());
-
-    const panel = document.createElement('div');
-    panel.id = 'timecode-panel';
-    panel.className = config.enabled ? '' : 'hidden';
-    if (config.autoTrackPlayback) panel.classList.add('auto-tracking');
-
-    panel.innerHTML = `
-        <div id="timecode-header">
-          <h3 id="timecode-title">
-            <div id="timecode-tracking-indicator"></div>
-            Timecodes
-            <span id="timecode-current-time"></span>
-          </h3>
-          <div id="timecode-header-controls">
-            <button id="timecode-reload" title="Reload timecodes" aria-label="Reload timecodes">⟳</button>
-            <button id="timecode-close" title="Close" aria-label="Close timecode panel">×</button>
-          </div>
-        </div>
-        <div id="timecode-list"></div>
-        <div id="timecode-empty">
-          <div>No timecodes found</div>
-          <div style="margin-top:5px;font-size:12px">Click + to add current time</div>
-        </div>
-        <div id="timecode-form">
-          <input type="text" id="timecode-form-time" placeholder="Time (e.g., 1:30)">
-          <input type="text" id="timecode-form-label" placeholder="Label (optional)">
-          <div id="timecode-form-buttons">
-            <button type="button" id="timecode-form-cancel">Cancel</button>
-            <button type="button" id="timecode-form-save" class="save">Save</button>
-          </div>
-        </div>
-        <div id="timecode-actions">
-          <button id="timecode-add-btn">+ Add</button>
-          <button id="timecode-export-btn" ${config.export ? '' : 'style="display:none"'}>Export</button>
-          <button id="timecode-track-toggle" class="${config.autoTrackPlayback ? 'active' : ''}">${config.autoTrackPlayback ? 'Tracking' : 'Track'}</button>
-        </div>
-      `;
-
-    // Cache DOM elements
-    state.dom = {
-      panel,
-      list: panel.querySelector('#timecode-list'),
-      empty: panel.querySelector('#timecode-empty'),
-      form: panel.querySelector('#timecode-form'),
-      timeInput: panel.querySelector('#timecode-form-time'),
-      labelInput: panel.querySelector('#timecode-form-label'),
-      currentTime: panel.querySelector('#timecode-current-time'),
-      trackToggle: panel.querySelector('#timecode-track-toggle'),
-      reloadButton: panel.querySelector('#timecode-reload'),
-    };
-
-    // Event delegation
-    panel.addEventListener('click', handlePanelClick);
-    makeDraggable(panel);
-
-    document.body.appendChild(panel);
-    applySavedPanelPosition(panel);
-    return panel;
-  };
-
-  // Event handling
-  const handlePanelClick = (e) => {
-    const { target } = e;
-    const item = target.closest('.timecode-item');
-
-    const reloadButton =
-      target.id === 'timecode-reload' ? target : target.closest('#timecode-reload');
-    if (reloadButton) {
-      e.preventDefault();
-      reloadTimecodes(reloadButton);
-      return;
-    }
-
-    if (target.id === 'timecode-close') {
-      toggleTimecodePanel(false);
-    } else if (target.id === 'timecode-add-btn') {
-      // ✅ Use cached querySelector
-      const video = YouTubeUtils.querySelector('video');
-      if (video) showTimecodeForm(video.currentTime);
-    } else if (target.id === 'timecode-track-toggle') {
-      config.autoTrackPlayback = !config.autoTrackPlayback;
-      target.textContent = config.autoTrackPlayback ? 'Tracking' : 'Track';
-      target.classList.toggle('active', config.autoTrackPlayback);
-      state.dom.panel.classList.toggle('auto-tracking', config.autoTrackPlayback);
-      saveSettings();
-      if (config.autoTrackPlayback) startTracking();
-    } else if (target.id === 'timecode-export-btn') {
-      exportTimecodes();
-    } else if (target.id === 'timecode-form-cancel') {
-      hideTimecodeForm();
-    } else if (target.id === 'timecode-form-save') {
-      saveTimecodeForm();
-    } else if (target.classList.contains('timecode-action')) {
-      e.stopPropagation();
-      const action = target.dataset.action;
-      const index = parseInt(target.closest('.timecode-item').dataset.index);
-
-      if (action === 'edit') {
-        editTimecode(index);
-      } else if (action === 'delete') {
-        deleteTimecode(index);
-      }
-    } else if (item && !target.closest('.timecode-actions')) {
-      const time = parseFloat(item.dataset.time);
-      const video = document.querySelector('video');
-      if (video && !isNaN(time)) {
-        video.currentTime = time;
-        if (video.paused) video.play();
-        updateActiveItem(item);
-      }
-    }
-  };
-
-  // Edit timecode
-  const editTimecode = (index) => {
-    const timecodes = getCurrentTimecodes();
-    if (index < 0 || index >= timecodes.length) return;
-
-    const timecode = timecodes[index];
-    state.editingIndex = index;
-
-    // Update item appearance
-    const item = state.dom.list.querySelector(`.timecode-item[data-index="${index}"]`);
-    if (item) {
-      item.classList.add('editing');
-      // Hide other editing items
-      state.dom.list.querySelectorAll('.timecode-item.editing').forEach((el) => {
-        if (el !== item) el.classList.remove('editing');
-      });
-    }
-
-    showTimecodeForm(timecode.time, timecode.label);
-  };
-
-  // Delete timecode
-  const deleteTimecode = (index) => {
-    const timecodes = getCurrentTimecodes();
-    if (index < 0 || index >= timecodes.length) return;
-
-    const timecode = timecodes[index];
-
-    // Don't allow deletion of native YouTube chapters
-    if (timecode.isChapter && !timecode.isUserAdded) {
-      showNotification('Cannot delete YouTube chapters');
-      return;
-    }
-
-    // Confirm deletion
-    if (!confirm(`Delete timecode "${timecode.label}"?`)) return;
-
-    timecodes.splice(index, 1);
-    updateTimecodePanel(timecodes);
-    saveTimecodesToStorage(timecodes);
-    showNotification('Timecode deleted');
-  };
-
-  // Form handling
-  const showTimecodeForm = (currentTime, existingLabel = '') => {
-    const { form, timeInput, labelInput } = state.dom;
-    form.classList.add('visible');
-    timeInput.value = formatTime(currentTime);
-    labelInput.value = existingLabel;
-    requestAnimationFrame(() => labelInput.focus());
-  };
-
-  const hideTimecodeForm = () => {
-    state.dom.form.classList.remove('visible');
-    state.editingIndex = null;
-    // Remove editing class from all items
-    state.dom.list?.querySelectorAll('.timecode-item.editing').forEach((el) => {
-      el.classList.remove('editing');
-    });
-  };
-
-  const saveTimecodeForm = () => {
-    const { timeInput, labelInput } = state.dom;
-    const timeValue = timeInput.value.trim();
-    const labelValue = labelInput.value.trim();
-
-    const time = parseTime(timeValue);
-    if (time === null) {
-      showNotification('Invalid time format');
-      return;
-    }
-
-    const timecodes = getCurrentTimecodes();
-    const newTimecode = { time, label: labelValue || formatTime(time), isUserAdded: true };
-
-    if (state.editingIndex !== null) {
-      // Editing existing timecode
-      const oldTimecode = timecodes[state.editingIndex];
-      if (oldTimecode.isChapter && !oldTimecode.isUserAdded) {
-        showNotification('Cannot edit YouTube chapters');
-        hideTimecodeForm();
+    deleteButtons.forEach(button => {
+      const parent = button.parentNode;
+      if (
+        button.closest(CONFIG.selectors.menuButton) ||
+        (parent && parent.querySelector && parent.querySelector(`.${CONFIG.classes.checkbox}`))
+      ) {
         return;
       }
 
-      timecodes[state.editingIndex] = { ...oldTimecode, ...newTimecode };
-      showNotification('Timecode updated');
-    } else {
-      // Adding new timecode
-      timecodes.push(newTimecode);
-      showNotification('Timecode added');
-    }
+      const commentElement =
+        button.closest('[class*="comment"]') || button.closest('[role="article"]') || parent;
 
-    const sorted = timecodes.sort((a, b) => a.time - b.time);
-    updateTimecodePanel(sorted);
-    saveTimecodesToStorage(sorted);
-    hideTimecodeForm();
-  };
-
-  // Export
-  const exportTimecodes = () => {
-    const timecodes = getCurrentTimecodes();
-    if (!timecodes.length) {
-      showNotification('No timecodes to export');
-      return;
-    }
-
-    const exportBtn = state.dom.panel?.querySelector('#timecode-export-btn');
-    if (exportBtn) {
-      exportBtn.textContent = 'Copied!';
-      exportBtn.style.backgroundColor = 'rgba(0,220,0,0.8)';
-      setTimeout(() => {
-        exportBtn.textContent = 'Export';
-        exportBtn.style.backgroundColor = '';
-      }, 2000);
-    }
-
-    const videoTitle = document.title.replace(/\s-\sYouTube$/, '');
-    let content = `${videoTitle}\n\nTimecodes:\n`;
-    timecodes.forEach((tc) => (content += `${formatTime(tc.time)} - ${tc.label}\n`));
-
-    if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(content).then(() => {
-        showNotification('Timecodes copied to clipboard');
-      });
-    }
-  };
-
-  // Panel updates
-  const updateTimecodePanel = (timecodes) => {
-    const { list, empty } = state.dom;
-    if (!list || !empty) return;
-
-    const isEmpty = !timecodes.length;
-    empty.style.display = isEmpty ? 'flex' : 'none';
-    list.style.display = isEmpty ? 'none' : 'block';
-
-    if (isEmpty) {
-      list.innerHTML = '';
-      return;
-    }
-
-    list.innerHTML = timecodes
-      .map((tc, i) => {
-        const timeStr = formatTime(tc.time);
-        const label = (tc.label?.trim() || timeStr).replace(
-          /[<>&"']/g,
-          (c) => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' })[c]
-        );
-        const isEditable = !tc.isChapter || tc.isUserAdded;
-
-        return `
-          <div class="timecode-item ${tc.isChapter ? 'has-chapter' : ''}" data-time="${tc.time}" data-index="${i}">
-            <div class="timecode-time">${timeStr}</div>
-            <div class="timecode-label" title="${label}">${label}</div>
-            <div class="timecode-progress"></div>
-            ${
-              isEditable
-                ? `
-              <div class="timecode-actions">
-                <button class="timecode-action edit" data-action="edit" title="Edit">✎</button>
-                <button class="timecode-action delete" data-action="delete" title="Delete">✕</button>
-              </div>
-            `
-                : ''
-            }
-          </div>
-        `;
-      })
-      .join('');
-  };
-
-  const updateActiveItem = (activeItem) => {
-    const items = state.dom.list?.querySelectorAll('.timecode-item');
-    if (!items) return;
-
-    items.forEach((item) => item.classList.remove('active', 'pulse'));
-    if (activeItem) {
-      activeItem.classList.add('active', 'pulse');
-      setTimeout(() => activeItem.classList.remove('pulse'), 800);
-    }
-  };
-
-  // Tracking
-  const startTracking = () => {
-    if (state.trackingId) return;
-
-    const track = () => {
-      try {
-        const video = document.querySelector('video');
-        const { panel, currentTime, list } = state.dom;
-
-        // Stop tracking if essential elements are missing or panel is hidden
-        if (!video || !panel || panel.classList.contains('hidden') || !config.autoTrackPlayback) {
-          if (state.trackingId) {
-            cancelAnimationFrame(state.trackingId);
-            state.trackingId = 0;
-          }
-          return;
-        }
-
-        // Update current time display
-        if (currentTime && !isNaN(video.currentTime)) {
-          currentTime.textContent = formatTime(video.currentTime);
-        }
-
-        // Update active item
-        const items = list?.querySelectorAll('.timecode-item');
-        if (items?.length) {
-          let activeIndex = -1;
-          let nextIndex = -1;
-
-          for (let i = 0; i < items.length; i++) {
-            const timeData = items[i].dataset.time;
-            if (!timeData) continue;
-
-            const time = parseFloat(timeData);
-            if (isNaN(time)) continue;
-
-            if (video.currentTime >= time) {
-              activeIndex = i;
-            } else if (nextIndex === -1) {
-              nextIndex = i;
-            }
-          }
-
-          // Update active state
-          if (state.activeIndex !== activeIndex) {
-            // Remove previous active state
-            if (state.activeIndex !== null && state.activeIndex >= 0 && items[state.activeIndex]) {
-              items[state.activeIndex].classList.remove('active');
-            }
-
-            // Set new active state
-            if (activeIndex >= 0 && items[activeIndex]) {
-              items[activeIndex].classList.add('active');
-              try {
-                items[activeIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-              } catch (e) {
-                // Fallback for browsers that don't support smooth scrolling
-                items[activeIndex].scrollIntoView(false);
-              }
-            }
-
-            state.activeIndex = activeIndex;
-          }
-
-          // Update progress bar
-          if (activeIndex >= 0 && nextIndex >= 0 && items[activeIndex]) {
-            const currentTimeData = items[activeIndex].dataset.time;
-            const nextTimeData = items[nextIndex].dataset.time;
-
-            if (currentTimeData && nextTimeData) {
-              const current = parseFloat(currentTimeData);
-              const next = parseFloat(nextTimeData);
-
-              if (!isNaN(current) && !isNaN(next) && next > current) {
-                const progress = ((video.currentTime - current) / (next - current)) * 100;
-                const progressEl = items[activeIndex].querySelector('.timecode-progress');
-                if (progressEl) {
-                  const clampedProgress = Math.min(100, Math.max(0, progress));
-                  progressEl.style.width = `${clampedProgress}%`;
-                }
-              }
-            }
-          }
-        }
-
-        // Continue tracking if enabled
-        if (config.autoTrackPlayback) {
-          state.trackingId = requestAnimationFrame(track);
-        }
-      } catch (error) {
-        console.warn('Timecode tracking error:', error);
-        // Stop tracking on error to prevent infinite error loops
-        if (state.trackingId) {
-          cancelAnimationFrame(state.trackingId);
-          state.trackingId = 0;
-        }
-      }
-    };
-
-    state.trackingId = requestAnimationFrame(track);
-  };
-
-  // Stop tracking function
-  const stopTracking = () => {
-    if (state.trackingId) {
-      cancelAnimationFrame(state.trackingId);
-      state.trackingId = 0;
-    }
-  };
-
-  // Drag functionality
-  const makeDraggable = (panel) => {
-    const header = panel.querySelector('#timecode-header');
-    if (!header) return;
-
-    let startX, startY, startLeft, startTop;
-
-    const mouseDownHandler = (e) => {
-      if (e.button !== 0) return;
-
-      state.dragging = true;
-      startX = e.clientX;
-      startY = e.clientY;
-
-      const rect = panel.getBoundingClientRect();
-
-      if (!panel.style.left) {
-        panel.style.left = `${rect.left}px`;
-      }
-      if (!panel.style.top) {
-        panel.style.top = `${rect.top}px`;
-      }
-
-      panel.style.right = 'auto';
-
-      startLeft = parseFloat(panel.style.left) || rect.left;
-      startTop = parseFloat(panel.style.top) || rect.top;
-
-      const handleMove = (event) => {
-        if (!state.dragging) return;
-
-        const deltaX = event.clientX - startX;
-        const deltaY = event.clientY - startY;
-        const { left, top } = clampPanelPosition(panel, startLeft + deltaX, startTop + deltaY);
-
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        panel.style.right = 'auto';
-      };
-
-      const handleUp = () => {
-        if (!state.dragging) return;
-
-        state.dragging = false;
-        document.removeEventListener('mousemove', handleMove);
-        document.removeEventListener('mouseup', handleUp);
-
-        const rectAfter = panel.getBoundingClientRect();
-        const { left, top } = clampPanelPosition(panel, rectAfter.left, rectAfter.top);
-
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        panel.style.right = 'auto';
-
-        savePanelPosition(left, top);
-      };
-
-      document.addEventListener('mousemove', handleMove);
-      document.addEventListener('mouseup', handleUp);
-    };
-
-    // ✅ Register the mousedown listener for cleanup
-    YouTubeUtils.cleanupManager.registerListener(header, 'mousedown', mouseDownHandler);
-  };
-
-  // Storage
-  const saveTimecodesToStorage = (timecodes) => {
-    const videoId = new URLSearchParams(window.location.search).get('v');
-    if (!videoId) return;
-
-    try {
-      const minimal = timecodes.map((tc) => ({
-        t: tc.time,
-        l: tc.label?.trim() || formatTime(tc.time),
-        c: tc.isChapter || false,
-        u: tc.isUserAdded || false,
-      }));
-      localStorage.setItem(`yt_tc_${videoId}`, JSON.stringify(minimal));
-    } catch (e) {}
-  };
-
-  const loadTimecodesFromStorage = () => {
-    const videoId = new URLSearchParams(window.location.search).get('v');
-    if (!videoId) return null;
-
-    try {
-      const data = localStorage.getItem(`yt_tc_${videoId}`);
-      return data
-        ? JSON.parse(data)
-            .map((tc) => ({
-              time: tc.t,
-              label: tc.l,
-              isChapter: tc.c,
-              isUserAdded: tc.u || false,
-            }))
-            .sort((a, b) => a.time - b.time)
-        : null;
-    } catch (e) {
-      return null;
-    }
-  };
-
-  const getCurrentTimecodes = () => {
-    const items = state.dom.list?.querySelectorAll('.timecode-item');
-    if (!items) return [];
-
-    return Array.from(items)
-      .map((item) => ({
-        time: parseFloat(item.dataset.time),
-        label:
-          item.querySelector('.timecode-label')?.textContent ||
-          formatTime(parseFloat(item.dataset.time)),
-        isChapter: item.classList.contains('has-chapter'),
-        isUserAdded: !item.classList.contains('has-chapter') || false,
-      }))
-      .sort((a, b) => a.time - b.time);
-  };
-
-  // Toggle panel
-  const toggleTimecodePanel = (show) => {
-    // Close any existing panels first (cleanup)
-    document.querySelectorAll('#timecode-panel').forEach((panel) => {
-      if (panel !== state.dom.panel) panel.remove();
-    });
-
-    const panel = state.dom.panel || createTimecodePanel();
-    if (show === undefined) show = panel.classList.contains('hidden');
-
-    panel.classList.toggle('hidden', !show);
-
-    if (show) {
-      applySavedPanelPosition(panel);
-
-      const saved = loadTimecodesFromStorage();
-      if (saved?.length) {
-        updateTimecodePanel(saved);
-      } else if (config.autoDetect) {
-        detectTimecodes().catch((err) => console.error('[Timecode] Detection failed:', err));
-      }
-
-      if (config.autoTrackPlayback) startTracking();
-    } else if (state.trackingId) {
-      cancelAnimationFrame(state.trackingId);
-      state.trackingId = 0;
-    }
-  };
-
-  // Navigation handling
-  const setupNavigation = () => {
-    let currentVideoId = new URLSearchParams(window.location.search).get('v');
-
-    const handleNavigationChange = () => {
-      const newVideoId = new URLSearchParams(window.location.search).get('v');
-      if (newVideoId === currentVideoId || window.location.pathname !== '/watch') return;
-
-      currentVideoId = newVideoId;
-      state.activeIndex = null;
-      state.editingIndex = null;
-      state.timecodes.clear();
-
-      if (config.enabled && state.dom.panel && !state.dom.panel.classList.contains('hidden')) {
-        const saved = loadTimecodesFromStorage();
-        if (saved?.length) {
-          updateTimecodePanel(saved);
-        } else if (config.autoDetect) {
-          setTimeout(
-            () =>
-              detectTimecodes().catch((err) => console.error('[Timecode] Detection failed:', err)),
-            500
+      if (commentElement && commentElement instanceof Element) {
+        if (!commentElement.hasAttribute('data-comment-text')) {
+          commentElement.setAttribute(
+            'data-comment-text',
+            (commentElement.textContent || '').toLowerCase()
           );
         }
-        if (config.autoTrackPlayback) startTracking();
       }
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      checkbox.className = `${CONFIG.classes.checkbox} ytp-plus-settings-checkbox`;
+      checkbox.setAttribute('aria-label', 'Select comment');
+
+      checkbox.addEventListener('change', updateDeleteButtonState);
+      checkbox.addEventListener('click', e => e.stopPropagation());
+
+      // Optimized positioning
+      const dateElement =
+        commentElement && commentElement.querySelector
+          ? commentElement.querySelector(
+            '[class*="date"],[class*="time"],time,[title*="20"],[aria-label*="ago"]'
+          )
+          : null;
+
+      if (dateElement && dateElement instanceof Element) {
+        dateElement.classList.add(CONFIG.classes.checkboxAnchor);
+        checkbox.classList.add(CONFIG.classes.checkboxFloating);
+        dateElement.appendChild(checkbox);
+      } else if (parent && parent.insertBefore) {
+        parent.insertBefore(checkbox, button);
+      }
+    });
+  }, 'addCheckboxes');
+
+  /**
+   * Add control panel with bulk action buttons
+   */
+  const addControlButtons = withErrorBoundary(() => {
+    if (!CONFIG.enabled || $(`.${CONFIG.classes.container}`)) return;
+
+    const deleteButtons = $$(CONFIG.selectors.deleteButtons);
+    if (!deleteButtons.length) return;
+
+    const first = deleteButtons[0];
+    const container = first && first.parentNode && first.parentNode.parentNode;
+    if (!container || !(container instanceof Element)) return;
+
+    const panel = document.createElement('div');
+    panel.className = `${CONFIG.classes.container} ${CONFIG.classes.panel} glass-panel`;
+    panel.setAttribute('role', 'region');
+    panel.setAttribute('aria-label', 'Comment manager controls');
+
+    const header = document.createElement('div');
+    header.className = CONFIG.classes.header;
+
+    const title = document.createElement('div');
+    title.className = CONFIG.classes.title;
+    title.textContent = 'Comment Manager';
+
+    const collapseButton = document.createElement('button');
+    collapseButton.className = `${CONFIG.classes.close} ytp-plus-settings-close`;
+    collapseButton.setAttribute('type', 'button');
+    collapseButton.setAttribute('aria-expanded', String(!state.panelCollapsed));
+    collapseButton.setAttribute('aria-label', 'Toggle panel');
+    collapseButton.innerHTML = `
+        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+        </svg>
+      `;
+
+    const togglePanelState = collapsed => {
+      state.panelCollapsed = collapsed;
+      header.classList.toggle('is-collapsed', collapsed);
+      actions.classList.toggle('is-hidden', collapsed);
+      collapseButton.setAttribute('aria-expanded', String(!collapsed));
+      panel.classList.toggle('is-collapsed', collapsed);
     };
 
-    document.addEventListener('yt-navigate-finish', handleNavigationChange);
-
-    // Also watch for URL changes using MutationObserver as a fallback
-    const observer = new MutationObserver(() => {
-      const newVideoId = new URLSearchParams(window.location.search).get('v');
-      if (newVideoId !== currentVideoId) {
-        handleNavigationChange();
-      }
+    collapseButton.addEventListener('click', () => {
+      state.panelCollapsed = !state.panelCollapsed;
+      togglePanelState(state.panelCollapsed);
     });
+
+    header.append(title, collapseButton);
+
+    const actions = document.createElement('div');
+    actions.className = CONFIG.classes.actions;
+
+    const createActionButton = (label, className, onClick, options = {}) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.textContent = label;
+      button.className = `${CONFIG.classes.button} ${className}`;
+      if (options.id) button.id = options.id;
+      if (options.disabled) button.disabled = true;
+      button.addEventListener('click', onClick);
+      return button;
+    };
+
+    const deleteAllButton = createActionButton(
+      'Delete Selected',
+      `${CONFIG.classes.buttonDanger} ${CONFIG.classes.deleteButton}`,
+      deleteSelectedComments,
+      { disabled: true }
+    );
+
+    const selectAllButton = createActionButton('Select All', CONFIG.classes.buttonPrimary, () => {
+      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = true));
+      updateDeleteButtonState();
+    });
+
+    const clearAllButton = createActionButton('Clear All', CONFIG.classes.buttonSuccess, () => {
+      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = false));
+      updateDeleteButtonState();
+    });
+
+    actions.append(deleteAllButton, selectAllButton, clearAllButton);
+    togglePanelState(state.panelCollapsed);
+
+    panel.append(header, actions);
+
+    const refNode = deleteButtons[0] && deleteButtons[0].parentNode;
+    if (refNode && refNode.parentNode) {
+      container.insertBefore(panel, refNode);
+    } else {
+      container.appendChild(panel);
+    }
+  }, 'addControlButtons');
+
+  /**
+   * Update delete button state based on checkbox selection
+   */
+  const updateDeleteButtonState = withErrorBoundary(() => {
+    const deleteAllButton = $(`.${CONFIG.classes.deleteButton}`);
+    if (!deleteAllButton) return;
+
+    const hasChecked = Array.from($$(`.${CONFIG.classes.checkbox}`)).some(cb => cb.checked);
+    deleteAllButton.disabled = !hasChecked;
+    deleteAllButton.style.opacity = hasChecked ? '1' : '0.6';
+  }, 'updateDeleteButtonState');
+
+  /**
+   * Delete selected comments with confirmation
+   */
+  const deleteSelectedComments = withErrorBoundary(() => {
+    const checkedBoxes = Array.from($$(`.${CONFIG.classes.checkbox}`)).filter(cb => cb.checked);
+
+    if (!checkedBoxes.length || !confirm(`Delete ${checkedBoxes.length} comment(s)?`)) return;
+
+    state.isProcessing = true;
+    checkedBoxes.forEach((checkbox, index) => {
+      setTimeout(() => {
+        const deleteButton =
+          checkbox.nextElementSibling ||
+          checkbox.parentNode.querySelector(CONFIG.selectors.deleteButtons);
+        deleteButton?.click();
+      }, index * CONFIG.deleteDelay);
+    });
+
+    setTimeout(() => (state.isProcessing = false), checkedBoxes.length * CONFIG.deleteDelay + 1000);
+  }, 'deleteSelectedComments');
+
+  /**
+   * Clean up all comment manager elements
+   */
+  const cleanup = withErrorBoundary(() => {
+    $$(`.${CONFIG.classes.checkbox}`).forEach(el => el.remove());
+    $(`.${CONFIG.classes.container}`)?.remove();
+  }, 'cleanup');
+
+  /**
+   * Initialize or cleanup script based on enabled state
+   */
+  const initializeScript = withErrorBoundary(() => {
+    if (CONFIG.enabled) {
+      addCheckboxes();
+      addControlButtons();
+      updateDeleteButtonState();
+    } else {
+      cleanup();
+    }
+  }, 'initializeScript');
+
+  /**
+   * Add enhanced CSS styles for comment manager UI
+   */
+  const addStyles = withErrorBoundary(() => {
+    if ($('#comment-delete-styles')) return;
+
+    const styles = `
+  .${CONFIG.classes.checkboxAnchor}{position:relative;display:inline-flex;align-items:center;gap:8px;width:auto;}
+        .${CONFIG.classes.checkboxFloating}{position:absolute;top:-4px;right:-32px;margin:0;}
+        .${CONFIG.classes.panel}{position:fixed;top:50%;right:24px;transform:translateY(-50%);display:flex;flex-direction:column;gap:16px;z-index:9999;padding:18px;background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-lg);box-shadow:var(--yt-glass-shadow);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);min-width:220px;max-width:260px;color:var(--yt-text-primary);transition:transform .3s ease,opacity .3s ease;}
+        html:not([dark]) .${CONFIG.classes.panel}{background:var(--yt-glass-bg);}
+        .${CONFIG.classes.header}{display:flex;align-items:center;justify-content:space-between;gap:12px;}
+  .${CONFIG.classes.panel}.is-collapsed{padding:14px 18px;}
+  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.title}{font-weight:500;opacity:.85;}
+  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.close}{transform:rotate(45deg);}
+  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.actions}{display:none!important;}
+        .${CONFIG.classes.title}{font-size:15px;font-weight:600;letter-spacing:.3px;}
+        .${CONFIG.classes.close}{background:transparent;border:none;cursor:pointer;padding:6px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--yt-text-primary);transition:all .2s ease;}
+        .${CONFIG.classes.close}:hover{transform:rotate(90deg) scale(1.05);color:var(--yt-accent);}
+        .${CONFIG.classes.actions}{display:flex;flex-direction:column;gap:10px;}
+  .${CONFIG.classes.actions}.is-hidden{display:none!important;}
+        .${CONFIG.classes.button}{padding:12px 16px;border-radius:var(--yt-radius-md);border:1px solid var(--yt-glass-border);cursor:pointer;font-size:13px;font-weight:500;background:var(--yt-button-bg);color:var(--yt-text-primary);transition:all .2s ease;text-align:center;}
+        .${CONFIG.classes.button}:disabled{opacity:.5;cursor:not-allowed;}
+        .${CONFIG.classes.button}:not(:disabled):hover{transform:translateY(-1px);box-shadow:var(--yt-shadow);}
+        .${CONFIG.classes.buttonDanger}{background:rgba(255,99,71,.12);border-color:rgba(255,99,71,.25);color:#ff5c5c;}
+        .${CONFIG.classes.buttonPrimary}{background:rgba(33,150,243,.12);border-color:rgba(33,150,243,.25);color:#2196f3;}
+        .${CONFIG.classes.buttonSuccess}{background:rgba(76,175,80,.12);border-color:rgba(76,175,80,.25);color:#4caf50;}
+        .${CONFIG.classes.buttonDanger}:not(:disabled):hover{background:rgba(255,99,71,.22);}
+        .${CONFIG.classes.buttonPrimary}:not(:disabled):hover{background:rgba(33,150,243,.22);}
+        .${CONFIG.classes.buttonSuccess}:not(:disabled):hover{background:rgba(76,175,80,.22);}
+        @media(max-width:1280px){
+          .${CONFIG.classes.panel}{top:auto;bottom:24px;transform:none;right:16px;}
+        }
+        @media(max-width:768px){
+          .${CONFIG.classes.panel}{position:fixed;left:16px;right:16px;bottom:16px;top:auto;transform:none;max-width:none;}
+          .${CONFIG.classes.actions}{flex-direction:row;flex-wrap:wrap;}
+          .${CONFIG.classes.button}{flex:1;min-width:140px;}
+        }
+      `;
+    YouTubeUtils.StyleManager.add('comment-delete-styles', styles);
+  }, 'addStyles');
+
+  /**
+   * Add comment manager settings to YouTube+ settings panel
+   */
+  const addCommentManagerSettings = withErrorBoundary(() => {
+    const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
+    if (!advancedSection) return;
+
+    // If already exists, move it to the bottom to ensure Comment Manager is last
+    const existing = $('.comment-manager-settings-item');
+    if (existing) {
+      try {
+        advancedSection.appendChild(existing);
+      } catch {
+        // ignore
+      }
+      return;
+    }
+
+    const settingsItem = document.createElement('div');
+    settingsItem.className = 'ytp-plus-settings-item comment-manager-settings-item';
+    settingsItem.innerHTML = `
+        <div>
+          <label class="ytp-plus-settings-item-label">Comment Manager</label>
+          <div class="ytp-plus-settings-item-description">Add bulk delete functionality for managing comments on YouTube</div>
+        </div>
+        <button class="ytp-plus-button" id="open-comment-history-page" style="margin:0 0 0 30px;padding:12px 16px;font-size:13px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2)">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="gray" stroke-width="2">
+            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+            <polyline points="15,3 21,3 21,9"/>
+            <line x1="10" y1="14" x2="21" y2="3"/>
+          </svg>
+        </button>
+      `;
+
+    // Append to end (ensure it's the bottom-most item)
+    advancedSection.appendChild(settingsItem);
+
+    $('#open-comment-history-page').addEventListener('click', () => {
+      window.open('https://www.youtube.com/feed/history/comment_history', '_blank');
+    });
+  }, 'addCommentManagerSettings');
+
+  /**
+   * Initialize comment manager module
+   * Sets up observers, event listeners, and initial state
+   */
+  const init = withErrorBoundary(() => {
+    settings.load();
+    addStyles();
+
+    // Setup observer with throttling
+    state.observer?.disconnect();
+    state.observer = new MutationObserver(debounce(initializeScript, CONFIG.debounceDelay));
 
     // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(observer);
-    observer.observe(document.body, { subtree: true, childList: true });
-  };
+    YouTubeUtils.cleanupManager.registerObserver(state.observer);
 
-  // Keyboard shortcuts
-  const setupKeyboard = () => {
-    document.addEventListener('keydown', (e) => {
-      // ✅ Проверяем, включена ли функция в настройках
-      if (!config.enabled) return;
-
-      if (e.target.matches('input, textarea, [contenteditable]')) return;
-
-      const { key, shiftKey, altKey, ctrlKey } = config.shortcut;
-      if (
-        e.key.toUpperCase() === key &&
-        e.shiftKey === shiftKey &&
-        e.altKey === altKey &&
-        e.ctrlKey === ctrlKey
-      ) {
-        e.preventDefault();
-        toggleTimecodePanel();
-      }
-    });
-  };
-
-  // Cleanup on unload
-  const cleanup = () => {
-    stopTracking();
-    if (state.dom.panel) {
-      state.dom.panel.remove();
-      state.dom.panel = null;
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      state.observer.observe(document.body, { childList: true, subtree: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        state.observer.observe(document.body, { childList: true, subtree: true });
+      });
     }
-  };
 
-  // Initialize
-  const init = () => {
-    loadSettings();
-    insertTimecodeStyles();
-    setupKeyboard();
-    setupNavigation();
+    // Initial setup
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', initializeScript);
+    } else {
+      initializeScript();
+    }
 
-    // Settings modal observer
-    const observer = new MutationObserver((mutations) => {
+    // Settings modal integration
+    const settingsObserver = new MutationObserver(mutations => {
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
-          if (node.classList?.contains('ytp-plus-settings-modal')) {
-            setTimeout(addTimecodePanelSettings, 100);
+          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
+            setTimeout(addCommentManagerSettings, 100);
             return;
           }
         }
       }
-
-      if (
-        document.querySelector(
-          '.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)'
-        ) &&
-        !document.querySelector('.timecode-settings-item')
-      ) {
-        setTimeout(addTimecodePanelSettings, 50);
-      }
     });
 
     // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(observer);
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: true,
-      attributeFilter: ['class'],
-    });
+    YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
 
-    // ✅ Register global click listener in cleanupManager
-    const clickHandler = (e) => {
-      if (
-        e.target.classList?.contains('ytp-plus-settings-nav-item') &&
-        e.target.dataset.section === 'advanced'
-      ) {
-        setTimeout(addTimecodePanelSettings, 50);
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      settingsObserver.observe(document.body, { childList: true, subtree: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        settingsObserver.observe(document.body, { childList: true, subtree: true });
+      });
+    }
+
+    const handleAdvancedNavClick = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (target.dataset?.section === 'advanced') {
+        setTimeout(addCommentManagerSettings, 50);
       }
     };
-    YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
 
-    if (config.enabled) {
-      createTimecodePanel();
-
-      if (!state.resizeListenerKey) {
-        const onResize = YouTubeUtils.throttle(() => {
-          if (!state.dom.panel) return;
-
-          const rect = state.dom.panel.getBoundingClientRect();
-          const { left, top } = clampPanelPosition(state.dom.panel, rect.left, rect.top);
-
-          state.dom.panel.style.left = `${left}px`;
-          state.dom.panel.style.top = `${top}px`;
-          state.dom.panel.style.right = 'auto';
-
-          savePanelPosition(left, top);
-        }, 200);
-
-        state.resizeListenerKey = YouTubeUtils.cleanupManager.registerListener(
-          window,
-          'resize',
-          onResize
-        );
-      }
-
-      const saved = loadTimecodesFromStorage();
-      if (saved?.length) {
-        updateTimecodePanel(saved);
-      } else if (config.autoDetect) {
-        setTimeout(
-          () =>
-            detectTimecodes().catch((err) => console.error('[Timecode] Detection failed:', err)),
-          1500
-        );
-      }
-      if (config.autoTrackPlayback) startTracking();
+    if (!state.settingsNavListenerKey) {
+      state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
+        document,
+        'click',
+        handleAdvancedNavClick,
+        { passive: true, capture: true }
+      );
     }
-  };
+  }, 'init');
 
-  // Start on document ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
-
-  // Cleanup on beforeunload
-  window.addEventListener('beforeunload', cleanup);
+  // Start the module
+  init();
 })();
 
 // --- MODULE: update.js ---
@@ -12942,11 +14838,11 @@ if (typeof window !== 'undefined') {
     },
 
     compareVersions: (v1, v2) => {
-      const normalize = (v) =>
+      const normalize = v =>
         v
           .replace(/[^\d.]/g, '')
           .split('.')
-          .map((n) => parseInt(n) || 0);
+          .map(n => parseInt(n) || 0);
       const [parts1, parts2] = [normalize(v1), normalize(v2)];
       const maxLength = Math.max(parts1.length, parts2.length);
 
@@ -12957,8 +14853,8 @@ if (typeof window !== 'undefined') {
       return 0;
     },
 
-    parseMetadata: (text) => {
-      const extractField = (field) =>
+    parseMetadata: text => {
+      const extractField = field =>
         text.match(new RegExp(`@${field}\\s+([^\\r\\n]+)`))?.[1]?.trim();
       return {
         version: extractField('version'),
@@ -12967,7 +14863,7 @@ if (typeof window !== 'undefined') {
       };
     },
 
-    formatTimeAgo: (timestamp) => {
+    formatTimeAgo: timestamp => {
       if (!timestamp) return 'Never';
       const diffMs = Date.now() - timestamp;
       const diffDays = Math.floor(diffMs / 86400000);
@@ -12986,7 +14882,7 @@ if (typeof window !== 'undefined') {
   };
 
   // Enhanced update notification
-  const showUpdateNotification = (updateDetails) => {
+  const showUpdateNotification = updateDetails => {
     const notification = document.createElement('div');
     notification.className = 'youtube-enhancer-notification update-notification';
     notification.style.cssText = `
@@ -13169,17 +15065,15 @@ if (typeof window !== 'undefined') {
             </div>
             <div style="font-size: 12px; color: var(--yt-spec-text-secondary);">
               Last checked: <span style="font-weight: 500;">${lastCheckTime}</span>
-              ${
-                updateState.lastVersion && updateState.lastVersion !== UPDATE_CONFIG.currentVersion
-                  ? `<br>Latest available: <span style="color: #ff6666; font-weight: 600;">${updateState.lastVersion}</span>`
-                  : ''
-              }
+              ${updateState.lastVersion && updateState.lastVersion !== UPDATE_CONFIG.currentVersion
+        ? `<br>Latest available: <span style="color: #ff6666; font-weight: 600;">${updateState.lastVersion}</span>`
+        : ''
+      }
             </div>
           </div>
           
-          ${
-            updateState.updateAvailable
-              ? `
+          ${updateState.updateAvailable
+        ? `
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
               <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; 
                           background: linear-gradient(135deg, rgba(255, 68, 68, 0.2), rgba(255, 68, 68, 0.3)); 
@@ -13195,7 +15089,7 @@ if (typeof window !== 'undefined') {
                       box-shadow: 0 4px 12px rgba(255, 69, 0, 0.3);">Install Now</button>
             </div>
           `
-              : `
+        : `
             <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; 
                         background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.3)); 
                         border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 20px;">
@@ -13205,7 +15099,7 @@ if (typeof window !== 'undefined') {
               </span>
             </div>
           `
-          }
+      }
         </div>
         
         <div style="display: flex; gap: 12px;">
@@ -13240,8 +15134,8 @@ if (typeof window !== 'undefined') {
       if (element) YouTubeUtils.cleanupManager.registerListener(element, 'click', handler);
     };
 
-    attachClickHandler('manual-update-check', async (e) => {
-      const button = e.target;
+    attachClickHandler('manual-update-check', async e => {
+      const button = /** @type {EventTarget & HTMLElement} */ (e.target);
       const originalHTML = button.innerHTML;
 
       button.innerHTML = `
@@ -13288,12 +15182,12 @@ if (typeof window !== 'undefined') {
 
     // Optimized settings modal observer
     let settingsObserved = false;
-    const observer = new MutationObserver((mutations) => {
+    const observer = new MutationObserver(mutations => {
       if (settingsObserved) return;
 
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
-          if (node.nodeType === 1 && node.classList?.contains('ytp-plus-settings-modal')) {
+          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
             settingsObserved = true;
             setTimeout(addUpdateSettings, 100);
             return;
@@ -13313,14 +15207,23 @@ if (typeof window !== 'undefined') {
 
     // ✅ Register observer in cleanupManager
     YouTubeUtils.cleanupManager.registerObserver(observer);
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, { childList: true, subtree: true });
+      });
+    }
 
     // Optimized click handler
     // ✅ Register global listener in cleanupManager
-    const clickHandler = (e) => {
+    const clickHandler = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
       if (
-        e.target.classList?.contains('ytp-plus-settings-nav-item') &&
-        e.target.dataset.section === 'about'
+        target.classList?.contains('ytp-plus-settings-nav-item') &&
+        target.dataset?.section === 'about'
       ) {
         setTimeout(addUpdateSettings, 50);
       }

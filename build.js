@@ -1,6 +1,6 @@
 const fs = require('fs');
 const path = require('path');
-const { execSync, spawn } = require('child_process');
+const { execSync } = require('child_process');
 const vm = require('vm');
 
 // Determine project root: if this script sits in a `src` folder, use parent,
@@ -21,11 +21,10 @@ const ORDER_MANIFESTS = ['build.order.json', 'build.order.txt'];
 function readFileSafe(p) {
   try {
     return fs.readFileSync(p, 'utf8');
-  } catch (e) {
+  } catch {
     return null;
   }
 }
-
 function extractMeta(content) {
   if (!content) return null;
   // Match either a // style userscript meta block or a /* */ block
@@ -78,7 +77,7 @@ function readOrderManifest() {
       } else {
         return raw
           .split(/\r?\n/)
-          .map((s) => s.trim())
+          .map(s => s.trim())
           .filter(Boolean);
       }
     } catch (e) {
@@ -90,33 +89,48 @@ function readOrderManifest() {
 
 function collectModuleFiles() {
   const srcDir = path.join(ROOT, 'src');
-  const useSrc =
-    fs.existsSync(srcDir) &&
-    fs.statSync(srcDir).isDirectory() &&
-    fs.readdirSync(srcDir).some((f) => f.endsWith('.js'));
+  const useSrc = fs.existsSync(srcDir) && fs.statSync(srcDir).isDirectory();
   const baseDir = useSrc ? srcDir : ROOT;
-  let files = fs.readdirSync(baseDir).filter((f) => f.endsWith('.js') && !EXCLUDE.has(f));
-  // If manifest order exists, use it for ordering
+
+  // Recursively walk directory and collect .js files (exclude build & output)
+  function walk(dir) {
+    const entries = fs.readdirSync(dir, { withFileTypes: true });
+    const out = [];
+    for (const ent of entries) {
+      const p = path.join(dir, ent.name);
+      if (ent.isDirectory()) {
+        out.push(...walk(p));
+      } else if (ent.isFile() && ent.name.endsWith('.js') && !EXCLUDE.has(ent.name)) {
+        out.push({ name: ent.name, dir });
+      }
+    }
+    return out;
+  }
+
+  const files = walk(baseDir);
+
+  // If manifest order exists, use it for ordering by basename (keep path from files)
   const manifest = readOrderManifest();
   if (manifest) {
+    const rest = new Map(files.map(f => [f.name, f]));
     const ordered = [];
-    const rest = new Set(files);
     for (const name of manifest) {
       if (rest.has(name)) {
-        ordered.push(name);
+        ordered.push(rest.get(name));
         rest.delete(name);
       }
     }
-    const others = Array.from(rest).sort();
-    return ordered.concat(others).map((fn) => ({ name: fn, dir: baseDir }));
+    const others = Array.from(rest.values()).sort((a, b) => a.name.localeCompare(b.name));
+    return ordered.concat(others);
   }
-  // put main.js first if present
-  files = files.sort((a, b) => {
-    if (a === 'main.js') return -1;
-    if (b === 'main.js') return 1;
-    return a.localeCompare(b);
+
+  // Default: put main.js first, then alphabetically by basename, preserving dirs
+  files.sort((a, b) => {
+    if (a.name === 'main.js') return -1;
+    if (b.name === 'main.js') return 1;
+    return a.name.localeCompare(b.name);
   });
-  return files.map((fn) => ({ name: fn, dir: baseDir }));
+  return files;
 }
 
 function buildOnce() {
@@ -126,26 +140,54 @@ function buildOnce() {
 
 function watchAndBuild() {
   let timer = null;
-  const watcher = fs.watch(ROOT, { recursive: false }, (eventType, filename) => {
-    if (!filename || !filename.endsWith('.js')) return;
-    if (EXCLUDE.has(filename)) return;
-    if (timer) clearTimeout(timer);
-    timer = setTimeout(() => {
-      console.log('Change detected, rebuilding...');
-      buildOnce();
-    }, DEBOUNCE_MS);
-  });
-  console.log('Watching for file changes...');
-  return watcher;
+  const srcDir = path.join(ROOT, 'src');
+  const watchDir = fs.existsSync(srcDir) ? srcDir : ROOT;
+  // Prefer chokidar for reliable recursive watching; fall back to fs.watch
+  try {
+    // Try to require chokidar (may be installed as devDependency)
+    const chokidar = require('chokidar');
+    const watcher = chokidar.watch(watchDir, { ignoreInitial: true });
+    watcher.on('all', (event, filePath) => {
+      if (!filePath || !filePath.endsWith('.js')) return;
+      const filename = path.basename(filePath);
+      if (EXCLUDE.has(filename)) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        console.log(`\n[${new Date().toLocaleTimeString()}] Change detected: ${filePath}`);
+        console.log('Rebuilding...');
+        buildOnce();
+      }, DEBOUNCE_MS);
+    });
+    console.log(`Watching (chokidar) for changes in: ${path.relative(process.cwd(), watchDir)}/`);
+    return watcher;
+  } catch {
+    const watcher = fs.watch(watchDir, { recursive: false }, (eventType, filename) => {
+      if (!filename || !filename.endsWith('.js')) return;
+      if (EXCLUDE.has(filename)) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => {
+        console.log(`\n[${new Date().toLocaleTimeString()}] Change detected: ${filename}`);
+        console.log('Rebuilding...');
+        buildOnce();
+      }, DEBOUNCE_MS);
+    });
+    console.log(
+      `Watching (fs.watch fallback) for changes in: ${path.relative(process.cwd(), watchDir)}/`
+    );
+    return watcher;
+  }
 }
 
 // CLI flags
 const args = process.argv.slice(2);
 const watch = args.includes('--watch') || args.includes('-w');
+const noEslint = args.includes('--no-eslint');
+const verbose = args.includes('--verbose') || args.includes('-v');
+const minify = args.includes('--minify') || args.includes('-m');
 
 // Output override: --out <path> or -o <path>
 let OUT_PATH = OUT;
-const outIdx = args.findIndex((a) => a === '--out' || a === '-o');
+const outIdx = args.findIndex(a => a === '--out' || a === '-o');
 if (outIdx !== -1 && args.length > outIdx + 1) {
   OUT_PATH = path.resolve(process.cwd(), args[outIdx + 1]);
 }
@@ -186,32 +228,36 @@ function ensureLocalEslint() {
 }
 
 // Wrap buildOnce to use OUT_PATH
-function buildOnceCli() {
-  const prevOut = OUT;
+async function buildOnceCli() {
   try {
-    // override OUT for this run
-    const originalOut = OUT_PATH;
-    // replace global OUT used inside buildOnce by writing to OUT_PATH via closure
-    // We'll simply adjust fs.writeFileSync target by temporarily setting a local variable
-    // so modify buildOnce to use OUT_PATH variable instead of OUT.
-    return buildOnceCustom(OUT_PATH);
-  } finally {
-    // no-op
+    return await buildOnceCustom(OUT_PATH);
+  } catch (err) {
+    console.error('Build failed:', err.message);
+    if (verbose) console.error(err.stack);
+    return false;
   }
 }
 
-// New buildOnce variant that accepts out path
-function buildOnceCustom(outPath) {
+// New buildOnce variant that accepts out path (async for minification)
+async function buildOnceCustom(outPath) {
+  if (verbose) console.log(`Starting build process for ${outPath}...`);
+
   const files = collectModuleFiles();
+  if (verbose) console.log(`Found ${files.length} module(s) to merge`);
+
   const parts = [header.trim(), '\n'];
   for (const f of files) {
     const p = path.join(f.dir || ROOT, f.name || f);
     const content = readFileSafe(p);
-    if (content === null) continue;
+    if (content === null) {
+      if (verbose) console.warn(`Warning: Could not read ${p}`);
+      continue;
+    }
     const clean = stripMeta(content).trim();
     const displayName = f.name || f;
     parts.push(`// --- MODULE: ${displayName} ---`);
     parts.push(clean);
+    if (verbose) console.log(`  ✓ Merged: ${displayName}`);
   }
 
   const out = parts.join('\n\n') + '\n';
@@ -224,6 +270,7 @@ function buildOnceCustom(outPath) {
   }
 
   // Syntax check using vm
+  if (verbose) console.log('Running syntax validation...');
   try {
     new vm.Script(out, { filename: outPath });
     console.log('Basic syntax check passed (vm.Script)');
@@ -233,35 +280,80 @@ function buildOnceCustom(outPath) {
   }
 
   // If local eslint exists, run it (optional). If not, try to install it.
-  let eslintPath = path.join(
-    ROOT,
-    'node_modules',
-    '.bin',
-    process.platform === 'win32' ? 'eslint.cmd' : 'eslint'
-  );
-  if (!fs.existsSync(eslintPath)) {
-    eslintPath = ensureLocalEslint();
-  }
-  if (eslintPath && fs.existsSync(eslintPath)) {
-    try {
-      console.log('Running eslint...');
-      // Prefer flat config if present
-      const flatConfig = path.join(ROOT, 'eslint.config.cjs');
-      if (fs.existsSync(flatConfig)) {
-        // Flat config is auto-loaded by ESLint; avoid incompatible flags
-        execSync(`"${eslintPath}" "${outPath}"`, { stdio: 'inherit' });
-      } else {
-        const configPath = path.join(ROOT, '.eslintrc.cjs');
-        if (fs.existsSync(configPath)) {
-          execSync(`"${eslintPath}" --config "${configPath}" "${outPath}"`, { stdio: 'inherit' });
-        } else {
+  if (noEslint) {
+    if (verbose) console.log('Skipping ESLint (--no-eslint flag)');
+  } else {
+    if (verbose) console.log('Preparing ESLint validation...');
+
+    let eslintPath = path.join(
+      ROOT,
+      'node_modules',
+      '.bin',
+      process.platform === 'win32' ? 'eslint.cmd' : 'eslint'
+    );
+    if (!fs.existsSync(eslintPath)) {
+      if (verbose) console.log('ESLint not found locally, attempting installation...');
+      eslintPath = ensureLocalEslint();
+    }
+    if (eslintPath && fs.existsSync(eslintPath)) {
+      try {
+        console.log('Running eslint...');
+        // Prefer flat config if present
+        const flatConfig = path.join(ROOT, 'eslint.config.cjs');
+        if (fs.existsSync(flatConfig)) {
+          if (verbose) console.log(`Using flat config: ${flatConfig}`);
+          // Flat config is auto-loaded by ESLint; avoid incompatible flags
           execSync(`"${eslintPath}" "${outPath}"`, { stdio: 'inherit' });
+        } else {
+          const configPath = path.join(ROOT, '.eslintrc.cjs');
+          if (fs.existsSync(configPath)) {
+            execSync(`"${eslintPath}" --config "${configPath}" "${outPath}"`, { stdio: 'inherit' });
+          } else {
+            execSync(`"${eslintPath}" "${outPath}"`, { stdio: 'inherit' });
+          }
         }
+        if (verbose) console.log('ESLint validation passed');
+        console.log('ESLint passed');
+      } catch {
+        console.error('ESLint reported problems (non-zero exit)');
+        return false;
       }
-      console.log('ESLint passed');
+    }
+  }
+
+  // Minify if requested
+  if (minify) {
+    if (verbose) console.log('Minifying output...');
+    try {
+      const terser = require('terser');
+      const minified = await terser.minify(out, {
+        compress: {
+          dead_code: true,
+          drop_console: false,
+          drop_debugger: true,
+          keep_classnames: true,
+          keep_fnames: true,
+        },
+        mangle: false,
+        format: {
+          comments:
+            /==UserScript==|==\/UserScript==|@name|@version|@description|@author|@license|@match|@grant/,
+          preamble: header.trim(),
+        },
+      });
+
+      if (minified.code) {
+        fs.writeFileSync(outPath, minified.code, 'utf8');
+        const originalSize = Buffer.byteLength(out, 'utf8');
+        const minifiedSize = Buffer.byteLength(minified.code, 'utf8');
+        const savings = ((1 - minifiedSize / originalSize) * 100).toFixed(2);
+        console.log(
+          `Minified: ${(originalSize / 1024).toFixed(2)}KB → ${(minifiedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
+        );
+      }
     } catch (e) {
-      console.error('ESLint reported problems (non-zero exit)');
-      return false;
+      console.warn('Minification failed:', e.message);
+      if (verbose) console.error(e);
     }
   }
 
@@ -270,10 +362,12 @@ function buildOnceCustom(outPath) {
 }
 
 if (watch) {
-  const ok = buildOnceCli();
-  if (!ok) console.warn('Initial build failed. Still watching for fixes...');
-  watchAndBuild();
+  buildOnceCli().then(ok => {
+    if (!ok) console.warn('Initial build failed. Still watching for fixes...');
+    watchAndBuild();
+  });
 } else {
-  const ok = buildOnceCli();
-  if (!ok) process.exitCode = 2;
+  buildOnceCli().then(ok => {
+    if (!ok) process.exitCode = 2;
+  });
 }

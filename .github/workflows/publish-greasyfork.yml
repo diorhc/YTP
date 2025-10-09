@@ -1,0 +1,30 @@
+name: Publish to GreasyFork
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build userscript
+        run: npm run build
+
+      - name: Publish to GreasyFork
+        env:
+          GREASYFORK_USERNAME: ${{ secrets.GREASYFORK_USERNAME }}
+          GREASYFORK_PASSWORD: ${{ secrets.GREASYFORK_PASSWORD }}
+        run: node .github/scripts/upload-greasyfork.js

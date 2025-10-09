@@ -48,11 +48,11 @@
     },
 
     compareVersions: (v1, v2) => {
-      const normalize = (v) =>
+      const normalize = v =>
         v
           .replace(/[^\d.]/g, '')
           .split('.')
-          .map((n) => parseInt(n) || 0);
+          .map(n => parseInt(n) || 0);
       const [parts1, parts2] = [normalize(v1), normalize(v2)];
       const maxLength = Math.max(parts1.length, parts2.length);
 
@@ -63,8 +63,8 @@
       return 0;
     },
 
-    parseMetadata: (text) => {
-      const extractField = (field) =>
+    parseMetadata: text => {
+      const extractField = field =>
         text.match(new RegExp(`@${field}\\s+([^\\r\\n]+)`))?.[1]?.trim();
       return {
         version: extractField('version'),
@@ -73,7 +73,7 @@
       };
     },
 
-    formatTimeAgo: (timestamp) => {
+    formatTimeAgo: timestamp => {
       if (!timestamp) return 'Never';
       const diffMs = Date.now() - timestamp;
       const diffDays = Math.floor(diffMs / 86400000);
@@ -92,7 +92,7 @@
   };
 
   // Enhanced update notification
-  const showUpdateNotification = (updateDetails) => {
+  const showUpdateNotification = updateDetails => {
     const notification = document.createElement('div');
     notification.className = 'youtube-enhancer-notification update-notification';
     notification.style.cssText = `
@@ -346,8 +346,8 @@
       if (element) YouTubeUtils.cleanupManager.registerListener(element, 'click', handler);
     };
 
-    attachClickHandler('manual-update-check', async (e) => {
-      const button = e.target;
+    attachClickHandler('manual-update-check', async e => {
+      const button = /** @type {EventTarget & HTMLElement} */ (e.target);
       const originalHTML = button.innerHTML;
 
       button.innerHTML = `
@@ -394,12 +394,12 @@
 
     // Optimized settings modal observer
     let settingsObserved = false;
-    const observer = new MutationObserver((mutations) => {
+    const observer = new MutationObserver(mutations => {
       if (settingsObserved) return;
 
       for (const mutation of mutations) {
         for (const node of mutation.addedNodes) {
-          if (node.nodeType === 1 && node.classList?.contains('ytp-plus-settings-modal')) {
+          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
             settingsObserved = true;
             setTimeout(addUpdateSettings, 100);
             return;
@@ -419,14 +419,23 @@
 
     // ✅ Register observer in cleanupManager
     YouTubeUtils.cleanupManager.registerObserver(observer);
-    observer.observe(document.body, { childList: true, subtree: true });
+
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      observer.observe(document.body, { childList: true, subtree: true });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, { childList: true, subtree: true });
+      });
+    }
 
     // Optimized click handler
     // ✅ Register global listener in cleanupManager
-    const clickHandler = (e) => {
+    const clickHandler = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
       if (
-        e.target.classList?.contains('ytp-plus-settings-nav-item') &&
-        e.target.dataset.section === 'about'
+        target.classList?.contains('ytp-plus-settings-nav-item') &&
+        target.dataset?.section === 'about'
       ) {
         setTimeout(addUpdateSettings, 50);
       }

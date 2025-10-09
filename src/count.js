@@ -47,38 +47,31 @@
       console.error(`[YouTube Enhancer] ${message}`, ...args);
     },
 
-    debounce: (func, wait) => {
-      let timeout;
-      return function executedFunction(...args) {
-        const later = () => {
+    // Use shared debounce from YouTubeUtils
+    debounce:
+      window.YouTubeUtils?.debounce ||
+      ((func, wait) => {
+        let timeout;
+        return function executedFunction(...args) {
+          const later = () => {
+            clearTimeout(timeout);
+            func(...args);
+          };
           clearTimeout(timeout);
-          func(...args);
+          timeout = setTimeout(later, wait);
         };
-        clearTimeout(timeout);
-        timeout = setTimeout(later, wait);
-      };
-    },
+      }),
   };
 
   const OPTIONS = CONFIG.OPTIONS;
   const FONT_LINK = CONFIG.FONT_LINK;
   const STATS_API_URL = CONFIG.STATS_API_URL;
-  const DEFAULT_UPDATE_INTERVAL = CONFIG.DEFAULT_UPDATE_INTERVAL;
-  const DEFAULT_OVERLAY_OPACITY = CONFIG.DEFAULT_OVERLAY_OPACITY;
 
-  let {
-    overlay,
-    isUpdating,
-    intervalId,
-    currentChannelName,
-    updateInterval,
-    overlayOpacity,
-    lastSuccessfulStats,
-    previousStats,
-    previousUrl,
-    isChecking,
-  } = state;
-
+  /**
+   * Fetches channel data from YouTube
+   * @param {string} url - The channel URL to fetch
+   * @returns {Promise<Object|null>} The parsed channel data or null on error
+   */
   async function fetchChannel(url) {
     if (state.isChecking) return null;
     state.isChecking = true;
@@ -110,7 +103,7 @@
       const channelId = data?.metadata?.channelMetadataRenderer?.externalId || null;
 
       return { channelName, channelId };
-    } catch (e) {
+    } catch {
       return null;
     }
   }
@@ -135,6 +128,7 @@
   }
 
   history.pushState = (function (f) {
+    /** @this {any} */
     return function () {
       f.apply(this, arguments);
       checkUrlChange();
@@ -142,6 +136,7 @@
   })(history.pushState);
 
   history.replaceState = (function (f) {
+    /** @this {any} */
     return function () {
       f.apply(this, arguments);
       checkUrlChange();
@@ -181,7 +176,7 @@
   }
 
   function initializeLocalStorage() {
-    OPTIONS.forEach((option) => {
+    OPTIONS.forEach(option => {
       if (localStorage.getItem(`show-${option}`) === null) {
         localStorage.setItem(`show-${option}`, 'true');
       }
@@ -265,7 +260,7 @@
     displayLabel.style.fontWeight = 'bold';
     displaySection.appendChild(displayLabel);
 
-    OPTIONS.forEach((option) => {
+    OPTIONS.forEach(option => {
       const checkboxContainer = document.createElement('div');
       checkboxContainer.style.display = 'flex';
       checkboxContainer.style.alignItems = 'center';
@@ -287,7 +282,7 @@
       checkboxLabel.style.marginLeft = '8px';
 
       checkbox.addEventListener('change', () => {
-        localStorage.setItem(`show-${option}`, checkbox.checked);
+        localStorage.setItem(`show-${option}`, String(checkbox.checked));
         updateDisplayState();
       });
 
@@ -322,7 +317,7 @@
       { name: 'Tahoma', value: 'Tahoma, Geneva, sans-serif' },
     ];
     const savedFont = localStorage.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif';
-    fonts.forEach((f) => {
+    fonts.forEach(f => {
       const opt = document.createElement('option');
       opt.value = f.value;
       opt.textContent = f.name;
@@ -330,14 +325,15 @@
       fontSelect.appendChild(opt);
     });
 
-    fontSelect.addEventListener('change', (e) => {
-      localStorage.setItem('youtubeEnhancerFontFamily', e.target.value);
+    fontSelect.addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
+      localStorage.setItem('youtubeEnhancerFontFamily', target.value);
       if (state.overlay) {
         // Only update .subscribers-number, .views-number, .videos-number
         state.overlay
           .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-          .forEach((el) => {
-            el.style.fontFamily = e.target.value;
+          .forEach(el => {
+            el.style.fontFamily = target.value;
           });
       }
     });
@@ -364,15 +360,16 @@
     fontSizeValue.style.fontSize = '14px';
     fontSizeValue.style.marginBottom = '15px';
 
-    fontSizeSlider.addEventListener('input', (e) => {
-      fontSizeValue.textContent = `${e.target.value}px`;
-      localStorage.setItem('youtubeEnhancerFontSize', e.target.value);
+    fontSizeSlider.addEventListener('input', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      fontSizeValue.textContent = `${target.value}px`;
+      localStorage.setItem('youtubeEnhancerFontSize', target.value);
       if (state.overlay) {
         // Only update .subscribers-number, .views-number, .videos-number
         state.overlay
           .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-          .forEach((el) => {
-            el.style.fontSize = `${e.target.value}px`;
+          .forEach(el => {
+            el.style.fontSize = `${target.value}px`;
           });
       }
     });
@@ -389,7 +386,7 @@
     intervalSlider.type = 'range';
     intervalSlider.min = '2';
     intervalSlider.max = '10';
-    intervalSlider.value = state.updateInterval / 1000;
+    intervalSlider.value = String(state.updateInterval / 1000);
     intervalSlider.step = '1';
     intervalSlider.className = 'interval-slider';
 
@@ -399,11 +396,12 @@
     intervalValue.style.marginBottom = '15px';
     intervalValue.style.fontSize = '14px';
 
-    intervalSlider.addEventListener('input', (e) => {
-      const newInterval = parseInt(e.target.value) * 1000;
-      intervalValue.textContent = `${e.target.value}s`;
+    intervalSlider.addEventListener('input', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      const newInterval = parseInt(target.value) * 1000;
+      intervalValue.textContent = `${target.value}s`;
       state.updateInterval = newInterval;
-      localStorage.setItem('youtubeEnhancerInterval', newInterval);
+      localStorage.setItem('youtubeEnhancerInterval', String(newInterval));
 
       if (state.intervalId) {
         clearInterval(state.intervalId);
@@ -427,7 +425,7 @@
     opacitySlider.type = 'range';
     opacitySlider.min = '50';
     opacitySlider.max = '90';
-    opacitySlider.value = state.overlayOpacity * 100;
+    opacitySlider.value = String(state.overlayOpacity * 100);
     opacitySlider.step = '5';
     opacitySlider.className = 'opacity-slider';
 
@@ -436,11 +434,12 @@
     opacityValue.textContent = `${opacitySlider.value}%`;
     opacityValue.style.fontSize = '14px';
 
-    opacitySlider.addEventListener('input', (e) => {
-      const newOpacity = parseInt(e.target.value) / 100;
-      opacityValue.textContent = `${e.target.value}%`;
+    opacitySlider.addEventListener('input', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      const newOpacity = parseInt(target.value) / 100;
+      opacityValue.textContent = `${target.value}%`;
       state.overlayOpacity = newOpacity;
-      localStorage.setItem('youtubeEnhancerOpacity', newOpacity);
+      localStorage.setItem('youtubeEnhancerOpacity', String(newOpacity));
 
       if (state.overlay) {
         state.overlay.style.backgroundColor = `rgba(0, 0, 0, ${newOpacity})`;
@@ -639,7 +638,7 @@
     overlay.appendChild(settingsMenu);
 
     // Enhanced event handling with keyboard support
-    const toggleMenu = (show) => {
+    const toggleMenu = show => {
       settingsMenu.classList.toggle('show', show);
       settingsButton.setAttribute('aria-expanded', show);
       if (show) {
@@ -647,12 +646,12 @@
       }
     };
 
-    settingsButton.addEventListener('click', (e) => {
+    settingsButton.addEventListener('click', e => {
       e.stopPropagation();
       toggleMenu(!settingsMenu.classList.contains('show'));
     });
 
-    settingsButton.addEventListener('keydown', (e) => {
+    settingsButton.addEventListener('keydown', e => {
       if (e.key === 'Enter' || e.key === ' ') {
         e.preventDefault();
         toggleMenu(!settingsMenu.classList.contains('show'));
@@ -660,8 +659,9 @@
     });
 
     // Close menu when clicking outside or pressing escape
-    const documentClickHandler = (e) => {
-      if (!settingsMenu.contains(e.target) && !settingsButton.contains(e.target)) {
+    const documentClickHandler = e => {
+      const target = /** @type {EventTarget & Node} */ (e.target);
+      if (!settingsMenu.contains(target) && !settingsButton.contains(target)) {
         toggleMenu(false);
       }
     };
@@ -672,7 +672,7 @@
     );
     state.documentListenerKeys.add(clickListenerKey);
 
-    const documentKeydownHandler = (e) => {
+    const documentKeydownHandler = e => {
       if (e.key === 'Escape' && settingsMenu.classList.contains('show')) {
         toggleMenu(false);
         settingsButton.focus();
@@ -715,15 +715,16 @@
       Accept: 'application/json',
       ...headers,
     };
-
-    if (typeof GM_xmlhttpRequest === 'function') {
+    // Access GM_xmlhttpRequest via window to avoid TS "Cannot find name" when d.ts isn't picked up
+    const gm = /** @type {any} */ (window).GM_xmlhttpRequest;
+    if (typeof gm === 'function') {
       return new Promise((resolve, reject) => {
-        GM_xmlhttpRequest({
+        gm({
           method: 'GET',
           url,
           headers: requestHeaders,
           timeout: 10000,
-          onload: (response) => {
+          onload: response => {
             if (response.status >= 200 && response.status < 300) {
               try {
                 resolve(JSON.parse(response.responseText));
@@ -734,7 +735,7 @@
               reject(new Error(`Failed to fetch: ${response.status}`));
             }
           },
-          onerror: (error) => reject(error),
+          onerror: error => reject(error),
           ontimeout: () => reject(new Error('Request timed out')),
         });
       });
@@ -747,19 +748,19 @@
       credentials: 'omit',
       mode: 'cors',
     })
-      .then((response) => {
+      .then(response => {
         if (!response.ok) {
           throw new Error(`Failed to fetch: ${response.status}`);
         }
         return response.json();
       })
-      .catch((error) => {
+      .catch(error => {
         utils.error('Fallback fetch failed:', error);
         throw error;
       });
   }
 
-  async function fetchChannelId(channelName) {
+  async function fetchChannelId(_channelName) {
     // Try meta tag first
     const metaTag = document.querySelector('meta[itemprop="channelId"]');
     if (metaTag && metaTag.content) return metaTag.content;
@@ -771,14 +772,12 @@
     // Try ytInitialData
     const channelInfo = await getChannelInfo(window.location.href);
     if (channelInfo && channelInfo.channelId) return channelInfo.channelId;
-
     throw new Error('Could not determine channel ID');
   }
 
   async function fetchChannelStats(channelId) {
     try {
       let retries = CONFIG.MAX_RETRIES;
-      let lastError;
 
       while (retries > 0) {
         try {
@@ -799,11 +798,11 @@
           });
           return stats;
         } catch (e) {
-          lastError = e;
+          utils.warn('Fetch attempt failed:', e.message);
           retries--;
           if (retries > 0) {
             // Exponential backoff for retries
-            await new Promise((resolve) =>
+            await new Promise(resolve =>
               setTimeout(resolve, 1000 * (CONFIG.MAX_RETRIES - retries + 1))
             );
           }
@@ -842,16 +841,18 @@
           const subText = subCountElem.textContent || subCountElem.innerText || '';
           const subMatch = subText.match(/[\d,\.]+[KMB]?/);
           if (subMatch) {
-            let count = subMatch[0].replace(/,/g, '');
-            // Handle K, M, B suffixes
-            if (count.includes('K')) {
-              count = parseFloat(count) * 1000;
-            } else if (count.includes('M')) {
-              count = parseFloat(count) * 1000000;
-            } else if (count.includes('B')) {
-              count = parseFloat(count) * 1000000000;
+            const raw = subMatch[0].replace(/,/g, '');
+            // parse into number safely
+            let numCount = Number(raw.replace(/[KMB]/, '')) || 0;
+            if (raw.includes('K')) {
+              numCount = numCount * 1000;
+            } else if (raw.includes('M')) {
+              numCount = numCount * 1000000;
+            } else if (raw.includes('B')) {
+              numCount = numCount * 1000000000;
             }
-            fallbackStats.followerCount = Math.floor(count);
+            // Ensure followerCount is a number
+            fallbackStats.followerCount = Math.floor(numCount);
             utils.log('Extracted fallback subscriber count:', fallbackStats.followerCount);
             break;
           }
@@ -875,8 +876,8 @@
     if (existingOverlay) {
       try {
         existingOverlay.remove();
-      } catch (e) {
-        console.warn('[YouTube+] Failed to remove overlay:', e);
+      } catch {
+        console.warn('[YouTube+] Failed to remove overlay');
       }
     }
     if (state.intervalId) {
@@ -884,17 +885,17 @@
         clearInterval(state.intervalId);
         // ✅ Unregister from cleanupManager if it was registered
         YouTubeUtils.cleanupManager.unregisterInterval(state.intervalId);
-      } catch (e) {
-        console.warn('[YouTube+] Failed to clear interval:', e);
+      } catch {
+        console.warn('[YouTube+] Failed to clear interval');
       }
       state.intervalId = null;
     }
     if (state.documentListenerKeys && state.documentListenerKeys.size) {
-      state.documentListenerKeys.forEach((key) => {
+      state.documentListenerKeys.forEach(key => {
         try {
           YouTubeUtils.cleanupManager.unregisterListener(key);
-        } catch (e) {
-          console.warn('[YouTube+] Failed to unregister listener:', e);
+        } catch {
+          console.warn('[YouTube+] Failed to unregister listener');
         }
       });
       state.documentListenerKeys.clear();
@@ -953,15 +954,12 @@
       container.removeChild(container.firstChild);
     }
 
-    let digitIndex = 0;
-
     for (let i = 0; i < digits.length; i++) {
       const group = digits[i];
       for (let j = 0; j < group.length; j++) {
         const digitElement = createDigitElement();
         digitElement.textContent = group[j];
         container.appendChild(digitElement);
-        digitIndex++;
       }
       if (i < digits.length - 1) {
         container.appendChild(createCommaElement());
@@ -1013,12 +1011,12 @@
     }
 
     const containers = overlay.querySelectorAll('div[style*="visibility: hidden"]');
-    containers.forEach((container) => {
+    containers.forEach(container => {
       container.style.visibility = 'visible';
     });
 
     const icons = overlay.querySelectorAll('svg[style*="display: none"]');
-    icons.forEach((icon) => {
+    icons.forEach(icon => {
       icon.style.display = 'block';
     });
   }
@@ -1051,7 +1049,7 @@
     let visibleCount = 0;
     const visibleContainers = [];
 
-    statContainers.forEach((container) => {
+    statContainers.forEach(container => {
       const numberContainer = container.querySelector('[class$="-number"]');
       if (!numberContainer) return;
 
@@ -1068,7 +1066,7 @@
       }
     });
 
-    visibleContainers.forEach((container) => {
+    visibleContainers.forEach(container => {
       container.style.width = '';
       container.style.margin = '';
 
@@ -1090,7 +1088,7 @@
     // Only update font size and font family for .subscribers-number, .views-number, .videos-number
     const fontSize = localStorage.getItem('youtubeEnhancerFontSize') || '24';
     const fontFamily = localStorage.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif';
-    overlay.querySelectorAll('.subscribers-number,.views-number,.videos-number').forEach((el) => {
+    overlay.querySelectorAll('.subscribers-number,.views-number,.videos-number').forEach(el => {
       el.style.fontSize = `${fontSize}px`;
       el.style.fontFamily = fontFamily;
     });
@@ -1114,7 +1112,7 @@
 
       if (stats.error) {
         const containers = overlay.querySelectorAll('[class$="-number"]');
-        containers.forEach((container) => {
+        containers.forEach(container => {
           if (container.classList.contains('subscribers-number') && stats.followerCount > 0) {
             updateDigits(container, stats.followerCount);
           } else {
@@ -1160,7 +1158,7 @@
     } catch (error) {
       utils.error('Failed to update overlay content:', error);
       const containers = overlay.querySelectorAll('[class$="-number"]');
-      containers.forEach((container) => {
+      containers.forEach(container => {
         container.textContent = '---';
       });
     } finally {
@@ -1186,8 +1184,9 @@
       `;
     section.appendChild(item);
 
-    item.querySelector('input').addEventListener('change', (e) => {
-      state.enabled = e.target.checked;
+    item.querySelector('input').addEventListener('change', e => {
+      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+      state.enabled = target.checked;
       localStorage.setItem(CONFIG.STORAGE_KEY, state.enabled ? 'true' : 'false');
       if (!state.enabled) {
         clearExistingOverlay();
@@ -1205,10 +1204,10 @@
   }
 
   // Observe settings modal for experimental section
-  const settingsObserver = new MutationObserver((mutations) => {
+  const settingsObserver = new MutationObserver(mutations => {
     for (const { addedNodes } of mutations) {
       for (const node of addedNodes) {
-        if (node.classList?.contains('ytp-plus-settings-modal')) {
+        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
           setTimeout(addSettingsUI, 100);
           return;
         }
@@ -1219,12 +1218,21 @@
     }
   });
   YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-  settingsObserver.observe(document.body, { childList: true, subtree: true });
 
-  const experimentalNavClickHandler = (e) => {
+  // ✅ Safe observe with document.body check
+  if (document.body) {
+    settingsObserver.observe(document.body, { childList: true, subtree: true });
+  } else {
+    document.addEventListener('DOMContentLoaded', () => {
+      settingsObserver.observe(document.body, { childList: true, subtree: true });
+    });
+  }
+
+  const experimentalNavClickHandler = e => {
+    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
     if (
-      e.target.classList?.contains('ytp-plus-settings-nav-item') &&
-      e.target.dataset.section === 'experimental'
+      target.classList?.contains('ytp-plus-settings-nav-item') &&
+      target.dataset?.section === 'experimental'
     ) {
       setTimeout(addSettingsUI, 50);
     }
@@ -1307,14 +1315,14 @@
     if (!state.enabled) return;
 
     // More robust banner detection with multiple fallback selectors
-    const observer = new MutationObserver((mutations) => {
+    const observer = new MutationObserver(_mutations => {
       // Throttle observations for better performance
-      if (observer._timeout) {
-        YouTubeUtils.cleanupManager.unregisterTimeout(observer._timeout);
-        clearTimeout(observer._timeout);
+      if (/** @type {any} */ (observer)._timeout) {
+        YouTubeUtils.cleanupManager.unregisterTimeout(/** @type {any} */ (observer)._timeout);
+        clearTimeout(/** @type {any} */ (observer)._timeout);
       }
 
-      observer._timeout = YouTubeUtils.cleanupManager.registerTimeout(
+      /** @type {any} */ (observer)._timeout = YouTubeUtils.cleanupManager.registerTimeout(
         setTimeout(() => {
           let bannerElement = document.getElementById('page-header-banner-sizer');
 
@@ -1348,14 +1356,25 @@
       ); // Small delay to batch rapid changes
     });
 
-    observer.observe(document.body, {
-      childList: true,
-      subtree: true,
-      attributes: false, // Reduce observation scope for performance
-    });
+    // ✅ Safe observe with document.body check
+    if (document.body) {
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+        attributes: false, // Reduce observation scope for performance
+      });
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributes: false,
+        });
+      });
+    }
 
     // Store timeout reference for cleanup
-    observer._timeout = null;
+    /** @type {any} */ (observer)._timeout = null;
 
     // Store observer for cleanup on page unload
     if (typeof state.observers === 'undefined') {
@@ -1388,7 +1407,7 @@
   function cleanup() {
     // Disconnect all observers
     if (state.observers && Array.isArray(state.observers)) {
-      state.observers.forEach((observer) => {
+      state.observers.forEach(observer => {
         try {
           observer.disconnect();
         } catch (e) {

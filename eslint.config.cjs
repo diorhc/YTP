@@ -1,17 +1,82 @@
-// Minimal flat config compatible with ESLint v9+
+// ESLint flat config for ESLint v9+
 module.exports = [
-    {
-        ignores: ['node_modules/**'],
+  {
+    ignores: ['node_modules/**', 'youtube.user.js', 'dist/**', 'coverage/**', 'test/**'],
+  },
+  {
+    files: ['**/*.js'],
+    languageOptions: {
+      ecmaVersion: 'latest',
+      sourceType: 'script',
+      globals: {
+        // Browser globals for userscript
+        window: 'readonly',
+        document: 'readonly',
+        console: 'readonly',
+        localStorage: 'readonly',
+        sessionStorage: 'readonly',
+        location: 'readonly',
+        navigator: 'readonly',
+        history: 'readonly',
+        trustedTypes: 'readonly',
+        queueMicrotask: 'readonly',
+        customElements: 'readonly',
+        unsafeWindow: 'readonly',
+        // DOM APIs
+        fetch: 'readonly',
+        URL: 'readonly',
+        URLSearchParams: 'readonly',
+        CustomEvent: 'readonly',
+        Event: 'readonly',
+        MutationObserver: 'readonly',
+        IntersectionObserver: 'readonly',
+        ResizeObserver: 'readonly',
+        AbortController: 'readonly',
+        requestAnimationFrame: 'readonly',
+        cancelAnimationFrame: 'readonly',
+        requestIdleCallback: 'readonly',
+        getComputedStyle: 'readonly',
+        confirm: 'readonly',
+        performance: 'readonly',
+        // DOM types/constructors
+        Element: 'readonly',
+        HTMLElement: 'readonly',
+        HTMLIFrameElement: 'readonly',
+        Node: 'readonly',
+        Document: 'readonly',
+        DocumentFragment: 'readonly',
+        Window: 'readonly',
+        CustomElementRegistry: 'readonly',
+        // Userscript globals (Tampermonkey/Greasemonkey)
+        GM_xmlhttpRequest: 'readonly',
+        // Project-specific globals (defined in main.js, shared across modules)
+        YouTubeUtils: 'readonly',
+        closestFromAnchor: 'readonly',
+        _querySelector: 'readonly',
+        findContentsRenderer: 'readonly',
+        isVideoPlaying: 'readonly',
+        // Build script needs Node.js globals
+        process: 'readonly',
+        __dirname: 'readonly',
+        __filename: 'readonly',
+        require: 'readonly',
+        module: 'readonly',
+        exports: 'readonly',
+        Buffer: 'readonly',
+        setTimeout: 'readonly',
+        clearTimeout: 'readonly',
+        setInterval: 'readonly',
+        clearInterval: 'readonly',
+      },
     },
-    {
-        files: ['**/*.js'],
-        languageOptions: {
-            ecmaVersion: 'latest',
-            sourceType: 'script',
-        },
-        plugins: {},
-        rules: {
-            // keep permissive; adjust if you want stricter linting
-        },
+    rules: {
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      'no-console': 'off',
+      'prefer-const': 'warn',
+      'no-var': 'warn',
+      eqeqeq: ['warn', 'smart'],
+      curly: ['warn', 'multi-line'],
+      'no-undef': 'error',
     },
+  },
 ];
