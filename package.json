@@ -35,6 +35,8 @@
     "pretty-quick": "^4.2.2",
     "terser": "^5.44.0",
     "typescript": "^5.9.3"
+    ,"@microsoft/eslint-formatter-sarif": "^2.0.0"
+    ,"puppeteer": "^21.3.3"
   },
   "lint-staged": {
     "src/**/*.js": [

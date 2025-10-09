@@ -123,6 +123,10 @@ jobs:
   code-quality:
     name: Code Quality Analysis
     runs-on: ubuntu-latest
+    permissions:
+      checks: write
+      contents: read
+      security-events: write
 
     steps:
       - name: Checkout code
@@ -139,14 +143,22 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Install SARIF formatter
+        run: npm ci
+
       - name: Run ESLint with SARIF output
         run: |
-          npm run lint -- --format @microsoft/eslint-formatter-sarif --output-file eslint-results.sarif || true
+          npx eslint "src/**/*.js" "build.js" --format @microsoft/eslint-formatter-sarif --output-file eslint-results.sarif || true
         continue-on-error: true
 
-      - name: Upload SARIF file
+      - name: Check SARIF file exists
+        id: check_sarif
+        run: |
+          if [ -f eslint-results.sarif ]; then echo "exists=true" >> $GITHUB_OUTPUT; else echo "exists=false" >> $GITHUB_OUTPUT; fi
+
+      - name: Upload SARIF file (if generated)
+        if: steps.check_sarif.outputs.exists == 'true'
         uses: github/codeql-action/upload-sarif@v3
-        if: always()
         with:
           sarif_file: eslint-results.sarif
           category: eslint
