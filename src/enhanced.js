@@ -422,7 +422,7 @@
     state.ytNavigateListenerKey = YouTubeUtils.cleanupManager.registerListener(
       document,
       'yt-navigate-finish',
-      handlePageChange,
+      /** @type {EventListener} */ (handlePageChange),
       { passive: true }
     );
   }

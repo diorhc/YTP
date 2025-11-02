@@ -331,8 +331,40 @@
                     cursor: pointer;
                     z-index: 1001;
                     transition: all 0.15s ease;
-                    opacity: 0.5;
+                    opacity: 0;
                 `;
+
+        // Add hover and focus behaviour so overlay becomes fully visible when interacted with
+        overlay.tabIndex = 0; // make focusable for keyboard users
+        overlay.onmouseenter = () => {
+          try {
+            overlay.style.opacity = '0.5';
+          } catch {}
+        };
+        overlay.onmouseleave = () => {
+          try {
+            overlay.style.opacity = '0';
+          } catch {}
+        };
+        overlay.onfocus = () => {
+          try {
+            overlay.style.opacity = '0.5';
+          } catch {}
+        };
+        overlay.onblur = () => {
+          try {
+            overlay.style.opacity = '0';
+          } catch {}
+        };
+        // allow Enter/Space to open the thumbnail
+        overlay.addEventListener('keydown', e => {
+          // cast to KeyboardEvent for lint/type safety
+          const ke = /** @type {KeyboardEvent} */ (e);
+          if (ke && (ke.key === 'Enter' || ke.key === ' ')) {
+            ke.preventDefault();
+            overlay.click();
+          }
+        });
 
         // ensure the player is positioned to allow absolute child
         const playerAny = /** @type {any} */ (player);
@@ -388,7 +420,7 @@
             position: absolute;
             bottom: 8px;
             left: 8px;
-            background: rgba(0, 0, 0, 0.7);
+            background: rgba(0, 0, 0, 0.3);
             width: 28px;
             height: 28px;
             display: flex;
@@ -402,12 +434,10 @@
         `;
 
     overlay.onmouseenter = () => {
-      overlay.style.background = 'rgba(0, 0, 0, 0.9)';
-      svg.style.stroke = '#f50057';
+      overlay.style.background = 'rgba(0, 0, 0, 0.7)';
     };
     overlay.onmouseleave = () => {
-      overlay.style.background = 'rgba(0, 0, 0, 0.7)';
-      svg.style.stroke = 'white';
+      overlay.style.background = 'rgba(0, 0, 0, 0.3)';
     };
 
     overlay.onclick = async e => {
@@ -513,11 +543,9 @@
 
     overlay.onmouseenter = () => {
       overlay.style.background = 'rgba(0, 0, 0, 0.9)';
-      svg.style.stroke = '#f50057';
     };
     overlay.onmouseleave = () => {
       overlay.style.background = 'rgba(0, 0, 0, 0.7)';
-      svg.style.stroke = 'white';
     };
 
     return overlay;
@@ -601,11 +629,9 @@
 
     overlay.onmouseenter = () => {
       overlay.style.background = 'rgba(0, 0, 0, 0.9)';
-      svg.style.stroke = '#f50057';
     };
     overlay.onmouseleave = () => {
       overlay.style.background = 'rgba(0, 0, 0, 0.7)';
-      svg.style.stroke = 'white';
     };
 
     return overlay;

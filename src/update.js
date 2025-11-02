@@ -263,14 +263,15 @@
   const showUpdateNotification = updateDetails => {
     const notification = document.createElement('div');
     notification.className = 'youtube-enhancer-notification update-notification';
+    // Use centralized notification container for consistent placement. Keep visual styles but remove fixed positioning.
     notification.style.cssText = `
-        position: fixed; bottom: 20px; right: 20px; z-index: 10001; max-width: 350px;
-        background: linear-gradient(135deg, rgba(255, 69, 0, 0.95), rgba(255, 140, 0, 0.95));
-        color: white; padding: 16px 20px; border-radius: 12px;
-        box-shadow: 0 8px 32px rgba(255, 69, 0, 0.4); backdrop-filter: blur(16px);
-        border: 1px solid rgba(255, 255, 255, 0.2);
+    z-index: 10001; max-width: 350px;
+    background: linear-gradient(135deg, rgba(255, 69, 0, 0.95), rgba(255, 140, 0, 0.95));
+    color: white; padding: 16px 20px; border-radius: 12px;
+    box-shadow: 0 8px 32px rgba(255, 69, 0, 0.4); backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.2);
   animation: slideInFromBottom 0.4s ease-out;
-      `;
+    `;
 
     notification.innerHTML = `
         <div style="position: relative; display: flex; align-items: flex-start; gap: 12px;">
@@ -322,7 +323,24 @@
         </style>
       `;
 
-    document.body.appendChild(notification);
+    // Append into centralized notification container (created if missing)
+    const _containerId = 'youtube-enhancer-notification-container';
+    let _container = document.getElementById(_containerId);
+    if (!_container) {
+      _container = document.createElement('div');
+      _container.id = _containerId;
+      _container.className = 'youtube-enhancer-notification-container';
+      try {
+        document.body.appendChild(_container);
+      } catch {
+        document.body.appendChild(notification);
+      }
+    }
+    try {
+      _container.insertBefore(notification, _container.firstChild);
+    } catch {
+      document.body.appendChild(notification);
+    }
 
     const removeNotification = () => {
       // use explicit slide-out animation so it exits downward like the entry

@@ -1,0 +1,14 @@
+/**
+ * ESLint ignore patterns
+ * Note: This file is deprecated in ESLint v9+
+ * Ignore patterns are now defined in eslint.config.cjs
+ */
+
+# This file is no longer used by ESLint v9+
+# See eslint.config.cjs for current ignore configuration
+
+node_modules/
+coverage/
+dist/
+youtube.user.js
+*.min.js

@@ -3,7 +3,6 @@
  */
 
 const fs = require('fs');
-const path = require('path');
 
 // Files to process
 const files = ['src/basic.js', 'src/adblocker.js', 'src/timecode.js'];

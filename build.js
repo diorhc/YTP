@@ -3,7 +3,7 @@ const path = require('path');
 const { execSync } = require('child_process');
 const vm = require('vm');
 
-// Determine project root: if this script sits in a `src` folder, use parent,
+// Determine project root: if this script sits in a `src` folder, use parent,// Determine project root: if this script sits in a `src` folder, use parent,
 // otherwise use its directory. This prevents scanning the wrong directory
 // when the script is placed in the repo root.
 const ROOT =
@@ -18,6 +18,11 @@ const DEBOUNCE_MS = 200;
 // Possible order manifest files (JSON array of filenames or plain text lines)
 const ORDER_MANIFESTS = ['build.order.json', 'build.order.txt'];
 
+/**
+ * Safely read a file, returning null on error
+ * @param {string} p - File path
+ * @returns {string|null} File content or null
+ */
 function readFileSafe(p) {
   try {
     return fs.readFileSync(p, 'utf8');
@@ -25,6 +30,12 @@ function readFileSafe(p) {
     return null;
   }
 }
+
+/**
+ * Extract userscript metadata block from content
+ * @param {string} content - File content
+ * @returns {string|null} Metadata block or null
+ */
 function extractMeta(content) {
   if (!content) return null;
   // Match either a // style userscript meta block or a /* */ block
@@ -37,6 +48,11 @@ function extractMeta(content) {
   return null;
 }
 
+/**
+ * Remove userscript metadata blocks from content
+ * @param {string} content - File content
+ * @returns {string} Content without metadata
+ */
 function stripMeta(content) {
   if (!content) return '';
   // remove any userscript meta blocks so they don't duplicate in modules
@@ -147,7 +163,7 @@ function watchAndBuild() {
     // Try to require chokidar (may be installed as devDependency)
     const chokidar = require('chokidar');
     const watcher = chokidar.watch(watchDir, { ignoreInitial: true });
-    watcher.on('all', (event, filePath) => {
+    watcher.on('all', (_event, filePath) => {
       if (!filePath || !filePath.endsWith('.js')) return;
       const filename = path.basename(filePath);
       if (EXCLUDE.has(filename)) return;
@@ -161,7 +177,7 @@ function watchAndBuild() {
     console.log(`Watching (chokidar) for changes in: ${path.relative(process.cwd(), watchDir)}/`);
     return watcher;
   } catch {
-    const watcher = fs.watch(watchDir, { recursive: false }, (eventType, filename) => {
+    const watcher = fs.watch(watchDir, { recursive: false }, (_eventType, filename) => {
       if (!filename || !filename.endsWith('.js')) return;
       if (EXCLUDE.has(filename)) return;
       if (timer) clearTimeout(timer);
@@ -302,14 +318,16 @@ async function buildOnceCustom(outPath) {
         const flatConfig = path.join(ROOT, 'eslint.config.cjs');
         if (fs.existsSync(flatConfig)) {
           if (verbose) console.log(`Using flat config: ${flatConfig}`);
-          // Flat config is auto-loaded by ESLint; avoid incompatible flags
-          execSync(`"${eslintPath}" "${outPath}"`, { stdio: 'inherit' });
+          // Flat config is auto-loaded by ESLint; add --no-warn-ignored to suppress warnings
+          execSync(`"${eslintPath}" --no-warn-ignored "${outPath}"`, { stdio: 'inherit' });
         } else {
           const configPath = path.join(ROOT, '.eslintrc.cjs');
           if (fs.existsSync(configPath)) {
-            execSync(`"${eslintPath}" --config "${configPath}" "${outPath}"`, { stdio: 'inherit' });
+            execSync(`"${eslintPath}" --no-warn-ignored --config "${configPath}" "${outPath}"`, {
+              stdio: 'inherit',
+            });
           } else {
-            execSync(`"${eslintPath}" "${outPath}"`, { stdio: 'inherit' });
+            execSync(`"${eslintPath}" --no-warn-ignored "${outPath}"`, { stdio: 'inherit' });
           }
         }
         if (verbose) console.log('ESLint validation passed');

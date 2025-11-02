@@ -1,0 +1,8 @@
+node_modules/
+coverage/
+dist/
+build/
+youtube.user.js
+*.min.js
+.github/
+docs/

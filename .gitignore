@@ -1,31 +1,60 @@
 # Dependencies
 node_modules/
 package-lock.json
+yarn.lock
+pnpm-lock.yaml
 
 # Build outputs
 dist/
 youtube.user.js
 
-# IDE
+# IDE and editors
 .vscode/
 .idea/
 *.sublime-*
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
 .DS_Store
+Thumbs.db
 
 # Logs
 *.log
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+lerna-debug.log*
 
 # Testing
 coverage/
 .nyc_output/
+*.lcov
+.jest-cache/
 
 # Environment
 .env
 .env.local
+.env.*.local
+
+# Temporary files
+*.tmp
+*.temp
+.cache/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
 
 # Misc
 docs/
 GREASYFORK_PUBLISH.md
+GREASYFORK_PUBLISH en.md
+eslint-output.json

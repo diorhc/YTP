@@ -119,7 +119,7 @@
     const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
     if (!playlistPanel) {
       // Use MutationObserver instead of setTimeout for better performance
-      const observer = new MutationObserver((mutations, obs) => {
+      const observer = new MutationObserver((_mutations, obs) => {
         const panel = document.querySelector('ytd-playlist-panel-renderer');
         if (panel) {
           obs.disconnect();

@@ -371,9 +371,9 @@
   }
 
   function createStatsMenu() {
-    if (!statsButtonEnabled) return;
+    if (!statsButtonEnabled) return undefined;
     if (document.querySelector('.stats-menu-container')) {
-      return;
+      return undefined;
     }
 
     const containerDiv = document.createElement('div');
@@ -2096,7 +2096,7 @@
   }
 
   function observePageChanges() {
-    if (!state.enabled) return;
+    if (!state.enabled) return undefined;
 
     // More robust banner detection with multiple fallback selectors
     const observer = new MutationObserver(_mutations => {

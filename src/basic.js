@@ -105,10 +105,14 @@ const YouTubeUtils = (() => {
     return lang.startsWith('ru') ? 'ru' : 'en';
   }
 
-  // Translation function
+  /**
+   * Translation function
+   * @param {string} key - Translation key
+   * @returns {string} Translated text
+   */
   function t(key) {
     const lang = getLanguage();
-    return i18n[lang][key] || i18n.en[key] || key;
+    return i18n[lang]?.[key] || i18n.en[key] || key;
   }
 
   /**
@@ -129,7 +133,7 @@ const YouTubeUtils = (() => {
    */
   const safeExecute = (fn, context = 'Unknown') => {
     /** @this {any} */
-    return function (...args) {
+    return function (...args /** @type {any[]} */) {
       try {
         return fn.apply(this, args);
       } catch (error) {
@@ -147,7 +151,7 @@ const YouTubeUtils = (() => {
    */
   const safeExecuteAsync = (fn, context = 'Unknown') => {
     /** @this {any} */
-    return async function (...args) {
+    return async function (...args /** @type {any[]} */) {
       try {
         return await fn.apply(this, args);
       } catch (error) {
@@ -165,6 +169,7 @@ const YouTubeUtils = (() => {
   const sanitizeHTML = html => {
     if (typeof html !== 'string') return '';
 
+    /** @type {Record<string, string>} */
     const map = {
       '<': '&lt;',
       '>': '&gt;',
@@ -257,18 +262,26 @@ const YouTubeUtils = (() => {
   // Use shared debounce and throttle from YouTubeUtils (defined in utils.js)
   const debounce =
     /** @type {any} */ (window).YouTubeUtils?.debounce ||
+    /**
+     * @param {Function} func - Function to debounce
+     * @param {number} wait - Wait time in milliseconds
+     * @param {{leading?: boolean}} [options] - Options object
+     */
     ((func, wait, options = {}) => {
-      let timeout;
-      let lastArgs;
-      let lastThis;
+      /** @type {ReturnType<typeof setTimeout> | null} */
+      let timeout = null;
+      /** @type {any[] | null} */
+      let lastArgs = null;
+      /** @type {any} */
+      let lastThis = null;
 
       /** @this {any} */
-      const debounced = function (...args) {
+      const debounced = function (...args /** @type {any[]} */) {
         lastArgs = args;
         lastThis = this;
-        clearTimeout(timeout);
+        if (timeout !== null) clearTimeout(timeout);
 
-        if (options.leading && !timeout) {
+        if (options.leading && timeout === null) {
           /** @type {Function} */ (func).apply(this, args);
         }
 
@@ -283,7 +296,7 @@ const YouTubeUtils = (() => {
       };
 
       debounced.cancel = () => {
-        clearTimeout(timeout);
+        if (timeout !== null) clearTimeout(timeout);
         timeout = null;
         lastArgs = null;
         lastThis = null;
@@ -294,12 +307,18 @@ const YouTubeUtils = (() => {
 
   const throttle =
     /** @type {any} */ (window).YouTubeUtils?.throttle ||
+    /**
+     * @param {Function} func - Function to throttle
+     * @param {number} limit - Time limit in milliseconds
+     */
     ((func, limit) => {
-      let inThrottle;
-      let lastResult;
+      /** @type {boolean} */
+      let inThrottle = false;
+      /** @type {any} */
+      let lastResult = undefined;
 
       /** @this {any} */
-      return function (...args) {
+      return function (...args /** @type {any[]} */) {
         if (!inThrottle) {
           lastResult = /** @type {Function} */ (func).apply(this, args);
           inThrottle = true;
@@ -313,7 +332,7 @@ const YouTubeUtils = (() => {
    * Safe DOM element creation with props and children
    * @param {string} tag - HTML tag name
    * @param {Object} props - Element properties
-   * @param {Array} children - Child elements or text
+   * @param {Array<string | Node>} children - Child elements or text
    * @returns {HTMLElement} Created element
    */
   const createElement = (tag, props = {}, children = []) => {
@@ -439,6 +458,7 @@ const YouTubeUtils = (() => {
       }
 
       const controller = new AbortController();
+      /** @type {MutationObserver | null} */
       let observer = null;
 
       const timeoutId = setTimeout(() => {
@@ -458,7 +478,7 @@ const YouTubeUtils = (() => {
           const element = parent.querySelector(selector);
           if (element) {
             clearTimeout(timeoutId);
-            observer.disconnect();
+            if (observer) observer.disconnect();
             resolve(/** @type {HTMLElement} */ (/** @type {unknown} */ (element)));
           }
         } catch (e) {
@@ -730,7 +750,7 @@ const YouTubeUtils = (() => {
      */
     get(path) {
       const settings = this.load();
-      return path.split('.').reduce((obj, key) => obj?.[key], settings);
+      return path.split('.').reduce((obj, key) => /** @type {any} */ (obj)?.[key], settings);
     },
 
     /**
@@ -743,10 +763,10 @@ const YouTubeUtils = (() => {
       const keys = path.split('.');
       const last = keys.pop();
       const target = keys.reduce((obj, key) => {
-        obj[key] = obj[key] || {};
-        return obj[key];
+        /** @type {any} */ (obj)[key] = /** @type {any} */ (obj)[key] || {};
+        return /** @type {any} */ (obj)[key];
       }, settings);
-      target[last] = value;
+      /** @type {any} */ (target)[/** @type {string} */ (last)] = value;
       this.save(settings);
     },
   };
@@ -757,6 +777,7 @@ const YouTubeUtils = (() => {
    */
   const StyleManager = {
     styles: new Map(),
+    /** @type {HTMLStyleElement | null} */
     element: null,
 
     /**
@@ -824,6 +845,7 @@ const YouTubeUtils = (() => {
    * Manages all notifications with queue and deduplication
    */
   const NotificationManager = {
+    /** @type {any[]} */
     queue: [],
     activeNotifications: new Set(),
     maxVisible: 3,
@@ -832,8 +854,8 @@ const YouTubeUtils = (() => {
     /**
      * Show notification
      * @param {string} message - Notification message
-     * @param {Object} options - Notification options
-     * @returns {HTMLElement} Notification element
+     * @param {{duration?: number, position?: string | null, action?: {text: string, callback: Function} | null, type?: string}} [options] - Notification options
+     * @returns {HTMLElement | null} Notification element
      */
     show(message, options = {}) {
       // Validate message
@@ -880,7 +902,9 @@ const YouTubeUtils = (() => {
               alignItems: 'center',
               gap: '10px',
             },
-            position && positions[position] ? positions[position] : {}
+            position && /** @type {any} */ (positions)[position]
+              ? /** @type {any} */ (positions)[position]
+              : {}
           ),
         });
 
@@ -924,7 +948,34 @@ const YouTubeUtils = (() => {
           notification.appendChild(actionBtn);
         }
 
-        document.body.appendChild(notification);
+        // Ensure a centralized bottom-center container exists and add notification there
+        const _notifContainerId = 'youtube-enhancer-notification-container';
+        let _notifContainer = document.getElementById(_notifContainerId);
+        if (!_notifContainer) {
+          _notifContainer = createElement('div', {
+            id: _notifContainerId,
+            className: 'youtube-enhancer-notification-container',
+          });
+          try {
+            document.body.appendChild(_notifContainer);
+          } catch {
+            // fallback to body append if container append fails
+            document.body.appendChild(notification);
+            this.activeNotifications.add(notification);
+          }
+        }
+
+        try {
+          // Prepend so newest notifications appear on top
+          _notifContainer.insertBefore(notification, _notifContainer.firstChild);
+        } catch {
+          // fallback
+          document.body.appendChild(notification);
+        }
+        // ensure notification accepts pointer events (container is pointer-events:none)
+        try {
+          notification.style.pointerEvents = 'auto';
+        } catch {}
         this.activeNotifications.add(notification);
 
         // Apply entry animation from bottom
@@ -1377,15 +1428,20 @@ if (typeof window !== 'undefined') {
       const styles = `:root{--yt-accent:#ff0000;--yt-accent-hover:#cc0000;--yt-radius-sm:6px;--yt-radius-md:10px;--yt-radius-lg:16px;--yt-transition:all .2s ease;--yt-space-xs:4px;--yt-space-sm:8px;--yt-space-md:16px;--yt-space-lg:24px;--yt-glass-blur:blur(18px) saturate(180%);--yt-glass-blur-light:blur(12px) saturate(160%);--yt-glass-blur-heavy:blur(24px) saturate(200%);}
         html[dark],html:not([dark]):not([light]){--yt-bg-primary:rgba(15,15,15,.85);--yt-bg-secondary:rgba(28,28,28,.85);--yt-bg-tertiary:rgba(34,34,34,.85);--yt-text-primary:#fff;--yt-text-secondary:#aaa;--yt-border-color:rgba(255,255,255,.2);--yt-hover-bg:rgba(255,255,255,.1);--yt-shadow:0 4px 12px rgba(0,0,0,.25);--yt-glass-bg:rgba(255,255,255,.1);--yt-glass-border:rgba(255,255,255,.2);--yt-glass-shadow:0 8px 32px rgba(0,0,0,.2);--yt-modal-bg:rgba(0,0,0,.75);--yt-notification-bg:rgba(28,28,28,.9);--yt-panel-bg:rgba(34,34,34,.3);--yt-header-bg:rgba(20,20,20,.6);--yt-input-bg:rgba(255,255,255,.1);--yt-button-bg:rgba(255,255,255,.2);--yt-text-stroke:white;}
         html[light]{--yt-bg-primary:rgba(255,255,255,.85);--yt-bg-secondary:rgba(248,248,248,.85);--yt-bg-tertiary:rgba(240,240,240,.85);--yt-text-primary:#030303;--yt-text-secondary:#606060;--yt-border-color:rgba(0,0,0,.2);--yt-hover-bg:rgba(0,0,0,.05);--yt-shadow:0 4px 12px rgba(0,0,0,.15);--yt-glass-bg:rgba(255,255,255,.7);--yt-glass-border:rgba(0,0,0,.1);--yt-glass-shadow:0 8px 32px rgba(0,0,0,.1);--yt-modal-bg:rgba(0,0,0,.5);--yt-notification-bg:rgba(255,255,255,.95);--yt-panel-bg:rgba(255,255,255,.7);--yt-header-bg:rgba(248,248,248,.8);--yt-input-bg:rgba(0,0,0,.05);--yt-button-bg:rgba(0,0,0,.1);--yt-text-stroke:#030303;}
-        .ytp-screenshot-button,.ytp-cobalt-button,.ytp-pip-button{position:relative;bottom:12px;width:44px;transition:opacity .15s,transform .15s;}
+        .ytp-screenshot-button,.ytp-cobalt-button,.ytp-pip-button{position:relative;width:44px;height:100%;display:inline-flex;align-items:center;justify-content:center;vertical-align:top;transition:opacity .15s,transform .15s;}
         .ytp-screenshot-button:hover,.ytp-cobalt-button:hover,.ytp-pip-button:hover{transform:scale(1.1);}
-        .speed-control-btn{width:4em!important;float:left;text-align:center!important;border-radius:var(--yt-radius-sm);font-size:13px;color:var(--yt-text-primary);cursor:pointer;user-select:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;transition:color .2s;}
-        .speed-control-btn:hover{color:var(--yt-accent);font-weight:bold;}
-        .speed-options{position:absolute!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;border-radius:var(--yt-radius-md)!important;display:none;bottom: 100%!important;width:48px!important;z-index:9999!important;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);}
-        .speed-option-item{cursor:pointer!important;height:25px!important;line-height:25px!important;font-size:12px!important;text-align:center!important;transition:background-color .15s,color .15s;}
+  .speed-control-btn{width:4em!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;text-align:center!important;border-radius:var(--yt-radius-sm);font-size:13px;color:var(--yt-text-primary);cursor:pointer;user-select:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;transition:color .2s;}
+  .speed-control-btn:hover{color:var(--yt-accent);font-weight:bold;}
+  .speed-options{position:fixed!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;border-radius:var(--yt-radius-md)!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:0!important;transform:translate(-50%,12px)!important;width:92px!important;z-index:2147483647!important;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);opacity:0;pointer-events:none!important;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box;}
+  .speed-options.visible{opacity:1;pointer-events:auto!important;transform:translate(-50%,0)!important;}
+  .speed-option-item{cursor:pointer!important;height:28px!important;line-height:28px!important;font-size:12px!important;text-align:center!important;transition:background-color .15s,color .15s;}
         .speed-option-active,.speed-option-item:hover{color:var(--yt-accent)!important;font-weight:bold!important;background:var(--yt-hover-bg)!important;}
         #speed-indicator{position:absolute!important;margin:auto!important;top:0!important;right:0!important;bottom:0!important;left:0!important;border-radius:24px!important;font-size:30px!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;z-index:99999!important;width:80px!important;height:80px!important;line-height:80px!important;text-align:center!important;display:none;box-shadow:var(--yt-glass-shadow);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);border:1px solid var(--yt-glass-border);}
-        .youtube-enhancer-notification{position:fixed;bottom:75px;right:50%;max-width:500px;width:auto;background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:8px 14px;font-size:13px;border-radius:var(--yt-radius-md);z-index:9999;transition:opacity .35s,transform .32s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur); -webkit-backdrop-filter:var(--yt-glass-blur);font-weight:500;box-sizing:border-box;display:flex;align-items:center;gap:10px;}
+  /* Notification container - bottom centered */
+  .youtube-enhancer-notification-container{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;z-index:2147483647;pointer-events:none;max-width:calc(100% - 32px);width:100%;box-sizing:border-box;padding:0 16px;}
+
+  /* Individual notifications (children of the container). Container uses pointer-events:none so children must opt-in. */
+  .youtube-enhancer-notification{position:relative;max-width:700px;width:auto;background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:8px 14px;font-size:13px;border-radius:var(--yt-radius-md);z-index:inherit;transition:opacity .35s,transform .32s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur); -webkit-backdrop-filter:var(--yt-glass-blur);font-weight:500;box-sizing:border-box;display:flex;align-items:center;gap:10px;pointer-events:auto;}
         .ytp-plus-settings-button{background:transparent;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:var(--yt-space-sm);margin-right:var(--yt-space-sm);border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background-color .2s,transform .2s;}
         .ytp-plus-settings-button svg{width:24px;height:24px;}
         .ytp-plus-settings-button:hover{background:var(--yt-hover-bg);transform:rotate(30deg);color:var(--yt-text-secondary);}
@@ -1438,11 +1494,12 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-item{padding:10px 12px;}}
         .ytp-plus-settings-section h1{margin:-95px 90px 8px;font-family:'Montserrat',sans-serif;font-size:52px;font-weight:600;color:transparent;-webkit-text-stroke-width:1px;-webkit-text-stroke-color:var(--yt-text-stroke);cursor:pointer;transition:color .2s;}
         .ytp-plus-settings-section h1:hover{color:var(--yt-accent);-webkit-text-stroke-width:1px;-webkit-text-stroke-color:transparent;}
-        .download-options{position:fixed;background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-md);width:150px;z-index:99999;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);display:none;}
-        .download-options.visible{display:block;}
+  .download-options{position:fixed;background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-md);width:150px;z-index:2147483647;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;transform:translateY(8px);box-sizing:border-box;}
+  .download-options.visible{opacity:1;pointer-events:auto;transform:translateY(0);}
         .download-options-list{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;}
         .download-option-item{cursor:pointer;padding:12px;text-align:center;transition:background .2s,color .2s;width:100%;}
         .download-option-item:hover{background:var(--yt-hover-bg);color:var(--yt-accent);}
+        .ytp-download-button{position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;padding:0 10px!important;cursor:pointer!important;}
         .glass-panel{background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);box-shadow:var(--yt-glass-shadow);}
         .glass-card{background:var(--yt-panel-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);padding:var(--yt-space-md);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);box-shadow:var(--yt-shadow);}
         .glass-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--yt-modal-bg);display:flex;align-items:center;justify-content:center;z-index:99999;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);}
@@ -2081,9 +2138,6 @@ if (typeof window !== 'undefined') {
       button.setAttribute('role', 'button');
       button.setAttribute('aria-haspopup', 'true');
       button.setAttribute('aria-expanded', 'false');
-      button.style.display = 'inline-block';
-      button.style.padding = '0 10px 0 0';
-      button.style.height = '36px';
       button.innerHTML = `
           <svg fill="currentColor" width="24" height="24" viewBox="0 0 256 256" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:auto;vertical-align:middle;">
         <path d="M83.17188,112.83984a4.00026,4.00026,0,0,1,5.65624-5.6582L124,142.34473V40a4,4,0,0,1,8,0V142.34473l35.17188-35.16309a4.00026,4.00026,0,0,1,5.65624,5.6582l-42,41.98926a4.00088,4.00088,0,0,1-5.65624,0ZM216,148a4.0002,4.0002,0,0,0-4,4v56a4.00427,4.00427,0,0,1-4,4H48a4.00427,4.00427,0,0,1-4-4V152a4,4,0,0,0-8,0v56a12.01343,12.01343,0,0,0,12,12H208a12.01343,12.01343,0,0,0,12-12V152A4.0002,4.0002,0,0,0,216,148Z"/>
@@ -2095,11 +2149,13 @@ if (typeof window !== 'undefined') {
       options.className = 'download-options';
       options.setAttribute('role', 'menu');
 
-      // Position dropdown below button
+      // Position dropdown below button (centered)
       function positionDropdown() {
         const rect = button.getBoundingClientRect();
-        options.style.left = `${rect.left + rect.width / 2 - 75}px`;
-        options.style.bottom = `${window.innerHeight - rect.top + 12}px`;
+        const left = Math.max(8, rect.left + rect.width / 2 - 75);
+        const bottom = Math.max(8, window.innerHeight - rect.top + 12);
+        options.style.left = `${left}px`;
+        options.style.bottom = `${bottom}px`;
       }
 
       // Helper to open download site
@@ -2310,7 +2366,17 @@ if (typeof window !== 'undefined') {
 
       options.appendChild(list);
 
-      button.appendChild(options);
+      // Ensure only one dropdown exists to avoid duplicates (helpful on refresh)
+      const existingDownload = document.querySelector('.download-options');
+      if (existingDownload) existingDownload.remove();
+
+      // Append dropdown to body to avoid Firefox issues with positioned children
+      try {
+        document.body.appendChild(options);
+      } catch {
+        // fallback: append to controls
+        button.appendChild(options);
+      }
 
       // Expose rebuild function globally (safe guard) so settings handlers can call it
       try {
@@ -2338,10 +2404,24 @@ if (typeof window !== 'undefined') {
           button.setAttribute('aria-expanded', 'false');
         }, 150);
       }
-      button.addEventListener('mouseenter', showDropdown);
-      button.addEventListener('mouseleave', hideDropdown);
-      options.addEventListener('mouseenter', showDropdown);
-      options.addEventListener('mouseleave', hideDropdown);
+      // Hover behaviour for download dropdown (show on hover, hide on leave)
+      let downloadHideTimer;
+      button.addEventListener('mouseenter', () => {
+        clearTimeout(downloadHideTimer);
+        showDropdown();
+      });
+      button.addEventListener('mouseleave', () => {
+        clearTimeout(downloadHideTimer);
+        downloadHideTimer = setTimeout(hideDropdown, 180);
+      });
+      options.addEventListener('mouseenter', () => {
+        clearTimeout(downloadHideTimer);
+        showDropdown();
+      });
+      options.addEventListener('mouseleave', () => {
+        clearTimeout(downloadHideTimer);
+        downloadHideTimer = setTimeout(hideDropdown, 180);
+      });
       button.addEventListener('keydown', e => {
         if (e.key === 'Enter' || e.key === ' ') {
           if (options.classList.contains('visible')) {
@@ -2356,35 +2436,162 @@ if (typeof window !== 'undefined') {
     },
 
     addSpeedControlButton(controls) {
-      const speedBtn = document.createElement('div');
+      const speedBtn = document.createElement('button');
+      speedBtn.type = 'button';
       speedBtn.className = 'ytp-button speed-control-btn';
+      speedBtn.setAttribute('aria-label', t('speedControl'));
+      speedBtn.setAttribute('aria-haspopup', 'true');
+      speedBtn.setAttribute('aria-expanded', 'false');
       speedBtn.innerHTML = `<span>${this.speedControl.currentSpeed}×</span>`;
 
       const speedOptions = document.createElement('div');
       speedOptions.className = 'speed-options';
+      speedOptions.setAttribute('role', 'menu');
+
+      const selectSpeed = speed => {
+        this.changeSpeed(speed);
+        hideDropdown();
+      };
 
       [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0].forEach(speed => {
         const option = document.createElement('div');
         option.className = `speed-option-item${Number(speed) === this.speedControl.currentSpeed ? ' speed-option-active' : ''}`;
         option.textContent = `${speed}x`;
         option.dataset.speed = String(speed);
-        option.addEventListener('click', () => this.changeSpeed(speed));
+        option.setAttribute('role', 'menuitem');
+        option.tabIndex = 0;
+        option.addEventListener('click', () => selectSpeed(speed));
+        option.addEventListener('keydown', event => {
+          if (event.key === 'Enter' || event.key === ' ') {
+            event.preventDefault();
+            selectSpeed(speed);
+          }
+        });
         speedOptions.appendChild(option);
       });
 
       speedBtn.appendChild(speedOptions);
 
-      let isHovering = false;
-      speedBtn.addEventListener('mouseenter', () => {
-        isHovering = true;
-        speedOptions.style.display = 'block';
+      // Ensure only one speed dropdown exists
+      const existingSpeed = document.querySelector('.speed-options');
+      if (existingSpeed) existingSpeed.remove();
+
+      // Append speedOptions to body to avoid Firefox positioning/hover issues
+      try {
+        document.body.appendChild(speedOptions);
+      } catch {
+        // fallback keep as child
+      }
+
+      const positionDropdown = () => {
+        const rect = speedBtn.getBoundingClientRect();
+        speedOptions.style.left = `${rect.left + rect.width / 2}px`;
+        speedOptions.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+      };
+
+      const hideDropdown = () => {
+        speedOptions.classList.remove('visible');
+        speedBtn.setAttribute('aria-expanded', 'false');
+      };
+
+      const showDropdown = () => {
+        positionDropdown();
+        speedOptions.classList.add('visible');
+        speedBtn.setAttribute('aria-expanded', 'true');
+      };
+
+      const toggleDropdown = () => {
+        if (speedOptions.classList.contains('visible')) {
+          hideDropdown();
+        } else {
+          showDropdown();
+        }
+      };
+
+      let documentClickKey;
+
+      const documentClickHandler = event => {
+        if (!speedBtn.isConnected) {
+          if (documentClickKey) {
+            YouTubeUtils.cleanupManager.unregisterListener(documentClickKey);
+            documentClickKey = undefined;
+          }
+          return;
+        }
+        if (!speedOptions.classList.contains('visible')) return;
+        if (
+          speedBtn.contains(/** @type {Node} */ (event.target)) ||
+          speedOptions.contains(/** @type {Node} */ (event.target))
+        ) {
+          return;
+        }
+        hideDropdown();
+      };
+
+      const documentKeydownHandler = event => {
+        if (event.key === 'Escape' && speedOptions.classList.contains('visible')) {
+          hideDropdown();
+          speedBtn.focus();
+        }
+      };
+
+      documentClickKey = YouTubeUtils.cleanupManager.registerListener(
+        document,
+        'click',
+        documentClickHandler,
+        true
+      );
+      YouTubeUtils.cleanupManager.registerListener(
+        document,
+        'keydown',
+        documentKeydownHandler,
+        true
+      );
+
+      YouTubeUtils.cleanupManager.registerListener(window, 'resize', () => {
+        if (speedOptions.classList.contains('visible')) {
+          positionDropdown();
+        }
       });
 
+      YouTubeUtils.cleanupManager.registerListener(
+        window,
+        'scroll',
+        () => {
+          if (speedOptions.classList.contains('visible')) {
+            positionDropdown();
+          }
+        },
+        true
+      );
+
+      // Hover behaviour: show on mouseenter, hide on mouseleave (with small delay)
+      let speedHideTimer;
+      speedBtn.addEventListener('mouseenter', () => {
+        clearTimeout(speedHideTimer);
+        showDropdown();
+      });
       speedBtn.addEventListener('mouseleave', () => {
-        isHovering = false;
-        setTimeout(() => {
-          if (!isHovering) speedOptions.style.display = 'none';
-        }, 150);
+        clearTimeout(speedHideTimer);
+        speedHideTimer = setTimeout(hideDropdown, 200);
+      });
+      speedOptions.addEventListener('mouseenter', () => {
+        clearTimeout(speedHideTimer);
+        showDropdown();
+      });
+      speedOptions.addEventListener('mouseleave', () => {
+        clearTimeout(speedHideTimer);
+        speedHideTimer = setTimeout(hideDropdown, 200);
+      });
+
+      // Keep keyboard support (Enter toggles dropdown)
+      speedBtn.addEventListener('keydown', event => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          toggleDropdown();
+        } else if (event.key === 'Escape') {
+          hideDropdown();
+        }
       });
 
       controls.insertBefore(speedBtn, controls.firstChild);
@@ -2414,7 +2621,7 @@ if (typeof window !== 'undefined') {
     handleFullscreenChange() {
       const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
       document.querySelectorAll('.ytp-screenshot-button, .ytp-cobalt-button').forEach(button => {
-        button.style.bottom = isFullscreen ? '15px' : '12px';
+        button.style.bottom = isFullscreen ? '0px' : '0px';
       });
     },
 

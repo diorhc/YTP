@@ -3,7 +3,13 @@
   'use strict';
 
   /**
-   * Error boundary configuration
+   * Error boundary configuration object
+   * @typedef {Object} ErrorBoundaryConfig
+   * @property {number} maxErrors - Maximum number of errors allowed within the error window
+   * @property {number} errorWindow - Time window in milliseconds for tracking errors (default: 60000ms = 1 minute)
+   * @property {boolean} enableLogging - Whether to log errors to console
+   * @property {boolean} enableRecovery - Whether to attempt automatic recovery from errors
+   * @property {string} storageKey - LocalStorage key for persisting error data
    */
   const ErrorBoundaryConfig = {
     maxErrors: 10,
@@ -14,7 +20,7 @@
   };
 
   /**
-   * Error tracking state
+   * Error tracking state (used inline for internal tracking)
    */
   const errorState = {
     errors: [],
@@ -24,7 +30,8 @@
   };
 
   /**
-   * Error severity levels
+   * Error severity levels enumeration
+   * @enum {string}
    */
   const ErrorSeverity = {
     LOW: 'low',
@@ -34,9 +41,9 @@
   };
 
   /**
-   * Categorize error severity
-   * @param {Error} error - The error object
-   * @returns {string} Severity level
+   * Categorize error severity based on error message patterns
+   * @param {Error} error - The error object to categorize
+   * @returns {string} Severity level from ErrorSeverity enum
    */
   const categorizeSeverity = error => {
     const message = error.message?.toLowerCase() || '';
@@ -186,7 +193,7 @@
       console.error(
         '[YouTube+] Error rate exceeded! Too many errors in short period. Some features may be disabled.'
       );
-      return;
+      return false;
     }
 
     // Attempt recovery

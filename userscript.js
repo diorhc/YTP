@@ -2,7 +2,7 @@
 // @name            YouTube +
 // @name:en         YouTube +
 // @namespace       by
-// @version         2.0.1
+// @version         2.0.2
 // @author          diorhc
 // @description     Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:en  Tabview YouTube and Download and others features ↴
@@ -24,8 +24,8 @@
 // @connect         api.livecounts.io
 // @connect         livecounts.io
 // @run-at          document-start
-// @homepageURL     https://github.com/diorhc/YoutubePlus
-// @supportURL      https://github.com/diorhc/YoutubePlus/issues
+// @homepageURL     https://github.com/diorhc/YTPlus
+// @supportURL      https://github.com/diorhc/YTPlus/issues
 // @downloadURL     https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js
 // @updateURL       https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js
 // ==/UserScript==
