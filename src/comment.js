@@ -6,6 +6,46 @@
 (function () {
   'use strict';
 
+  // Internationalization (i18n) system
+  const i18n = {
+    en: {
+      commentManager: 'Comment Manager',
+      deleteSelected: 'Delete Selected',
+      selectAll: 'Select All',
+      clearAll: 'Clear All',
+      selectComment: 'Select comment',
+      togglePanel: 'Toggle panel',
+      commentManagerControls: 'Comment manager controls',
+      commentManagement: 'Comment Management',
+      enableCommentManager: 'Enable comment manager',
+      bulkDeleteDescription: 'Add checkboxes and bulk delete functionality to your comments',
+    },
+    ru: {
+      commentManager: 'Менеджер комментариев',
+      deleteSelected: 'Удалить выбранные',
+      selectAll: 'Выбрать все',
+      clearAll: 'Очистить все',
+      selectComment: 'Выбрать комментарий',
+      togglePanel: 'Переключить панель',
+      commentManagerControls: 'Управление менеджером комментариев',
+      commentManagement: 'Управление комментариями',
+      enableCommentManager: 'Включить менеджер комментариев',
+      bulkDeleteDescription: 'Добавить чекбоксы и функцию массового удаления к вашим комментариям',
+    },
+  };
+
+  // Get browser language
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  // Translation function
+  function t(key) {
+    const lang = getLanguage();
+    return i18n[lang][key] || i18n.en[key] || key;
+  }
+
   /**
    * Configuration object for comment manager
    * @const {Object}
@@ -168,7 +208,7 @@
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
       checkbox.className = `${CONFIG.classes.checkbox} ytp-plus-settings-checkbox`;
-      checkbox.setAttribute('aria-label', 'Select comment');
+      checkbox.setAttribute('aria-label', t('selectComment'));
 
       checkbox.addEventListener('change', updateDeleteButtonState);
       checkbox.addEventListener('click', e => e.stopPropagation());
@@ -207,20 +247,20 @@
     const panel = document.createElement('div');
     panel.className = `${CONFIG.classes.container} ${CONFIG.classes.panel} glass-panel`;
     panel.setAttribute('role', 'region');
-    panel.setAttribute('aria-label', 'Comment manager controls');
+    panel.setAttribute('aria-label', t('commentManagerControls'));
 
     const header = document.createElement('div');
     header.className = CONFIG.classes.header;
 
     const title = document.createElement('div');
     title.className = CONFIG.classes.title;
-    title.textContent = 'Comment Manager';
+    title.textContent = t('commentManager');
 
     const collapseButton = document.createElement('button');
     collapseButton.className = `${CONFIG.classes.close} ytp-plus-settings-close`;
     collapseButton.setAttribute('type', 'button');
     collapseButton.setAttribute('aria-expanded', String(!state.panelCollapsed));
-    collapseButton.setAttribute('aria-label', 'Toggle panel');
+    collapseButton.setAttribute('aria-label', t('togglePanel'));
     collapseButton.innerHTML = `
         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
@@ -257,18 +297,18 @@
     };
 
     const deleteAllButton = createActionButton(
-      'Delete Selected',
+      t('deleteSelected'),
       `${CONFIG.classes.buttonDanger} ${CONFIG.classes.deleteButton}`,
       deleteSelectedComments,
       { disabled: true }
     );
 
-    const selectAllButton = createActionButton('Select All', CONFIG.classes.buttonPrimary, () => {
+    const selectAllButton = createActionButton(t('selectAll'), CONFIG.classes.buttonPrimary, () => {
       $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = true));
       updateDeleteButtonState();
     });
 
-    const clearAllButton = createActionButton('Clear All', CONFIG.classes.buttonSuccess, () => {
+    const clearAllButton = createActionButton(t('clearAll'), CONFIG.classes.buttonSuccess, () => {
       $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = false));
       updateDeleteButtonState();
     });
@@ -349,7 +389,8 @@
     const styles = `
   .${CONFIG.classes.checkboxAnchor}{position:relative;display:inline-flex;align-items:center;gap:8px;width:auto;}
         .${CONFIG.classes.checkboxFloating}{position:absolute;top:-4px;right:-32px;margin:0;}
-        .${CONFIG.classes.panel}{position:fixed;top:50%;right:24px;transform:translateY(-50%);display:flex;flex-direction:column;gap:16px;z-index:9999;padding:18px;background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-lg);box-shadow:var(--yt-glass-shadow);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);min-width:220px;max-width:260px;color:var(--yt-text-primary);transition:transform .3s ease,opacity .3s ease;}
+        /* Panel styled to match shorts feedback: glassmorphism, rounded corners, soft shadow */
+        .${CONFIG.classes.panel}{position:fixed;top:50%;right:24px;transform:translateY(-50%);display:flex;flex-direction:column;gap:14px;z-index:10000;padding:16px 18px;background:var(--yt-glass-bg);border:1.5px solid var(--yt-glass-border);border-radius:20px;box-shadow:0 12px 40px rgba(0,0,0,0.45);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);min-width:220px;max-width:300px;color:var(--yt-text-primary);transition:transform .22s cubic-bezier(.4,0,.2,1),opacity .22s,box-shadow .2s}
         html:not([dark]) .${CONFIG.classes.panel}{background:var(--yt-glass-bg);}
         .${CONFIG.classes.header}{display:flex;align-items:center;justify-content:space-between;gap:12px;}
   .${CONFIG.classes.panel}.is-collapsed{padding:14px 18px;}
@@ -404,8 +445,8 @@
     settingsItem.className = 'ytp-plus-settings-item comment-manager-settings-item';
     settingsItem.innerHTML = `
         <div>
-          <label class="ytp-plus-settings-item-label">Comment Manager</label>
-          <div class="ytp-plus-settings-item-description">Add bulk delete functionality for managing comments on YouTube</div>
+          <label class="ytp-plus-settings-item-label">${t('commentManagement')}</label>
+          <div class="ytp-plus-settings-item-description">${t('bulkDeleteDescription')}</div>
         </div>
         <button class="ytp-plus-button" id="open-comment-history-page" style="margin:0 0 0 30px;padding:12px 16px;font-size:13px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="gray" stroke-width="2">

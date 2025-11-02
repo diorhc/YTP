@@ -1,6 +1,116 @@
 const YouTubeUtils = (() => {
   'use strict';
 
+  // Internationalization (i18n) system
+  const i18n = {
+    en: {
+      // Settings modal
+      settingsTitle: 'Settings',
+      basicTab: 'Basic',
+      advancedTab: 'Advanced',
+      experimentalTab: 'Experimental',
+      aboutTab: 'About',
+      closeButton: 'Close',
+      saveChanges: 'Save Changes',
+      settingsSaved: 'Settings saved',
+
+      // Basic settings
+      speedControl: 'Speed Control',
+      speedControlDesc: 'Add speed control buttons to video player',
+      screenshotButton: 'Screenshot Button',
+      screenshotButtonDesc: 'Add screenshot capture button to video player',
+      downloadButton: 'Download Button',
+      downloadButtonDesc: 'Add download button with multiple site options to video player',
+
+      // Download customization
+      customDownloader: 'Use custom downloader',
+      alwaysEnabled: 'Always enabled - GitHub repository',
+      siteName: 'Site name',
+      urlTemplate: 'URL template (use {videoId} or {videoUrl})',
+      saveButton: 'Save',
+      resetButton: 'Reset',
+
+      // Notifications
+      y2mateSettingsSaved: 'Y2Mate settings saved',
+      y2mateReset: 'Y2Mate reset to defaults',
+      xbuddySettingsSaved: '9xBuddy settings saved',
+      xbuddyReset: '9xBuddy reset to defaults',
+
+      // Tooltips
+      youtubeSettings: 'YouTube + Settings',
+      takeScreenshot: 'Take screenshot',
+      downloadOptions: 'Download options',
+
+      // Download sites
+      byYTDL: 'by YTDL',
+      copiedToClipboard: 'Video URL copied to clipboard!',
+      // End screen remover
+      endscreenHideLabel: 'Hide End Screens & Cards',
+      endscreenHideDesc: 'Remove end screen suggestions and info cards',
+      // Generic small suffixes
+      removedSuffix: ' ({n} removed)',
+    },
+    ru: {
+      // Settings modal
+      settingsTitle: 'Настройки',
+      basicTab: 'Основные',
+      advancedTab: 'Расширенные',
+      experimentalTab: 'Экспериментальные',
+      aboutTab: 'О программе',
+      closeButton: 'Закрыть',
+      saveChanges: 'Сохранить изменения',
+      settingsSaved: 'Настройки сохранены',
+
+      // Basic settings
+      speedControl: 'Управление скоростью',
+      speedControlDesc: 'Добавить кнопки управления скоростью в видеоплеер',
+      screenshotButton: 'Кнопка скриншота',
+      screenshotButtonDesc: 'Добавить кнопку создания скриншота в видеоплеер',
+      downloadButton: 'Кнопка загрузки',
+      downloadButtonDesc: 'Добавить кнопку загрузки с несколькими вариантами сайтов в видеоплеер',
+
+      // Download customization
+      customDownloader: 'Использовать свой загрузчик',
+      alwaysEnabled: 'Всегда включено - репозиторий GitHub',
+      siteName: 'Название сайта',
+      urlTemplate: 'Шаблон URL (используйте {videoId} или {videoUrl})',
+      saveButton: 'Сохранить',
+      resetButton: 'Сбросить',
+
+      // Notifications
+      y2mateSettingsSaved: 'Настройки Y2Mate сохранены',
+      y2mateReset: 'Y2Mate сброшен к значениям по умолчанию',
+      xbuddySettingsSaved: 'Настройки 9xBuddy сохранены',
+      xbuddyReset: '9xBuddy сброшен к значениям по умолчанию',
+
+      // Tooltips
+      youtubeSettings: 'Настройки YouTube +',
+      takeScreenshot: 'Сделать скриншот',
+      downloadOptions: 'Варианты загрузки',
+
+      // Download sites
+      byYTDL: 'by YTDL',
+      copiedToClipboard: 'URL видео скопирован в буфер обмена!',
+      // End screen remover
+      endscreenHideLabel: 'Скрыть конечные экраны и карточки',
+      endscreenHideDesc: 'Удалять рекомендации в конце видео и информационные карточки',
+      // Generic small suffixes
+      removedSuffix: ' ({n} удалено)',
+    },
+  };
+
+  // Get browser language
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  // Translation function
+  function t(key) {
+    const lang = getLanguage();
+    return i18n[lang][key] || i18n.en[key] || key;
+  }
+
   /**
    * Error logging with module context
    * @param {string} module - Module name
@@ -384,6 +494,27 @@ const YouTubeUtils = (() => {
     intervals: new Set(),
     timeouts: new Set(),
     animationFrames: new Set(),
+    cleanupFunctions: new Set(),
+
+    /**
+     * Register a generic cleanup function
+     * @param {Function} fn - Cleanup function to call during cleanup
+     * @returns {Function} The registered function
+     */
+    register: fn => {
+      if (typeof fn === 'function') {
+        cleanupManager.cleanupFunctions.add(fn);
+      }
+      return fn;
+    },
+
+    /**
+     * Unregister a specific cleanup function
+     * @param {Function} fn - Function to unregister
+     */
+    unregister: fn => {
+      cleanupManager.cleanupFunctions.delete(fn);
+    },
 
     /**
      * Register MutationObserver for cleanup
@@ -507,6 +638,16 @@ const YouTubeUtils = (() => {
      * Cleanup all registered resources
      */
     cleanup: () => {
+      // Call all registered cleanup functions
+      cleanupManager.cleanupFunctions.forEach(fn => {
+        try {
+          fn();
+        } catch (e) {
+          logError('Cleanup', 'Cleanup function failed', e);
+        }
+      });
+      cleanupManager.cleanupFunctions.clear();
+
       // Disconnect all observers
       cleanupManager.observers.forEach(obs => {
         try {
@@ -786,6 +927,11 @@ const YouTubeUtils = (() => {
         document.body.appendChild(notification);
         this.activeNotifications.add(notification);
 
+        // Apply entry animation from bottom
+        try {
+          notification.style.animation = 'slideInFromBottom 0.38s ease-out forwards';
+        } catch {}
+
         // Auto-dismiss
         if (duration > 0) {
           const timeoutId = setTimeout(() => this.remove(notification), duration);
@@ -813,18 +959,26 @@ const YouTubeUtils = (() => {
       if (!notification || !notification.isConnected) return;
 
       try {
-        notification.style.transform = 'translateY(100%)';
-        notification.style.opacity = '0';
-
-        const timeoutId = setTimeout(() => {
+        try {
+          notification.style.animation = 'slideOutToBottom 0.32s ease-in forwards';
+          const timeoutId = setTimeout(() => {
+            try {
+              notification.remove();
+              this.activeNotifications.delete(notification);
+            } catch (e) {
+              logError('NotificationManager', 'Failed to remove notification', e);
+            }
+          }, 340);
+          cleanupManager.registerTimeout(timeoutId);
+        } catch {
+          // Fallback: immediate removal
           try {
             notification.remove();
             this.activeNotifications.delete(notification);
           } catch (e) {
-            logError('NotificationManager', 'Failed to remove notification', e);
+            logError('NotificationManager', 'Failed to remove notification (fallback)', e);
           }
-        }, 300);
-        cleanupManager.registerTimeout(timeoutId);
+        }
       } catch (error) {
         logError('NotificationManager', 'Failed to animate notification removal', error);
         // Force remove
@@ -855,6 +1009,11 @@ const YouTubeUtils = (() => {
     @keyframes slideInFromBottom {
       from { transform: translateY(100%); opacity: 0; }
       to { transform: translateY(0); opacity: 1; }
+    }
+
+    @keyframes slideOutToBottom {
+      from { transform: translateY(0); opacity: 1; }
+      to { transform: translateY(100%); opacity: 0; }
     }
   `
   );
@@ -1006,6 +1165,7 @@ const YouTubeUtils = (() => {
     retryAsync,
     measurePerformance,
     measurePerformanceAsync,
+    t, // Translation function
   };
 })();
 
@@ -1021,11 +1181,11 @@ if (typeof window !== 'undefined') {
   } catch {}
 
   // Add initialization health check (non-intrusive)
-  console.log('[YouTube+ v2.0] Core utilities merged');
+  console.log('[YouTube+ v2.0.2] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.0',
+    version: '2.0.2',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1053,7 +1213,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.0 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.0.2 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1065,6 +1225,9 @@ if (typeof window !== 'undefined') {
 // YouTube enhancements module
 (function () {
   'use strict';
+
+  // Local reference to translation function
+  const t = YouTubeUtils.t;
 
   const YouTubeEnhancer = {
     // Speed control variables
@@ -1222,13 +1385,13 @@ if (typeof window !== 'undefined') {
         .speed-option-item{cursor:pointer!important;height:25px!important;line-height:25px!important;font-size:12px!important;text-align:center!important;transition:background-color .15s,color .15s;}
         .speed-option-active,.speed-option-item:hover{color:var(--yt-accent)!important;font-weight:bold!important;background:var(--yt-hover-bg)!important;}
         #speed-indicator{position:absolute!important;margin:auto!important;top:0!important;right:0!important;bottom:0!important;left:0!important;border-radius:24px!important;font-size:30px!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;z-index:99999!important;width:80px!important;height:80px!important;line-height:80px!important;text-align:center!important;display:none;box-shadow:var(--yt-glass-shadow);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);border:1px solid var(--yt-glass-border);}
-        .youtube-enhancer-notification{position:fixed;bottom:70px;left:50%;transform:translateX(-50%);background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:12px 24px;border-radius:var(--yt-radius-md);z-index:9999;transition:opacity .5s,transform .3s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);font-weight:500;}
+        .youtube-enhancer-notification{position:fixed;bottom:75px;right:50%;max-width:500px;width:auto;background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:8px 14px;font-size:13px;border-radius:var(--yt-radius-md);z-index:9999;transition:opacity .35s,transform .32s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur); -webkit-backdrop-filter:var(--yt-glass-blur);font-weight:500;box-sizing:border-box;display:flex;align-items:center;gap:10px;}
         .ytp-plus-settings-button{background:transparent;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:var(--yt-space-sm);margin-right:var(--yt-space-sm);border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background-color .2s,transform .2s;}
         .ytp-plus-settings-button svg{width:24px;height:24px;}
         .ytp-plus-settings-button:hover{background:var(--yt-hover-bg);transform:rotate(30deg);color:var(--yt-text-secondary);}
-        .ytp-plus-settings-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--yt-modal-bg);display:flex;align-items:center;justify-content:center;z-index:99999;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);animation:ytEnhanceFadeIn .25s ease-out;}
-        .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-lg);width:720px;max-width:90%;max-height:90vh;overflow:hidden;box-shadow:var(--yt-glass-shadow);animation:ytEnhanceScaleIn .3s cubic-bezier(.4,0,.2,1);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);border:1px solid var(--yt-glass-border);will-change:transform,opacity;display:flex;flex-direction:row;}
-        .ytp-plus-settings-sidebar{width:200px;background:var(--yt-header-bg);border-right:1px solid var(--yt-glass-border);display:flex;flex-direction:column;backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
+        .ytp-plus-settings-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:100000;backdrop-filter:blur(8px) saturate(140%);-webkit-backdrop-filter:blur(8px) saturate(140%);animation:ytEnhanceFadeIn .25s ease-out;}
+        .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:20px;width:760px;max-width:94%;max-height:90vh;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.45);animation:ytEnhanceScaleIn .28s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-glass-border);will-change:transform,opacity;display:flex;flex-direction:row}
+        .ytp-plus-settings-sidebar{width:240px;background:var(--yt-header-bg);border-right:1px solid var(--yt-glass-border);display:flex;flex-direction:column;backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
         .ytp-plus-settings-sidebar-header{padding:var(--yt-space-md) var(--yt-space-lg);border-bottom:1px solid var(--yt-glass-border);display:flex;justify-content:space-between;align-items:center;}
         .ytp-plus-settings-title{font-size:18px;font-weight:500;margin:0;color:var(--yt-text-primary);}
         .ytp-plus-settings-sidebar-close{padding:var(--yt-space-md) var(--yt-space-lg);display:flex;justify-content:flex-end;background:transparent;}
@@ -1272,8 +1435,7 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-nav{display:flex;flex-direction:row;padding:0;}
         .ytp-plus-settings-nav-item{white-space:nowrap;border-left:none;border-bottom:3px solid transparent;}
         .ytp-plus-settings-nav-item.active{border-left:none;border-bottom-color:var(--yt-accent);}
-        .ytp-plus-settings-item{padding:10px 12px;}
-        }
+        .ytp-plus-settings-item{padding:10px 12px;}}
         .ytp-plus-settings-section h1{margin:-95px 90px 8px;font-family:'Montserrat',sans-serif;font-size:52px;font-weight:600;color:transparent;-webkit-text-stroke-width:1px;-webkit-text-stroke-color:var(--yt-text-stroke);cursor:pointer;transition:color .2s;}
         .ytp-plus-settings-section h1:hover{color:var(--yt-accent);-webkit-text-stroke-width:1px;-webkit-text-stroke-color:transparent;}
         .download-options{position:fixed;background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-md);width:150px;z-index:99999;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);display:none;}
@@ -1294,6 +1456,8 @@ if (typeof window !== 'undefined') {
         .download-site-option .ytp-plus-settings-checkbox{margin:0;}
         .download-site-name{font-weight:600;color:var(--yt-text-primary);}
         .download-site-desc{font-size:12px;color:var(--yt-text-secondary);margin-top:2px;}
+          /* Ensure custom YouTube searchbox input backgrounds are transparent to match theme */
+  .ytSearchboxComponentInputBox { background: transparent !important; }
         `;
 
       // ✅ Use StyleManager instead of createElement('style')
@@ -1308,7 +1472,7 @@ if (typeof window !== 'undefined') {
           if (!this.getElement('.ytp-plus-settings-button')) {
             const settingsButton = document.createElement('div');
             settingsButton.className = 'ytp-plus-settings-button';
-            settingsButton.setAttribute('title', 'YouTube + Settings');
+            settingsButton.setAttribute('title', t('youtubeSettings'));
             settingsButton.innerHTML = `
                 <svg width="24" height="24" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M39.23,26a16.52,16.52,0,0,0,.14-2,16.52,16.52,0,0,0-.14-2l4.33-3.39a1,1,0,0,0,.25-1.31l-4.1-7.11a1,1,0,0,0-1.25-.44l-5.11,2.06a15.68,15.68,0,0,0-3.46-2l-.77-5.43a1,1,0,0,0-1-.86H19.9a1,1,0,0,0-1,.86l-.77,5.43a15.36,15.36,0,0,0-3.46,2L9.54,9.75a1,1,0,0,0-1.25.44L4.19,17.3a1,1,0,0,0,.25,1.31L8.76,22a16.66,16.66,0,0,0-.14,2,16.52,16.52,0,0,0,.14,2L4.44,29.39a1,1,0,0,0-.25,1.31l4.1,7.11a1,1,0,0,0,1.25.44l5.11-2.06a15.68,15.68,0,0,0,3.46,2l.77,5.43a1,1,0,0,0,1,.86h8.2a1,1,0,0,0,1-.86l.77-5.43a15.36,15.36,0,0,0,3.46-2l5.11,2.06a1,1,0,0,0,1.25-.44l4.1-7.11a1,1,0,0,0-.25-1.31ZM24,31.18A7.18,7.18,0,1,1,31.17,24,7.17,7.17,0,0,1,24,31.18Z"/>
@@ -1336,7 +1500,7 @@ if (typeof window !== 'undefined') {
           <div class="ytp-plus-settings-panel">
             <div class="ytp-plus-settings-sidebar">
               <div class="ytp-plus-settings-sidebar-header">
-                <h2 class="ytp-plus-settings-title">Settings</h2>                
+                <h2 class="ytp-plus-settings-title">${t('settingsTitle')}</h2>                
               </div>
               <div class="ytp-plus-settings-nav">
                 <div class="ytp-plus-settings-nav-item active" data-section="basic">
@@ -1345,7 +1509,7 @@ if (typeof window !== 'undefined') {
                     <circle cx="9" cy="9" r="2"/>
                     <path d="m21 15-3.086-3.086a2 2 0 0 0-1.414-.586H13l-2-2v3h6l3 3"/>
                   </svg>
-                  Basic
+                  ${t('basicTab')}
                 </div>
                 <div class="ytp-plus-settings-nav-item" data-section="advanced">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1353,26 +1517,26 @@ if (typeof window !== 'undefined') {
                     <path d="m12 1 0 6m0 6 0 6"/>
                     <path d="m17.5 6.5-4.5 4.5m0 0-4.5 4.5m9-9L12 12l5.5 5.5"/>
                   </svg>
-                  Advanced
+                  ${t('advancedTab')}
                 </div>
                 <div class="ytp-plus-settings-nav-item" data-section="experimental">
                   <svg width="64px" height="64px" viewBox="0 0 48 48" fill="none" xmlns="http://www.w3.org/2000/svg">
                     <path fill-rule="evenodd" clip-rule="evenodd" d="M18.019 4V15.0386L6.27437 39.3014C5.48686 40.9283 6.16731 42.8855 7.79421 43.673C8.23876 43.8882 8.72624 44 9.22013 44H38.7874C40.5949 44 42.0602 42.5347 42.0602 40.7273C42.0602 40.2348 41.949 39.7488 41.7351 39.3052L30.0282 15.0386V4H18.019Z" stroke="currentColor" stroke-width="4" stroke-linejoin="round"></path> <path d="M10.9604 29.9998C13.1241 31.3401 15.2893 32.0103 17.4559 32.0103C19.6226 32.0103 21.7908 31.3401 23.9605 29.9998C26.1088 28.6735 28.2664 28.0103 30.433 28.0103C32.5997 28.0103 34.7755 28.6735 36.9604 29.9998" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
                   </svg>
-                  Experimental
+                  ${t('experimentalTab')}
                 </div>
                 <div class="ytp-plus-settings-nav-item" data-section="about">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <circle cx="12" cy="12" r="10"/>
                     <path d="m9 12 2 2 4-4"/>
                   </svg>
-                  About
+                  ${t('aboutTab')}
                 </div>
               </div>
             </div>
             <div class="ytp-plus-settings-main">
               <div class="ytp-plus-settings-sidebar-close">
-                <button class="ytp-plus-settings-close" aria-label="Close">
+                <button class="ytp-plus-settings-close" aria-label="${t('closeButton')}">
                   <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                     <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
                   </svg>
@@ -1382,22 +1546,22 @@ if (typeof window !== 'undefined') {
                 <div class="ytp-plus-settings-section" data-section="basic">
                   <div class="ytp-plus-settings-item">
                     <div>
-                      <label class="ytp-plus-settings-item-label">Speed Control</label>
-                      <div class="ytp-plus-settings-item-description">Add speed control buttons to video player</div>
+                      <label class="ytp-plus-settings-item-label">${t('speedControl')}</label>
+                      <div class="ytp-plus-settings-item-description">${t('speedControlDesc')}</div>
                     </div>
                     <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableSpeedControl" ${this.settings.enableSpeedControl ? 'checked' : ''}>
                   </div>
                   <div class="ytp-plus-settings-item">
                     <div>
-                      <label class="ytp-plus-settings-item-label">Screenshot Button</label>
-                      <div class="ytp-plus-settings-item-description">Add screenshot capture button to video player</div>
+                      <label class="ytp-plus-settings-item-label">${t('screenshotButton')}</label>
+                      <div class="ytp-plus-settings-item-description">${t('screenshotButtonDesc')}</div>
                     </div>
                     <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableScreenshot" ${this.settings.enableScreenshot ? 'checked' : ''}>
                   </div>
                   <div class="ytp-plus-settings-item">
                     <div>
-                      <label class="ytp-plus-settings-item-label">Download Button</label>
-                      <div class="ytp-plus-settings-item-description">Add download button with multiple site options to video player</div>
+                      <label class="ytp-plus-settings-item-label">${t('downloadButton')}</label>
+                      <div class="ytp-plus-settings-item-description">${t('downloadButtonDesc')}</div>
                     </div>
                     <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableDownload" ${this.settings.enableDownload ? 'checked' : ''}>
                   </div>
@@ -1407,20 +1571,20 @@ if (typeof window !== 'undefined') {
                         <div class="download-site-header">
                           <div>
                             <div class="download-site-name">${this.settings.downloadSiteCustomization?.y2mate?.name || 'Y2Mate'}</div>
-                            <div class="download-site-desc">Use custom downloader</div>
+                            <div class="download-site-desc">${t('customDownloader')}</div>
                           </div>
                           <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="downloadSite_y2mate" ${this.settings.downloadSites?.y2mate ? 'checked' : ''}>
                         </div>
                         <div class="download-site-controls" style="display:${this.settings.downloadSites?.y2mate ? 'block' : 'none'};">
-                          <input type="text" placeholder="Site name" value="${this.settings.downloadSiteCustomization?.y2mate?.name || 'Y2Mate'}" 
+                          <input type="text" placeholder="${t('siteName')}" value="${this.settings.downloadSiteCustomization?.y2mate?.name || 'Y2Mate'}" 
                               data-site="y2mate" data-field="name" class="download-site-input" 
                               style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
-                          <input type="text" placeholder="URL template (use {videoId} or {videoUrl})" value="${this.settings.downloadSiteCustomization?.y2mate?.url || 'https://www.y2mate.com/youtube/{videoId}'}" 
+                          <input type="text" placeholder="${t('urlTemplate')}" value="${this.settings.downloadSiteCustomization?.y2mate?.url || 'https://www.y2mate.com/youtube/{videoId}'}" 
                             data-site="y2mate" data-field="url" class="download-site-input" 
                             style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
                           <div class="download-site-cta">
-                            <button class="glass-button" id="download-y2mate-save" style="padding:6px 10px;font-size:12px;">Save</button>
-                            <button class="glass-button" id="download-y2mate-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">Reset</button>
+                            <button class="glass-button" id="download-y2mate-save" style="padding:6px 10px;font-size:12px;">${t('saveButton')}</button>
+                            <button class="glass-button" id="download-y2mate-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">${t('resetButton')}</button>
                           </div>
                         </div>
                       </div>
@@ -1429,28 +1593,28 @@ if (typeof window !== 'undefined') {
                         <div class="download-site-header">
                           <div>
                             <div class="download-site-name">${this.settings.downloadSiteCustomization?.xbbuddy?.name || '9xbuddy'}</div>
-                            <div class="download-site-desc">Use custom downloader</div>
+                            <div class="download-site-desc">${t('customDownloader')}</div>
                           </div>
                           <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="downloadSite_xbbuddy" ${this.settings.downloadSites?.xbbuddy ? 'checked' : ''}>
                         </div>
                         <div class="download-site-controls" style="display:${this.settings.downloadSites?.xbbuddy ? 'block' : 'none'};">
-                          <input type="text" placeholder="Site name" value="${this.settings.downloadSiteCustomization?.xbbuddy?.name || '9xbuddy'}" 
+                          <input type="text" placeholder="${t('siteName')}" value="${this.settings.downloadSiteCustomization?.xbbuddy?.name || '9xbuddy'}" 
                             data-site="xbbuddy" data-field="name" class="download-site-input" 
                             style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
-                          <input type="text" placeholder="URL template (use {videoId} or {videoUrl})" value="${this.settings.downloadSiteCustomization?.xbbuddy?.url || 'https://9xbuddy.org/process?url={videoUrl}'}" 
+                          <input type="text" placeholder="${t('urlTemplate')}" value="${this.settings.downloadSiteCustomization?.xbbuddy?.url || 'https://9xbuddy.org/process?url={videoUrl}'}" 
                             data-site="xbbuddy" data-field="url" class="download-site-input" 
                             style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
                           <div class="download-site-cta">
-                            <button class="glass-button" id="download-xbbuddy-save" style="padding:6px 10px;font-size:12px;">Save</button>
-                            <button class="glass-button" id="download-xbbuddy-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">Reset</button>
+                            <button class="glass-button" id="download-xbbuddy-save" style="padding:6px 10px;font-size:12px;">${t('saveButton')}</button>
+                            <button class="glass-button" id="download-xbbuddy-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">${t('resetButton')}</button>
                           </div>
                         </div>
                       </div>
 
                       <div class="download-site-option" style="padding:4px 0;">
                         <div>
-                          <div class="download-site-name">by YTDL</div>
-                          <div class="download-site-desc">Always enabled - GitHub repository</div>
+                          <div class="download-site-name">${t('byYTDL')}</div>
+                          <div class="download-site-desc">${t('alwaysEnabled')}</div>
                         </div>
                         <button class="glass-button" id="open-ytdl-github" style="margin:0;padding:10px 14px;font-size:13px;">
                           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1478,7 +1642,7 @@ if (typeof window !== 'undefined') {
                 </div>
               </div>
               <div class="ytp-plus-footer">
-                <button class="ytp-plus-button ytp-plus-button-primary" id="ytp-plus-save-settings">Save Changes</button>
+                <button class="ytp-plus-button ytp-plus-button-primary" id="ytp-plus-save-settings">${t('saveChanges')}</button>
               </div>
             </div>
           </div>
@@ -1625,7 +1789,7 @@ if (typeof window !== 'undefined') {
         if (target.id === 'ytp-plus-save-settings') {
           this.saveSettings();
           modal.remove();
-          this.showNotification('Settings saved');
+          this.showNotification(t('settingsSaved'));
         }
         // Save specific Y2Mate customization
         if (target.id === 'download-y2mate-save') {
@@ -1668,7 +1832,7 @@ if (typeof window !== 'undefined') {
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
           }
-          this.showNotification('Y2Mate settings saved');
+          this.showNotification(t('y2mateSettingsSaved'));
         }
 
         // Reset Y2Mate to defaults
@@ -1717,7 +1881,7 @@ if (typeof window !== 'undefined') {
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
           }
-          this.showNotification('Y2Mate reset to defaults');
+          this.showNotification(t('y2mateReset'));
         }
 
         // Save specific 9xBuddy customization
@@ -1760,7 +1924,7 @@ if (typeof window !== 'undefined') {
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
           }
-          this.showNotification('9xBuddy settings saved');
+          this.showNotification(t('xbuddySettingsSaved'));
         }
 
         // Reset 9xBuddy to defaults
@@ -1808,7 +1972,7 @@ if (typeof window !== 'undefined') {
           } catch (err) {
             console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
           }
-          this.showNotification('9xBuddy reset to defaults');
+          this.showNotification(t('xbuddyReset'));
         }
       });
 
@@ -1898,7 +2062,7 @@ if (typeof window !== 'undefined') {
     addScreenshotButton(controls) {
       const button = document.createElement('button');
       button.className = 'ytp-button ytp-screenshot-button';
-      button.setAttribute('title', 'Take screenshot');
+      button.setAttribute('title', t('takeScreenshot'));
       button.innerHTML = `
           <svg width="24" height="24" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M19.83,8.77l-2.77,2.84H6.29A1.79,1.79,0,0,0,4.5,13.4V36.62a1.8,1.8,0,0,0,1.79,1.8H41.71a1.8,1.8,0,0,0,1.79-1.8V13.4a1.79,1.79,0,0,0-1.79-1.79H30.94L28.17,8.77Zm18.93,5.74a1.84,1.84,0,1,1,0,3.68A1.84,1.84,0,0,1,38.76,14.51ZM24,17.71a8.51,8.51,0,1,1-8.51,8.51A8.51,8.51,0,0,1,24,17.71Z"/>
@@ -1912,7 +2076,7 @@ if (typeof window !== 'undefined') {
       if (!this.settings.enableDownload) return;
       const button = document.createElement('div');
       button.className = 'ytp-button ytp-download-button';
-      button.setAttribute('title', 'Download options');
+      button.setAttribute('title', t('downloadOptions'));
       button.setAttribute('tabindex', '0');
       button.setAttribute('role', 'button');
       button.setAttribute('aria-haspopup', 'true');
@@ -1950,7 +2114,7 @@ if (typeof window !== 'undefined') {
             .writeText(videoUrl)
             .then(() => {
               // Show notification
-              YouTubeUtils.NotificationManager.show('URL скопирован в буфер обмена!', {
+              YouTubeUtils.NotificationManager.show(t('copiedToClipboard'), {
                 duration: 2000,
                 type: 'success',
               });
@@ -1963,7 +2127,7 @@ if (typeof window !== 'undefined') {
               input.select();
               document.execCommand('copy');
               document.body.removeChild(input);
-              YouTubeUtils.NotificationManager.show('URL скопирован в буфер обмена!', {
+              YouTubeUtils.NotificationManager.show(t('copiedToClipboard'), {
                 duration: 2000,
                 type: 'success',
               });

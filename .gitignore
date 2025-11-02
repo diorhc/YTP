@@ -25,4 +25,7 @@ coverage/
 # Environment
 .env
 .env.local
+
+# Misc
 docs/
+GREASYFORK_PUBLISH.md

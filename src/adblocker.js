@@ -2,6 +2,28 @@
 (function () {
   'use strict';
 
+  // Internationalization
+  const i18n = {
+    en: {
+      adBlocker: 'Ad Blocker',
+      adBlockerDescription: 'Skip ads and remove ad elements automatically',
+    },
+    ru: {
+      adBlocker: 'Блокировщик рекламы',
+      adBlockerDescription: 'Автоматически пропускать рекламу и удалять рекламные элементы',
+    },
+  };
+
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  function t(key) {
+    const lang = getLanguage();
+    return i18n[lang][key] || i18n.en[key] || key;
+  }
+
   /**
    * Ad blocking functionality for YouTube
    * @namespace AdBlocker
@@ -210,8 +232,8 @@
         item.className = 'ytp-plus-settings-item ab-settings';
         item.innerHTML = `
           <div>
-            <label class="ytp-plus-settings-item-label">Ad Blocker</label>
-            <div class="ytp-plus-settings-item-description">Skip ads and remove ad elements automatically</div>
+            <label class="ytp-plus-settings-item-label">${t('adBlocker')}</label>
+            <div class="ytp-plus-settings-item-description">${t('adBlockerDescription')}</div>
           </div>
           <input type="checkbox" class="ytp-plus-settings-checkbox" ${AdBlocker.config.enabled ? 'checked' : ''}>
         `;

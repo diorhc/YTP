@@ -2,15 +2,103 @@
 (function () {
   'use strict';
 
+  // Internationalization
+  const i18n = {
+    en: {
+      updateAvailableTitle: 'YouTube + Update Available',
+      version: 'Version',
+      newFeatures: 'New features and improvements',
+      installUpdate: 'Install Update',
+      later: 'Later',
+      enhancedExperience: 'Enhanced YouTube experience with powerful features',
+      currentVersion: 'Current Version',
+      lastChecked: 'Last checked',
+      latestAvailable: 'Latest available',
+      updateAvailable: 'Update Available',
+      installing: 'Installing...',
+      checkingForUpdates: 'Checking for updates...',
+      upToDate: 'Up to date',
+      checkForUpdates: 'Check for Updates',
+      autoCheckUpdates: 'Automatically check for updates',
+      manualInstallHint:
+        'Could not open update automatically. Download it manually from GreasyFork.',
+      updatePageFallback: 'Opening update page...',
+      // Time / small messages
+      never: 'Never',
+      justNow: 'Just now',
+      daysAgo: '{n}d ago',
+      hoursAgo: '{n}h ago',
+      minutesAgo: '{n}m ago',
+      updateAvailableMsg: 'Update {version} available!',
+      upToDateMsg: "You're using the latest version ({version})",
+      updateCheckFailed: 'Update check failed: {msg}',
+      dismiss: 'Dismiss',
+    },
+    ru: {
+      updateAvailableTitle: 'Доступно обновление YouTube +',
+      version: 'Версия',
+      newFeatures: 'Новые функции и улучшения',
+      installUpdate: 'Установить обновление',
+      later: 'Позже',
+      enhancedExperience: 'Расширенные возможности YouTube с мощными функциями',
+      currentVersion: 'Текущая версия',
+      lastChecked: 'Последняя проверка',
+      latestAvailable: 'Доступна версия',
+      updateAvailable: 'Доступно обновление',
+      installing: 'Установка...',
+      checkingForUpdates: 'Проверка обновлений...',
+      upToDate: 'Актуальная версия',
+      checkForUpdates: 'Проверить обновления',
+      autoCheckUpdates: 'Автоматически проверять обновления',
+      manualInstallHint:
+        'Не удалось открыть обновление автоматически. Загрузите его вручную с GreasyFork.',
+      updatePageFallback: 'Открываю страницу обновления...',
+      // Time / small messages
+      never: 'Никогда',
+      justNow: 'Только что',
+      daysAgo: '{n}д',
+      hoursAgo: '{n}ч',
+      minutesAgo: '{n}м',
+      updateAvailableMsg: 'Доступно обновление {version}!',
+      upToDateMsg: 'Вы используете последнюю версию ({version})',
+      updateCheckFailed: 'Проверка обновлений не удалась: {msg}',
+      dismiss: 'Закрыть',
+    },
+  };
+
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  function t(key) {
+    const lang = getLanguage();
+    return i18n[lang][key] || i18n.en[key] || key;
+  }
+
   const UPDATE_CONFIG = {
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.0',
+    currentVersion: '2.0.2',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
   };
+
+  const windowRef = typeof window !== 'undefined' ? window : null;
+  const GM_namespace = windowRef?.GM || null;
+  const GM_info_safe = windowRef?.GM_info || null;
+  const GM_openInTab_safe = (() => {
+    if (!windowRef) return null;
+    if (typeof windowRef.GM_openInTab === 'function') return windowRef.GM_openInTab.bind(windowRef);
+    if (GM_namespace?.openInTab) return GM_namespace.openInTab.bind(GM_namespace);
+    return null;
+  })();
+
+  if (GM_info_safe?.script?.version) {
+    UPDATE_CONFIG.currentVersion = GM_info_safe.script.version;
+  }
 
   const updateState = {
     lastCheck: 0,
@@ -19,6 +107,34 @@
     checkInProgress: false,
     updateDetails: null,
   };
+
+  // Pluralization helper for time units (available to this module)
+  function pluralizeTime(n, unit) {
+    const lang = getLanguage();
+    const num = Math.abs(Number(n)) || 0;
+
+    if (lang === 'ru') {
+      const forms = {
+        day: ['день', 'дня', 'дней'],
+        hour: ['час', 'часа', 'часов'],
+        minute: ['минута', 'минуты', 'минут'],
+      }[unit];
+      const mod10 = num % 10;
+      const mod100 = num % 100;
+      let idx = 2;
+      if (mod10 === 1 && mod100 !== 11) idx = 0;
+      else if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) idx = 1;
+      return `${num} ${forms[idx]}`;
+    }
+
+    // English (default)
+    const enForms = {
+      day: ['day', 'days'],
+      hour: ['hour', 'hours'],
+      minute: ['minute', 'minutes'],
+    }[unit];
+    return `${num} ${num === 1 ? enForms[0] : enForms[1]}`;
+  }
 
   // Optimized utilities
   const utils = {
@@ -74,21 +190,73 @@
     },
 
     formatTimeAgo: timestamp => {
-      if (!timestamp) return 'Never';
+      if (!timestamp) return t('never');
       const diffMs = Date.now() - timestamp;
       const diffDays = Math.floor(diffMs / 86400000);
       const diffHours = Math.floor(diffMs / 3600000);
       const diffMinutes = Math.floor(diffMs / 60000);
 
-      if (diffDays > 0) return `${diffDays}d ago`;
-      if (diffHours > 0) return `${diffHours}h ago`;
-      if (diffMinutes > 0) return `${diffMinutes}m ago`;
-      return 'Just now';
+      if (diffDays > 0) return pluralizeTime(diffDays, 'day');
+      if (diffHours > 0) return pluralizeTime(diffHours, 'hour');
+      if (diffMinutes > 0) return pluralizeTime(diffMinutes, 'minute');
+      return t('justNow');
     },
 
     showNotification: (text, type = 'info', duration = 3000) => {
-      YouTubeUtils.NotificationManager.show(text, { type, duration });
+      try {
+        YouTubeUtils.NotificationManager.show(text, { type, duration });
+      } catch (error) {
+        console.log(`[YouTube+] ${type.toUpperCase()}:`, text, error);
+      }
     },
+  };
+
+  const installUpdate = (details = updateState.updateDetails) => {
+    const downloadUrl = details?.downloadUrl || UPDATE_CONFIG.autoInstallUrl;
+    if (!downloadUrl) {
+      console.warn('[YouTube+] No download URL provided for update installation');
+      return false;
+    }
+
+    const markDismissed = () => {
+      if (details?.version) {
+        try {
+          sessionStorage.setItem('update_dismissed', details.version);
+        } catch (err) {
+          console.warn('[YouTube+] Failed to persist dismissal state:', err);
+        }
+      }
+    };
+
+    try {
+      if (GM_openInTab_safe) {
+        GM_openInTab_safe(downloadUrl, { active: true, insert: true, setParent: true });
+        markDismissed();
+        return true;
+      }
+    } catch (gmError) {
+      console.error('[YouTube+] GM_openInTab update install failed:', gmError);
+    }
+
+    try {
+      const popup = window.open(downloadUrl, '_blank', 'noopener');
+      if (popup) {
+        markDismissed();
+        return true;
+      }
+    } catch (popupError) {
+      console.error('[YouTube+] window.open update install failed:', popupError);
+    }
+
+    try {
+      window.location.assign(downloadUrl);
+      markDismissed();
+      return true;
+    } catch (navigationError) {
+      console.error('[YouTube+] Navigation to update URL failed:', navigationError);
+    }
+
+    return false;
   };
 
   // Enhanced update notification
@@ -101,11 +269,11 @@
         color: white; padding: 16px 20px; border-radius: 12px;
         box-shadow: 0 8px 32px rgba(255, 69, 0, 0.4); backdrop-filter: blur(16px);
         border: 1px solid rgba(255, 255, 255, 0.2);
-        animation: slideInFromRight 0.4s ease-out;
+  animation: slideInFromBottom 0.4s ease-out;
       `;
 
     notification.innerHTML = `
-        <div style="display: flex; align-items: flex-start; gap: 12px;">
+        <div style="position: relative; display: flex; align-items: flex-start; gap: 12px;">
           <div style="background: rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 8px; flex-shrink: 0;">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 12c0 1-1 2-1 2s-1-1-1-2 1-2 1-2 1 1 1 2z"/>
@@ -113,28 +281,43 @@
             </svg>
           </div>
           <div style="flex: 1; min-width: 0;">
-            <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">YouTube + Update Available</div>
+            <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">${t('updateAvailableTitle')}</div>
             <div style="font-size: 13px; opacity: 0.9; margin-bottom: 12px;">
-              Version ${updateDetails.version} • ${updateDetails.description || 'New features and improvements'}
+              ${t('version')} ${updateDetails.version} • ${updateDetails.description || t('newFeatures')}
             </div>
             <div style="display: flex; gap: 8px;">
               <button id="update-install-btn" style="
                 background: rgba(255, 255, 255, 0.9); color: #ff4500; border: none;
                 padding: 8px 16px; border-radius: 6px; cursor: pointer;
                 font-size: 13px; font-weight: 600; transition: all 0.2s ease;
-              ">Install Update</button>
+              ">${t('installUpdate')}</button>
               <button id="update-dismiss-btn" style="
                 background: rgba(255, 255, 255, 0.1); color: white;
                 border: 1px solid rgba(255, 255, 255, 0.3); padding: 8px 12px;
                 border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s ease;
-              ">Later</button>
+              ">${t('later')}</button>
             </div>
           </div>
+          <button id="update-close-btn" aria-label="${t('dismiss')}" style="
+            position: absolute; top: -6px; right: -6px; width: 24px; height: 24px;
+            border-radius: 50%; border: none; cursor: pointer; display: flex;
+            align-items: center; justify-content: center; font-size: 16px; line-height: 1;
+            background: rgba(255, 255, 255, 0.15); color: white; transition: background 0.2s ease;
+          ">&times;</button>
         </div>
         <style>
           @keyframes slideInFromBottom {
             from { transform: translateY(100%); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
+          }
+
+          @keyframes slideOutToBottom {
+            from { transform: translateY(0); opacity: 1; }
+            to { transform: translateY(100%); opacity: 0; }
+          }
+
+          #update-close-btn:hover {
+            background: rgba(255, 255, 255, 0.25);
           }
         </style>
       `;
@@ -142,34 +325,45 @@
     document.body.appendChild(notification);
 
     const removeNotification = () => {
-      notification.style.animation = 'slideInFromRight 0.3s ease-in reverse';
-      setTimeout(() => notification.remove(), 300);
+      // use explicit slide-out animation so it exits downward like the entry
+      notification.style.animation = 'slideOutToBottom 0.35s ease-in forwards';
+      setTimeout(() => notification.remove(), 360);
     };
 
     // Event handlers
-    notification.querySelector('#update-install-btn').addEventListener('click', () => {
-      try {
-        window.open(updateDetails.downloadUrl, '_blank');
-        sessionStorage.setItem('update_dismissed', updateDetails.version);
-        removeNotification();
-        setTimeout(
-          () =>
-            utils.showNotification('Update started! Follow your userscript manager instructions.'),
-          500
-        );
-      } catch (error) {
-        console.error('Error installing update:', error);
-        window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
-        removeNotification();
-      }
-    });
+    const installBtn = notification.querySelector('#update-install-btn');
+    if (installBtn) {
+      installBtn.addEventListener('click', () => {
+        const success = installUpdate(updateDetails);
+        if (success) {
+          removeNotification();
+          setTimeout(() => utils.showNotification(t('installing')), 500);
+        } else {
+          utils.showNotification(t('manualInstallHint'), 'error', 5000);
+          window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
+        }
+      });
+    }
 
-    notification.querySelector('#update-dismiss-btn').addEventListener('click', () => {
-      sessionStorage.setItem('update_dismissed', updateDetails.version);
-      removeNotification();
-    });
+    const dismissBtn = notification.querySelector('#update-dismiss-btn');
+    if (dismissBtn) {
+      dismissBtn.addEventListener('click', () => {
+        if (updateDetails?.version) {
+          sessionStorage.setItem('update_dismissed', updateDetails.version);
+        }
+        removeNotification();
+      });
+    }
 
-    notification.querySelector('#update-close-btn').addEventListener('click', removeNotification);
+    const closeBtn = notification.querySelector('#update-close-btn');
+    if (closeBtn) {
+      closeBtn.addEventListener('click', () => {
+        if (updateDetails?.version) {
+          sessionStorage.setItem('update_dismissed', updateDetails.version);
+        }
+        removeNotification();
+      });
+    }
 
     // Auto-dismiss
     setTimeout(() => {
@@ -222,18 +416,30 @@
           showUpdateNotification(updateDetails);
           console.log(`YouTube + Update available: ${updateDetails.version}`);
         } else if (force) {
-          utils.showNotification(
-            updateState.updateAvailable
-              ? `Update ${updateDetails.version} available!`
-              : `You're using the latest version (${UPDATE_CONFIG.currentVersion})`
-          );
+          if (updateState.updateAvailable) {
+            utils.showNotification(
+              t('updateAvailableMsg').replace('{version}', updateDetails.version)
+            );
+          } else {
+            utils.showNotification(
+              t('upToDateMsg').replace('{version}', UPDATE_CONFIG.currentVersion)
+            );
+          }
         }
 
         utils.saveSettings();
       }
     } catch (error) {
-      console.error('Update check failed:', error);
-      if (force) utils.showNotification(`Update check failed: ${error.message}`, 'error', 4000);
+      if (typeof console !== 'undefined' && console.error) {
+        console.error('Update check failed:', error);
+      }
+      if (force) {
+        utils.showNotification(
+          t('updateCheckFailed').replace('{msg}', error.message),
+          'error',
+          4000
+        );
+      }
     } finally {
       updateState.checkInProgress = false;
     }
@@ -260,7 +466,7 @@
     updateContainer.innerHTML = `
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
           <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--yt-spec-text-primary);">
-            Enhanced YouTube experience with powerful features
+            ${t('enhancedExperience')}
           </h3>
         </div>
         
@@ -268,16 +474,16 @@
                     padding: 16px; background: rgba(255, 255, 255, 0.03); border-radius: 10px; margin-bottom: 16px;">
           <div>
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-              <span style="font-size: 14px; font-weight: 600; color: var(--yt-spec-text-primary);">Current Version</span>
+              <span style="font-size: 14px; font-weight: 600; color: var(--yt-spec-text-primary);">${t('currentVersion')}</span>
               <span style="font-size: 13px; font-weight: 600; color: var(--yt-spec-text-primary); 
                            padding: 3px 10px; background: rgba(255, 255, 255, 0.1); border-radius: 12px; 
                            border: 1px solid rgba(255, 255, 255, 0.2);">${UPDATE_CONFIG.currentVersion}</span>
             </div>
             <div style="font-size: 12px; color: var(--yt-spec-text-secondary);">
-              Last checked: <span style="font-weight: 500;">${lastCheckTime}</span>
+              ${t('lastChecked')}: <span style="font-weight: 500;">${lastCheckTime}</span>
               ${
                 updateState.lastVersion && updateState.lastVersion !== UPDATE_CONFIG.currentVersion
-                  ? `<br>Latest available: <span style="color: #ff6666; font-weight: 600;">${updateState.lastVersion}</span>`
+                  ? `<br>${t('latestAvailable')}: <span style="color: #ff6666; font-weight: 600;">${updateState.lastVersion}</span>`
                   : ''
               }
             </div>
@@ -292,13 +498,13 @@
                           border: 1px solid rgba(255, 68, 68, 0.4); border-radius: 20px;">
                 <div style="width: 6px; height: 6px; background: #ff4444; border-radius: 50%; animation: pulse 2s infinite;"></div>
                 <span style="font-size: 11px; color: #ff6666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
-                  Update Available
+                  ${t('updateAvailable')}
                 </span>
               </div>
               <button id="install-update-btn" style="background: linear-gradient(135deg, #ff4500, #ff6b35); 
                       color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; 
                       font-size: 12px; font-weight: 600; transition: all 0.3s ease; 
-                      box-shadow: 0 4px 12px rgba(255, 69, 0, 0.3);">Install Now</button>
+                      box-shadow: 0 4px 12px rgba(255, 69, 0, 0.3);">${t('installUpdate')}</button>
             </div>
           `
               : `
@@ -307,7 +513,7 @@
                         border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 20px;">
               <div style="width: 6px; height: 6px; background: #22c55e; border-radius: 50%;"></div>
               <span style="font-size: 11px; color: #22c55e; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
-                Up to Date
+                ${t('upToDate')}
               </span>
             </div>
           `
@@ -320,7 +526,7 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
               <path d="M21.5 2v6h-6M2.5 22v-6h6M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1"/>
             </svg>
-            Check for Updates
+            ${t('checkForUpdates')}
           </button>
           <button class="ytp-plus-button" id="open-update-page" 
                   style="padding: 12px 16px; font-size: 13px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);">
@@ -355,7 +561,7 @@
                style="margin-right: 6px; animation: spin 1s linear infinite;">
             <path d="M21.5 2v6h-6M2.5 22v-6h6M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1"/>
           </svg>
-          Checking...
+          ${t('checkingForUpdates')}
         `;
       button.disabled = true;
 
@@ -368,13 +574,17 @@
     });
 
     attachClickHandler('install-update-btn', () => {
-      const url =
-        updateState.updateDetails?.downloadUrl ||
-        'https://greasyfork.org/en/scripts/537017-youtube';
-      window.open(url, '_blank');
+      const success = installUpdate();
+      if (success) {
+        utils.showNotification(t('installing'));
+      } else {
+        utils.showNotification(t('manualInstallHint'), 'error', 5000);
+        window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
+      }
     });
 
     attachClickHandler('open-update-page', () => {
+      utils.showNotification(t('updatePageFallback'));
       window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
     });
   };
@@ -445,12 +655,14 @@
       capture: true,
     });
 
-    console.log('YouTube + Update Checker initialized', {
-      version: UPDATE_CONFIG.currentVersion,
-      enabled: UPDATE_CONFIG.enabled,
-      lastCheck: new Date(updateState.lastCheck).toLocaleString(),
-      updateAvailable: updateState.updateAvailable,
-    });
+    if (typeof console !== 'undefined' && console.log) {
+      console.log('YouTube + Update Checker initialized', {
+        version: UPDATE_CONFIG.currentVersion,
+        enabled: UPDATE_CONFIG.enabled,
+        lastCheck: new Date(updateState.lastCheck).toLocaleString(),
+        updateAvailable: updateState.updateAvailable,
+      });
+    }
   };
 
   // Start

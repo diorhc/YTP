@@ -6,12 +6,12 @@
   "basic.js",
   "enhanced.js",
   "adblocker.js",
-  "count.js",
   "pip.js",  
   "timecode.js",
+  "playlist-search.js",
+  "thumbnail.js",
   "shorts.js",
   "stats.js",
-  "thumbnail.js",
   "comment.js",
   "update.js"
 ]

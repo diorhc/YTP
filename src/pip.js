@@ -2,6 +2,40 @@
 (function () {
   'use strict';
 
+  // Internationalization
+  const i18n = {
+    en: {
+      pipTitle: 'Picture-in-Picture',
+      pipDescription: 'Add Picture-in-Picture functionality with keyboard shortcut',
+      pipShortcutTitle: 'PiP Keyboard Shortcut',
+      pipShortcutDescription: 'Customize keyboard combination to toggle PiP mode',
+      none: 'None',
+      ctrl: 'Ctrl',
+      alt: 'Alt',
+      shift: 'Shift',
+    },
+    ru: {
+      pipTitle: 'Картинка в картинке',
+      pipDescription: 'Добавляет функцию «Картинка в картинке» с клавишной комбинацией',
+      pipShortcutTitle: 'Клавишная комбинация PiP',
+      pipShortcutDescription: 'Настройка клавиатурной комбинации для переключения режима PiP',
+      none: 'Нет',
+      ctrl: 'Ctrl',
+      alt: 'Alt',
+      shift: 'Shift',
+    },
+  };
+
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  function t(key) {
+    const lang = getLanguage();
+    return i18n[lang][key] || i18n.en[key] || key;
+  }
+
   /**
    * PiP settings configuration
    * @type {Object}
@@ -197,8 +231,8 @@
     enableItem.className = 'ytp-plus-settings-item pip-settings-item';
     enableItem.innerHTML = `
         <div>
-          <label class="ytp-plus-settings-item-label">Picture-in-Picture</label>
-          <div class="ytp-plus-settings-item-description">Add Picture-in-Picture functionality with keyboard shortcut</div>
+          <label class="ytp-plus-settings-item-label">${t('pipTitle')}</label>
+          <div class="ytp-plus-settings-item-description">${t('pipDescription')}</div>
         </div>
         <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enablePiP" id="pip-enable-checkbox" ${pipSettings.enabled ? 'checked' : ''}>
       `;
@@ -229,8 +263,8 @@
 
     shortcutItem.innerHTML = `
         <div>
-          <label class="ytp-plus-settings-item-label">PiP Keyboard Shortcut</label>
-          <div class="ytp-plus-settings-item-description">Customize keyboard combination to toggle PiP mode</div>
+          <label class="ytp-plus-settings-item-label">${t('pipShortcutTitle')}</label>
+          <div class="ytp-plus-settings-item-description">${t('pipShortcutDescription')}</div>
         </div>
         <div class="pip-shortcut-editor">
           <select id="pip-modifier-combo">
@@ -248,9 +282,12 @@
                 v =>
                   `<option value="${v}" ${v === modifierValue ? 'selected' : ''}>${
                     v === 'none'
-                      ? 'None'
+                      ? t('none')
                       : v
                           .replace(/\+/g, '+')
+                          .split('+')
+                          .map(k => t(k.toLowerCase()))
+                          .join('+')
                           .split('+')
                           .map(k => k.charAt(0).toUpperCase() + k.slice(1))
                           .join('+')

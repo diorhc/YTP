@@ -1,6 +1,30 @@
 (function () {
   'use strict';
 
+  // Internationalization
+  const i18n = {
+    en: {
+      close: 'Close',
+      thumbnailPreview: 'Thumbnail Preview',
+      clickToOpen: 'Click to open in new tab',
+    },
+    ru: {
+      close: 'Закрыть',
+      thumbnailPreview: 'Предпросмотр миниатюры',
+      clickToOpen: 'Нажмите, чтобы открыть в новой вкладке',
+    },
+  };
+
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  function t(key) {
+    const lang = getLanguage();
+    return i18n[lang][key] || i18n.en[key] || key;
+  }
+
   function extractVideoId(thumbnailSrc) {
     const match = thumbnailSrc.match(/\/vi\/([^\/]+)\//);
     return match ? match[1] : null;
@@ -75,7 +99,7 @@
                     to { transform: rotate(360deg); }
                 }
             `;
-      document.head.appendChild(style);
+      (document.head || document.documentElement).appendChild(style);
     }
 
     return spinner;
@@ -131,55 +155,9 @@
   (function addThumbnailStyles() {
     try {
       const css = `
-    :root {
-        --thumbnail-btn-bg-light: rgba(255, 255, 255, 0.85);
-        --thumbnail-btn-bg-dark: rgba(0, 0, 0, 0.7);
-        --thumbnail-btn-hover-bg-light: rgba(255, 255, 255, 1);
-        --thumbnail-btn-hover-bg-dark: rgba(0, 0, 0, 0.9);
-        --thumbnail-btn-color-light: #222;
-        --thumbnail-btn-color-dark: #fff;
-        --thumbnail-modal-bg-light: rgba(255, 255, 255, 0.95);
-        --thumbnail-modal-bg-dark: rgba(34, 34, 34, 0.85);
-        --thumbnail-modal-title-light: #222;
-        --thumbnail-modal-title-dark: #fff;
-        --thumbnail-modal-btn-bg-light: rgba(0, 0, 0, 0.08);
-        --thumbnail-modal-btn-bg-dark: rgba(255, 255, 255, 0.08);
-        --thumbnail-modal-btn-hover-bg-light: rgba(0, 0, 0, 0.18);
-        --thumbnail-modal-btn-hover-bg-dark: rgba(255, 255, 255, 0.18);
-        --thumbnail-modal-btn-color-light: #222;
-        --thumbnail-modal-btn-color-dark: #fff;
-        --thumbnail-modal-btn-hover-color-light: #ff4444;
-        --thumbnail-modal-btn-hover-color-dark: #ff4444;
-        --thumbnail-glass-blur: blur(18px) saturate(180%);
-        --thumbnail-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.2);
-        --thumbnail-glass-border: rgba(255, 255, 255, 0.2);
-    }
-
-    html[dark],
-    body[dark] {
-        --thumbnail-btn-bg: var(--thumbnail-btn-bg-dark);
-        --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-dark);
-        --thumbnail-btn-color: var(--thumbnail-btn-color-dark);
-        --thumbnail-modal-bg: var(--thumbnail-modal-bg-dark);
-        --thumbnail-modal-title: var(--thumbnail-modal-title-dark);
-        --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-dark);
-        --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-dark);
-        --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-dark);
-        --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-dark);
-    }
-
-    html:not([dark]) {
-        --thumbnail-btn-bg: var(--thumbnail-btn-bg-light);
-        --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-light);
-        --thumbnail-btn-color: var(--thumbnail-btn-color-light);
-        --thumbnail-modal-bg: var(--thumbnail-modal-bg-light);
-        --thumbnail-modal-title: var(--thumbnail-modal-title-light);
-        --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-light);
-        --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-light);
-        --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-light);
-        --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-light);
-    }
-
+    :root { --thumbnail-btn-bg-light: rgba(255, 255, 255, 0.85); --thumbnail-btn-bg-dark: rgba(0, 0, 0, 0.7); --thumbnail-btn-hover-bg-light: rgba(255, 255, 255, 1); --thumbnail-btn-hover-bg-dark: rgba(0, 0, 0, 0.9); --thumbnail-btn-color-light: #222; --thumbnail-btn-color-dark: #fff; --thumbnail-modal-bg-light: rgba(255, 255, 255, 0.95); --thumbnail-modal-bg-dark: rgba(34, 34, 34, 0.85); --thumbnail-modal-title-light: #222; --thumbnail-modal-title-dark: #fff; --thumbnail-modal-btn-bg-light: rgba(0, 0, 0, 0.08); --thumbnail-modal-btn-bg-dark: rgba(255, 255, 255, 0.08); --thumbnail-modal-btn-hover-bg-light: rgba(0, 0, 0, 0.18); --thumbnail-modal-btn-hover-bg-dark: rgba(255, 255, 255, 0.18); --thumbnail-modal-btn-color-light: #222; --thumbnail-modal-btn-color-dark: #fff; --thumbnail-modal-btn-hover-color-light: #ff4444; --thumbnail-modal-btn-hover-color-dark: #ff4444; --thumbnail-glass-blur: blur(18px) saturate(180%); --thumbnail-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); --thumbnail-glass-border: rgba(255, 255, 255, 0.2); }
+    html[dark], body[dark] { --thumbnail-btn-bg: var(--thumbnail-btn-bg-dark); --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-dark); --thumbnail-btn-color: var(--thumbnail-btn-color-dark); --thumbnail-modal-bg: var(--thumbnail-modal-bg-dark); --thumbnail-modal-title: var(--thumbnail-modal-title-dark); --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-dark); --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-dark); --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-dark); --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-dark); }
+    html:not([dark]) { --thumbnail-btn-bg: var(--thumbnail-btn-bg-light); --thumbnail-btn-bg: var(--thumbnail-btn-bg-light); --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-light); --thumbnail-btn-color: var(--thumbnail-btn-color-light); --thumbnail-modal-bg: var(--thumbnail-modal-bg-light); --thumbnail-modal-title: var(--thumbnail-modal-title-light); --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-light); --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-light); --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-light); --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-light); }
     .thumbnail-overlay-container { position: absolute; bottom: 8px; left: 8px; z-index: 9999; opacity: 0; transition: opacity 0.2s ease; }
     .thumbnail-overlay-button { width: 28px; height: 28px; background: var(--thumbnail-btn-bg); border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--thumbnail-btn-color); position: relative; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
     .thumbnail-overlay-button:hover { background: var(--thumbnail-btn-hover-bg); }
@@ -190,12 +168,12 @@
     .thumbnailPreview-button { position: absolute; bottom: 10px; left: 5px; background-color: var(--thumbnail-btn-bg); color: var(--thumbnail-btn-color); border: none; border-radius: 6px; padding: 3px; font-size: 18px; cursor: pointer; z-index: 2000; opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
     .thumbnailPreview-container { position: relative; }
     .thumbnailPreview-container:hover .thumbnailPreview-button { opacity: 1; }
-    .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.7); z-index: 99999; display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.2s; backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); }
-    .thumbnail-modal-content { background: var(--thumbnail-modal-bg); border-radius: 18px; box-shadow: var(--thumbnail-glass-shadow); max-width: 75vw; max-height: 90vh; overflow: auto; position: relative; padding: 24px 0 16px 0; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.2s; border: 1px solid var(--thumbnail-glass-border); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); }
+  .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 100000; display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.22s cubic-bezier(.4,0,.2,1); backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%); }
+  .thumbnail-modal-content { background: var(--thumbnail-modal-bg); border-radius: 20px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); max-width: 78vw; max-height: 90vh; overflow: auto; position: relative; padding: 20px 0 0 0; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.22s cubic-bezier(.4,0,.2,1); border: 1.5px solid var(--thumbnail-glass-border); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%); }
     .thumbnail-modal-close { position: absolute; top: 12px; right: 18px; background: transparent; color: #fff; border: none; font-size: 28px; line-height: 1; width: 36px; height: 36px; cursor: pointer; transition: background 0.2s; z-index: 2; display: flex; align-items: center; justify-content: center; }
     .thumbnail-modal-close:hover { color: #ff4444; transform: rotate(90deg) scale(1.25); }
-    .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; margin-bottom: 12px; box-shadow: var(--thumbnail-glass-shadow); background: #222; border: 1px solid var(--thumbnail-glass-border); }
-    .thumbnail-modal-options { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 8px; justify-content: center; }
+    .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; box-shadow: var(--thumbnail-glass-shadow); background: #222; border: 1px solid var(--thumbnail-glass-border); }
+    .thumbnail-modal-options { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
     .thumbnail-modal-option-btn { background: var(--thumbnail-modal-btn-bg); color: var(--thumbnail-modal-btn-color); border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s; margin-bottom: 6px; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
     .thumbnail-modal-option-btn:hover { background: var(--thumbnail-modal-btn-hover-bg); color: var(--thumbnail-modal-btn-hover-color); }
     .thumbnail-modal-title { font-size: 18px; font-weight: 600; color: var(--thumbnail-modal-title); margin-bottom: 10px; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,0.15); }
@@ -213,7 +191,7 @@
         const s = document.createElement('style');
         s.id = 'ytplus-thumbnail-styles';
         s.textContent = css;
-        document.head.appendChild(s);
+        (document.head || document.documentElement).appendChild(s);
       }
     } catch {
       // fallback: inject minimal styles
@@ -221,7 +199,7 @@
         const s = document.createElement('style');
         s.id = 'ytplus-thumbnail-styles';
         s.textContent = '.thumbnail-modal-img{max-width:72vw;max-height:70vh;}';
-        document.head.appendChild(s);
+        (document.head || document.documentElement).appendChild(s);
       }
     }
   })();
@@ -240,7 +218,7 @@
     const closeBtn = document.createElement('button');
     closeBtn.className = 'thumbnail-modal-close';
     closeBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `;
-    closeBtn.title = 'Close';
+    closeBtn.title = t('close');
     closeBtn.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
@@ -249,13 +227,13 @@
 
     const title = document.createElement('div');
     title.className = 'thumbnail-modal-title';
-    title.textContent = titleText || 'Thumbnail Preview';
+    title.textContent = titleText || t('thumbnailPreview');
 
     const img = document.createElement('img');
     img.className = 'thumbnail-modal-img';
     img.src = url;
-    img.alt = 'Thumbnail Preview';
-    img.title = 'Click to open in new tab';
+    img.alt = t('thumbnailPreview');
+    img.title = t('clickToOpen');
     img.style.cursor = 'pointer';
     img.addEventListener('click', () => window.open(img.src, '_blank'));
 
@@ -342,8 +320,8 @@
         // override position/size for player overlay (top-left)
         overlay.style.cssText = `
                     position: absolute;
-                    top: 8px;
-                    left: 8px;
+                    top: 10%;
+                    right: 8px;
                     width: 36px;
                     height: 36px;
                     display: flex;

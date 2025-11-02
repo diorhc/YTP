@@ -2,16 +2,77 @@
 (function () {
   'use strict';
 
+  // Internationalization (i18n) system
+  const i18n = {
+    en: {
+      seekBackward: 'Seek backward 5s',
+      seekForward: 'Seek forward 5s',
+      volumeUp: 'Volume up',
+      volumeDown: 'Volume down',
+      muteUnmute: 'Mute/Unmute',
+      showHideHelp: 'Show/Hide help',
+      keyboardShortcuts: 'Keyboard Shortcuts',
+      closeButton: 'Close',
+      resetAll: 'Reset All',
+      resetAllConfirm: 'Reset all shortcuts?',
+      shortcutsReset: 'Shortcuts reset',
+      editShortcut: 'Edit',
+      pressAnyKey: 'Press any key to set as new shortcut',
+      current: 'Current',
+      cancel: 'Cancel',
+      keyAlreadyUsed: 'Key "{key}" already used',
+      shortcutUpdated: 'Shortcut updated',
+    },
+    ru: {
+      seekBackward: 'Перемотка назад 5с',
+      seekForward: 'Перемотка вперёд 5с',
+      volumeUp: 'Громче',
+      volumeDown: 'Тише',
+      muteUnmute: 'Вкл/Выкл звук',
+      showHideHelp: 'Показать/Скрыть помощь',
+      keyboardShortcuts: 'Клавиатурные сочетания',
+      closeButton: 'Закрыть',
+      resetAll: 'Сбросить всё',
+      resetAllConfirm: 'Сбросить все сочетания клавиш?',
+      shortcutsReset: 'Сочетания клавиш сброшены',
+      editShortcut: 'Изменить',
+      pressAnyKey: 'Нажмите любую клавишу для установки нового сочетания',
+      current: 'Текущее',
+      cancel: 'Отмена',
+      keyAlreadyUsed: 'Клавиша "{key}" уже используется',
+      shortcutUpdated: 'Сочетание клавиш обновлено',
+    },
+  };
+
+  // Get browser language
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  // Translation function
+  function t(key, params = {}) {
+    const lang = getLanguage();
+    let text = i18n[lang][key] || i18n.en[key] || key;
+
+    // Replace parameters in template
+    Object.keys(params).forEach(paramKey => {
+      text = text.replace(`{${paramKey}}`, params[paramKey]);
+    });
+
+    return text;
+  }
+
   // Configuration
   const config = {
     enabled: true,
     shortcuts: {
-      seekBackward: { key: 'ArrowLeft', description: 'Seek backward 5s' },
-      seekForward: { key: 'ArrowRight', description: 'Seek forward 5s' },
-      volumeUp: { key: '+', description: 'Volume up' },
-      volumeDown: { key: '-', description: 'Volume down' },
-      mute: { key: 'm', description: 'Mute/Unmute' },
-      showHelp: { key: '?', description: 'Show/Hide help', editable: false },
+      seekBackward: { key: 'ArrowLeft', description: t('seekBackward') },
+      seekForward: { key: 'ArrowRight', description: t('seekForward') },
+      volumeUp: { key: '+', description: t('volumeUp') },
+      volumeDown: { key: '-', description: t('volumeDown') },
+      mute: { key: 'm', description: t('muteUnmute') },
+      showHelp: { key: '?', description: t('showHideHelp'), editable: false },
     },
     storageKey: 'youtube_shorts_keyboard_settings',
   };
@@ -80,12 +141,12 @@
     },
 
     getDefaultShortcuts: () => ({
-      seekBackward: { key: 'ArrowLeft', description: 'Seek backward 5s' },
-      seekForward: { key: 'ArrowRight', description: 'Seek forward 5s' },
-      volumeUp: { key: '+', description: 'Volume up' },
-      volumeDown: { key: '-', description: 'Volume down' },
-      mute: { key: 'm', description: 'Mute/Unmute' },
-      showHelp: { key: '?', description: 'Show/Hide help', editable: false },
+      seekBackward: { key: 'ArrowLeft', description: t('seekBackward') },
+      seekForward: { key: 'ArrowRight', description: t('seekForward') },
+      volumeUp: { key: '+', description: t('volumeUp') },
+      volumeDown: { key: '-', description: t('volumeDown') },
+      mute: { key: 'm', description: t('muteUnmute') },
+      showHelp: { key: '?', description: t('showHideHelp'), editable: false },
     }),
   };
 
@@ -109,7 +170,7 @@
           z-index:10000;opacity:0;visibility:hidden;pointer-events:none;
           transition:all .3s cubic-bezier(.4,0,.2,1);text-align:center;
           box-shadow:0 8px 32px rgba(0,0,0,.4);
-          background: rgba(255,255,255,0.15);
+          background: rgba(155, 155, 155, 0.15);
           border: 1px solid rgba(255,255,255,0.2);
           box-shadow: 0 8px 32px 0 rgba(31,38,135,0.37);
           backdrop-filter: blur(12px) saturate(180%);
@@ -204,8 +265,8 @@
       const render = () => {
         panel.innerHTML = `
             <div class="help-header">
-              <h3>Keyboard Shortcuts</h3>
-              <button class="ytp-plus-settings-close help-close" type="button" aria-label="Close">
+              <h3>${t('keyboardShortcuts')}</h3>
+              <button class="ytp-plus-settings-close help-close" type="button" aria-label="${t('closeButton')}">
                 <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
                 </svg>
@@ -223,16 +284,16 @@
                 .join('')}
             </div>
             <div class="help-footer">
-              <button class="ytp-plus-button ytp-plus-button-primary reset-all-shortcuts">Reset All</button>
+              <button class="ytp-plus-button ytp-plus-button-primary reset-all-shortcuts">${t('resetAll')}</button>
             </div>
           `;
 
         panel.querySelector('.help-close').onclick = () => helpPanel.hide();
         panel.querySelector('.reset-all-shortcuts').onclick = () => {
-          if (confirm('Reset all shortcuts?')) {
+          if (confirm(t('resetAllConfirm'))) {
             config.shortcuts = utils.getDefaultShortcuts();
             utils.saveSettings();
-            feedback.show('Shortcuts reset');
+            feedback.show(t('shortcutsReset'));
             render();
           }
         };
@@ -282,10 +343,10 @@
     dialog.setAttribute('aria-modal', 'true');
     dialog.innerHTML = `
         <div class="glass-panel shortcut-edit-content">
-          <h4>Edit: ${config.shortcuts[actionKey].description}</h4>
-          <p>Press any key to set as new shortcut</p>
-          <div class="current-shortcut">Current: <kbd>${currentKey === ' ' ? 'Space' : currentKey}</kbd></div>
-          <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">Cancel</button>
+          <h4>${t('editShortcut')}: ${config.shortcuts[actionKey].description}</h4>
+          <p>${t('pressAnyKey')}</p>
+          <div class="current-shortcut">${t('current')}: <kbd>${currentKey === ' ' ? 'Space' : currentKey}</kbd></div>
+          <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">${t('cancel')}</button>
         </div>
       `;
 
@@ -301,13 +362,13 @@
         key => key !== actionKey && config.shortcuts[key].key === e.key
       );
       if (conflict) {
-        feedback.show(`Key "${e.key}" already used`);
+        feedback.show(t('keyAlreadyUsed', { key: e.key }));
         return;
       }
 
       config.shortcuts[actionKey].key = e.key;
       utils.saveSettings();
-      feedback.show('Shortcut updated');
+      feedback.show(t('shortcutUpdated'));
       helpPanel.refresh();
       cleanup();
     };

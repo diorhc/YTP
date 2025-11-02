@@ -10,8 +10,28 @@
    */
   const logError = (module, message, error) => {
     try {
+      const errorDetails = {
+        module,
+        message,
+        error:
+          error instanceof Error
+            ? {
+                name: error.name,
+                message: error.message,
+                stack: error.stack,
+              }
+            : error,
+        timestamp: new Date().toISOString(),
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+        url: typeof window !== 'undefined' ? window.location.href : 'unknown',
+      };
+
       console.error(`[YouTube+][${module}] ${message}:`, error);
-    } catch {}
+      console.debug('[YouTube+] Error details:', errorDetails);
+    } catch (loggingError) {
+      // Fallback if logging itself fails
+      console.error('[YouTube+] Error logging failed:', loggingError);
+    }
   };
 
   /**

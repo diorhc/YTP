@@ -1,12 +1,16 @@
-# YouTube Plus v2.0 - Modular Userscript#
+# YouTube Plus v2.0 - Modular Userscript
 
-[![Tests](https://img.shields.io/badge/tests-49%20passing-success)](https://github.com/diorhc/YoutubePlus)Modular userscript build system for YouTube+ with automatic formatting, linting, and pre-commit hooks.
-
+[![Tests](https://img.shields.io/badge/tests-76%20passing-success)](#)
 [![Code Quality](https://img.shields.io/badge/quality-92%2F100-brightgreen)](#)
+[![TypeScript](https://img.shields.io/badge/TypeScript-JSDoc-blue)](#)
+[![License](https://img.shields.io/badge/license-MIT-blue)](#)
+[![Build](https://img.shields.io/badge/build-passing-success)](#)
 
-[![TypeScript](https://img.shields.io/badge/TypeScript-JSDoc-blue)](#)## 📋 Table of Contents
+Modular userscript build system for YouTube+ with automatic formatting, linting, and pre-commit hooks.
 
-[![License](https://img.shields.io/badge/license-MIT-blue)](#)- [Features](#features)
+## 📋 Table of Contents
+
+- [Features](#features)
 
 - [Quick Start](#quick-start)
 

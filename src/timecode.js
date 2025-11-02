@@ -11,6 +11,54 @@
   if (window._timecodeModuleInitialized) return;
   window._timecodeModuleInitialized = true;
 
+  // Localization
+  const i18n = {
+    en: {
+      timecodes: 'Timecodes',
+      noTimecodesFound: 'No timecodes found',
+      clickToAdd: 'Click + to add current time',
+      reload: 'Reload timecodes',
+      close: 'Close',
+      add: '+ Add',
+      export: 'Export',
+      tracking: 'Tracking',
+      track: 'Track',
+      cancel: 'Cancel',
+      save: 'Save',
+      timePlaceholder: 'Time (e.g., 1:30)',
+      labelPlaceholder: 'Label (optional)',
+      enableTimecode: 'Enable Timecode Panel',
+      keyboardShortcut: 'Keyboard Shortcut',
+    },
+    ru: {
+      timecodes: 'Таймкоды',
+      noTimecodesFound: 'Таймкоды не найдены',
+      clickToAdd: 'Нажмите + чтобы добавить текущее время',
+      reload: 'Обновить таймкоды',
+      close: 'Закрыть',
+      add: '+ Добавить',
+      export: 'Экспорт',
+      tracking: 'Отслеживание',
+      track: 'Отслеживать',
+      cancel: 'Отмена',
+      save: 'Сохранить',
+      timePlaceholder: 'Время (например, 1:30)',
+      labelPlaceholder: 'Метка (необязательно)',
+      enableTimecode: 'Включить панель таймкодов',
+      keyboardShortcut: 'Горячая клавиша',
+    },
+  };
+
+  // Detect language
+  const getLanguage = () => {
+    const htmlLang = document.documentElement.lang || 'en';
+    if (htmlLang.startsWith('ru')) return 'ru';
+    return 'en';
+  };
+
+  const lang = getLanguage();
+  const t = key => i18n[lang][key] || i18n.en[key] || key;
+
   // Configuration
   const config = {
     enabled: true,
@@ -443,7 +491,7 @@
     enableDiv.className = 'ytp-plus-settings-item timecode-settings-item';
     enableDiv.innerHTML = `
         <div>
-          <label class="ytp-plus-settings-item-label">Timecode Panel</label>
+          <label class="ytp-plus-settings-item-label">${t('enableTimecode')}</label>
           <div class="ytp-plus-settings-item-description">Enable video timecode/chapter panel with quick navigation</div>
         </div>
         <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enabled" ${config.enabled ? 'checked' : ''}>
@@ -454,7 +502,7 @@
     shortcutDiv.style.display = config.enabled ? 'flex' : 'none';
     shortcutDiv.innerHTML = `
         <div>
-          <label class="ytp-plus-settings-item-label">Keyboard Shortcut</label>
+          <label class="ytp-plus-settings-item-label">${t('keyboardShortcut')}</label>
           <div class="ytp-plus-settings-item-description">Customize keyboard combination to toggle Timecode Panel</div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
@@ -524,27 +572,30 @@
 
     // ✅ Use StyleManager instead of createElement('style')
     const styles = `
-                #timecode-panel{position:fixed;right:20px;top:80px;background:rgba(34,34,34,.9);border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.4);width:250px;max-height:70vh;z-index:9999;color:#fff;backdrop-filter:blur(10px);border:1px solid rgba(255,255,255,.1);transition:transform .3s,opacity .3s;overflow:hidden;display:flex;flex-direction:column}
-                #timecode-panel.hidden{transform:translateX(270px);opacity:0;pointer-events:none}
-                #timecode-panel.auto-tracking{border-color:rgba(255,0,0,.5)}
-                #timecode-header{display:flex;justify-content:space-between;align-items:center;padding:12px;border-bottom:1px solid rgba(255,255,255,.1);background:rgba(0,0,0,.3);cursor:move}
-                #timecode-title{font-weight:500;margin:0;font-size:14px;user-select:none;display:flex;align-items:center;gap:8px}
+        :root{--tc-panel-bg:rgba(255,255,255,0.06);--tc-panel-border:rgba(255,255,255,0.12);--tc-panel-color:#fff}
+        html[dark],body[dark]{--tc-panel-bg:rgba(34,34,34,0.75);--tc-panel-border:rgba(255,255,255,0.12);--tc-panel-color:#fff}
+        html:not([dark]){--tc-panel-bg:rgba(255,255,255,0.95);--tc-panel-border:rgba(0,0,0,0.08);--tc-panel-color:#222}
+        #timecode-panel{position:fixed;right:20px;top:80px;background:var(--tc-panel-bg);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,0.45);width:320px;max-height:70vh;z-index:10000;color:var(--tc-panel-color);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--tc-panel-border);transition:transform .28s cubic-bezier(.4,0,.2,1),opacity .28s;overflow:hidden;display:flex;flex-direction:column}
+        #timecode-panel.hidden{transform:translateX(300px);opacity:0;pointer-events:none}
+        #timecode-panel.auto-tracking{box-shadow:0 12px 48px rgba(255,0,0,0.12);border-color:rgba(255,0,0,0.25)}
+        #timecode-header{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid rgba(255,255,255,0.04);background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);cursor:move}
+                #timecode-title{font-weight:600;margin:0;font-size:15px;user-select:none;display:flex;align-items:center;gap:8px}
                 #timecode-tracking-indicator{width:8px;height:8px;background:red;border-radius:50%;opacity:0;transition:opacity .3s}
                 #timecode-panel.auto-tracking #timecode-tracking-indicator{opacity:1}
                 #timecode-current-time{font-family:monospace;font-size:12px;padding:2px 6px;background:rgba(255,0,0,.3);border-radius:3px;margin-left:auto}
                 #timecode-header-controls{display:flex;align-items:center;gap:6px}
-                #timecode-reload,#timecode-close{background:0 0;border:none;color:rgba(255,255,255,.7);cursor:pointer;width:24px;height:24px;padding:0;display:flex;align-items:center;justify-content:center;transition:color .2s}
-                #timecode-reload:hover,#timecode-close:hover{color:#fff}
+                #timecode-reload,#timecode-close{background:transparent;border:none;color:inherit;cursor:pointer;width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:background .18s,color .18s}
+                #timecode-reload:hover,#timecode-close:hover{background:rgba(255,255,255,0.04)}
                 #timecode-reload.loading{animation:timecode-spin .8s linear infinite}
                 #timecode-list{overflow-y:auto;padding:8px 0;max-height:calc(70vh - 80px);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
                 #timecode-list::-webkit-scrollbar{width:6px}
                 #timecode-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
-                .timecode-item{padding:8px 12px;display:flex;align-items:center;cursor:pointer;transition:background-color .2s;border-left:3px solid transparent;position:relative}
-                .timecode-item:hover{background:rgba(255,255,255,.1)}
+                .timecode-item{padding:10px 14px;display:flex;align-items:center;cursor:pointer;transition:background-color .16s,transform .12s;border-left:3px solid transparent;position:relative;border-radius:8px;margin:6px 10px}
+                .timecode-item:hover{background:rgba(255,255,255,0.04);transform:translateY(-2px)}
                 .timecode-item:hover .timecode-actions{opacity:1}
-                .timecode-item.active{background:rgba(255,0,0,.25);border-left-color:red}
+                .timecode-item.active{background:linear-gradient(90deg, rgba(255,68,68,0.12), rgba(255,68,68,0.04));border-left-color:#ff6666;box-shadow:inset 0 0 0 1px rgba(255,68,68,0.03)}
                 .timecode-item.active.pulse{animation:pulse .8s ease-out}
-                .timecode-item.editing{background:rgba(255,255,0,.15);border-left-color:#ffaa00}
+                .timecode-item.editing{background:linear-gradient(90deg, rgba(255,170,0,0.08), rgba(255,170,0,0.03));border-left-color:#ffaa00}
                 .timecode-item.editing .timecode-actions{opacity:1}
                 @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
                 @keyframes timecode-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
@@ -558,7 +609,7 @@
                 .timecode-action.edit:hover{color:#ffaa00}
                 .timecode-action.delete:hover{color:#ff4444}
                 #timecode-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;color:rgba(255,255,255,.7);font-size:13px}
-                #timecode-form{padding:10px;border-top:1px solid rgba(255,255,255,.1);display:none}
+                #timecode-form{padding:12px;border-top:1px solid rgba(255,255,255,.04);display:none}
                 #timecode-form.visible{display:block}
                 #timecode-form input{width:100%;margin-bottom:8px;padding:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:4px;color:#fff;font-size:13px}
                 #timecode-form input::placeholder{color:rgba(255,255,255,.6)}
@@ -568,10 +619,10 @@
                 #timecode-form-cancel:hover{background:rgba(255,255,255,.3)}
                 #timecode-form-save{background:#ff4444;color:#fff}
                 #timecode-form-save:hover{background:#ff6666}
-                #timecode-actions{padding:8px;border-top:1px solid rgba(255,255,255,.1);display:flex;gap:8px;background:rgba(0,0,0,.2)}
-                #timecode-actions button{padding:6px 10px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s;background:rgba(255,255,255,.2);color:#fff}
-                #timecode-actions button:hover{background:rgba(255,255,255,.3)}
-                #timecode-track-toggle.active{background:#ff4444!important}
+        #timecode-actions{padding:10px;border-top:1px solid rgba(255,255,255,.04);display:flex;gap:8px;background:linear-gradient(180deg,transparent,rgba(0,0,0,0.03))}
+        #timecode-actions button{padding:8px 12px;border:none;border-radius:8px;cursor:pointer;font-size:13px;transition:background .18s;color:inherit;background:rgba(255,255,255,0.02)}
+        #timecode-actions button:hover{background:rgba(255,255,255,0.04)}
+        #timecode-track-toggle.active{background:linear-gradient(90deg,#ff6b6b,#ff4444);color:#fff}
             `;
     YouTubeUtils.StyleManager.add('timecode-panel-styles', styles);
   };
@@ -592,31 +643,35 @@
         <div id="timecode-header">
           <h3 id="timecode-title">
             <div id="timecode-tracking-indicator"></div>
-            Timecodes
+            ${t('timecodes')}
             <span id="timecode-current-time"></span>
           </h3>
           <div id="timecode-header-controls">
-            <button id="timecode-reload" title="Reload timecodes" aria-label="Reload timecodes">⟳</button>
-            <button id="timecode-close" title="Close" aria-label="Close timecode panel">×</button>
+            <button id="timecode-reload" title="${t('reload')}" aria-label="${t('reload')}">⟳</button>
+            <button id="timecode-close" title="${t('close')}" aria-label="${t('close')}">
+              <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+              </svg>
+            </button>
           </div>
         </div>
         <div id="timecode-list"></div>
         <div id="timecode-empty">
-          <div>No timecodes found</div>
-          <div style="margin-top:5px;font-size:12px">Click + to add current time</div>
+          <div>${t('noTimecodesFound')}</div>
+          <div style="margin-top:5px;font-size:12px">${t('clickToAdd')}</div>
         </div>
         <div id="timecode-form">
-          <input type="text" id="timecode-form-time" placeholder="Time (e.g., 1:30)">
-          <input type="text" id="timecode-form-label" placeholder="Label (optional)">
+          <input type="text" id="timecode-form-time" placeholder="${t('timePlaceholder')}">
+          <input type="text" id="timecode-form-label" placeholder="${t('labelPlaceholder')}">
           <div id="timecode-form-buttons">
-            <button type="button" id="timecode-form-cancel">Cancel</button>
-            <button type="button" id="timecode-form-save" class="save">Save</button>
+            <button type="button" id="timecode-form-cancel">${t('cancel')}</button>
+            <button type="button" id="timecode-form-save" class="save">${t('save')}</button>
           </div>
         </div>
         <div id="timecode-actions">
-          <button id="timecode-add-btn">+ Add</button>
-          <button id="timecode-export-btn" ${config.export ? '' : 'style="display:none"'}>Export</button>
-          <button id="timecode-track-toggle" class="${config.autoTrackPlayback ? 'active' : ''}">${config.autoTrackPlayback ? 'Tracking' : 'Track'}</button>
+          <button id="timecode-add-btn">${t('add')}</button>
+          <button id="timecode-export-btn" ${config.export ? '' : 'style="display:none"'}>${t('export')}</button>
+          <button id="timecode-track-toggle" class="${config.autoTrackPlayback ? 'active' : ''}">${config.autoTrackPlayback ? t('tracking') : t('track')}</button>
         </div>
       `;
 
@@ -647,15 +702,24 @@
     const { target } = e;
     const item = target.closest('.timecode-item');
 
-    const reloadButton =
-      target.id === 'timecode-reload' ? target : target.closest('#timecode-reload');
+    // Use closest so clicks on child SVG/path elements are detected
+    const reloadButton = target.closest
+      ? target.closest('#timecode-reload')
+      : target.id === 'timecode-reload'
+        ? target
+        : null;
     if (reloadButton) {
       e.preventDefault();
       reloadTimecodes(reloadButton);
       return;
     }
 
-    if (target.id === 'timecode-close') {
+    const closeButton = target.closest
+      ? target.closest('#timecode-close')
+      : target.id === 'timecode-close'
+        ? target
+        : null;
+    if (closeButton) {
       toggleTimecodePanel(false);
     } else if (target.id === 'timecode-add-btn') {
       // ✅ Use cached querySelector
@@ -663,7 +727,7 @@
       if (video) showTimecodeForm(video.currentTime);
     } else if (target.id === 'timecode-track-toggle') {
       config.autoTrackPlayback = !config.autoTrackPlayback;
-      target.textContent = config.autoTrackPlayback ? 'Tracking' : 'Track';
+      target.textContent = config.autoTrackPlayback ? t('tracking') : t('track');
       target.classList.toggle('active', config.autoTrackPlayback);
       state.dom.panel.classList.toggle('auto-tracking', config.autoTrackPlayback);
       saveSettings();
@@ -1152,6 +1216,7 @@
       state.editingIndex = null;
       state.timecodes.clear();
 
+      // ✅ Обновляем панель только если она уже открыта
       if (config.enabled && state.dom.panel && !state.dom.panel.classList.contains('hidden')) {
         const saved = loadTimecodesFromStorage();
         if (saved?.length) {
@@ -1296,40 +1361,26 @@
     };
     YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
 
-    if (config.enabled) {
-      createTimecodePanel();
+    // ✅ Больше не создаём панель автоматически - только по шорткату
+    if (config.enabled && !state.resizeListenerKey) {
+      const onResize = YouTubeUtils.throttle(() => {
+        if (!state.dom.panel) return;
 
-      if (!state.resizeListenerKey) {
-        const onResize = YouTubeUtils.throttle(() => {
-          if (!state.dom.panel) return;
+        const rect = state.dom.panel.getBoundingClientRect();
+        const { left, top } = clampPanelPosition(state.dom.panel, rect.left, rect.top);
 
-          const rect = state.dom.panel.getBoundingClientRect();
-          const { left, top } = clampPanelPosition(state.dom.panel, rect.left, rect.top);
+        state.dom.panel.style.left = `${left}px`;
+        state.dom.panel.style.top = `${top}px`;
+        state.dom.panel.style.right = 'auto';
 
-          state.dom.panel.style.left = `${left}px`;
-          state.dom.panel.style.top = `${top}px`;
-          state.dom.panel.style.right = 'auto';
+        savePanelPosition(left, top);
+      }, 200);
 
-          savePanelPosition(left, top);
-        }, 200);
-
-        state.resizeListenerKey = YouTubeUtils.cleanupManager.registerListener(
-          window,
-          'resize',
-          onResize
-        );
-      }
-
-      const saved = loadTimecodesFromStorage();
-      if (saved?.length) {
-        updateTimecodePanel(saved);
-      } else if (config.autoDetect) {
-        setTimeout(
-          () => detectTimecodes().catch(err => console.error('[Timecode] Detection failed:', err)),
-          1500
-        );
-      }
-      if (config.autoTrackPlayback) startTracking();
+      state.resizeListenerKey = YouTubeUtils.cleanupManager.registerListener(
+        window,
+        'resize',
+        onResize
+      );
     }
   };
 
