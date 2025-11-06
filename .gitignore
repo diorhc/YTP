@@ -7,6 +7,7 @@ pnpm-lock.yaml
 # Build outputs
 dist/
 youtube.user.js
+*.user.js
 
 # IDE and editors
 .vscode/
@@ -18,8 +19,6 @@ youtube.user.js
 .project
 .classpath
 .settings/
-.DS_Store
-Thumbs.db
 
 # Logs
 *.log
@@ -33,6 +32,7 @@ coverage/
 .nyc_output/
 *.lcov
 .jest-cache/
+test-results/
 
 # Environment
 .env
@@ -53,8 +53,15 @@ coverage/
 ehthumbs.db
 Thumbs.db
 
-# Misc
+#Optional: Documentation build artifacts (uncomment if needed)
 docs/
 GREASYFORK_PUBLISH.md
 GREASYFORK_PUBLISH en.md
+
+# Linting/analysis outputs
 eslint-output.json
+*.sarif
+
+# Backup files
+*.bak
+*.backup

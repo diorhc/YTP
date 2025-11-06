@@ -1,8 +1,8 @@
 # YouTube Plus v2.0 - Modular Userscript
 
-[![CI/CD Pipeline](https://github.com/diorhc/YoutubePlus/actions/workflows/ci.yml/badge.svg)](https://github.com/diorhc/YoutubePlus/actions/workflows/ci.yml)
-[![Tests](https://img.shields.io/badge/tests-76%20passing-success)](#)
-[![Coverage](https://img.shields.io/badge/coverage-improving-yellow)](#)
+[![CI/CD Pipeline](https://github.com/diorhc/YTP/actions/workflows/ci.yml/badge.svg)](https://github.com/diorhc/YTP/actions/workflows/ci.yml)
+[![Tests](https://img.shields.io/badge/tests-136%20passing-success)](#)
+[![Coverage](https://img.shields.io/badge/coverage-unit%20tests-green)](#)
 [![Code Quality](https://img.shields.io/badge/quality-A+-brightgreen)](#)
 [![TypeScript](https://img.shields.io/badge/TypeScript-JSDoc-blue)](#)
 [![License](https://img.shields.io/badge/license-MIT-blue)](#)
@@ -57,11 +57,11 @@ Professional-grade YouTube enhancement userscript with modular architecture, com
 | Metric                | Value                  |
 | --------------------- | ---------------------- |
 | **Modules**           | 16                     |
-| **Tests**             | 76 passing             |
-| **Coverage**          | ~60%                   |
+| **Tests**             | 136 passing            |
+| **Coverage**          | Unit tests (mocked)    |
 | **Build Size**        | ~200KB (60KB minified) |
-| **Quality Score**     | 94/100                 |
-| **TypeScript Errors** | Reduced by 77%         |
+| **Quality Score**     | 96/100                 |
+| **TypeScript Errors** | 0 (100% resolved)      |
 
 ## 🚀 Quick Start
 

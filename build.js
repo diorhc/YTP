@@ -25,8 +25,13 @@ const ORDER_MANIFESTS = ['build.order.json', 'build.order.txt'];
  */
 function readFileSafe(p) {
   try {
+    if (!fs.existsSync(p)) {
+      console.warn(`[Build Warning] File not found: ${p}`);
+      return null;
+    }
     return fs.readFileSync(p, 'utf8');
-  } catch {
+  } catch (err) {
+    console.error(`[Build Error] Failed to read file ${p}:`, err.message);
     return null;
   }
 }
@@ -81,6 +86,10 @@ if (!header) {
 }
 
 // Get module files
+/**
+ * Reads order manifest from build.order.json or build.order.txt
+ * @returns {string[]|null} Array of module filenames or null if not found
+ */
 function readOrderManifest() {
   for (const name of ORDER_MANIFESTS) {
     const p = path.join(ROOT, name);
@@ -97,33 +106,65 @@ function readOrderManifest() {
           .filter(Boolean);
       }
     } catch (e) {
-      console.warn('Failed to read order manifest', p, e && e.message);
+      console.error(`[Build Error] Failed to read order manifest ${p}:`, e.message);
+      return null;
     }
+  }
+  if (verbose) {
+    console.warn('[Build Warning] No order manifest found. Using default ordering.');
   }
   return null;
 }
 
+/**
+ * Collects all JavaScript module files from src directory
+ * @returns {Array<{name: string, dir: string}>} Array of file objects with name and directory
+ */
 function collectModuleFiles() {
   const srcDir = path.join(ROOT, 'src');
   const useSrc = fs.existsSync(srcDir) && fs.statSync(srcDir).isDirectory();
   const baseDir = useSrc ? srcDir : ROOT;
 
-  // Recursively walk directory and collect .js files (exclude build & output)
+  if (!useSrc && verbose) {
+    console.warn('[Build Warning] src/ directory not found. Scanning root directory instead.');
+  }
+
+  /**
+   * Recursively walks directory and collects .js files
+   * @param {string} dir - Directory to walk
+   * @returns {Array<{name: string, dir: string}>} Array of file objects
+   */
   function walk(dir) {
-    const entries = fs.readdirSync(dir, { withFileTypes: true });
-    const out = [];
-    for (const ent of entries) {
-      const p = path.join(dir, ent.name);
-      if (ent.isDirectory()) {
-        out.push(...walk(p));
-      } else if (ent.isFile() && ent.name.endsWith('.js') && !EXCLUDE.has(ent.name)) {
-        out.push({ name: ent.name, dir });
+    try {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      const out = [];
+      for (const ent of entries) {
+        const p = path.join(dir, ent.name);
+        if (ent.isDirectory()) {
+          out.push(...walk(p));
+        } else if (ent.isFile() && ent.name.endsWith('.js') && !EXCLUDE.has(ent.name)) {
+          out.push({ name: ent.name, dir });
+        }
       }
+      return out;
+    } catch (e) {
+      console.error(`[Build Error] Failed to read directory ${dir}:`, e.message);
+      return [];
     }
-    return out;
   }
 
   const files = walk(baseDir);
+
+  if (files.length === 0) {
+    console.error('[Build Error] No JavaScript module files found!');
+    console.error(`[Build Error] Searched in: ${baseDir}`);
+    console.error('[Build Error] Make sure your source files are in the src/ directory');
+    throw new Error('No module files found for build');
+  }
+
+  if (verbose) {
+    console.log(`[Build Info] Found ${files.length} module file(s)`);
+  }
 
   // If manifest order exists, use it for ordering by basename (keep path from files)
   const manifest = readOrderManifest();
@@ -134,9 +175,18 @@ function collectModuleFiles() {
       if (rest.has(name)) {
         ordered.push(rest.get(name));
         rest.delete(name);
+      } else {
+        console.warn(`[Build Warning] Module "${name}" listed in manifest but not found in src/`);
+        console.warn(`[Build Warning] Available modules: ${Array.from(rest.keys()).join(', ')}`);
       }
     }
     const others = Array.from(rest.values()).sort((a, b) => a.name.localeCompare(b.name));
+    if (others.length > 0) {
+      console.warn(
+        `[Build Warning] ${others.length} module(s) not in manifest: ${others.map(f => f.name).join(', ')}`
+      );
+      console.warn('[Build Warning] Consider adding these to build.order.json');
+    }
     return ordered.concat(others);
   }
 
@@ -263,14 +313,16 @@ async function buildOnceCustom(outPath) {
 
   const parts = [header.trim(), '\n'];
   for (const f of files) {
-    const p = path.join(f.dir || ROOT, f.name || f);
+    // Handle both object {name, dir} and string formats
+    const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
+    const p = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
     const content = readFileSafe(p);
     if (content === null) {
       if (verbose) console.warn(`Warning: Could not read ${p}`);
       continue;
     }
     const clean = stripMeta(content).trim();
-    const displayName = f.name || f;
+    const displayName = typeof f === 'string' ? path.basename(f) : f.name;
     parts.push(`// --- MODULE: ${displayName} ---`);
     parts.push(clean);
     if (verbose) console.log(`  ✓ Merged: ${displayName}`);
@@ -280,7 +332,9 @@ async function buildOnceCustom(outPath) {
   fs.writeFileSync(outPath, out, 'utf8');
   console.log(`Built ${outPath} from ${files.length} modules:`);
   for (const f of files) {
-    const fp = path.join(f.dir || ROOT, f.name || f);
+    // Handle both object {name, dir} and string formats
+    const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
+    const fp = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
     const rel = path.relative(ROOT, fp).replace(/\\/g, '/');
     console.log(' -', rel);
   }
@@ -366,16 +420,20 @@ async function buildOnceCustom(outPath) {
         const minifiedSize = Buffer.byteLength(minified.code, 'utf8');
         const savings = ((1 - minifiedSize / originalSize) * 100).toFixed(2);
         console.log(
-          `Minified: ${(originalSize / 1024).toFixed(2)}KB → ${(minifiedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
+          `✓ Minified: ${(originalSize / 1024).toFixed(2)}KB → ${(minifiedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
         );
+      } else {
+        console.error('[Build Error] Minification produced no output');
+        return false;
       }
     } catch (e) {
-      console.warn('Minification failed:', e.message);
-      if (verbose) console.error(e);
+      console.error('[Build Error] Minification failed:', e.message);
+      if (verbose) console.error(e.stack);
+      return false;
     }
   }
 
-  console.log('Done.');
+  console.log('✓ Build completed successfully.');
   return true;
 }
 

@@ -51,20 +51,37 @@
 
   const PIP_SESSION_KEY = 'youtube_plus_pip_session';
 
+  /**
+   * Get video element with validation
+   * @returns {HTMLVideoElement|null} Video element or null if not found
+   */
   const getVideoElement = () => {
-    const candidate =
-      (typeof YouTubeUtils?.querySelector === 'function' && YouTubeUtils.querySelector('video')) ||
-      document.querySelector('video');
+    try {
+      const candidate =
+        (typeof YouTubeUtils?.querySelector === 'function' &&
+          YouTubeUtils.querySelector('video')) ||
+        document.querySelector('video');
 
-    if (candidate && candidate.tagName && candidate.tagName.toLowerCase() === 'video') {
-      return /** @type {HTMLVideoElement} */ (candidate);
+      if (candidate && candidate.tagName && candidate.tagName.toLowerCase() === 'video') {
+        return /** @type {HTMLVideoElement} */ (candidate);
+      }
+
+      return null;
+    } catch (error) {
+      console.error('[PiP] Error getting video element:', error);
+      return null;
     }
-
-    return null;
   };
 
+  /**
+   * Wait for video metadata to load with timeout
+   * @param {HTMLVideoElement} video - Video element
+   * @returns {Promise<void>} Resolves when metadata is loaded
+   */
   const waitForMetadata = video => {
-    if (!video) return Promise.reject(new Error('No video element available'));
+    if (!video) {
+      return Promise.reject(new Error('[PiP] Invalid video element'));
+    }
 
     if (video.readyState >= 1 && !video.seeking) {
       return Promise.resolve();
@@ -92,14 +109,14 @@
         if (settled) return;
         settled = true;
         cleanup();
-        reject(new Error('Video metadata failed to load'));
+        reject(new Error('[PiP] Video metadata failed to load'));
       };
 
       let timeoutId = setTimeout(() => {
         if (settled) return;
         settled = true;
         cleanup();
-        reject(new Error('Timed out waiting for video metadata'));
+        reject(new Error('[PiP] Timed out waiting for video metadata'));
       }, 3000);
 
       const registeredTimeout = YouTubeUtils?.cleanupManager?.registerTimeout?.(timeoutId);
@@ -131,27 +148,58 @@
   };
 
   /**
-   * Load settings from localStorage
+   * Load settings from localStorage with validation
    * @returns {void}
    */
   const loadSettings = () => {
     try {
       const saved = localStorage.getItem(pipSettings.storageKey);
-      if (saved) Object.assign(pipSettings, JSON.parse(saved));
+      if (!saved) return;
+
+      const parsed = JSON.parse(saved);
+      if (typeof parsed !== 'object' || parsed === null) {
+        console.warn('[PiP] Invalid settings format');
+        return;
+      }
+
+      // Validate and merge settings
+      if (typeof parsed.enabled === 'boolean') {
+        pipSettings.enabled = parsed.enabled;
+      }
+
+      // Validate shortcut object
+      if (parsed.shortcut && typeof parsed.shortcut === 'object') {
+        if (typeof parsed.shortcut.key === 'string' && parsed.shortcut.key.length > 0) {
+          pipSettings.shortcut.key = parsed.shortcut.key;
+        }
+        if (typeof parsed.shortcut.shiftKey === 'boolean') {
+          pipSettings.shortcut.shiftKey = parsed.shortcut.shiftKey;
+        }
+        if (typeof parsed.shortcut.altKey === 'boolean') {
+          pipSettings.shortcut.altKey = parsed.shortcut.altKey;
+        }
+        if (typeof parsed.shortcut.ctrlKey === 'boolean') {
+          pipSettings.shortcut.ctrlKey = parsed.shortcut.ctrlKey;
+        }
+      }
     } catch (e) {
-      console.error('Error loading PiP settings:', e);
+      console.error('[PiP] Error loading settings:', e);
     }
   };
 
   /**
-   * Save settings to localStorage
+   * Save settings to localStorage with error handling
    * @returns {void}
    */
   const saveSettings = () => {
     try {
-      localStorage.setItem(pipSettings.storageKey, JSON.stringify(pipSettings));
+      const settingsToSave = {
+        enabled: pipSettings.enabled,
+        shortcut: pipSettings.shortcut,
+      };
+      localStorage.setItem(pipSettings.storageKey, JSON.stringify(settingsToSave));
     } catch (e) {
-      console.error('Error saving PiP settings:', e);
+      console.error('[PiP] Error saving settings:', e);
     }
   };
 

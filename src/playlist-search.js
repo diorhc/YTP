@@ -57,6 +57,8 @@
     storageKey: 'youtube_playlist_search_settings',
     searchDebounceMs: 200, // Debounce search input
     observerThrottleMs: 500, // Throttle mutation observer
+    maxPlaylistItems: 5000, // Maximum items to process
+    maxQueryLength: 200, // Maximum search query length
   };
 
   const state = {
@@ -81,31 +83,64 @@
 
   // (saveSettings removed - settings are static for this module)
 
-  // Get current playlist id (if present)
+  /**
+   * Get current playlist id with validation
+   * @returns {string|null} Valid playlist ID or null
+   */
   const getCurrentPlaylistId = () => {
-    const urlParams = new URLSearchParams(window.location.search);
-    return urlParams.get('list');
+    try {
+      const urlParams = new URLSearchParams(window.location.search);
+      const listId = urlParams.get('list');
+
+      // Validate playlist ID format (alphanumeric, dashes, underscores)
+      if (listId && /^[a-zA-Z0-9_-]+$/.test(listId)) {
+        return listId;
+      }
+
+      return null;
+    } catch (error) {
+      console.warn('[Playlist Search] Failed to get playlist ID:', error);
+      return null;
+    }
   };
 
-  // Try to obtain a display name for the current playlist from DOM
+  /**
+   * Try to obtain a display name for the current playlist from DOM
+   * @param {Element|HTMLElement} playlistPanel - Playlist panel element
+   * @param {string} listId - Playlist ID
+   * @returns {string} Playlist display name
+   */
   const getPlaylistDisplayName = (playlistPanel, listId) => {
     try {
       // Common places for title: .title, h3 a, #header-title, #title
       const sel = ['.title', 'h3 a', '#header-title', '#title', '.playlist-title', 'h1.title'];
       for (const s of sel) {
         const el = playlistPanel.querySelector(s) || document.querySelector(s);
-        if (el && el.textContent && el.textContent.trim()) return el.textContent.trim();
+        if (el && el.textContent && el.textContent.trim()) {
+          // Sanitize and limit length
+          const title = el.textContent.trim();
+          return title.length > 100 ? title.substring(0, 100) + '...' : title;
+        }
       }
 
       // Fallback to meta or channel-specific metadata
       const meta =
         document.querySelector('meta[name="title"]') ||
         document.querySelector('meta[property="og:title"]');
-      if (meta && meta.content) return meta.content;
-    } catch {}
+      if (meta && meta.content) {
+        const title = meta.content.trim();
+        return title.length > 100 ? title.substring(0, 100) + '...' : title;
+      }
+    } catch (error) {
+      console.warn('[Playlist Search] Failed to get display name:', error);
+    }
 
-    // Default to id if nothing else
-    return listId || 'playlist';
+    // Default to sanitized id if nothing else
+    if (listId && typeof listId === 'string') {
+      return listId.substring(0, 50); // Limit length
+    }
+
+    return 'playlist';
   };
 
   // Add search UI to playlist panel
@@ -268,16 +303,27 @@
     });
   };
 
-  // Collect all playlist items for filtering
+  /**
+   * Collect all playlist items for filtering with limit
+   */
   const collectOriginalItems = () => {
     const items = document.querySelectorAll(
       'ytd-playlist-panel-renderer ytd-playlist-panel-video-renderer'
     );
 
+    // Limit number of items to prevent performance issues
+    if (items.length > config.maxPlaylistItems) {
+      console.warn(
+        `[Playlist Search] Playlist has ${items.length} items, limiting to ${config.maxPlaylistItems}`
+      );
+    }
+
     // Clear cache when collecting new items
     state.itemsCache.clear();
 
-    state.originalItems = Array.from(items).map((item, index) => {
+    const itemsArray = Array.from(items).slice(0, config.maxPlaylistItems);
+
+    state.originalItems = itemsArray.map((item, index) => {
       const videoId = item.getAttribute('video-id') || `item-${index}`;
 
       // Check if this item is already cached
@@ -302,11 +348,25 @@
     });
   };
 
-  // Filter playlist items based on search query
+  /**
+   * Filter playlist items based on search query with validation
+   * @param {string} query - Search query
+   */
   const filterPlaylistItems = query => {
     // Cancel any pending RAF
     if (state.rafId) {
       cancelAnimationFrame(state.rafId);
+    }
+
+    // Validate and sanitize query
+    if (query && typeof query !== 'string') {
+      console.warn('[Playlist Search] Invalid query type');
+      return;
+    }
+
+    // Limit query length to prevent performance issues
+    if (query && query.length > config.maxQueryLength) {
+      query = query.substring(0, config.maxQueryLength);
     }
 
     if (!query || query.trim() === '') {

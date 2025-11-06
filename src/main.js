@@ -219,7 +219,7 @@ const executionScript = _communicationKey => {
      * Helps reduce DOM traversal overhead
      */
     const selectorCache = new Map();
-    // eslint-disable-next-line no-unused-vars
+
     const _CACHE_MAX_SIZE = 50; // Reserved for future cache implementation
     const CACHE_TTL = 5000; // 5 seconds
 
@@ -254,7 +254,7 @@ const executionScript = _communicationKey => {
      * @param {string} selector - CSS selector string
      * @returns {NodeListOf<Element>} NodeList of found elements
      */
-    // eslint-disable-next-line no-unused-vars
+
     const _qsAll = (elm, selector) => {
       return HTMLElement_.prototype.querySelectorAll.call(elm, selector);
     };
@@ -400,6 +400,7 @@ const executionScript = _communicationKey => {
      * Minifier: https://www.toptal.com/developers/javascript-minifier
      *
      */
+    /* eslint-disable no-unused-expressions */
     (() => {
       const e =
         'undefined' != typeof unsafeWindow ? unsafeWindow : this instanceof Window ? this : window;
@@ -480,6 +481,7 @@ const executionScript = _communicationKey => {
           }));
       }
     })();
+    /* eslint-enable no-unused-expressions */
 
     let configOnce = false;
     window._ytConfigHacks.add(config_ => {
@@ -579,7 +581,7 @@ const executionScript = _communicationKey => {
     const isPassiveArgSupport = typeof IntersectionObserver === 'function';
 
     /** @const {Object|boolean} Event listener options for bubble phase with passive */
-    // eslint-disable-next-line no-unused-vars
+
     const _bubblePassive = isPassiveArgSupport ? { capture: false, passive: true } : false;
 
     /** @const {Object|boolean} Event listener options for capture phase with passive */
@@ -670,7 +672,7 @@ const executionScript = _communicationKey => {
      * @param {Function} asyncFn - Async function to wrap
      * @returns {Function} Wrapped function
      */
-    // eslint-disable-next-line no-unused-vars
+
     const _asyncWrap = asyncFn => {
       return () => {
         Promise.resolve().then(asyncFn);
@@ -1113,7 +1115,7 @@ const executionScript = _communicationKey => {
             target instanceof HTMLElement_ &&
             typeof cnt.calculateCanCollapse === 'function'
           ) {
-            lockSet['removeKeepCommentsScrollerLock'];
+            // lockSet['removeKeepCommentsScrollerLock']; // Commented out - no-op expression
             cnt.calculateCanCollapse(true);
             target.setAttribute111('io-intersected', '');
             const ytdFlexyElm = elements.flexy;
@@ -4827,7 +4829,6 @@ const executionScript = _communicationKey => {
           }
         });
 
-    // eslint-disable-next-line no-unused-vars
     const _retrieveCE = async nodeName => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);

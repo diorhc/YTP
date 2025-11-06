@@ -11,6 +11,9 @@ const { execSync } = require('child_process');
 const ROOT = path.resolve(__dirname);
 const ITERATIONS = 5;
 
+// Reserved for future build type comparison feature
+// const BUILD_TYPES = ['normal', 'no-eslint', 'minify'];
+
 /**
  * Format duration in ms
  * @param {number} ms - Milliseconds
@@ -19,6 +22,17 @@ const ITERATIONS = 5;
 function formatDuration(ms) {
   if (ms < 1000) return `${ms.toFixed(2)}ms`;
   return `${(ms / 1000).toFixed(2)}s`;
+}
+
+/**
+ * Format bytes to human-readable format
+ * @param {number} bytes - Bytes
+ * @returns {string} Formatted string
+ */
+function formatBytes(bytes) {
+  if (bytes < 1024) return `${bytes}B`;
+  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(2)}KB`;
+  return `${(bytes / (1024 * 1024)).toFixed(2)}MB`;
 }
 
 /**
@@ -40,12 +54,18 @@ function calculateStats(values) {
 
 /**
  * Measure build time
+ * @param {string} buildType - Type of build ('normal', 'no-eslint', 'minify')
  * @returns {number} Duration in ms
  */
-function measureBuild() {
+function measureBuild(buildType = 'no-eslint') {
   const start = performance.now();
   try {
-    execSync('node build.js --no-eslint', {
+    const flags = {
+      normal: '',
+      'no-eslint': '--no-eslint',
+      minify: '--minify --no-eslint',
+    };
+    execSync(`node build.js ${flags[buildType] || flags['no-eslint']}`, {
       cwd: ROOT,
       stdio: 'pipe',
       encoding: 'utf8',
@@ -158,7 +178,7 @@ async function runBenchmarks() {
   const outputStats = measureOutputSize();
   if (outputStats) {
     console.log(`  File:  youtube.user.js`);
-    console.log(`  Size:  ${outputStats.kbSize} KB`);
+    console.log(`  Size:  ${formatBytes(outputStats.size)} (${outputStats.kbSize} KB)`);
     console.log(`  Lines: ${outputStats.lines}`);
 
     const compressionRatio = ((1 - outputStats.size / totalSize) * 100).toFixed(2);

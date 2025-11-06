@@ -1,16 +1,39 @@
 {
   "name": "youtubeplus",
-  "version": "2.0.2",
-  "description": "Modular userscript build system for YouTube+ with automatic formatting, linting and pre-commit hooks",
+  "version": "2.1",
+  "description": "Professional-grade YouTube enhancement userscript with modular architecture, comprehensive error handling, and automated testing",
   "private": true,
   "author": "diorhc",
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/diorhc/YTP.git"
+  },
+  "bugs": {
+    "url": "https://github.com/diorhc/YTP/issues"
+  },
+  "homepage": "https://github.com/diorhc/YTP#readme",
+  "keywords": [
+    "userscript",
+    "youtube",
+    "greasemonkey",
+    "tampermonkey",
+    "browser-extension",
+    "video-enhancement",
+    "modular-architecture"
+  ],
+  "engines": {
+    "node": ">=18.0.0",
+    "npm": ">=8.0.0"
+  },
   "scripts": {
     "prepare": "husky install",
+    "dev": "npm run build:watch",
     "build": "node build.js",
     "build:fast": "node build.js --no-eslint",
     "build:minify": "node build.js --minify",
     "build:watch": "node build.js --watch",
+    "build:analyze": "npm run build && npm run benchmark",
     "lint": "eslint --no-warn-ignored \"src/**/*.js\" \"build.js\"",
     "lint:fix": "eslint --no-warn-ignored \"src/**/*.js\" \"build.js\" --fix",
     "typecheck": "tsc --noEmit",
@@ -21,6 +44,7 @@
     "test:unit": "jest",
     "test:unit:watch": "jest --watch",
     "test:unit:coverage": "jest --coverage",
+    "test:coverage": "jest --coverage",
     "test:smoke": "node test/smoke.js",
     "test:all": "npm run typecheck && npm run test",
     "security:audit": "npm audit --audit-level=moderate",
@@ -31,7 +55,8 @@
     "benchmark": "node benchmark.js",
     "clean": "node -e \"require('fs').rmSync('coverage', {recursive: true, force: true}); require('fs').rmSync('youtube.user.js', {force: true});\" && echo Cleaned build artifacts",
     "check:deps": "npm outdated || true",
-    "update:deps": "npm update && npm audit fix"
+    "update:deps": "npm update && npm audit fix",
+    "ci": "npm run typecheck && npm run lint && npm run test:unit && npm run build"
   },
   "devDependencies": {
     "@microsoft/eslint-formatter-sarif": "^3.1.0",

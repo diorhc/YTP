@@ -103,16 +103,21 @@
   // Utility functions: use shared debounce when available
   const debounce = (func, wait) => {
     try {
-      return (
-        (window.YouTubeUtils && window.YouTubeUtils.debounce) ||
-        ((f, w) => {
-          let timeout;
-          return (...args) => {
-            clearTimeout(timeout);
-            timeout = setTimeout(() => f(...args), w);
-          };
-        })(func, wait)
-      );
+      const utilDebounce = window.YouTubeUtils && window.YouTubeUtils.debounce;
+      if (typeof utilDebounce === 'function') {
+        // Call the util to get a debounced function (instead of returning the util itself)
+        const debounced = utilDebounce(func, wait);
+        if (typeof debounced === 'function') return debounced;
+        // If utilDebounce didn't return a function, fall back to local implementation
+      }
+
+      return ((f, w) => {
+        let timeout;
+        return (...args) => {
+          clearTimeout(timeout);
+          timeout = setTimeout(() => f(...args), w);
+        };
+      })(func, wait);
     } catch {
       // fallback
       let timeout;
@@ -393,15 +398,15 @@
         .${CONFIG.classes.panel}{position:fixed;top:50%;right:24px;transform:translateY(-50%);display:flex;flex-direction:column;gap:14px;z-index:10000;padding:16px 18px;background:var(--yt-glass-bg);border:1.5px solid var(--yt-glass-border);border-radius:20px;box-shadow:0 12px 40px rgba(0,0,0,0.45);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);min-width:220px;max-width:300px;color:var(--yt-text-primary);transition:transform .22s cubic-bezier(.4,0,.2,1),opacity .22s,box-shadow .2s}
         html:not([dark]) .${CONFIG.classes.panel}{background:var(--yt-glass-bg);}
         .${CONFIG.classes.header}{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-  .${CONFIG.classes.panel}.is-collapsed{padding:14px 18px;}
-  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.title}{font-weight:500;opacity:.85;}
-  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.close}{transform:rotate(45deg);}
-  .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.actions}{display:none!important;}
+        .${CONFIG.classes.panel}.is-collapsed{padding:14px 18px;}
+        .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.title}{font-weight:500;opacity:.85;}
+        .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.close}{transform:rotate(45deg);}
+        .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.actions}{display:none!important;}
         .${CONFIG.classes.title}{font-size:15px;font-weight:600;letter-spacing:.3px;}
         .${CONFIG.classes.close}{background:transparent;border:none;cursor:pointer;padding:6px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--yt-text-primary);transition:all .2s ease;}
         .${CONFIG.classes.close}:hover{transform:rotate(90deg) scale(1.05);color:var(--yt-accent);}
         .${CONFIG.classes.actions}{display:flex;flex-direction:column;gap:10px;}
-  .${CONFIG.classes.actions}.is-hidden{display:none!important;}
+        .${CONFIG.classes.actions}.is-hidden{display:none!important;}
         .${CONFIG.classes.button}{padding:12px 16px;border-radius:var(--yt-radius-md);border:1px solid var(--yt-glass-border);cursor:pointer;font-size:13px;font-weight:500;background:var(--yt-button-bg);color:var(--yt-text-primary);transition:all .2s ease;text-align:center;}
         .${CONFIG.classes.button}:disabled{opacity:.5;cursor:not-allowed;}
         .${CONFIG.classes.button}:not(:disabled):hover{transform:translateY(-1px);box-shadow:var(--yt-shadow);}

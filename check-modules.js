@@ -11,6 +11,9 @@ const modules = [
   'adblocker',
   'enhanced',
   'main',
+  'stats',
+  'playlist-search',
+  'style',
 ];
 
 console.log('Проверка модулей в youtube.user.js:\n');

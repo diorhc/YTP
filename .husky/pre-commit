@@ -1,4 +1,9 @@
 #!/usr/bin/env sh
 . "$(dirname "$0")/_/husky.sh"
 
+# Run lint-staged for code formatting and linting
 npx --no-install lint-staged
+
+# Run security audit
+echo "Running security audit..."
+npm audit --audit-level=moderate || echo "Security audit found issues - please review"

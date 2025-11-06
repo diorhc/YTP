@@ -80,7 +80,7 @@
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.0.2',
+    currentVersion: '2.0.3',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
@@ -103,7 +103,7 @@
   const updateState = {
     lastCheck: 0,
     lastVersion: UPDATE_CONFIG.currentVersion,
-    updateAvailable: false,
+    updateAvailable: true,
     checkInProgress: false,
     updateDetails: null,
   };
@@ -138,32 +138,84 @@
 
   // Optimized utilities
   const utils = {
+    /**
+     * Load update settings from localStorage with validation
+     * @returns {void}
+     */
     loadSettings: () => {
       try {
         const saved = localStorage.getItem(UPDATE_CONFIG.storageKey);
-        if (saved) Object.assign(updateState, JSON.parse(saved));
+        if (!saved) {
+          return;
+        }
+
+        const parsed = JSON.parse(saved);
+
+        // Validate parsed object structure
+        if (typeof parsed !== 'object' || parsed === null) {
+          console.error('[Update] Invalid settings structure');
+          return;
+        }
+
+        // Validate individual properties with type checking
+        if (typeof parsed.lastCheck === 'number' && parsed.lastCheck >= 0) {
+          updateState.lastCheck = parsed.lastCheck;
+        }
+
+        if (typeof parsed.lastVersion === 'string' && /^\d+\.\d+\.\d+/.test(parsed.lastVersion)) {
+          updateState.lastVersion = parsed.lastVersion;
+        }
+
+        if (typeof parsed.updateAvailable === 'boolean') {
+          updateState.updateAvailable = parsed.updateAvailable;
+        }
+
+        if (parsed.updateDetails && typeof parsed.updateDetails === 'object') {
+          // Validate updateDetails properties
+          if (
+            typeof parsed.updateDetails.version === 'string' &&
+            /^\d+\.\d+\.\d+/.test(parsed.updateDetails.version)
+          ) {
+            updateState.updateDetails = parsed.updateDetails;
+          }
+        }
       } catch (e) {
-        console.warn('[YouTube+] Failed to load update settings:', e);
+        console.error('[Update] Failed to load update settings:', e);
       }
     },
 
+    /**
+     * Save update settings to localStorage
+     * @returns {void}
+     */
     saveSettings: () => {
       try {
-        localStorage.setItem(
-          UPDATE_CONFIG.storageKey,
-          JSON.stringify({
-            lastCheck: updateState.lastCheck,
-            lastVersion: updateState.lastVersion,
-            updateAvailable: updateState.updateAvailable,
-            updateDetails: updateState.updateDetails,
-          })
-        );
+        const dataToSave = {
+          lastCheck: updateState.lastCheck,
+          lastVersion: updateState.lastVersion,
+          updateAvailable: updateState.updateAvailable,
+          updateDetails: updateState.updateDetails,
+        };
+
+        localStorage.setItem(UPDATE_CONFIG.storageKey, JSON.stringify(dataToSave));
       } catch (e) {
-        console.warn('[YouTube+] Failed to save update settings:', e);
+        console.error('[Update] Failed to save update settings:', e);
       }
     },
 
+    /**
+     * Compare two version strings
+     * @param {string} v1 - First version
+     * @param {string} v2 - Second version
+     * @returns {number} -1 if v1 < v2, 0 if equal, 1 if v1 > v2
+     */
     compareVersions: (v1, v2) => {
+      // Validate version format
+      if (typeof v1 !== 'string' || typeof v2 !== 'string') {
+        console.error('[Update] Invalid version format - must be strings');
+        return 0;
+      }
+
       const normalize = v =>
         v
           .replace(/[^\d.]/g, '')
@@ -174,18 +226,41 @@
 
       for (let i = 0; i < maxLength; i++) {
         const diff = (parts1[i] || 0) - (parts2[i] || 0);
-        if (diff !== 0) return diff;
+        if (diff !== 0) {
+          return diff;
+        }
       }
       return 0;
     },
 
+    /**
+     * Parse metadata from update script with validation
+     * @param {string} text - Metadata text
+     * @returns {Object} Parsed metadata with version, description, downloadUrl
+     */
     parseMetadata: text => {
+      if (typeof text !== 'string' || text.length > 100000) {
+        console.error('[Update] Invalid metadata text');
+        return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
+      }
+
       const extractField = field =>
         text.match(new RegExp(`@${field}\\s+([^\\r\\n]+)`))?.[1]?.trim();
+
+      const version = extractField('version');
+      const description = extractField('description') || '';
+      const downloadUrl = extractField('downloadURL') || UPDATE_CONFIG.autoInstallUrl;
+
+      // Validate extracted version
+      if (version && !/^\d+\.\d+\.\d+/.test(version)) {
+        console.error('[Update] Invalid version format in metadata:', version);
+        return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
+      }
+
       return {
-        version: extractField('version'),
-        description: extractField('description') || '',
-        downloadUrl: extractField('downloadURL') || UPDATE_CONFIG.autoInstallUrl,
+        version,
+        description: description.substring(0, 500), // Limit description length
+        downloadUrl,
       };
     },
 
@@ -211,19 +286,43 @@
     },
   };
 
+  /**
+   * Install update with URL validation
+   * @param {Object} details - Update details containing downloadUrl and version
+   * @returns {boolean} True if installation initiated successfully
+   */
   const installUpdate = (details = updateState.updateDetails) => {
     const downloadUrl = details?.downloadUrl || UPDATE_CONFIG.autoInstallUrl;
-    if (!downloadUrl) {
-      console.warn('[YouTube+] No download URL provided for update installation');
+    if (!downloadUrl || typeof downloadUrl !== 'string') {
+      console.error('[Update] Invalid download URL for installation');
+      return false;
+    }
+
+    // Validate URL format and protocol
+    try {
+      const parsedUrl = new URL(downloadUrl);
+      const allowedDomains = ['update.greasyfork.org', 'greasyfork.org'];
+
+      if (parsedUrl.protocol !== 'https:') {
+        console.error('[Update] Only HTTPS URLs allowed for updates');
+        return false;
+      }
+
+      if (!allowedDomains.includes(parsedUrl.hostname)) {
+        console.error('[Update] Update URL domain not in allowlist:', parsedUrl.hostname);
+        return false;
+      }
+    } catch (error) {
+      console.error('[Update] Invalid URL format:', error);
       return false;
     }
 
     const markDismissed = () => {
-      if (details?.version) {
+      if (details?.version && typeof details.version === 'string') {
         try {
           sessionStorage.setItem('update_dismissed', details.version);
         } catch (err) {
-          console.warn('[YouTube+] Failed to persist dismissal state:', err);
+          console.error('[Update] Failed to persist dismissal state:', err);
         }
       }
     };
@@ -389,16 +488,39 @@
     }, UPDATE_CONFIG.notificationDuration);
   };
 
-  // Optimized update checker
+  /**
+   * Check for updates with URL validation and timeout protection
+   * @param {boolean} force - Force update check even if recently checked
+   * @returns {Promise<void>}
+   */
   const checkForUpdates = async (force = false) => {
-    if (!UPDATE_CONFIG.enabled || updateState.checkInProgress) return;
+    if (!UPDATE_CONFIG.enabled || updateState.checkInProgress) {
+      return;
+    }
 
     const now = Date.now();
-    if (!force && now - updateState.lastCheck < UPDATE_CONFIG.checkInterval) return;
+    if (!force && now - updateState.lastCheck < UPDATE_CONFIG.checkInterval) {
+      return;
+    }
 
     updateState.checkInProgress = true;
 
     try {
+      // Validate update URL before fetch
+      try {
+        const parsedUrl = new URL(UPDATE_CONFIG.updateUrl);
+        if (parsedUrl.protocol !== 'https:') {
+          throw new Error('Update URL must use HTTPS');
+        }
+        if (!parsedUrl.hostname.includes('greasyfork.org')) {
+          throw new Error('Update URL must be from greasyfork.org');
+        }
+      } catch (urlError) {
+        console.error('[Update] Invalid update URL configuration:', urlError);
+        updateState.checkInProgress = false;
+        return;
+      }
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000);
 
@@ -411,7 +533,9 @@
 
       clearTimeout(timeoutId);
 
-      if (!response.ok) throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}: ${response.statusText}`);
+      }
 
       const metaText = await response.text();
       const updateDetails = utils.parseMetadata(metaText);

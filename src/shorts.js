@@ -5,8 +5,8 @@
   // Internationalization (i18n) system
   const i18n = {
     en: {
-      seekBackward: 'Seek backward 5s',
-      seekForward: 'Seek forward 5s',
+      seekBackward: 'Seek backward',
+      seekForward: 'Seek forward',
       volumeUp: 'Volume up',
       volumeDown: 'Volume down',
       muteUnmute: 'Mute/Unmute',
@@ -22,10 +22,14 @@
       cancel: 'Cancel',
       keyAlreadyUsed: 'Key "{key}" already used',
       shortcutUpdated: 'Shortcut updated',
+      toggleCaptions: 'Toggle subtitles',
+      captionsOn: 'Subtitles: On',
+      captionsOff: 'Subtitles: Off',
+      captionsUnavailable: 'Subtitles unavailable',
     },
     ru: {
-      seekBackward: 'Перемотка назад 5с',
-      seekForward: 'Перемотка вперёд 5с',
+      seekBackward: 'Перемотка назад',
+      seekForward: 'Перемотка вперёд',
       volumeUp: 'Громче',
       volumeDown: 'Тише',
       muteUnmute: 'Вкл/Выкл звук',
@@ -41,6 +45,10 @@
       cancel: 'Отмена',
       keyAlreadyUsed: 'Клавиша "{key}" уже используется',
       shortcutUpdated: 'Сочетание клавиш обновлено',
+      toggleCaptions: 'Переключить субтитры',
+      captionsOn: 'Субтитры: Вкл',
+      captionsOff: 'Субтитры: Выкл',
+      captionsUnavailable: 'Субтитры недоступны',
     },
   };
 
@@ -72,6 +80,7 @@
       volumeUp: { key: '+', description: t('volumeUp') },
       volumeDown: { key: '-', description: t('volumeDown') },
       mute: { key: 'm', description: t('muteUnmute') },
+      toggleCaptions: { key: 'c', description: t('toggleCaptions') },
       showHelp: { key: '?', description: t('showHideHelp'), editable: false },
     },
     storageKey: 'youtube_shorts_keyboard_settings',
@@ -121,23 +130,69 @@
       return el?.matches?.('input, textarea, [contenteditable="true"]') || el?.isContentEditable;
     },
 
+    /**
+     * Load settings from localStorage with validation
+     * @returns {void}
+     */
     loadSettings: () => {
       try {
         const saved = localStorage.getItem(config.storageKey);
-        if (saved) Object.assign(config, JSON.parse(saved));
-      } catch {}
+        if (!saved) return;
+
+        const parsed = JSON.parse(saved);
+        if (typeof parsed !== 'object' || parsed === null) {
+          console.warn('[Shorts] Invalid settings format');
+          return;
+        }
+
+        // Validate enabled flag
+        if (typeof parsed.enabled === 'boolean') {
+          config.enabled = parsed.enabled;
+        }
+
+        // Validate shortcuts object
+        if (parsed.shortcuts && typeof parsed.shortcuts === 'object') {
+          const defaultShortcuts = utils.getDefaultShortcuts();
+
+          for (const [action, shortcut] of Object.entries(parsed.shortcuts)) {
+            // Only restore valid shortcut actions
+            if (defaultShortcuts[action]) {
+              if (shortcut && typeof shortcut === 'object') {
+                // Validate key is a non-empty string
+                if (
+                  typeof shortcut.key === 'string' &&
+                  shortcut.key.length > 0 &&
+                  shortcut.key.length <= 20
+                ) {
+                  config.shortcuts[action] = {
+                    key: shortcut.key,
+                    description: defaultShortcuts[action].description,
+                    editable: shortcut.editable !== false,
+                  };
+                }
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('[Shorts] Error loading settings:', error);
+      }
     },
 
+    /**
+     * Save settings to localStorage with error handling
+     * @returns {void}
+     */
     saveSettings: () => {
       try {
-        localStorage.setItem(
-          config.storageKey,
-          JSON.stringify({
-            enabled: config.enabled,
-            shortcuts: config.shortcuts,
-          })
-        );
-      } catch {}
+        const settingsToSave = {
+          enabled: config.enabled,
+          shortcuts: config.shortcuts,
+        };
+        localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
+      } catch (error) {
+        console.error('[Shorts] Error saving settings:', error);
+      }
     },
 
     getDefaultShortcuts: () => ({
@@ -146,6 +201,7 @@
       volumeUp: { key: '+', description: t('volumeUp') },
       volumeDown: { key: '-', description: t('volumeDown') },
       mute: { key: 'm', description: t('muteUnmute') },
+      toggleCaptions: { key: 'c', description: t('toggleCaptions') },
       showHelp: { key: '?', description: t('showHideHelp'), editable: false },
     }),
   };
@@ -221,6 +277,47 @@
       }
     },
 
+    toggleCaptions: () => {
+      // Try to click a captions/subtitles button first
+      try {
+        const buttons = document.querySelectorAll('button[aria-label]');
+        for (const b of buttons) {
+          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+          if (
+            aria.includes('subtit') ||
+            aria.includes('caption') ||
+            aria.includes('субтит') ||
+            aria.includes('субтитр') ||
+            aria.includes('cc')
+          ) {
+            if (b.offsetParent !== null) {
+              b.click();
+              // It's hard to know exact state, so try to use textTracks below for feedback
+              break;
+            }
+          }
+        }
+      } catch {
+        // Continue to fallback
+      }
+
+      const video = getCurrentVideo();
+      if (video && video.textTracks && video.textTracks.length) {
+        const tracks = Array.from(video.textTracks).filter(
+          t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind
+        );
+        if (tracks.length) {
+          const anyShowing = tracks.some(tr => tr.mode === 'showing');
+          tracks.forEach(tr => (tr.mode = anyShowing ? 'hidden' : 'showing'));
+          feedback.show(anyShowing ? t('captionsOff') : t('captionsOn'));
+          return;
+        }
+      }
+
+      // If we couldn't toggle via textTracks or button, inform user
+      feedback.show(t('captionsUnavailable'));
+    },
+
     volumeUp: () => {
       const video = getCurrentVideo();
       if (video) {
@@ -239,6 +336,36 @@
 
     mute: () => {
       const video = getCurrentVideo();
+
+      // Try to click a visible mute/volume button so the player UI updates its icon
+      try {
+        const buttons = document.querySelectorAll('button[aria-label]');
+        for (const b of buttons) {
+          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+          if (
+            aria.includes('mute') ||
+            aria.includes('unmute') ||
+            aria.includes('sound') ||
+            aria.includes('volume') ||
+            aria.includes('звук') ||
+            aria.includes('громк')
+          ) {
+            if (b.offsetParent !== null) {
+              b.click();
+              // Give the player a moment to update state, then show feedback based on video.muted
+              setTimeout(() => {
+                const v = getCurrentVideo();
+                if (v) feedback.show(v.muted ? '🔇' : '🔊');
+              }, 60);
+              return;
+            }
+          }
+        }
+      } catch {
+        // ignore and fallback
+      }
+
+      // Fallback: toggle programmatically
       if (video) {
         video.muted = !video.muted;
         feedback.show(video.muted ? '🔇' : '🔊');

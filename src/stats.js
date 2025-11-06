@@ -72,10 +72,16 @@
             .stats-menu-container{position:relative;display:inline-block}.stats-horizontal-menu{position:absolute;display:flex;left:100%;top:0;height:100%;visibility:hidden;opacity:0;transition:visibility 0s,opacity 0.2s linear;z-index:100}.stats-menu-container:hover .stats-horizontal-menu{visibility:visible;opacity:1}.stats-menu-button{margin-left:8px;white-space:nowrap}
             /* Modal overlay and content with stronger glassmorphism */
             .stats-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.55));z-index:99999;display:flex;align-items:center;justify-content:center;animation:fadeInModal .18s;backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%)}
-            .stats-modal-content{background:rgba(24,24,24,0.72);border-radius:20px;box-shadow:0 18px 40px rgba(0,0,0,0.45);max-width:78vw;max-height:88vh;overflow:auto;position:relative;padding:20px 0 0 0;display:flex;flex-direction:column;align-items:center;gap:12px;animation:scaleInModal .18s;border:1.5px solid rgba(255,255,255,0.08);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%)}
+            .stats-modal-content{background:rgba(24,24,24,0.72);border-radius:20px;box-shadow:0 18px 40px rgba(0,0,0,0.45);max-width:78vw;max-height:88vh;overflow:auto;position:relative;display:flex;flex-direction:column;align-items:center;gap:12px;animation:scaleInModal .18s;border:1.5px solid rgba(255,255,255,0.08);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%)}
             html[dark] .stats-modal-content{background:rgba(24,24,24,0.72)}html:not([dark]) .stats-modal-content{background:rgba(255,255,255,0.92);color:#222;border:1.25px solid rgba(0,0,0,0.06)}
-            .stats-modal-close{position:absolute;top:12px;right:16px;background:transparent;color:#fff;border:none;font-size:26px;line-height:1;width:40px;height:40px;cursor:pointer;transition:transform .18s ease,color .18s;z-index:3;display:flex;align-items:center;justify-content:center;border-radius:10px}
-            .stats-modal-close:hover{color:#ff6b6b;transform:rotate(90deg) scale(1.25);}
+            /* New layout: wrapper to put iframe and action buttons side-by-side */
+            .stats-modal-wrapper{display:flex;align-items:flex-start;gap:12px}
+            .stats-modal-actions{display:flex;flex-direction:column;gap:10px;margin-top:6px}
+            .stats-modal-action-btn{width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,0.06);border:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,0.2);transition:transform .12s ease,background .12s;color:#fff}
+            .stats-modal-action-btn:hover{transform:translateY(-2px)}
+            /* keep the old absolute close for fallback as a separately-named class */
+            .stats-modal-close-abs{position:absolute;top:12px;right:16px;background:transparent;color:#fff;border:none;font-size:26px;line-height:1;width:40px;height:40px;cursor:pointer;transition:transform .18s ease,color .18s;z-index:3;display:flex;align-items:center;justify-content:center;border-radius:10px}
+            .stats-modal-close-abs:hover{color:#ff6b6b;transform:rotate(90deg) scale(1.25);}
             .stats-modal-iframe{width:70vw;height:68vh;box-shadow:0 12px 36px rgba(0,0,0,0.36);background:#111;border:1px solid rgba(255,255,255,0.06)}
             .stats-modal-title{font-size:18px;font-weight:600;color:#fff;margin-bottom:6px;text-align:center;text-shadow:0 6px 18px rgba(0,0,0,0.25)}html:not([dark]) .stats-modal-title{color:#111}
             @keyframes fadeInModal{from{opacity:0}to{opacity:1}}@keyframes scaleInModal{from{transform:scale(0.985);opacity:0.6}to{transform:scale(1);opacity:1}}
@@ -93,6 +99,47 @@
     hasShorts: false,
   };
 
+  /**
+   * Rate limiter for API calls
+   * @type {Object}
+   */
+  const rateLimiter = {
+    requests: new Map(),
+    maxRequests: 10,
+    timeWindow: 60000, // 1 minute
+
+    /**
+     * Check if request is allowed
+     * @param {string} key - Request identifier
+     * @returns {boolean} Whether request is allowed
+     */
+    canRequest: key => {
+      const now = Date.now();
+      const requests = rateLimiter.requests.get(key) || [];
+
+      // Remove old requests outside time window
+      const recentRequests = requests.filter(time => now - time < rateLimiter.timeWindow);
+
+      if (recentRequests.length >= rateLimiter.maxRequests) {
+        console.warn(
+          `[YouTube+][Stats] Rate limit exceeded for ${key}. Max ${rateLimiter.maxRequests} requests per minute.`
+        );
+        return false;
+      }
+
+      recentRequests.push(now);
+      rateLimiter.requests.set(key, recentRequests);
+      return true;
+    },
+
+    /**
+     * Clear rate limiter state
+     */
+    clear: () => {
+      rateLimiter.requests.clear();
+    },
+  };
+
   function addStyles() {
     if (!document.querySelector('#youtube-enhancer-styles')) {
       // ✅ Use StyleManager instead of createElement('style')
@@ -100,51 +147,128 @@
     }
   }
 
+  /**
+   * Get current video URL with validation
+   * @returns {string|null} Valid YouTube video URL or null
+   */
   function getCurrentVideoUrl() {
-    const url = window.location.href;
-    const urlParams = new URLSearchParams(window.location.search);
-    const videoId = urlParams.get('v');
+    try {
+      const url = window.location.href;
 
-    if (videoId) {
-      return `https://www.youtube.com/watch?v=${videoId}`;
+      // Validate URL is from YouTube domain
+      if (!url.includes('youtube.com')) {
+        return null;
+      }
+
+      const urlParams = new URLSearchParams(window.location.search);
+      const videoId = urlParams.get('v');
+
+      // Validate video ID format (11 characters, alphanumeric + - and _)
+      if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+        return `https://www.youtube.com/watch?v=${videoId}`;
+      }
+
+      const shortsMatch = url.match(/\/shorts\/([^?]+)/);
+      if (shortsMatch && /^[a-zA-Z0-9_-]{11}$/.test(shortsMatch[1])) {
+        return `https://www.youtube.com/shorts/${shortsMatch[1]}`;
+      }
+
+      return null;
+    } catch (error) {
+      YouTubeUtils?.logError?.('Stats', 'Failed to get video URL', error);
+      return null;
     }
-
-    const shortsMatch = url.match(/\/shorts\/([^?]+)/);
-    if (shortsMatch) {
-      return `https://www.youtube.com/shorts/${shortsMatch[1]}`;
-    }
-
-    return null;
   }
 
+  /**
+   * Get channel identifier with validation
+   * @returns {string} Channel identifier
+   */
   function getChannelIdentifier() {
-    const url = window.location.href;
-    let identifier = '';
+    try {
+      const url = window.location.href;
+      let identifier = '';
 
-    if (url.includes('/channel/')) {
-      identifier = url.split('/channel/')[1].split('/')[0];
-    } else if (url.includes('/@')) {
-      identifier = url.split('/@')[1].split('/')[0];
+      if (url.includes('/channel/')) {
+        identifier = url.split('/channel/')[1].split('/')[0];
+      } else if (url.includes('/@')) {
+        identifier = url.split('/@')[1].split('/')[0];
+      }
+
+      // Validate identifier (alphanumeric, dashes, underscores)
+      if (identifier && /^[a-zA-Z0-9_-]+$/.test(identifier)) {
+        return identifier;
+      }
+
+      return '';
+    } catch (error) {
+      YouTubeUtils?.logError?.('Stats', 'Failed to get channel identifier', error);
+      return '';
     }
-
-    return identifier;
   }
 
+  /**
+   * Check channel tabs with rate limiting and enhanced security
+   * @param {string} url - Channel URL to check
+   * @returns {Promise<void>}
+   */
   async function checkChannelTabs(url) {
     if (isChecking) return;
+
+    // Validate URL
+    if (!url || typeof url !== 'string') {
+      return;
+    }
+
+    try {
+      // Parse and validate URL
+      const parsedUrl = new URL(url);
+      if (parsedUrl.hostname !== 'www.youtube.com' && parsedUrl.hostname !== 'youtube.com') {
+        console.warn('[YouTube+][Stats] Invalid domain for channel check');
+        return;
+      }
+    } catch (error) {
+      YouTubeUtils?.logError?.('Stats', 'Invalid URL for channel check', error);
+      return;
+    }
+
+    // Rate limiting
+    if (!rateLimiter.canRequest('checkChannelTabs')) {
+      return;
+    }
+
     isChecking = true;
 
     try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
+
       const response = await fetch(url, {
         credentials: 'same-origin',
+        signal: controller.signal,
+        headers: {
+          Accept: 'text/html',
+        },
       });
 
+      clearTimeout(timeoutId);
+
       if (!response.ok) {
+        console.warn(`[YouTube+][Stats] HTTP ${response.status} when checking channel tabs`);
         isChecking = false;
         return;
       }
 
       const html = await response.text();
+
+      // Limit response size to prevent memory issues
+      if (html.length > 5000000) {
+        // 5MB limit
+        console.warn('[YouTube+][Stats] Response too large, skipping parse');
+        isChecking = false;
+        return;
+      }
+
       const match = html.match(/var ytInitialData = (.+?);<\/script>/);
 
       if (!match || !match[1]) {
@@ -152,7 +276,16 @@
         return;
       }
 
-      const data = JSON.parse(match[1]);
+      // Safe JSON parse with try-catch
+      let data;
+      try {
+        data = JSON.parse(match[1]);
+      } catch (parseError) {
+        YouTubeUtils?.logError?.('Stats', 'Failed to parse ytInitialData', parseError);
+        isChecking = false;
+        return;
+      }
+
       const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
 
       let hasStreams = false;
@@ -160,7 +293,7 @@
 
       tabs.forEach(tab => {
         const tabUrl = tab?.tabRenderer?.endpoint?.commandMetadata?.webCommandMetadata?.url;
-        if (tabUrl) {
+        if (tabUrl && typeof tabUrl === 'string') {
           if (/\/streams$/.test(tabUrl)) hasStreams = true;
           if (/\/shorts$/.test(tabUrl)) hasShorts = true;
         }
@@ -176,30 +309,67 @@
         existingMenu.remove();
         createStatsMenu();
       }
-    } catch {
+    } catch (error) {
+      if (error.name === 'AbortError') {
+        console.warn('[YouTube+][Stats] Channel check timed out');
+      } else {
+        YouTubeUtils?.logError?.('Stats', 'Failed to check channel tabs', error);
+      }
     } finally {
       isChecking = false;
     }
   }
 
+  /**
+   * Check if URL is a channel page
+   * @param {string} url - URL to check
+   * @returns {boolean} Whether URL is a channel page
+   */
   function isChannelPage(url) {
-    return (
-      url.includes('youtube.com/') &&
-      (url.includes('/channel/') || url.includes('/@')) &&
-      !url.includes('/video/') &&
-      !url.includes('/watch')
-    );
-  }
-
-  function checkUrlChange() {
-    const currentUrl = location.href;
-    if (currentUrl !== previousUrl) {
-      previousUrl = currentUrl;
-      if (isChannelPage(currentUrl)) {
-        setTimeout(() => checkChannelTabs(currentUrl), 500);
-      }
+    try {
+      return (
+        url &&
+        typeof url === 'string' &&
+        url.includes('youtube.com/') &&
+        (url.includes('/channel/') || url.includes('/@')) &&
+        !url.includes('/video/') &&
+        !url.includes('/watch')
+      );
+    } catch {
+      return false;
     }
   }
+
+  /**
+   * Check for URL changes with debouncing
+   */
+  const checkUrlChange =
+    YouTubeUtils?.debounce?.(() => {
+      try {
+        const currentUrl = location.href;
+        if (currentUrl !== previousUrl) {
+          previousUrl = currentUrl;
+          if (isChannelPage(currentUrl)) {
+            setTimeout(() => checkChannelTabs(currentUrl), 500);
+          }
+        }
+      } catch (error) {
+        YouTubeUtils?.logError?.('Stats', 'URL change check failed', error);
+      }
+    }, 300) ||
+    function () {
+      try {
+        const currentUrl = location.href;
+        if (currentUrl !== previousUrl) {
+          previousUrl = currentUrl;
+          if (isChannelPage(currentUrl)) {
+            setTimeout(() => checkChannelTabs(currentUrl), 500);
+          }
+        }
+      } catch (error) {
+        console.error('[YouTube+][Stats] URL change check failed:', error);
+      }
+    };
 
   function createStatsIcon(isShorts = false) {
     const icon = document.createElement('div');
@@ -222,10 +392,7 @@
       e.stopPropagation();
       const videoUrl = getCurrentVideoUrl();
       if (videoUrl) {
-        openStatsModal(
-          `https://stats.afkarxyz.fun/?directVideo=${encodeURIComponent(videoUrl)}`,
-          t('videoStats')
-        );
+        openStatsModal(`https://stats.afkarxyz.fun/?directVideo=${encodeURIComponent(videoUrl)}`);
       }
     });
 
@@ -318,7 +485,41 @@
     return buttonViewModel;
   }
 
-  function openStatsModal(url, titleText) {
+  /**
+   * Open stats modal with enhanced security
+   * @param {string} url - URL to display in iframe
+   */
+  function openStatsModal(url) {
+    // Validate URL
+    if (!url || typeof url !== 'string') {
+      console.error('[YouTube+][Stats] Invalid URL for modal');
+      return;
+    }
+
+    try {
+      // Parse and validate URL
+      const parsedUrl = new URL(url);
+      const allowedDomains = ['stats.afkarxyz.fun', 'livecounts.io', 'api.livecounts.io'];
+
+      if (!allowedDomains.includes(parsedUrl.hostname)) {
+        console.error(
+          `[YouTube+][Stats] URL domain ${parsedUrl.hostname} not in allowlist:`,
+          allowedDomains
+        );
+        return;
+      }
+
+      // Ensure HTTPS
+      if (parsedUrl.protocol !== 'https:') {
+        console.error('[YouTube+][Stats] Only HTTPS URLs are allowed');
+        return;
+      }
+    } catch (error) {
+      YouTubeUtils?.logError?.('Stats', 'Invalid URL for modal', error);
+      return;
+    }
+
+    // Remove any existing overlays
     document.querySelectorAll('.stats-modal-overlay').forEach(m => m.remove());
 
     const overlay = document.createElement('div');
@@ -327,20 +528,7 @@
     const content = document.createElement('div');
     content.className = 'stats-modal-content';
 
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'stats-modal-close';
-    closeBtn.innerHTML = `
-      <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
-      </svg>
-    `;
-    closeBtn.title = t('close');
-    closeBtn.onclick = () => overlay.remove();
-
-    const title = document.createElement('div');
-    title.className = 'stats-modal-title';
-    title.textContent = titleText || t('stats');
-
+    // Create iframe (main content)
     const iframe = document.createElement('iframe');
     iframe.className = 'stats-modal-iframe';
     iframe.src = url;
@@ -349,23 +537,71 @@
     iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups');
     iframe.style.background = '#222';
 
-    content.append(closeBtn, title, iframe);
-    overlay.appendChild(content);
+    // Action buttons column (to the right of iframe)
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'stats-modal-actions';
 
-    overlay.onclick = e => {
-      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      if (target === overlay) overlay.remove();
-    };
-    document.addEventListener(
-      'keydown',
-      function escHandler(e) {
-        if (e.key === 'Escape') {
-          overlay.remove();
-          document.removeEventListener('keydown', escHandler, true);
-        }
-      },
-      true
-    );
+    // Close button (first) — styled like the Open button (use action-btn class)
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'stats-modal-action-btn stats-modal-close-btn';
+    closeBtn.innerHTML = `
+      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+      </svg>
+    `;
+    closeBtn.title = t('close');
+    closeBtn.setAttribute('aria-label', t('close'));
+    closeBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      overlay.remove();
+    });
+
+    // Open in new tab button (second)
+    const openBtn = document.createElement('button');
+    openBtn.className = 'stats-modal-open stats-modal-action-btn';
+    openBtn.innerHTML = `
+      <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">
+        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>
+        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>
+        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>
+      </svg>
+    `;
+    openBtn.title = t('clickToOpen');
+    openBtn.setAttribute('aria-label', t('clickToOpen'));
+    openBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(url, '_blank');
+    });
+
+    // Append buttons into actions column (close first, then open)
+    actionsDiv.appendChild(closeBtn);
+    actionsDiv.appendChild(openBtn);
+
+    // Wrapper to hold iframe + actions side-by-side
+    const wrapper = document.createElement('div');
+    wrapper.className = 'stats-modal-wrapper';
+    // Put iframe inside content area so content styling remains
+    content.appendChild(iframe);
+
+    wrapper.appendChild(content);
+    wrapper.appendChild(actionsDiv);
+    overlay.appendChild(wrapper);
+
+    // Close overlay when clicking outside
+    overlay.addEventListener('click', e => {
+      if (e.target === overlay) overlay.remove();
+    });
+
+    // ESC to close
+    function escHandler(e) {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        window.removeEventListener('keydown', escHandler, true);
+      }
+    }
+    window.addEventListener('keydown', escHandler, true);
 
     document.body.appendChild(overlay);
   }
@@ -449,10 +685,7 @@
       () => {
         const channelId = getChannelIdentifier();
         if (channelId) {
-          openStatsModal(
-            `https://stats.afkarxyz.fun/?directChannel=${channelId}`,
-            t('channelStats')
-          );
+          openStatsModal(`https://stats.afkarxyz.fun/?directChannel=${channelId}`);
         }
       }
     );
@@ -472,7 +705,7 @@
         () => {
           const channelId = getChannelIdentifier();
           if (channelId) {
-            openStatsModal(`https://stats.afkarxyz.fun/?directStream=${channelId}`, t('liveStats'));
+            openStatsModal(`https://stats.afkarxyz.fun/?directStream=${channelId}`);
           }
         }
       );
@@ -493,10 +726,7 @@
         () => {
           const channelId = getChannelIdentifier();
           if (channelId) {
-            openStatsModal(
-              `https://stats.afkarxyz.fun/?directShorts=${channelId}`,
-              t('shortsStats')
-            );
+            openStatsModal(`https://stats.afkarxyz.fun/?directShorts=${channelId}`);
           }
         }
       );

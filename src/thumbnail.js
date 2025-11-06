@@ -7,11 +7,13 @@
       close: 'Close',
       thumbnailPreview: 'Thumbnail Preview',
       clickToOpen: 'Click to open in new tab',
+      download: 'Download',
     },
     ru: {
       close: 'Закрыть',
       thumbnailPreview: 'Предпросмотр миниатюры',
       clickToOpen: 'Нажмите, чтобы открыть в новой вкладке',
+      download: 'Скачать',
     },
   };
 
@@ -25,50 +27,140 @@
     return i18n[lang][key] || i18n.en[key] || key;
   }
 
+  /**
+   * Extract video ID from thumbnail source with validation
+   * @param {string} thumbnailSrc - Thumbnail source URL
+   * @returns {string|null} Video ID or null if invalid
+   */
   function extractVideoId(thumbnailSrc) {
-    const match = thumbnailSrc.match(/\/vi\/([^\/]+)\//);
-    return match ? match[1] : null;
+    try {
+      if (!thumbnailSrc || typeof thumbnailSrc !== 'string') return null;
+      const match = thumbnailSrc.match(/\/vi\/([^\/]+)\//);
+      const videoId = match ? match[1] : null;
+      // Validate video ID format (11 characters, alphanumeric + - and _)
+      if (videoId && !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+        console.warn('[Thumbnail] Invalid video ID format:', videoId);
+        return null;
+      }
+      return videoId;
+    } catch (error) {
+      console.error('[Thumbnail] Error extracting video ID:', error);
+      return null;
+    }
   }
 
+  /**
+   * Extract shorts ID from URL with validation
+   * @param {string} href - URL to extract shorts ID from
+   * @returns {string|null} Shorts ID or null if invalid
+   */
   function extractShortsId(href) {
-    const match = href.match(/\/shorts\/([^\/\?]+)/);
-    return match ? match[1] : null;
+    try {
+      if (!href || typeof href !== 'string') return null;
+      const match = href.match(/\/shorts\/([^\/\?]+)/);
+      const shortsId = match ? match[1] : null;
+      // Validate shorts ID format (11 characters, alphanumeric + - and _)
+      if (shortsId && !/^[a-zA-Z0-9_-]{11}$/.test(shortsId)) {
+        console.warn('[Thumbnail] Invalid shorts ID format:', shortsId);
+        return null;
+      }
+      return shortsId;
+    } catch (error) {
+      console.error('[Thumbnail] Error extracting shorts ID:', error);
+      return null;
+    }
   }
 
+  /**
+   * Check if image exists with timeout and error handling
+   * @param {string} url - Image URL to check
+   * @returns {Promise<boolean>} True if image exists and is accessible
+   */
   async function checkImageExists(url) {
     try {
-      const corsTest = await fetch(url, { method: 'HEAD' }).catch(() => null);
-
-      if (corsTest) {
-        return corsTest.ok;
-      } else {
-        return true;
+      // Validate URL
+      if (!url || typeof url !== 'string') {
+        console.warn('[Thumbnail] Invalid URL provided');
+        return false;
       }
-    } catch {
-      return new Promise(resolve => {
-        const img = document.createElement('img');
-        img.style.display = 'none';
 
-        const timeout = setTimeout(() => {
-          document.body.removeChild(img);
-          resolve(false);
-        }, 2000);
+      // Validate URL format and protocol
+      let parsedUrl;
+      try {
+        parsedUrl = new URL(url);
+        // Only allow https protocol for security
+        if (parsedUrl.protocol !== 'https:') {
+          console.warn('[Thumbnail] Only HTTPS URLs are allowed');
+          return false;
+        }
+        // Validate domain (only allow YouTube image domains)
+        if (
+          !parsedUrl.hostname.endsWith('ytimg.com') &&
+          !parsedUrl.hostname.endsWith('youtube.com')
+        ) {
+          console.warn('[Thumbnail] Only YouTube image domains are allowed');
+          return false;
+        }
+      } catch (error) {
+        console.error('[Thumbnail] Invalid URL:', error);
+        return false;
+      }
 
-        img.onload = () => {
-          clearTimeout(timeout);
-          document.body.removeChild(img);
-          resolve(true);
-        };
+      // Try HEAD request first with timeout
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
 
-        img.onerror = () => {
-          clearTimeout(timeout);
-          document.body.removeChild(img);
-          resolve(false);
-        };
+      try {
+        const corsTest = await fetch(url, {
+          method: 'HEAD',
+          signal: controller.signal,
+        }).catch(() => null);
 
-        document.body.appendChild(img);
-        img.src = url;
-      });
+        clearTimeout(timeoutId);
+
+        if (corsTest) {
+          return corsTest.ok;
+        } else {
+          return true; // Fallback if HEAD request fails
+        }
+      } catch {
+        clearTimeout(timeoutId);
+
+        // Fallback to image load test
+        return new Promise(resolve => {
+          const img = document.createElement('img');
+          img.style.display = 'none';
+
+          const timeout = setTimeout(() => {
+            if (img.parentNode) {
+              document.body.removeChild(img);
+            }
+            resolve(false);
+          }, 3000); // 3 second timeout for image load
+
+          img.onload = () => {
+            clearTimeout(timeout);
+            if (img.parentNode) {
+              document.body.removeChild(img);
+            }
+            resolve(true);
+          };
+
+          img.onerror = () => {
+            clearTimeout(timeout);
+            if (img.parentNode) {
+              document.body.removeChild(img);
+            }
+            resolve(false);
+          };
+
+          document.body.appendChild(img);
+          img.src = url;
+        });
+      }
+    } catch (error) {
+      console.error('[Thumbnail] Error checking image:', error);
+      return false;
     }
   }
 
@@ -105,49 +197,71 @@
     return spinner;
   }
 
+  /**
+   * Open thumbnail in modal with error handling
+   * @param {string} videoId - YouTube video ID
+   * @param {boolean} isShorts - Whether this is a Shorts video
+   * @param {HTMLElement} overlayElement - Overlay element containing the button
+   * @returns {Promise<void>}
+   */
   async function openThumbnail(videoId, isShorts, overlayElement) {
-    if (isShorts) {
-      const originalSvg = overlayElement.querySelector('svg');
-      const spinner = createSpinner();
-      overlayElement.replaceChild(spinner, originalSvg);
-
-      try {
-        const oardefaultUrl = `https://i.ytimg.com/vi/${videoId}/oardefault.jpg`;
-        const isOarDefaultAvailable = await checkImageExists(oardefaultUrl);
-
-        if (isOarDefaultAvailable) {
-          showImageModal(oardefaultUrl);
-        } else {
-          showImageModal(`https://i.ytimg.com/vi/${videoId}/oar2.jpg`);
-        }
-      } finally {
-        overlayElement.replaceChild(originalSvg, spinner);
+    try {
+      // Validate inputs
+      if (!videoId || typeof videoId !== 'string' || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
+        console.error('[Thumbnail] Invalid video ID:', videoId);
+        return;
       }
-    } else {
-      // For non-shorts thumbnails: capture original svg, show spinner while checking
+
+      if (!overlayElement || !(overlayElement instanceof HTMLElement)) {
+        console.error('[Thumbnail] Invalid overlay element');
+        return;
+      }
+
       const originalSvg = overlayElement.querySelector('svg');
+      if (!originalSvg) {
+        console.warn('[Thumbnail] No SVG found in overlay element');
+        return;
+      }
+
       const spinner = createSpinner();
-      // replace original with spinner
       overlayElement.replaceChild(spinner, originalSvg);
 
       try {
-        const maxresdefaultUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
-        const isMaxResAvailable = await checkImageExists(maxresdefaultUrl);
+        if (isShorts) {
+          const oardefaultUrl = `https://i.ytimg.com/vi/${videoId}/oardefault.jpg`;
+          const isOarDefaultAvailable = await checkImageExists(oardefaultUrl);
 
-        if (isMaxResAvailable) {
-          showImageModal(maxresdefaultUrl);
+          if (isOarDefaultAvailable) {
+            showImageModal(oardefaultUrl);
+          } else {
+            showImageModal(`https://i.ytimg.com/vi/${videoId}/oar2.jpg`);
+          }
         } else {
-          showImageModal(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`);
+          const maxresdefaultUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
+          const isMaxResAvailable = await checkImageExists(maxresdefaultUrl);
+
+          if (isMaxResAvailable) {
+            showImageModal(maxresdefaultUrl);
+          } else {
+            showImageModal(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`);
+          }
         }
       } finally {
-        // restore original svg
+        // Restore original svg
         try {
-          overlayElement.replaceChild(originalSvg, spinner);
-        } catch {
-          // fallback: remove spinner if original not found
-          if (spinner && spinner.parentNode) spinner.parentNode.removeChild(spinner);
+          if (spinner && spinner.parentNode) {
+            overlayElement.replaceChild(originalSvg, spinner);
+          }
+        } catch (restoreError) {
+          console.error('[Thumbnail] Error restoring original SVG:', restoreError);
+          // Fallback: remove spinner if original not found
+          if (spinner && spinner.parentNode) {
+            spinner.parentNode.removeChild(spinner);
+          }
         }
       }
+    } catch (error) {
+      console.error('[Thumbnail] Error opening thumbnail:', error);
     }
   }
 
@@ -168,10 +282,15 @@
     .thumbnailPreview-button { position: absolute; bottom: 10px; left: 5px; background-color: var(--thumbnail-btn-bg); color: var(--thumbnail-btn-color); border: none; border-radius: 6px; padding: 3px; font-size: 18px; cursor: pointer; z-index: 2000; opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
     .thumbnailPreview-container { position: relative; }
     .thumbnailPreview-container:hover .thumbnailPreview-button { opacity: 1; }
-  .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 100000; display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.22s cubic-bezier(.4,0,.2,1); backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%); }
-  .thumbnail-modal-content { background: var(--thumbnail-modal-bg); border-radius: 20px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); max-width: 78vw; max-height: 90vh; overflow: auto; position: relative; padding: 20px 0 0 0; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.22s cubic-bezier(.4,0,.2,1); border: 1.5px solid var(--thumbnail-glass-border); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%); }
-    .thumbnail-modal-close { position: absolute; top: 12px; right: 18px; background: transparent; color: #fff; border: none; font-size: 28px; line-height: 1; width: 36px; height: 36px; cursor: pointer; transition: background 0.2s; z-index: 2; display: flex; align-items: center; justify-content: center; }
-    .thumbnail-modal-close:hover { color: #ff4444; transform: rotate(90deg) scale(1.25); }
+    .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 100000; display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.22s cubic-bezier(.4,0,.2,1); backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%); }
+  .thumbnail-modal-content { background: var(--thumbnail-modal-bg); border-radius: 20px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); max-width: 78vw; max-height: 90vh; overflow: auto; position: relative; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.22s cubic-bezier(.4,0,.2,1); border: 1.5px solid var(--thumbnail-glass-border); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%);}
+    /* Wrapper to place content and action buttons side-by-side */
+    .thumbnail-modal-wrapper { display: flex; align-items: flex-start; gap: 12px; }
+    .thumbnail-modal-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+  .thumbnail-modal-action-btn { width: 40px; height: 40px; border-radius: 50%; background: var(--thumbnail-modal-btn-bg); border: 1px solid rgba(0,0,0,0.08); display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.2); transition: transform 0.12s ease, background 0.12s ease; color: var(--thumbnail-modal-btn-color); }
+    .thumbnail-modal-action-btn:hover { transform: translateY(-2px); }
+    .thumbnail-modal-close { }
+    .thumbnail-modal-open { }
     .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; box-shadow: var(--thumbnail-glass-shadow); background: #222; border: 1px solid var(--thumbnail-glass-border); }
     .thumbnail-modal-options { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
     .thumbnail-modal-option-btn { background: var(--thumbnail-modal-btn-bg); color: var(--thumbnail-modal-btn-color); border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s; margin-bottom: 6px; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
@@ -204,68 +323,171 @@
     }
   })();
 
-  // Modal image viewer (class-based, uses injected CSS)
-  function showImageModal(url, titleText) {
-    // remove existing
-    document.querySelectorAll('.thumbnail-modal-overlay').forEach(m => m.remove());
-
-    const overlay = document.createElement('div');
-    overlay.className = 'thumbnail-modal-overlay';
-
-    const content = document.createElement('div');
-    content.className = 'thumbnail-modal-content';
-
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'thumbnail-modal-close';
-    closeBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `;
-    closeBtn.title = t('close');
-    closeBtn.addEventListener('click', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      overlay.remove();
-    });
-
-    const title = document.createElement('div');
-    title.className = 'thumbnail-modal-title';
-    title.textContent = titleText || t('thumbnailPreview');
-
-    const img = document.createElement('img');
-    img.className = 'thumbnail-modal-img';
-    img.src = url;
-    img.alt = t('thumbnailPreview');
-    img.title = t('clickToOpen');
-    img.style.cursor = 'pointer';
-    img.addEventListener('click', () => window.open(img.src, '_blank'));
-
-    const optionsDiv = document.createElement('div');
-    optionsDiv.className = 'thumbnail-modal-options';
-
-    content.appendChild(closeBtn);
-    content.appendChild(title);
-    content.appendChild(img);
-    content.appendChild(optionsDiv);
-    overlay.appendChild(content);
-
-    overlay.addEventListener('click', e => {
-      if (e.target === overlay) overlay.remove();
-    });
-
-    function escHandler(e) {
-      if (e.key === 'Escape') {
-        overlay.remove();
-        window.removeEventListener('keydown', escHandler, true);
+  /**
+   * Show image in modal with error handling and security
+   * @param {string} url - Image URL to display
+   * @returns {void}
+   */
+  function showImageModal(url) {
+    try {
+      // Validate URL
+      if (!url || typeof url !== 'string') {
+        console.error('[Thumbnail] Invalid URL provided to modal');
+        return;
       }
+
+      // Validate URL format and security
+      try {
+        const parsedUrl = new URL(url);
+        // Only allow HTTPS protocol
+        if (parsedUrl.protocol !== 'https:') {
+          console.error('[Thumbnail] Only HTTPS URLs are allowed');
+          return;
+        }
+        // Validate domain (allow common YouTube image domains)
+        // Avatars and some images may be hosted on ggpht.com or googleusercontent.com
+        const allowedDomains = ['ytimg.com', 'youtube.com', 'ggpht.com', 'googleusercontent.com'];
+        if (!allowedDomains.some(d => parsedUrl.hostname.endsWith(d))) {
+          console.error('[Thumbnail] Image domain not allowed:', parsedUrl.hostname);
+          return;
+        }
+      } catch (urlError) {
+        console.error('[Thumbnail] Invalid URL format:', urlError);
+        return;
+      }
+
+      // Remove existing modals
+      document.querySelectorAll('.thumbnail-modal-overlay').forEach(m => m.remove());
+
+      const overlay = document.createElement('div');
+      overlay.className = 'thumbnail-modal-overlay';
+
+      const content = document.createElement('div');
+      content.className = 'thumbnail-modal-content';
+
+      // create image element
+      const img = document.createElement('img');
+      img.className = 'thumbnail-modal-img';
+      img.src = url;
+      img.alt = t('thumbnailPreview');
+      // remove tooltip/title text per request
+      img.title = '';
+      img.style.cursor = 'pointer';
+      img.addEventListener('click', () => window.open(img.src, '_blank'));
+
+      const optionsDiv = document.createElement('div');
+      optionsDiv.className = 'thumbnail-modal-options';
+
+      // close button placed on the overlay (outside modal content)
+      const closeBtn = document.createElement('button');
+      closeBtn.className = 'thumbnail-modal-close';
+      closeBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `;
+      closeBtn.title = t('close');
+      closeBtn.setAttribute('aria-label', t('close'));
+      closeBtn.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        overlay.remove();
+      });
+
+      // open-in-new-tab button (uses extension-like puzzle icon)
+      const newTabBtn = document.createElement('button');
+      newTabBtn.className = 'thumbnail-modal-open';
+      newTabBtn.innerHTML = `\n            <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">\n        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>\n        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>\n        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>\n      </svg>\n        `;
+      newTabBtn.title = t('clickToOpen');
+      newTabBtn.setAttribute('aria-label', t('clickToOpen'));
+      newTabBtn.addEventListener('click', e => {
+        e.preventDefault();
+        e.stopPropagation();
+        window.open(img.src, '_blank');
+      });
+
+      // download button
+      const downloadBtn = document.createElement('button');
+      downloadBtn.className = 'thumbnail-modal-download';
+      downloadBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>\n                <polyline points="7 10 12 15 17 10"/>\n                <line x1="12" y1="15" x2="12" y2="3"/>\n            </svg>\n        `;
+      downloadBtn.title = t('download');
+      downloadBtn.setAttribute('aria-label', t('download'));
+      downloadBtn.addEventListener('click', async e => {
+        e.preventDefault();
+        e.stopPropagation();
+        try {
+          // Try to download by fetching the image as a blob first. Browsers often ignore
+          // the `download` attribute for cross-origin links, so fetching and creating
+          // an object URL forces a download when allowed by CORS.
+          const response = await fetch(img.src);
+          if (!response.ok) throw new Error('Network response was not ok');
+          const blob = await response.blob();
+          const blobUrl = URL.createObjectURL(blob);
+          const a = document.createElement('a');
+          a.href = blobUrl;
+          // Derive a sensible filename from the image URL, fallback to thumbnail.jpg
+          try {
+            const urlObj = new URL(img.src);
+            const segments = urlObj.pathname.split('/');
+            a.download = segments[segments.length - 1] || 'thumbnail.jpg';
+          } catch {
+            a.download = 'thumbnail.jpg';
+          }
+          document.body.appendChild(a);
+          a.click();
+          a.remove();
+          // Revoke object URL shortly after to free memory
+          setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
+        } catch {
+          // If fetch failed (CORS or network), fallback to opening in a new tab so user
+          // can still save the image manually.
+          window.open(img.src, '_blank');
+        }
+      });
+
+      // append modal pieces: create wrapper with content and an actions column
+      content.appendChild(img);
+      content.appendChild(optionsDiv);
+
+      const wrapper = document.createElement('div');
+      wrapper.className = 'thumbnail-modal-wrapper';
+
+      const actionsDiv = document.createElement('div');
+      actionsDiv.className = 'thumbnail-modal-actions';
+
+      // style action buttons consistently
+      closeBtn.classList.add('thumbnail-modal-action-btn');
+      newTabBtn.classList.add('thumbnail-modal-action-btn');
+      downloadBtn.classList.add('thumbnail-modal-action-btn');
+
+      // put close first, then open (new-tab), then download (last)
+      actionsDiv.appendChild(closeBtn);
+      actionsDiv.appendChild(newTabBtn);
+      actionsDiv.appendChild(downloadBtn);
+
+      wrapper.appendChild(content);
+      wrapper.appendChild(actionsDiv);
+      overlay.appendChild(wrapper);
+
+      overlay.addEventListener('click', e => {
+        if (e.target === overlay) overlay.remove();
+      });
+
+      function escHandler(e) {
+        if (e.key === 'Escape') {
+          overlay.remove();
+          window.removeEventListener('keydown', escHandler, true);
+        }
+      }
+      window.addEventListener('keydown', escHandler, true);
+
+      img.addEventListener('error', () => {
+        const err = document.createElement('div');
+        err.textContent = 'Не удалось загрузить изображение';
+        err.style.color = 'white';
+        content.appendChild(err);
+      });
+
+      document.body.appendChild(overlay);
+    } catch (error) {
+      console.error('[Thumbnail] Error showing modal:', error);
     }
-    window.addEventListener('keydown', escHandler, true);
-
-    img.addEventListener('error', () => {
-      const err = document.createElement('div');
-      err.textContent = 'Не удалось загрузить изображение';
-      err.style.color = 'white';
-      content.appendChild(err);
-    });
-
-    document.body.appendChild(overlay);
   }
 
   let thumbnailPreviewCurrentVideoId = '';
@@ -286,6 +508,11 @@
 
     if (newVideoId !== thumbnailPreviewCurrentVideoId) {
       thumbnailPreviewClosed = false;
+      // Remove old overlay when video changes to prevent showing stale thumbnails
+      const oldOverlay = document.querySelector('#thumbnailPreview-player-overlay');
+      if (oldOverlay) {
+        oldOverlay.remove();
+      }
     }
 
     if (!newVideoId || newVideoId === thumbnailPreviewCurrentVideoId || thumbnailPreviewClosed) {
@@ -317,6 +544,7 @@
           createThumbnailOverlay(thumbnailPreviewCurrentVideoId, player)
         );
         overlay.id = overlayId;
+        overlay.dataset.videoId = thumbnailPreviewCurrentVideoId; // Store video ID
         // override position/size for player overlay (top-left)
         overlay.style.cssText = `
                     position: absolute;
@@ -373,7 +601,13 @@
         }
         playerAny.appendChild(overlay);
       } else {
-        // overlay already exists — keep it updated (no img src needed, overlay contains svg)
+        // overlay already exists — verify it matches current video ID, otherwise remove and recreate
+        if (overlay.dataset.videoId !== thumbnailPreviewCurrentVideoId) {
+          overlay.remove();
+          // Recursively call to create new overlay
+          attemptInsertion();
+          return;
+        }
       }
 
       thumbnailInsertionAttempts = 0;
@@ -667,11 +901,20 @@
       '#avatar img',
       'ytd-channel-avatar-editor img',
       '.ytd-video-owner-renderer img[src*="yt"]',
+      'img[src*="yt3.ggpht.com"]', // Добавляем прямой селектор для аватаров
+      'img[src*="yt4.ggpht.com"]',
     ];
 
     avatarSelectors.forEach(selector => {
       document.querySelectorAll(selector).forEach(img => {
-        if (img.src && img.src.includes('yt') && !img.closest('.avatar-overlay')) {
+        if (!img.src) return;
+        if (!img.src.includes('yt')) return;
+        if (img.closest('.avatar-overlay')) return;
+
+        // Проверяем, что это действительно аватар (квадратное изображение)
+        const isAvatar = img.naturalWidth > 0 && img.naturalWidth === img.naturalHeight;
+
+        if (isAvatar || img.src.includes('ggpht.com')) {
           addAvatarOverlay(img);
         }
       });
@@ -683,15 +926,19 @@
       'yt-image-banner-view-model img',
       'ytd-c4-tabbed-header-renderer img[src*="yt"]',
       '#channel-header img[src*="banner"]',
+      'img[src*="banner"]', // Более общий селектор для баннеров
     ];
 
     bannerSelectors.forEach(selector => {
       document.querySelectorAll(selector).forEach(img => {
-        if (
-          img.src &&
+        if (!img.src) return;
+        if (img.closest('.banner-overlay')) return;
+
+        const isBanner =
           (img.src.includes('banner') || img.src.includes('yt')) &&
-          !img.closest('.banner-overlay')
-        ) {
+          img.naturalWidth > img.naturalHeight * 2; // Баннеры обычно широкие
+
+        if (isBanner || img.src.includes('banner')) {
           addBannerOverlay(img);
         }
       });

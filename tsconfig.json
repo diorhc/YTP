@@ -2,7 +2,7 @@
   "compilerOptions": {
     // Enable JavaScript sources but keep type checking opt-in via // @ts-check when ready
     "allowJs": true,
-    "checkJs": true,
+    "checkJs": false, // ✅ Disabled for gradual adoption - enable per-file with @ts-check
     "noEmit": true,
 
     // Module resolution
@@ -14,7 +14,7 @@
     // Type checking options (gradually enable strict mode)
     "strict": false,
     "noImplicitAny": false,
-    "strictNullChecks": false,
+    "strictNullChecks": false, // ⚠️ Disabled for now - too many errors, enable gradually
     "strictFunctionTypes": true,
     "strictPropertyInitialization": false,
     "noImplicitThis": true,

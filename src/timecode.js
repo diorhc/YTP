@@ -29,6 +29,22 @@
       labelPlaceholder: 'Label (optional)',
       enableTimecode: 'Enable Timecode Panel',
       keyboardShortcut: 'Keyboard Shortcut',
+      enableDescription: 'Enable video timecode/chapter panel with quick navigation',
+      shortcutDescription: 'Customize keyboard combination to toggle Timecode Panel',
+      foundTimecodes: 'Found timecodes: {count}',
+      cannotDeleteChapter: 'Cannot delete YouTube chapters',
+      invalidTimeFormat: 'Invalid time format',
+      timecodeDeleted: 'Timecode deleted',
+      timecodeUpdated: 'Timecode updated',
+      timecodeAdded: 'Timecode added',
+      noTimecodesToExport: 'No timecodes to export',
+      timecodesCopied: 'Timecodes copied to clipboard',
+      edit: 'Edit',
+      delete: 'Delete',
+      copied: 'Copied!',
+      confirmDelete: 'Delete timecode "{label}"?',
+      reloadError: 'Error reloading timecodes',
+      cannotEditChapter: 'Cannot edit YouTube chapters',
     },
     ru: {
       timecodes: 'Таймкоды',
@@ -46,6 +62,22 @@
       labelPlaceholder: 'Метка (необязательно)',
       enableTimecode: 'Включить панель таймкодов',
       keyboardShortcut: 'Горячая клавиша',
+      enableDescription: 'Включить панель таймкодов/глав с быстрым переходом',
+      shortcutDescription: 'Настройте комбинацию клавиш для переключения панели таймкодов',
+      foundTimecodes: 'Найдено таймкодов: {count}',
+      cannotDeleteChapter: 'Нельзя удалить главы YouTube',
+      invalidTimeFormat: 'Неверный формат времени',
+      timecodeDeleted: 'Таймкод удалён',
+      timecodeUpdated: 'Таймкод обновлён',
+      timecodeAdded: 'Таймкод добавлен',
+      noTimecodesToExport: 'Нет таймкодов для экспорта',
+      timecodesCopied: 'Таймкоды скопированы в буфер обмена',
+      edit: 'Редактировать',
+      delete: 'Удалить',
+      copied: 'Скопировано!',
+      confirmDelete: 'Удалить таймкод "{label}"?',
+      reloadError: 'Ошибка при обновлении таймкодов',
+      cannotEditChapter: 'Нельзя редактировать главы YouTube',
     },
   };
 
@@ -91,38 +123,148 @@
   };
 
   // Utilities
+  /**
+   * Load settings from localStorage with error handling
+   * @returns {void}
+   */
   const loadSettings = () => {
     try {
       const saved = localStorage.getItem(config.storageKey);
-      if (saved) Object.assign(config, JSON.parse(saved));
-    } catch {}
+      if (!saved) return;
+
+      const parsed = JSON.parse(saved);
+      if (typeof parsed !== 'object' || parsed === null) {
+        console.warn('[Timecode] Invalid settings format');
+        return;
+      }
+
+      // Validate and merge settings
+      if (typeof parsed.enabled === 'boolean') {
+        config.enabled = parsed.enabled;
+      }
+      if (typeof parsed.autoDetect === 'boolean') {
+        config.autoDetect = parsed.autoDetect;
+      }
+      if (typeof parsed.autoSave === 'boolean') {
+        config.autoSave = parsed.autoSave;
+      }
+      if (typeof parsed.autoTrackPlayback === 'boolean') {
+        config.autoTrackPlayback = parsed.autoTrackPlayback;
+      }
+      if (typeof parsed.export === 'boolean') {
+        config.export = parsed.export;
+      }
+
+      // Validate shortcut object
+      if (parsed.shortcut && typeof parsed.shortcut === 'object') {
+        if (typeof parsed.shortcut.key === 'string') {
+          config.shortcut.key = parsed.shortcut.key;
+        }
+        if (typeof parsed.shortcut.shiftKey === 'boolean') {
+          config.shortcut.shiftKey = parsed.shortcut.shiftKey;
+        }
+        if (typeof parsed.shortcut.altKey === 'boolean') {
+          config.shortcut.altKey = parsed.shortcut.altKey;
+        }
+        if (typeof parsed.shortcut.ctrlKey === 'boolean') {
+          config.shortcut.ctrlKey = parsed.shortcut.ctrlKey;
+        }
+      }
+
+      // Validate panel position
+      if (parsed.panelPosition && typeof parsed.panelPosition === 'object') {
+        const { left, top } = parsed.panelPosition;
+        if (
+          typeof left === 'number' &&
+          typeof top === 'number' &&
+          !isNaN(left) &&
+          !isNaN(top) &&
+          left >= 0 &&
+          top >= 0
+        ) {
+          config.panelPosition = { left, top };
+        }
+      }
+    } catch (error) {
+      console.error('[Timecode] Error loading settings:', error);
+    }
   };
 
+  /**
+   * Save settings to localStorage with error handling
+   * @returns {void}
+   */
   const saveSettings = () => {
     try {
-      localStorage.setItem(config.storageKey, JSON.stringify(config));
-    } catch {}
+      const settingsToSave = {
+        enabled: config.enabled,
+        autoDetect: config.autoDetect,
+        shortcut: config.shortcut,
+        autoSave: config.autoSave,
+        autoTrackPlayback: config.autoTrackPlayback,
+        panelPosition: config.panelPosition,
+        export: config.export,
+      };
+      localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
+    } catch (error) {
+      console.error('[Timecode] Error saving settings:', error);
+    }
   };
 
+  /**
+   * Clamp panel position within viewport bounds
+   * @param {HTMLElement} panel - Panel element
+   * @param {number} left - Desired left position
+   * @param {number} top - Desired top position
+   * @returns {{left: number, top: number}} Clamped position
+   */
   const clampPanelPosition = (panel, left, top) => {
-    if (!panel) return { left: 0, top: 0 };
+    try {
+      if (!panel || !(panel instanceof HTMLElement)) {
+        console.warn('[Timecode] Invalid panel element');
+        return { left: 0, top: 0 };
+      }
 
-    const rect = panel.getBoundingClientRect();
-    const width = rect.width || panel.offsetWidth || 0;
-    const height = rect.height || panel.offsetHeight || 0;
+      // Validate input coordinates
+      if (typeof left !== 'number' || typeof top !== 'number' || isNaN(left) || isNaN(top)) {
+        console.warn('[Timecode] Invalid position coordinates');
+        return { left: 0, top: 0 };
+      }
 
-    const maxLeft = Math.max(0, window.innerWidth - width);
-    const maxTop = Math.max(0, window.innerHeight - height);
+      const rect = panel.getBoundingClientRect();
+      const width = rect.width || panel.offsetWidth || 0;
+      const height = rect.height || panel.offsetHeight || 0;
 
-    return {
-      left: Math.min(Math.max(0, left), maxLeft),
-      top: Math.min(Math.max(0, top), maxTop),
-    };
+      const maxLeft = Math.max(0, window.innerWidth - width);
+      const maxTop = Math.max(0, window.innerHeight - height);
+
+      return {
+        left: Math.min(Math.max(0, left), maxLeft),
+        top: Math.min(Math.max(0, top), maxTop),
+      };
+    } catch (error) {
+      console.error('[Timecode] Error clamping panel position:', error);
+      return { left: 0, top: 0 };
+    }
   };
 
+  /**
+   * Save panel position to settings
+   * @param {number} left - Left position
+   * @param {number} top - Top position
+   * @returns {void}
+   */
   const savePanelPosition = (left, top) => {
-    config.panelPosition = { left, top };
-    saveSettings();
+    try {
+      if (typeof left !== 'number' || typeof top !== 'number' || isNaN(left) || isNaN(top)) {
+        console.warn('[Timecode] Invalid position coordinates for saving');
+        return;
+      }
+      config.panelPosition = { left, top };
+      saveSettings();
+    } catch (error) {
+      console.error('[Timecode] Error saving panel position:', error);
+    }
   };
 
   const applySavedPanelPosition = panel => {
@@ -156,59 +298,106 @@
       : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
+  /**
+   * Parse time string to seconds with validation
+   * @param {string} timeStr - Time string (MM:SS or HH:MM:SS)
+   * @returns {number|null} Seconds or null if invalid
+   */
   const parseTime = timeStr => {
-    if (!timeStr) return null;
-    const str = timeStr.trim();
+    try {
+      if (!timeStr || typeof timeStr !== 'string') return null;
 
-    // Handle HH:MM:SS format
-    let match = str.match(/^(\d+):(\d{1,2}):(\d{2})$/);
-    if (match) {
-      const [, h, m, s] = match.map(Number);
-      return m < 60 && s < 60 ? h * 3600 + m * 60 + s : null;
+      const str = timeStr.trim();
+      if (str.length === 0 || str.length > 12) return null; // Sanity check
+
+      // Handle HH:MM:SS format
+      let match = str.match(/^(\d+):(\d{1,2}):(\d{2})$/);
+      if (match) {
+        const [, h, m, s] = match.map(Number);
+        // Validate ranges
+        if (isNaN(h) || isNaN(m) || isNaN(s)) return null;
+        if (m >= 60 || s >= 60 || h < 0 || m < 0 || s < 0) return null;
+        const total = h * 3600 + m * 60 + s;
+        // Sanity check: max 24 hours
+        return total <= 86400 ? total : null;
+      }
+
+      // Handle MM:SS format
+      match = str.match(/^(\d{1,2}):(\d{2})$/);
+      if (match) {
+        const [, m, s] = match.map(Number);
+        // Validate ranges
+        if (isNaN(m) || isNaN(s)) return null;
+        if (m >= 60 || s >= 60 || m < 0 || s < 0) return null;
+        return m * 60 + s;
+      }
+
+      return null;
+    } catch (error) {
+      console.error('[Timecode] Error parsing time:', error);
+      return null;
     }
-
-    // Handle MM:SS format
-    match = str.match(/^(\d{1,2}):(\d{2})$/);
-    if (match) {
-      const [, m, s] = match.map(Number);
-      return m < 60 && s < 60 ? m * 60 + s : null;
-    }
-
-    return null;
   };
 
-  // Timecode extraction
+  /**
+   * Extract timecodes from text with validation
+   * @param {string} text - Text containing timecodes
+   * @returns {Array<{time: number, label: string, originalText: string}>} Extracted timecodes
+   */
   const extractTimecodes = text => {
-    if (!text) return [];
+    try {
+      if (!text || typeof text !== 'string') return [];
 
-    const timecodes = [];
-    const seen = new Set();
-    const patterns = [
-      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]\s*(.+?)$/gm,
-      /^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)$/gm,
-      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—:]\s*([^\n\r]{1,100}?)(?=\s*\d{1,2}:\d{2}|\s*$)/g,
-      /(\d{1,2}:\d{2}(?::\d{2})?)\s*[–—-]\s*([^\n]+)/gm,
-      /^(\d{1,2}:\d{2}(?::\d{2})?)\s*(.+)$/gm,
-    ];
+      // Security: limit text length to prevent DoS
+      if (text.length > 50000) {
+        console.warn('[Timecode] Text too long, truncating');
+        text = text.substring(0, 50000);
+      }
 
-    for (const pattern of patterns) {
-      let match;
-      while ((match = pattern.exec(text)) !== null) {
-        const time = parseTime(match[1]);
-        if (time !== null && !seen.has(time)) {
-          seen.add(time);
-          const label = (match[2] || formatTime(time))
-            .trim()
-            .replace(/^\d+[\.\)]\s*/, '')
-            .substring(0, 100);
-          if (label) {
-            timecodes.push({ time, label, originalText: match[1] });
+      const timecodes = [];
+      const seen = new Set();
+      const patterns = [
+        /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]\s*(.+?)$/gm,
+        /^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)$/gm,
+        /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—:]\s*([^\n\r]{1,100}?)(?=\s*\d{1,2}:\d{2}|\s*$)/g,
+        /(\d{1,2}:\d{2}(?::\d{2})?)\s*[–—-]\s*([^\n]+)/gm,
+        /^(\d{1,2}:\d{2}(?::\d{2})?)\s*(.+)$/gm,
+      ];
+
+      for (const pattern of patterns) {
+        let match;
+        let iterations = 0;
+        const maxIterations = 1000; // Prevent infinite loops
+
+        while ((match = pattern.exec(text)) !== null && iterations++ < maxIterations) {
+          const time = parseTime(match[1]);
+          if (time !== null && !seen.has(time)) {
+            seen.add(time);
+            // Sanitize label text
+            let label = (match[2] || formatTime(time))
+              .trim()
+              .replace(/^\d+[\.\)]\s*/, '')
+              .substring(0, 100); // Limit label length
+
+            // Remove potentially dangerous characters
+            label = label.replace(/[<>\"']/g, '');
+
+            if (label) {
+              timecodes.push({ time, label, originalText: match[1] });
+            }
           }
         }
-      }
-    }
 
-    return timecodes.sort((a, b) => a.time - b.time);
+        if (iterations >= maxIterations) {
+          console.warn('[Timecode] Maximum iterations reached during extraction');
+        }
+      }
+
+      return timecodes.sort((a, b) => a.time - b.time);
+    } catch (error) {
+      console.error('[Timecode] Error extracting timecodes:', error);
+      return [];
+    }
   };
 
   const DESCRIPTION_SELECTORS = [
@@ -397,14 +586,14 @@
       const result = await detectTimecodes({ force: true });
 
       if (Array.isArray(result) && result.length) {
-        showNotification(`Найдено таймкодов: ${result.length}`);
+        showNotification(t('foundTimecodes').replace('{count}', result.length));
       } else {
         updateTimecodePanel([]);
-        showNotification('Таймкоды не найдены');
+        showNotification(t('noTimecodesFound'));
       }
     } catch (error) {
       YouTubeUtils.logError('TimecodePanel', 'Reload failed', error);
-      showNotification('Ошибка при обновлении таймкодов');
+      showNotification(t('reloadError'));
     } finally {
       if (button) {
         button.disabled = false;
@@ -492,7 +681,7 @@
     enableDiv.innerHTML = `
         <div>
           <label class="ytp-plus-settings-item-label">${t('enableTimecode')}</label>
-          <div class="ytp-plus-settings-item-description">Enable video timecode/chapter panel with quick navigation</div>
+          <div class="ytp-plus-settings-item-description">${t('enableDescription')}</div>
         </div>
         <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enabled" ${config.enabled ? 'checked' : ''}>
       `;
@@ -503,7 +692,7 @@
     shortcutDiv.innerHTML = `
         <div>
           <label class="ytp-plus-settings-item-label">${t('keyboardShortcut')}</label>
-          <div class="ytp-plus-settings-item-description">Customize keyboard combination to toggle Timecode Panel</div>
+          <div class="ytp-plus-settings-item-description">${t('shortcutDescription')}</div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
           <select id="timecode-modifier-combo" style="background: rgba(34, 34, 34, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
@@ -789,17 +978,17 @@
 
     // Don't allow deletion of native YouTube chapters
     if (timecode.isChapter && !timecode.isUserAdded) {
-      showNotification('Cannot delete YouTube chapters');
+      showNotification(t('cannotDeleteChapter'));
       return;
     }
 
     // Confirm deletion
-    if (!confirm(`Delete timecode "${timecode.label}"?`)) return;
+    if (!confirm(t('confirmDelete').replace('{label}', timecode.label))) return;
 
     timecodes.splice(index, 1);
     updateTimecodePanel(timecodes);
     saveTimecodesToStorage(timecodes);
-    showNotification('Timecode deleted');
+    showNotification(t('timecodeDeleted'));
   };
 
   // Form handling
@@ -827,7 +1016,7 @@
 
     const time = parseTime(timeValue);
     if (time === null) {
-      showNotification('Invalid time format');
+      showNotification(t('invalidTimeFormat'));
       return;
     }
 
@@ -843,17 +1032,17 @@
       // Editing existing timecode
       const oldTimecode = timecodes[state.editingIndex];
       if (oldTimecode.isChapter && !oldTimecode.isUserAdded) {
-        showNotification('Cannot edit YouTube chapters');
+        showNotification(t('cannotEditChapter'));
         hideTimecodeForm();
         return;
       }
 
       timecodes[state.editingIndex] = { ...oldTimecode, ...newTimecode };
-      showNotification('Timecode updated');
+      showNotification(t('timecodeUpdated'));
     } else {
       // Adding new timecode
       timecodes.push(newTimecode);
-      showNotification('Timecode added');
+      showNotification(t('timecodeAdded'));
     }
 
     const sorted = timecodes.sort((a, b) => a.time - b.time);
@@ -866,16 +1055,16 @@
   const exportTimecodes = () => {
     const timecodes = getCurrentTimecodes();
     if (!timecodes.length) {
-      showNotification('No timecodes to export');
+      showNotification(t('noTimecodesToExport'));
       return;
     }
 
     const exportBtn = state.dom.panel?.querySelector('#timecode-export-btn');
     if (exportBtn) {
-      exportBtn.textContent = 'Copied!';
+      exportBtn.textContent = t('copied');
       exportBtn.style.backgroundColor = 'rgba(0,220,0,0.8)';
       setTimeout(() => {
-        exportBtn.textContent = 'Export';
+        exportBtn.textContent = t('export');
         exportBtn.style.backgroundColor = '';
       }, 2000);
     }
@@ -886,7 +1075,7 @@
 
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(content).then(() => {
-        showNotification('Timecodes copied to clipboard');
+        showNotification(t('timecodesCopied'));
       });
     }
   };
@@ -923,8 +1112,8 @@
               isEditable
                 ? `
               <div class="timecode-actions">
-                <button class="timecode-action edit" data-action="edit" title="Edit">✎</button>
-                <button class="timecode-action delete" data-action="delete" title="Delete">✕</button>
+                <button class="timecode-action edit" data-action="edit" title="${t('edit')}">✎</button>
+                <button class="timecode-action delete" data-action="delete" title="${t('delete')}">✕</button>
               </div>
             `
                 : ''

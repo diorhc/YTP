@@ -87,117 +87,178 @@
    * @returns {void}
    */
   const handleScroll = scrollContainer => {
-    const button = document.getElementById('right-tabs-top-button');
-    if (!button || !scrollContainer) return;
-    button.classList.toggle('visible', scrollContainer.scrollTop > 100);
-  };
-
-  /**
-   * Sets up scroll event listener on active tab
-   * @returns {void}
-   */
-  const setupScrollListener = () => {
-    document.querySelectorAll('.tab-content-cld').forEach(tab => {
-      tab.removeEventListener('scroll', tab._topButtonScrollHandler);
-    });
-
-    const activeTab = document.querySelector(
-      '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
-    );
-    if (activeTab) {
-      const scrollHandler = () => handleScroll(activeTab);
-      activeTab._topButtonScrollHandler = scrollHandler;
-      activeTab.addEventListener('scroll', scrollHandler, { passive: true });
-      handleScroll(activeTab);
+    try {
+      const button = document.getElementById('right-tabs-top-button');
+      if (!button || !scrollContainer) return;
+      button.classList.toggle('visible', scrollContainer.scrollTop > 100);
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error in handleScroll:', error);
     }
   };
 
   /**
-   * Creates and appends scroll-to-top button
+   * Sets up scroll event listener on active tab with debouncing for performance
    * @returns {void}
    */
-  const createButton = () => {
-    const rightTabs = document.querySelector('#right-tabs');
-    if (!rightTabs || document.getElementById('right-tabs-top-button')) return;
-    if (!config.enabled) return;
+  const setupScrollListener = () => {
+    try {
+      document.querySelectorAll('.tab-content-cld').forEach(tab => {
+        tab.removeEventListener('scroll', tab._topButtonScrollHandler);
+      });
 
-    const button = document.createElement('button');
-    button.id = 'right-tabs-top-button';
-    button.className = 'top-button';
-    button.title = t('scrollToTop');
-    button.innerHTML =
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
-
-    button.addEventListener('click', () => {
       const activeTab = document.querySelector(
         '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
       );
-      if (activeTab) activeTab.scrollTo({ top: 0, behavior: 'smooth' });
-    });
+      if (activeTab) {
+        // Use debounce for better performance (check if YouTubeUtils.debounce is available)
+        const debounceFunc =
+          typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
+            ? YouTubeUtils.debounce
+            : (fn, delay) => {
+                let timeoutId;
+                return (...args) => {
+                  clearTimeout(timeoutId);
+                  timeoutId = setTimeout(() => fn(...args), delay);
+                };
+              };
+        const scrollHandler = debounceFunc(() => handleScroll(activeTab), 100);
+        activeTab._topButtonScrollHandler = scrollHandler;
+        activeTab.addEventListener('scroll', scrollHandler, { passive: true });
+        handleScroll(activeTab);
+      }
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error in setupScrollListener:', error);
+    }
+  };
 
-    rightTabs.style.position = 'relative';
-    rightTabs.appendChild(button);
-    setupScrollListener();
+  /**
+   * Creates and appends scroll-to-top button with error handling
+   * @returns {void}
+   */
+  const createButton = () => {
+    try {
+      const rightTabs = document.querySelector('#right-tabs');
+      if (!rightTabs || document.getElementById('right-tabs-top-button')) return;
+      if (!config.enabled) return;
+
+      const button = document.createElement('button');
+      button.id = 'right-tabs-top-button';
+      button.className = 'top-button';
+      button.title = t('scrollToTop');
+      button.setAttribute('aria-label', t('scrollToTop'));
+      button.innerHTML =
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+
+      button.addEventListener('click', () => {
+        try {
+          const activeTab = document.querySelector(
+            '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
+          );
+          if (activeTab) activeTab.scrollTo({ top: 0, behavior: 'smooth' });
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error scrolling to top:', error);
+        }
+      });
+
+      rightTabs.style.position = 'relative';
+      rightTabs.appendChild(button);
+      setupScrollListener();
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error creating button:', error);
+    }
   };
 
   /**
    * Observes DOM changes to detect tab switches
-   * @returns {void}
+   * @returns {MutationObserver|null} The created observer or null on error
    */
   const observeTabChanges = () => {
-    const observer = new MutationObserver(mutations => {
-      if (
-        mutations.some(
-          m =>
-            m.type === 'attributes' &&
-            m.attributeName === 'class' &&
-            m.target instanceof Element &&
-            m.target.classList.contains('tab-content-cld')
-        )
-      ) {
-        setTimeout(setupScrollListener, 100);
-      }
-    });
-
-    const rightTabs = document.querySelector('#right-tabs');
-    if (rightTabs) {
-      observer.observe(rightTabs, {
-        attributes: true,
-        subtree: true,
-        attributeFilter: ['class'],
+    try {
+      const observer = new MutationObserver(mutations => {
+        try {
+          if (
+            mutations.some(
+              m =>
+                m.type === 'attributes' &&
+                m.attributeName === 'class' &&
+                m.target instanceof Element &&
+                m.target.classList.contains('tab-content-cld')
+            )
+          ) {
+            setTimeout(setupScrollListener, 100);
+          }
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error in mutation observer:', error);
+        }
       });
+
+      const rightTabs = document.querySelector('#right-tabs');
+      if (rightTabs) {
+        observer.observe(rightTabs, {
+          attributes: true,
+          subtree: true,
+          attributeFilter: ['class'],
+        });
+        return observer;
+      }
+      return null;
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error in observeTabChanges:', error);
+      return null;
     }
   };
 
-  // Events
+  /**
+   * Sets up event listeners for tab button clicks
+   * @returns {void}
+   */
   const setupEvents = () => {
-    document.addEventListener(
-      'click',
-      e => {
-        const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-        if (target.closest && target.closest('.tab-btn[tyt-tab-content]')) {
-          setTimeout(setupScrollListener, 100);
-        }
-      },
-      true
-    );
+    try {
+      document.addEventListener(
+        'click',
+        e => {
+          try {
+            const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+            if (target.closest && target.closest('.tab-btn[tyt-tab-content]')) {
+              setTimeout(setupScrollListener, 100);
+            }
+          } catch (error) {
+            console.error('[YouTube+][Enhanced] Error in click handler:', error);
+          }
+        },
+        true
+      );
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error in setupEvents:', error);
+    }
   };
 
-  // Initialize
+  /**
+   * Initialize scroll-to-top button module
+   * @returns {void}
+   */
   const init = () => {
-    addStyles();
-    setupEvents();
+    try {
+      addStyles();
+      setupEvents();
 
-    const checkForTabs = () => {
-      if (document.querySelector('#right-tabs')) {
-        createButton();
-        observeTabChanges();
-      } else {
-        setTimeout(checkForTabs, 500);
-      }
-    };
+      const checkForTabs = () => {
+        try {
+          if (document.querySelector('#right-tabs')) {
+            createButton();
+            observeTabChanges();
+          } else {
+            setTimeout(checkForTabs, 500);
+          }
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error checking for tabs:', error);
+        }
+      };
 
-    checkForTabs();
+      checkForTabs();
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error in initialization:', error);
+    }
   };
 
   if (document.readyState === 'loading') {
@@ -215,8 +276,9 @@
   const CONFIG = {
     enabled: true,
     storageKey: 'youtube_endscreen_settings',
+    // Added .teaser-carousel to cover variants named 'teaser-carousel'
     selectors:
-      '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.ytp-cards-button,.iv-drawer,.video-annotations',
+      '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.teaser-carousel,.ytp-cards-button,.iv-drawer,.video-annotations',
     debounceMs: 32,
     batchSize: 20,
   };
@@ -510,18 +572,37 @@
   // Get current video id from the page (works on standard watch pages)
   const getVideoId = () => {
     try {
+      // First try URL parameters (most reliable)
+      const urlParams = new URLSearchParams(window.location.search);
+      const videoIdFromUrl = urlParams.get('v');
+      if (videoIdFromUrl) return videoIdFromUrl;
+
+      // Try canonical link
       const meta = document.querySelector('link[rel="canonical"]');
       if (meta && meta.href) {
         const u = new URL(meta.href);
-        return u.searchParams.get('v') || (u.pathname && u.pathname.split('/').pop());
+        const vParam = u.searchParams.get('v');
+        if (vParam) return vParam;
+
+        // Try extracting from pathname (for /watch/ or /shorts/ URLs)
+        const pathMatch = u.pathname.match(/\/(watch|shorts)\/([^\/\?]+)/);
+        if (pathMatch && pathMatch[2]) return pathMatch[2];
       }
+
       // Fallback to ytInitialPlayerResponse
-      return (
-        (window.ytInitialPlayerResponse &&
-          window.ytInitialPlayerResponse.videoDetails &&
-          window.ytInitialPlayerResponse.videoDetails.videoId) ||
-        null
-      );
+      if (
+        window.ytInitialPlayerResponse &&
+        window.ytInitialPlayerResponse.videoDetails &&
+        window.ytInitialPlayerResponse.videoDetails.videoId
+      ) {
+        return window.ytInitialPlayerResponse.videoDetails.videoId;
+      }
+
+      // Last resort: try to extract from current URL pathname
+      const pathMatch = window.location.pathname.match(/\/(watch|shorts)\/([^\/\?]+)/);
+      if (pathMatch && pathMatch[2]) return pathMatch[2];
+
+      return null;
     } catch {
       return null;
     }
@@ -538,19 +619,19 @@
 
     // Ensure glassmorphism styles are available for the overlay
     const resumeOverlayStyles = `
-      .ytpa-resume-overlay{min-width:180px;max-width:36vw;background:rgba(24, 24, 24, 0.3);color:var(--yt-spec-text-primary,#fff);padding:12px 14px;border-radius:12px;backdrop-filter:blur(8px) saturate(150%);-webkit-backdrop-filter:blur(8px) saturate(150%);box-shadow:0 14px 40px rgba(0,0,0,0.48);border:1.25px solid rgba(255,255,255,0.06);font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;align-items:center;text-align:center}
-      .ytpa-resume-overlay .ytpa-resume-title{font-weight:600;margin-bottom:8px}
-      .ytpa-resume-overlay .ytpa-resume-actions{display:flex;gap:8px;justify-content:center;margin-top:6px}
-      .ytpa-resume-overlay .ytpa-resume-btn{padding:6px 12px;border-radius:8px;border:none;cursor:pointer}
-      .ytpa-resume-overlay .ytpa-resume-btn.primary{background:#1e88e5;color:#fff}
-      .ytpa-resume-overlay .ytpa-resume-btn.ghost{background:rgba(255,255,255,0.06);color:#fff}
+      .ytp-resume-overlay{min-width:180px;max-width:36vw;background:rgba(24, 24, 24, 0.3);color:var(--yt-spec-text-primary,#fff);padding:12px 14px;border-radius:12px;backdrop-filter:blur(8px) saturate(150%);-webkit-backdrop-filter:blur(8px) saturate(150%);box-shadow:0 14px 40px rgba(0,0,0,0.48);border:1.25px solid rgba(255,255,255,0.06);font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;align-items:center;text-align:center}
+      .ytp-resume-overlay .ytp-resume-title{font-weight:600;margin-bottom:8px}
+      .ytp-resume-overlay .ytp-resume-actions{display:flex;gap:8px;justify-content:center;margin-top:6px}
+      .ytp-resume-overlay .ytp-resume-btn{padding:6px 12px;border-radius:8px;border:none;cursor:pointer}
+      .ytp-resume-overlay .ytp-resume-btn.primary{background:#1e88e5;color:#fff}
+      .ytp-resume-overlay .ytp-resume-btn.ghost{background:rgba(255,255,255,0.06);color:#fff}
     `;
     try {
       if (window.YouTubeUtils && YouTubeUtils.StyleManager) {
-        YouTubeUtils.StyleManager.add('ytpa-resume-overlay-styles', resumeOverlayStyles);
-      } else if (!document.getElementById('ytpa-resume-overlay-styles')) {
+        YouTubeUtils.StyleManager.add('ytp-resume-overlay-styles', resumeOverlayStyles);
+      } else if (!document.getElementById('ytp-resume-overlay-styles')) {
         const s = document.createElement('style');
-        s.id = 'ytpa-resume-overlay-styles';
+        s.id = 'ytp-resume-overlay-styles';
         s.textContent = resumeOverlayStyles;
         (document.head || document.documentElement).appendChild(s);
       }
@@ -566,28 +647,28 @@
       } catch {}
 
       // Position centered inside the player
-      wrap.className = 'ytpa-resume-overlay';
+      wrap.className = 'ytp-resume-overlay';
       // absolute center (use transform to center by both axes)
       wrap.style.cssText =
         'position:absolute;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:9999;pointer-events:auto;';
       player.appendChild(wrap);
     } else {
       // Fallback: fixed centered on the page
-      wrap.className = 'ytpa-resume-overlay';
+      wrap.className = 'ytp-resume-overlay';
       wrap.style.cssText =
         'position:fixed;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:1200;pointer-events:auto;';
       document.body.appendChild(wrap);
     }
 
     const title = document.createElement('div');
-    title.className = 'ytpa-resume-title';
+    title.className = 'ytp-resume-title';
     title.textContent = `${t('resumePlayback')} (${formatTime(seconds)})`;
 
     const btnResume = document.createElement('button');
-    btnResume.className = 'ytpa-resume-btn primary';
+    btnResume.className = 'ytp-resume-btn primary';
     btnResume.textContent = t('resume');
     const btnRestart = document.createElement('button');
-    btnRestart.className = 'ytpa-resume-btn ghost';
+    btnRestart.className = 'ytp-resume-btn ghost';
     btnRestart.textContent = t('startOver');
 
     btnResume.addEventListener('click', () => {
@@ -609,7 +690,7 @@
 
     // group actions and center them
     const actions = document.createElement('div');
-    actions.className = 'ytpa-resume-actions';
+    actions.className = 'ytp-resume-actions';
     actions.appendChild(btnResume);
     actions.appendChild(btnRestart);
 
@@ -651,7 +732,10 @@
 
   const attachResumeHandlers = videoEl => {
     if (!videoEl) return;
-    const vid = getVideoId();
+
+    // Get current video ID dynamically each time
+    const getCurrentVideoId = () => getVideoId();
+    const vid = getCurrentVideoId();
     if (!vid) return;
 
     const storage = readStorage();
@@ -666,11 +750,15 @@
       if (timeUpdateHandler) return;
       timeUpdateHandler = () => {
         try {
+          // Get current video ID each time we save
+          const currentVid = getCurrentVideoId();
+          if (!currentVid) return;
+
           const t = Math.floor(videoEl.currentTime || 0);
           const now = Date.now();
           if (t && (!lastSavedAt || now - lastSavedAt > SAVE_THROTTLE_MS)) {
             const s = readStorage();
-            s[vid] = t;
+            s[currentVid] = t;
             writeStorage(s);
             lastSavedAt = now;
           }
@@ -760,7 +848,20 @@
 
   const initResume = () => {
     // Only run on watch pages
-    if (window.location.pathname !== '/watch') return;
+    if (window.location.pathname !== '/watch') {
+      // Remove overlay if we navigate away from watch page
+      const existingOverlay = document.getElementById(OVERLAY_ID);
+      if (existingOverlay) {
+        existingOverlay.remove();
+      }
+      return;
+    }
+
+    // Remove any existing overlay from previous video
+    const existingOverlay = document.getElementById(OVERLAY_ID);
+    if (existingOverlay) {
+      existingOverlay.remove();
+    }
 
     const videoEl = findVideoElement();
     if (videoEl) {
@@ -797,69 +898,59 @@
 (async function () {
   'use strict';
 
-  // Safe access to Greasemonkey/Tampermonkey globals via window lookup to avoid
-  // static analysis errors when those globals are not present.
-  const GM_info_safe =
-    typeof window !== 'undefined' && window['GM_info'] ? window['GM_info'] : null;
-  const GM_safe = typeof window !== 'undefined' && window['GM'] ? window['GM'] : null;
+  /** @type {any} */
+  const globalContext =
+    typeof unsafeWindow !== 'undefined'
+      ? /** @type {any} */ (unsafeWindow)
+      : /** @type {any} */ (window);
 
-  // Localization for YouTube Play All
-  const i18n = {
-    en: {
-      loadingPlaylist: 'Loading playlist...',
-      playPopular: 'Play Popular',
-      playAll: 'Play All',
-      playRandom: 'Play Random',
-      preferNewest: 'Prefer newest',
-      preferOldest: 'Prefer oldest',
-      randomMode: 'Random',
-      externalApiWarning:
-        "Make sure to allow the external API call to ytplaylist.robert.wesner.io to keep viewing playlists that YouTube doesn't natively support!",
-    },
-    ru: {
-      loadingPlaylist: 'Загрузка плейлиста...',
-      playPopular: 'Популярные',
-      playAll: 'Воспроизвести все',
-      playRandom: 'Случайно',
-      preferNewest: 'Сначала новые',
-      preferOldest: 'Сначала старые',
-      randomMode: 'Случайный',
-      externalApiWarning:
-        'Разрешите внешний API вызов на ytplaylist.robert.wesner.io для просмотра плейлистов, которые YouTube не поддерживает изначально!',
-    },
-  };
+  const gmApi = globalContext?.GM ?? null;
+  const gmInfo = globalContext?.GM_info ?? null;
 
-  const getLanguage = () => {
-    const htmlLang = document.documentElement.lang || 'en';
-    if (htmlLang.startsWith('ru')) return 'ru';
-    return 'en';
-  };
-
-  const lang = getLanguage();
-  const t = key => i18n[lang][key] || i18n.en[key] || key;
-
-  const scriptVersion = GM_info_safe?.script?.version || null;
+  const scriptVersion = gmInfo?.script?.version ?? null;
   if (scriptVersion && /-(alpha|beta|dev|test)$/.test(scriptVersion)) {
-    // Only log in development/test builds
-    if (typeof console !== 'undefined' && console.log) {
-      console.log(
-        '%cYTPA - YouTube Play All\n',
-        'color: #bf4bcc; font-size: 32px; font-weight: bold',
-        'You are currently running a test version:',
-        scriptVersion
-      );
-    }
+    console.log(
+      '%cytp - YouTube Play All\n',
+      'color: #bf4bcc; font-size: 32px; font-weight: bold',
+      'You are currently running a test version:',
+      scriptVersion
+    );
   }
 
-  if (window.hasOwnProperty('trustedTypes') && !window.trustedTypes.defaultPolicy) {
+  if (
+    Object.prototype.hasOwnProperty.call(window, 'trustedTypes') &&
+    !window.trustedTypes.defaultPolicy
+  ) {
     window.trustedTypes.createPolicy('default', { createHTML: string => string });
   }
 
-  if (document.head) {
-    document.head.insertAdjacentHTML(
-      'beforeend',
-      `<style>
-        .ytpa-btn {
+  const insertStylesSafely = html => {
+    try {
+      const target = document.head || document.documentElement;
+      if (target && typeof target.insertAdjacentHTML === 'function') {
+        target.insertAdjacentHTML('beforeend', html);
+        return;
+      }
+
+      // If head isn't available yet, wait for DOMContentLoaded and insert then.
+      const onReady = () => {
+        try {
+          const t = document.head || document.documentElement;
+          if (t && typeof t.insertAdjacentHTML === 'function') {
+            t.insertAdjacentHTML('beforeend', html);
+          }
+        } catch {}
+      };
+      if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', onReady, { once: true });
+      } else {
+        onReady();
+      }
+    } catch {}
+  };
+
+  insertStylesSafely(`<style>
+        .ytp-btn {
             border-radius: 8px;
             font-family: 'Roboto', 'Arial', sans-serif;
             font-size: 1.4rem;
@@ -870,142 +961,135 @@
             user-select: none;
         }
         
-        .ytpa-btn, .ytpa-btn > * {
+        .ytp-btn, .ytp-btn > * {
             text-decoration: none;
             cursor: pointer;
         }
         
-        .ytpa-btn-sections {
+        .ytp-btn-sections {
             padding: 0;
         }
         
-        .ytpa-btn-sections > .ytpa-btn-section {
+        .ytp-btn-sections > .ytp-btn-section {
             padding: 0.5em;
             display: inline-block;
         }
  
-        .ytpa-btn-sections > .ytpa-btn-section:first-child {
+        .ytp-btn-sections > .ytp-btn-section:first-child {
             border-top-left-radius: 8px;
             border-bottom-left-radius: 8px;
         }
  
-  /* Firefox doesn't support the :nth-last-child(1 of ...) syntax; use :last-child instead */
-    .ytpa-btn-sections > .ytpa-btn-section:last-child {
-      border-top-right-radius: 8px;
-      border-bottom-right-radius: 8px;
-    }
+        .ytp-btn-sections > .ytp-btn-section:nth-last-child(1 of .ytp-btn-section) {
+            border-top-right-radius: 8px;
+            border-bottom-right-radius: 8px;
+        }
         
-        .ytpa-badge {
+        .ytp-badge {
             border-radius: 8px;
             padding: 0.2em;
             font-size: 0.8em;
             vertical-align: top;
         }
  
-        .ytpa-play-all-btn {
-            background-color: #313131ff;
+        .ytp-play-all-btn {
+            background-color: #bf4bcc;
             color: white;
         }
  
-        .ytpa-play-all-btn:hover {
+        .ytp-play-all-btn:hover {
             background-color: #d264de;
         }
         
-        .ytpa-random-btn > .ytpa-btn-section, .ytpa-random-badge, .ytpa-random-notice, .ytpa-random-popover > * {
-            background-color: #313131ff;
+        .ytp-random-btn > .ytp-btn-section, .ytp-random-badge, .ytp-random-notice, .ytp-random-popover > * {
+            background-color: #2b66da;
             color: white;
         }
  
-        .ytpa-random-btn > .ytpa-btn-section:hover, .ytpa-random-popover > *:hover {
+        .ytp-random-btn > .ytp-btn-section:hover, .ytp-random-popover > *:hover {
             background-color: #6192ee;
         }
         
-        .ytpa-play-all-btn.ytpa-unsupported {
+        .ytp-play-all-btn.ytp-unsupported {
             background-color: #828282;
             color: white;
         }
         
-        .ytpa-random-popover {
+        .ytp-random-popover {
             position: absolute;
             border-radius: 8px;
             font-size: 1.6rem;
             transform: translate(-100%, 0.4em);
         }
         
-        .ytpa-random-popover > * {
+        .ytp-random-popover > * {
             display: block;
             text-decoration: none;
             padding: 0.4em;
         }
         
-        .ytpa-random-popover > :first-child {
+        .ytp-random-popover > :first-child {
             border-top-left-radius: 8px;
             border-top-right-radius: 8px;
         }
         
-        .ytpa-random-popover > :last-child {
+        .ytp-random-popover > :last-child {
             border-bottom-left-radius: 8px;
             border-bottom-right-radius: 8px;
         }
     
-        .ytpa-random-popover > *:not(:last-child) {
+        .ytp-random-popover > *:not(:last-child) {
             border-bottom: 1px solid #6e8dbb;
         }
     
-        .ytpa-button-container {
+        .ytp-button-container {
             display: flex;
             width: 100%;
             margin-top: 1em;
             margin-bottom: -1em;
         }
  
-        ytd-rich-grid-renderer .ytpa-button-container > :first-child {
+        ytd-rich-grid-renderer .ytp-button-container > :first-child {
             margin-left: 0;
         }
         
         /* fetch() API introduces a race condition. This hides the occasional duplicate buttons */
-        .ytpa-play-all-btn ~ .ytpa-play-all-btn,
-        .ytpa-random-btn ~ .ytpa-random-btn {
+        .ytp-play-all-btn ~ .ytp-play-all-btn,
+        .ytp-random-btn ~ .ytp-random-btn {
             display: none;
         }
         
         /* Fix for mobile view */
-        ytm-feed-filter-chip-bar-renderer .ytpa-btn {
+        ytm-feed-filter-chip-bar-renderer .ytp-btn {
             margin-right: 12px;
             padding: 0.4em;
         }
         
-    /* Replace :has() rules (unsupported in Firefox) by targeting attributes placed on body by JS */
-    body.ytpa-has-random #secondary ytd-playlist-panel-renderer[ytpa-random] .ytp-prev-button.ytp-button,
-    body.ytpa-has-random #secondary ytd-playlist-panel-renderer[ytpa-random] .ytp-next-button.ytp-button:not([ytpa-random="applied"]) {
-      display: none !important;
-    }
-
-    body.ytpa-has-random #secondary ytd-playlist-panel-renderer[ytpa-random] ytd-menu-renderer.ytd-playlist-panel-renderer {
-      height: 1em;
-      visibility: hidden;
-    }
-
-    /* Use a body class to emulate :not(:hover) visual behavior via a slightly different rule: when not hovered the items get blurred.
-       Since CSS cannot detect :not(:hover) globally, we apply a class during random mode and rely on the existing hover behaviour for desktop. */
-    body.ytpa-has-random #secondary ytd-playlist-panel-renderer[ytpa-random] ytd-playlist-panel-video-renderer {
-      transition: filter 0.2s ease-in-out;
-    }
-    body.ytpa-has-random #secondary ytd-playlist-panel-renderer[ytpa-random]:not(:hover) ytd-playlist-panel-video-renderer {
-      filter: blur(2em);
-    }
+        body:has(#secondary ytd-playlist-panel-renderer[ytp-random]) .ytp-prev-button.ytp-button,
+        body:has(#secondary ytd-playlist-panel-renderer[ytp-random]) .ytp-next-button.ytp-button:not([ytp-random="applied"]) {
+            display: none !important;
+        }
+        
+        #secondary ytd-playlist-panel-renderer[ytp-random] ytd-menu-renderer.ytd-playlist-panel-renderer {
+            height: 1em;
+            visibility: hidden;
+        }
+        
+        #secondary ytd-playlist-panel-renderer[ytp-random]:not(:hover) ytd-playlist-panel-video-renderer {
+            filter: blur(2em);
+        }
  
-        .ytpa-random-notice {
+        .ytp-random-notice {
             padding: 1em;
             z-index: 1000;
         }
         
-        .ytpa-playlist-emulator {
+        .ytp-playlist-emulator {
             margin-bottom: 1.6rem;
             border-radius: 1rem;
         }
         
-        .ytpa-playlist-emulator > .title {
+        .ytp-playlist-emulator > .title {
             border-top-left-radius: 1rem;
             border-top-right-radius: 1rem;
             font-size: 2rem;
@@ -1014,28 +1098,28 @@
             padding: 0.8rem;
         }
         
-        .ytpa-playlist-emulator > .information {
+        .ytp-playlist-emulator > .information {
             font-size: 1rem;
             background-color: #2b2a2a;
             color: white;
             padding: 0.8rem;
         }
         
-        .ytpa-playlist-emulator > .footer {
+        .ytp-playlist-emulator > .footer {
             border-bottom-left-radius: 1rem;
             border-bottom-right-radius: 1rem;
             background-color: #323232;
             padding: 0.8rem;
         }
         
-        .ytpa-playlist-emulator > .items {
+        .ytp-playlist-emulator > .items {
             max-height: 500px;
             overflow-y: auto;
             overflow-x: hidden;
         }
         
-        .ytpa-playlist-emulator:not([data-failed]) > .items:empty::before {
-            content: '${t('loadingPlaylist')}';
+        .ytp-playlist-emulator:not([data-failed]) > .items:empty::before {
+            content: 'Loading playlist...';
             background-color: #626262;
             padding: 0.8rem;
             color: white;
@@ -1043,8 +1127,8 @@
             display: block;
         }
         
-        .ytpa-playlist-emulator[data-failed="rejected"] > .items:empty::before {
-            content: "${t('externalApiWarning')}";
+        .ytp-playlist-emulator[data-failed="rejected"] > .items:empty::before {
+            content: "Make sure to allow the external API call to ytplaylist.robert.wesner.io to keep viewing playlists that YouTube doesn't natively support!";
             background-color: #491818;
             padding: 0.8rem;
             color: #ff7c7c;
@@ -1052,7 +1136,7 @@
             display: block;
         }
         
-        .ytpa-playlist-emulator > .items > .item {
+        .ytp-playlist-emulator > .items > .item {
             background-color: #2c2c2c;
             padding: 0.8rem;
             border: 1px solid #1b1b1b;
@@ -1062,109 +1146,97 @@
             cursor: pointer;
         }
         
-        .ytpa-playlist-emulator > .items > .item:hover {
+        .ytp-playlist-emulator > .items > .item:hover {
             background-color: #505050;
         }
         
-        .ytpa-playlist-emulator > .items > .item:not(:last-of-type) {
+        .ytp-playlist-emulator > .items > .item:not(:last-of-type) {
             border-bottom: 0;
         }
         
-        .ytpa-playlist-emulator > .items > .item[data-current] {
+        .ytp-playlist-emulator > .items > .item[data-current] {
             background-color: #767676;
         }
         
-    /* Replace :has(.ytpa-playlist-emulator) with a body class set by JS to support Firefox */
-    body.ytpa-has-emulator .ytp-prev-button.ytp-button,
-    body.ytpa-has-emulator .ytp-next-button.ytp-button:not([ytpa-emulation="applied"]) {
-      display: none !important;
-    }
+        body:has(.ytp-playlist-emulator) .ytp-prev-button.ytp-button,
+        body:has(.ytp-playlist-emulator) .ytp-next-button.ytp-button:not([ytp-emulation="applied"]) {
+            display: none !important;
+        }
         
         /* hide when sorting by oldest */
-        ytm-feed-filter-chip-bar-renderer > div :nth-child(3).selected ~ .ytpa-btn:not(.ytpa-unsupported), ytd-feed-filter-chip-bar-renderer iron-selector#chips :nth-child(3).iron-selected ~ .ytpa-btn:not(.ytpa-unsupported) {
+        ytm-feed-filter-chip-bar-renderer > div :nth-child(3).selected ~ .ytp-btn:not(.ytp-unsupported), ytd-feed-filter-chip-bar-renderer iron-selector#chips :nth-child(3).iron-selected ~ .ytp-btn:not(.ytp-unsupported) {
             display: none;
         }
-    </style>`
-    );
-  }
+    </style>`);
 
-  const getVideoId = url => new URLSearchParams(new URL(url).search).get('v');
+  const getVideoId = url => {
+    try {
+      return new URLSearchParams(new URL(url).search).get('v');
+    } catch {
+      return null;
+    }
+  };
+
+  const queryHTMLElement = selector => {
+    const el = document.querySelector(selector);
+    return el instanceof HTMLElement ? el : null;
+  };
+
+  /**
+   * @typedef {HTMLDivElement & {
+   *   getProgressState: () => { current: number, duration: number, number: number },
+   *   pauseVideo: () => void,
+   *   seekTo: (seconds: number, allowSeekAhead?: boolean) => void,
+   *   isLifaAdPlaying: () => boolean
+   * }} PlayerElement
+   */
 
   /**
    * @return {{ getProgressState: () => { current: number, duration, number }, pauseVideo: () => void, seekTo: (number) => void, isLifaAdPlaying: () => boolean }} player
    */
-  /**
-   * Safe player accessor.
-   * Returns either the native player element (if it exposes the expected API)
-   * or a lightweight wrapper implementing the small API surface used by this
-   * module. This prevents runtime/TS complaints when YouTube's player does not
-   * expose the expected methods.
-   */
-  const getPlayer = () => {
-    const playerEl = document.querySelector('#movie_player');
-    if (!playerEl) return null;
-
-    // If the player element already implements the methods we need, return it
-    if (
-      typeof playerEl.getProgressState === 'function' &&
-      typeof playerEl.pauseVideo === 'function' &&
-      typeof playerEl.seekTo === 'function' &&
-      typeof playerEl.isLifaAdPlaying === 'function'
-    ) {
-      return playerEl;
-    }
-
-    // Otherwise return a safe wrapper that proxies to the HTML5 <video> where possible
-    return {
-      getProgressState: () => {
-        try {
-          const v = document.querySelector('video');
-          if (v) return { current: v.currentTime || 0, duration: v.duration || 1, number: 0 };
-        } catch {
-          // ignore
-        }
-        return { current: 0, duration: 1, number: 0 };
-      },
-      pauseVideo: () => {
-        try {
-          const v = document.querySelector('video');
-          if (v && typeof v.pause === 'function') v.pause();
-        } catch {}
-      },
-      seekTo: sec => {
-        try {
-          const v = document.querySelector('video');
-          if (v) v.currentTime = sec;
-        } catch {}
-      },
-      isLifaAdPlaying: () => !!document.querySelector('.ad-interrupting'),
-    };
-  };
+  const getPlayer = () =>
+    /** @type {PlayerElement | null} */ (document.querySelector('#movie_player'));
 
   const isAdPlaying = () => !!document.querySelector('.ad-interrupting');
 
-  const redirect = (v, list, ytpaRandom = null) => {
+  const redirect = (v, list, ytpRandom = null) => {
     if (location.host === 'm.youtube.com') {
-      // TODO: Client side routing on mobile
+      // Mobile: use direct navigation
+      const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
+      window.location.href = url;
     } else {
-      const redirector = document.createElement('a');
-      redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
-      redirector.setAttribute('hidden', '');
-      redirector.data = {
-        commandMetadata: {
-          webCommandMetadata: {
-            url: `/watch?v=${v}&list=${list}${ytpaRandom !== null ? `&ytpa-random=${ytpaRandom}` : ''}`,
-            webPageType: 'WEB_PAGE_TYPE_WATCH',
-            rootVe: 3832, // ??? required though
-          },
-        },
-        watchEndpoint: {
-          videoId: v,
-          playlistId: list,
-        },
-      };
-      document.querySelector('ytd-playlist-panel-renderer #items').append(redirector);
-      redirector.click();
+      // Desktop: try YouTube's client-side routing first, with fallback
+      try {
+        const playlistPanel = document.querySelector('ytd-playlist-panel-renderer #items');
+        if (playlistPanel) {
+          const redirector = document.createElement('a');
+          redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
+          redirector.setAttribute('hidden', '');
+          redirector.data = {
+            commandMetadata: {
+              webCommandMetadata: {
+                url: `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`,
+                webPageType: 'WEB_PAGE_TYPE_WATCH',
+                rootVe: 3832, // ??? required though
+              },
+            },
+            watchEndpoint: {
+              videoId: v,
+              playlistId: list,
+            },
+          };
+          playlistPanel.append(redirector);
+          redirector.click();
+        } else {
+          // Fallback: use direct navigation if playlist panel not found
+          const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
+          window.location.href = url;
+        }
+      } catch {
+        // Fallback: use direct navigation on error
+        const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
+        window.location.href = url;
+      }
     }
   };
 
@@ -1172,26 +1244,45 @@
   const apply = () => {
     if (id === '') {
       // do not apply prematurely, caused by mutation observer
+      console.warn('[Play All] Channel ID not yet determined');
       return;
     }
 
     let parent =
       location.host === 'm.youtube.com'
         ? // mobile view
-          document.querySelector(
+          queryHTMLElement(
             'ytm-feed-filter-chip-bar-renderer .chip-bar-contents, ytm-feed-filter-chip-bar-renderer > div'
           )
         : // desktop view
-          document.querySelector('ytd-feed-filter-chip-bar-renderer iron-selector#chips');
+          queryHTMLElement('ytd-feed-filter-chip-bar-renderer iron-selector#chips');
 
     // #5: add a custom container for buttons if Latest/Popular/Oldest is missing
     if (parent === null) {
-      const grid = document.querySelector('ytd-rich-grid-renderer, ytm-rich-grid-renderer');
-      if (grid instanceof HTMLElement) {
-        grid.insertAdjacentHTML('afterbegin', '<div class="ytpa-button-container"></div>');
-        const maybe = grid.querySelector('.ytpa-button-container');
-        parent = maybe instanceof HTMLElement ? maybe : null;
+      const grid = queryHTMLElement('ytd-rich-grid-renderer, ytm-rich-grid-renderer');
+      if (!grid) {
+        console.warn('[Play All] Could not find grid container');
+        return;
       }
+
+      // Check if container already exists
+      let existingContainer = grid.querySelector('.ytp-button-container');
+      if (!existingContainer) {
+        grid.insertAdjacentHTML('afterbegin', '<div class="ytp-button-container"></div>');
+        existingContainer = grid.querySelector('.ytp-button-container');
+      }
+      parent = existingContainer instanceof HTMLElement ? existingContainer : null;
+    }
+
+    if (!parent) {
+      console.warn('[Play All] Could not find parent container');
+      return;
+    }
+
+    // Prevent duplicate buttons
+    if (parent.querySelector('.ytp-play-all-btn, .ytp-random-btn')) {
+      console.log('[Play All] Buttons already exist, skipping');
+      return;
     }
 
     // See: available-lists.md
@@ -1206,74 +1297,104 @@
         : // Live streams
           ['UULV', 'UUPV'];
 
+    const playlistSuffix = id.startsWith('UC') ? id.substring(2) : id;
+
     // Check if popular videos are displayed
     if (parent.querySelector(':nth-child(2).selected, :nth-child(2).iron-selected')) {
       parent.insertAdjacentHTML(
         'beforeend',
-        `<a class="ytpa-btn ytpa-play-all-btn" href="/playlist?list=${popularPlaylist}${id}&playnext=1">${t('playPopular')}</a>`
+        `<a class="ytp-btn ytp-play-all-btn" href="/playlist?list=${popularPlaylist}${playlistSuffix}&playnext=1">Play Popular</a>`
       );
     } else if (parent.querySelector(':nth-child(1).selected, :nth-child(1).iron-selected')) {
       parent.insertAdjacentHTML(
         'beforeend',
-        `<a class="ytpa-btn ytpa-play-all-btn" href="/playlist?list=${allPlaylist}${id}&playnext=1">${t('playAll')}</a>`
+        `<a class="ytp-btn ytp-play-all-btn" href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1">Play All</a>`
       );
     } else {
       parent.insertAdjacentHTML(
         'beforeend',
-        `<a class="ytpa-btn ytpa-play-all-btn ytpa-unsupported" href="https://github.com/RobertWesner/YouTube-Play-All/issues/39" target="_blank">No Playlist Found</a>`
+        `<a class="ytp-btn ytp-play-all-btn ytp-unsupported" href="https://github.com/RobertWesner/YouTube-Play-All/issues/39" target="_blank">No Playlist Found</a>`
       );
     }
 
+    const navigate = href => {
+      window.location.assign(href);
+    };
+
     if (location.host === 'm.youtube.com') {
       // YouTube returns an "invalid response" when using client side routing for playnext=1 on mobile
-      document.querySelectorAll('.ytpa-btn').forEach(btn =>
+      parent.querySelectorAll('.ytp-btn').forEach(btn => {
         btn.addEventListener('click', event => {
           event.preventDefault();
 
-          window.location.href = btn.href;
-        })
-      );
+          navigate(btn.href);
+        });
+      });
     } else {
+      const attachNavigationHandler = elements => {
+        elements.forEach(btn => {
+          btn.addEventListener('click', event => {
+            event.preventDefault();
+            event.stopPropagation();
+
+            navigate(btn.href);
+          });
+        });
+      };
+
+      attachNavigationHandler(parent.querySelectorAll('.ytp-play-all-btn:not(.ytp-unsupported)'));
+
       // Only allow random play in desktop version for now
       parent.insertAdjacentHTML(
         'beforeend',
         `
-                <span class="ytpa-btn ytpa-random-btn ytpa-btn-sections">
-                    <a class="ytpa-btn-section" href="/playlist?list=${allPlaylist}${id}&playnext=1&ytpa-random=random&ytpa-random-initial=1">
-                        ${t('playRandom')}
+                <span class="ytp-btn ytp-random-btn ytp-btn-sections">
+                    <a class="ytp-btn-section" href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=random&ytp-random-initial=1">
+                        Play Random
                     </a><!--
-                    --><span class="ytpa-btn-section ytpa-random-more-options-btn ytpa-hover-popover">
+                    --><span class="ytp-btn-section ytp-random-more-options-btn ytp-hover-popover">
                         &#x25BE
                     </span>
                 </span>
             `
       );
 
+      // Remove existing popovers to prevent duplicates when navigating between tabs
+      document.querySelectorAll('.ytp-random-popover').forEach(popover => popover.remove());
+
       document.body.insertAdjacentHTML(
         'beforeend',
         `
-                <div class="ytpa-random-popover" hidden="">
-                    <a href="/playlist?list=${allPlaylist}${id}&playnext=1&ytpa-random=prefer-newest">
-                        ${t('preferNewest')}
+                <div class="ytp-random-popover" hidden="">
+                    <a href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=prefer-newest">
+                        Prefer newest
                     </a>
-                    <a href="/playlist?list=${allPlaylist}${id}&playnext=1&ytpa-random=prefer-oldest&ytpa-random-initial=1">
-                        ${t('preferOldest')}
+                    <a href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=prefer-oldest&ytp-random-initial=1">
+                        Prefer oldest
                     </a>
                 </div>
             `
       );
 
-      const randomMoreOptionsBtn = document.querySelector('.ytpa-random-more-options-btn');
-      const randomPopover = document.querySelector('.ytpa-random-popover');
-      randomMoreOptionsBtn.addEventListener('click', () => {
-        const rect = randomMoreOptionsBtn.getBoundingClientRect();
-        randomPopover.style.top = rect.bottom.toString() + 'px';
-        randomPopover.style.left = rect.right.toString() + 'px';
-        randomPopover.removeAttribute('hidden');
-      });
-      randomPopover.addEventListener('mouseleave', () => {
-        randomPopover.setAttribute('hidden', '');
-      });
+      attachNavigationHandler(parent.querySelectorAll('.ytp-random-btn a'));
+
+      const randomPopover = document.querySelector('.ytp-random-popover');
+      if (randomPopover) {
+        attachNavigationHandler(randomPopover.querySelectorAll('a'));
+      }
+
+      const randomMoreOptionsBtn = document.querySelector('.ytp-random-more-options-btn');
+      if (randomMoreOptionsBtn && randomPopover) {
+        randomMoreOptionsBtn.addEventListener('click', () => {
+          const rect = randomMoreOptionsBtn.getBoundingClientRect();
+          randomPopover.style.top = `${rect.bottom}px`;
+          randomPopover.style.left = `${rect.right}px`;
+          randomPopover.removeAttribute('hidden');
+        });
+        randomPopover.addEventListener('mouseleave', () => {
+          randomPopover.setAttribute('hidden', '');
+        });
+      }
     }
   };
 
@@ -1309,25 +1430,71 @@
     }
 
     // This check is necessary for the mobile Interval
-    if (document.querySelector('.ytpa-play-all-btn')) {
+    if (document.querySelector('.ytp-play-all-btn')) {
       return;
     }
 
-    const html = await (await fetch(location.href)).text();
-    const i =
-      html.indexOf('<link rel="canonical" href="https://www.youtube.com/channel/UC') +
-      60 +
-      2; /* ID starts with "UC" */
-    id = html.substring(i, i + 22);
+    // Try to extract channel ID from canonical link first
+    try {
+      const canonical = document.querySelector('link[rel="canonical"]');
+      if (canonical && canonical.href) {
+        const match = canonical.href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+        if (match && match[1]) {
+          id = match[1];
+          apply();
+          return;
+        }
 
-    // Initially generate button
-    apply();
+        // Also try @handle format
+        const handleMatch = canonical.href.match(/\/@([^\/]+)/);
+        if (handleMatch) {
+          // Try to get channel ID from page data
+          const pageData = document.querySelector('ytd-browse[page-subtype="channels"]');
+          if (pageData) {
+            const channelId = pageData.getAttribute('channel-id');
+            if (channelId && channelId.startsWith('UC')) {
+              id = channelId;
+              apply();
+              return;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Play All] Error extracting channel ID from canonical:', e);
+    }
+
+    // Fallback: fetch HTML and parse
+    try {
+      const html = await (await fetch(location.href)).text();
+      const canonicalMatch = html.match(
+        /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/
+      );
+
+      if (canonicalMatch && canonicalMatch[1]) {
+        id = canonicalMatch[1];
+      } else {
+        // Try alternative extraction methods
+        const channelIdMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
+        if (channelIdMatch && channelIdMatch[1]) {
+          id = channelIdMatch[1];
+        }
+      }
+
+      if (id) {
+        apply();
+      } else {
+        console.warn('[Play All] Could not extract channel ID');
+      }
+    } catch (e) {
+      console.error('[Play All] Error fetching channel data:', e);
+    }
   };
 
   // Removing the button prevents it from still existing when switching between "Videos", "Shorts", and "Live"
   // This is necessary due to the mobile Interval requiring a check for an already existing button
   const removeButton = () =>
-    document.querySelectorAll('.ytpa-btn').forEach(element => element.remove());
+    document.querySelectorAll('.ytp-btn').forEach(element => element.remove());
 
   if (location.host === 'm.youtube.com') {
     // The "yt-navigate-finish" event does not fire on mobile
@@ -1336,65 +1503,86 @@
   } else {
     window.addEventListener('yt-navigate-start', removeButton);
     window.addEventListener('yt-navigate-finish', addButton);
+    // Also attempt to add buttons on initial script run in case the SPA navigation event
+    // already happened before this script was loaded (some browsers/firefox timing).
+    try {
+      setTimeout(addButton, 300);
+    } catch {}
   }
 
   // Fallback playlist emulation
   (() => {
     const getItems = playlist => {
       return new Promise(resolve => {
-        // Prefer GM_safe.xmlHttpRequest when available (userscripts), otherwise use fetch
-        if (typeof GM_safe !== 'undefined' && GM_safe?.xmlHttpRequest) {
-          try {
-            GM_safe.xmlHttpRequest({
-              method: 'POST',
-              url: 'https://ytplaylist.robert.wesner.io/api/list',
-              data: JSON.stringify({
-                uri: `https://www.youtube.com/playlist?list=${playlist}`,
-                requestType: `YTPA ${scriptVersion || 'unknown'}`,
-              }),
-              headers: {
-                'Content-Type': 'application/json',
-              },
-              onload: response => {
-                resolve(JSON.parse(response.responseText));
-              },
-              onerror: () => {
-                document
-                  .querySelector('.ytpa-playlist-emulator')
-                  ?.setAttribute('data-failed', 'rejected');
-                resolve([]);
-              },
-            });
-            return;
-          } catch (err) {
-            console.warn('[YTPA] GM_safe.xmlHttpRequest failed, falling back to fetch', err);
+        const payload = {
+          uri: `https://www.youtube.com/playlist?list=${playlist}`,
+          requestType: `ytp ${gmInfo?.script?.version ?? 'unknown'}`,
+        };
+
+        const markFailure = () => {
+          const emulator = document.querySelector('.ytp-playlist-emulator');
+          if (emulator instanceof HTMLElement) {
+            emulator.setAttribute('data-failed', 'rejected');
           }
+        };
+
+        const handleSuccess = data => {
+          resolve(data);
+        };
+
+        const handleError = () => {
+          markFailure();
+          resolve({ status: 'error', items: [] });
+        };
+
+        if (gmApi && typeof gmApi.xmlHttpRequest === 'function') {
+          gmApi.xmlHttpRequest({
+            method: 'POST',
+            url: 'https://ytplaylist.robert.wesner.io/api/list',
+            data: JSON.stringify(payload),
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            onload: response => {
+              try {
+                handleSuccess(JSON.parse(response.responseText));
+              } catch (parseError) {
+                console.error('[Play All] Failed to parse playlist response:', parseError);
+                handleError();
+              }
+            },
+            onerror: _error => {
+              handleError();
+            },
+          });
+          return;
         }
 
-        // Fetch fallback for non-userscript environments
+        // Fallback to fetch when GM.xmlHttpRequest is unavailable (e.g., during tests)
         fetch('https://ytplaylist.robert.wesner.io/api/list', {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            uri: `https://www.youtube.com/playlist?list=${playlist}`,
-            requestType: `YTPA ${scriptVersion || 'unknown'}`,
-          }),
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
         })
-          .then(r => r.json())
-          .then(json => resolve(json))
-          .catch(() => {
-            document
-              .querySelector('.ytpa-playlist-emulator')
-              ?.setAttribute('data-failed', 'rejected');
-            resolve([]);
+          .then(resp => resp.json())
+          .then(handleSuccess)
+          .catch(err => {
+            console.error('[Play All] Playlist fetch failed:', err);
+            handleError();
           });
       });
     };
 
     const processItems = items => {
-      const itemsContainer = document.querySelector('.ytpa-playlist-emulator .items');
+      const itemsContainer = document.querySelector('.ytp-playlist-emulator .items');
       const params = new URLSearchParams(window.location.search);
       const list = params.get('list');
+
+      if (!(itemsContainer instanceof HTMLElement)) {
+        return;
+      }
 
       items.forEach(
         /**
@@ -1419,26 +1607,26 @@
     };
 
     const playNextEmulationItem = () => {
-      document.querySelector(`.ytpa-playlist-emulator .items .item[data-current] + .item`)?.click();
+      document.querySelector(`.ytp-playlist-emulator .items .item[data-current] + .item`)?.click();
     };
 
     const markCurrentItem = videoId => {
-      const existing = document.querySelector(`.ytpa-playlist-emulator .items .item[data-current]`);
+      const existing = document.querySelector(`.ytp-playlist-emulator .items .item[data-current]`);
       if (existing) {
         existing.removeAttribute('data-current');
       }
 
       const current = document.querySelector(
-        `.ytpa-playlist-emulator .items .item[data-id="${videoId}"]`
+        `.ytp-playlist-emulator .items .item[data-id="${videoId}"]`
       );
-      if (current && current.parentElement) {
+      if (current instanceof HTMLElement) {
         current.setAttribute('data-current', '');
-        // Type assertion: getComputedStyle accepts Element (HTMLElement extends Element)
-        const docElement = /** @type {Element} */ (
-          /** @type {unknown} */ (document.documentElement)
-        );
-        const fontSize = parseFloat(window.getComputedStyle(docElement).fontSize || '16');
-        current.parentElement.scrollTop = current.offsetTop - 12 * fontSize;
+        const parentElement = current.parentElement;
+        if (parentElement instanceof HTMLElement) {
+          const docElement = /** @type {any} */ (document.documentElement);
+          const fontSize = parseFloat(getComputedStyle(docElement).fontSize || '16');
+          parentElement.scrollTop = current.offsetTop - 12 * fontSize;
+        }
       }
     };
 
@@ -1449,7 +1637,10 @@
 
       const params = new URLSearchParams(window.location.search);
       const list = params.get('list');
-      if (params.has('ytpa-random')) {
+      if (!list) {
+        return;
+      }
+      if (params.has('ytp-random')) {
         return;
       }
 
@@ -1465,7 +1656,7 @@
         return;
       }
 
-      const existingEmulator = document.querySelector('.ytpa-playlist-emulator');
+      const existingEmulator = document.querySelector('.ytp-playlist-emulator');
       if (existingEmulator) {
         if (list === existingEmulator.getAttribute('data-list')) {
           markCurrentItem(params.get('v'));
@@ -1490,41 +1681,49 @@
       }
 
       const playlistEmulator = document.createElement('div');
-      playlistEmulator.className = 'ytpa-playlist-emulator';
+      playlistEmulator.className = 'ytp-playlist-emulator';
       playlistEmulator.innerHTML = `
                 <div class="title">
                     Playlist emulator
                 </div>
                 <div class="information">
                     It looks like YouTube is unable to handle this large playlist.
-                    Playlist emulation is a <b>limited</b> fallback feature of YTPA to enable you to watch even more content. <br>
+                    Playlist emulation is a <b>limited</b> fallback feature of ytp to enable you to watch even more content. <br>
                 </div>
                 <div class="items"></div>
                 <div class="footer"></div>
             `;
       playlistEmulator.setAttribute('data-list', list);
-      const playlistPanel = document.querySelector(
+      const playlistHost = document.querySelector(
         '#secondary-inner > ytd-playlist-panel-renderer#playlist'
       );
-      if (playlistPanel && playlistPanel.parentNode) {
-        playlistPanel.parentNode.insertBefore(playlistEmulator, playlistPanel.nextSibling);
-        // Signal to CSS that an emulator exists (used instead of :has() for Firefox)
-        document.body.classList.add('ytpa-has-emulator');
+      if (playlistHost instanceof HTMLElement) {
+        playlistHost.insertAdjacentElement('afterend', /** @type {any} */ (playlistEmulator));
       }
 
       getItems(list).then(response => {
-        if (response.status === 'running') {
-          setTimeout(() => getItems(list).then(response => processItems(response.items)), 5000);
+        if (response?.status === 'running') {
+          setTimeout(
+            () =>
+              getItems(list).then(nextResponse => {
+                if (nextResponse && Array.isArray(nextResponse.items)) {
+                  processItems(nextResponse.items);
+                }
+              }),
+            5000
+          );
 
           return;
         }
 
-        processItems(response.items);
+        if (response && Array.isArray(response.items)) {
+          processItems(response.items);
+        }
       });
 
       const nextButtonInterval = setInterval(() => {
         const nextButton = document.querySelector(
-          '#ytd-player .ytp-next-button.ytp-button:not([ytpa-emulation="applied"])'
+          '#ytd-player .ytp-next-button.ytp-button:not([ytp-emulation="applied"])'
         );
         if (nextButton) {
           clearInterval(nextButtonInterval);
@@ -1535,7 +1734,7 @@
           newButton.innerHTML = nextButton.innerHTML;
           nextButton.replaceWith(newButton);
 
-          newButton.setAttribute('ytpa-emulation', 'applied');
+          newButton.setAttribute('ytp-emulation', 'applied');
           newButton.addEventListener('click', () => playNextEmulationItem());
         }
       }, 1000);
@@ -1556,15 +1755,26 @@
 
       setInterval(() => {
         const player = getPlayer();
+        if (!player || typeof player.getProgressState !== 'function') {
+          return;
+        }
+
         const progressState = player.getProgressState();
+        if (!progressState) {
+          return;
+        }
 
         // Do not listen for watch progress when watching advertisements
         if (!isAdPlaying()) {
           // Autoplay random video
-          if (progressState.current >= progressState.duration - 2) {
+          if (
+            typeof progressState.current === 'number' &&
+            typeof progressState.duration === 'number' &&
+            progressState.current >= progressState.duration - 2
+          ) {
             // make sure vanilla autoplay doesnt take over
-            player.pauseVideo();
-            player.seekTo(0);
+            if (typeof player.pauseVideo === 'function') player.pauseVideo();
+            if (typeof player.seekTo === 'function') player.seekTo(0);
             playNextEmulationItem();
           }
         }
@@ -1572,13 +1782,14 @@
     };
 
     if (location.host === 'm.youtube.com') {
-      // TODO: mobile playlist emulation
+      // Note: Mobile playlist emulation is currently not supported due to different DOM structure
+      // and API limitations on mobile YouTube. Future implementation would require:
+      // - Mobile-specific DOM selectors
+      // - Touch event handling
+      // - Responsive UI adjustments
+      console.log('[Play All] Mobile playlist emulation not yet supported');
     } else {
       window.addEventListener('yt-navigate-finish', () => setTimeout(emulatePlaylist, 1000));
-      // Remove emulator body class on navigation start to ensure styles update
-      window.addEventListener('yt-navigate-start', () => {
-        document.body.classList.remove('ytpa-has-emulator');
-      });
     }
   })();
 
@@ -1591,18 +1802,18 @@
 
     const urlParams = new URLSearchParams(window.location.search);
 
-    if (!urlParams.has('ytpa-random') || urlParams.get('ytpa-random') === '0') {
+    if (!urlParams.has('ytp-random') || urlParams.get('ytp-random') === '0') {
       return;
     }
 
-    /**
-     * @type {'random'|'prefer-newest'|'prefer-oldest'}
-     */
-    const ytpaRandom = /** @type {'random'|'prefer-newest'|'prefer-oldest'} */ (
-      urlParams.get('ytpa-random')
-    );
+    const ytpRandomParam = urlParams.get('ytp-random');
+    /** @type {'random'|'prefer-newest'|'prefer-oldest'} */
+    const ytpRandom =
+      ytpRandomParam === 'prefer-newest' || ytpRandomParam === 'prefer-oldest'
+        ? ytpRandomParam
+        : 'random';
 
-    const getStorageKey = () => `ytpa-random-${urlParams.get('list')}`;
+    const getStorageKey = () => `ytp-random-${urlParams.get('list')}`;
     const getStorage = () => JSON.parse(localStorage.getItem(getStorageKey()) || '{}');
 
     const isWatched = videoId => getStorage()[videoId] || false;
@@ -1623,57 +1834,84 @@
     }
 
     const playNextRandom = (reload = false) => {
-      getPlayer().pauseVideo();
+      const playerInstance = getPlayer();
+      if (playerInstance && typeof playerInstance.pauseVideo === 'function') {
+        playerInstance.pauseVideo();
+      }
 
       const videos = Object.entries(getStorage()).filter(([_, watched]) => !watched);
       const params = new URLSearchParams(window.location.search);
 
+      if (videos.length === 0) {
+        return;
+      }
+
       // Either one fifth or at most the 20 newest.
-      const preferenceRange = Math.min(Math.min(videos.length * 0.2, 20));
+      const preferredCount = Math.max(1, Math.min(Math.floor(videos.length * 0.2), 20));
 
       let videoIndex;
-      switch (ytpaRandom) {
+      switch (ytpRandom) {
         case 'prefer-newest':
           // Select between latest 20 videos
-          videoIndex = Math.floor(Math.random() * preferenceRange);
+          videoIndex = Math.floor(Math.random() * preferredCount);
 
           break;
         case 'prefer-oldest':
-          // Select between oldest 20 videos
-          videoIndex = videos.length - Math.floor(Math.random() * preferenceRange);
+          // Select between oldest `preferredCount` videos (the last N entries).
+          // videos is an array where order follows the playlist DOM order; to pick
+          // from the oldest items we need to start at `videos.length - preferredCount`.
+          videoIndex = videos.length - preferredCount + Math.floor(Math.random() * preferredCount);
 
           break;
         default:
           videoIndex = Math.floor(Math.random() * videos.length);
       }
 
+      // Safety clamp in case of unexpected edge cases
+      if (videoIndex < 0) videoIndex = 0;
+      if (videoIndex >= videos.length) videoIndex = videos.length - 1;
+
       if (reload) {
         params.set('v', videos[videoIndex][0]);
-        params.set('ytpa-random', ytpaRandom);
+        params.set('ytp-random', ytpRandom);
         params.delete('t');
         params.delete('index');
-        params.delete('ytpa-random-initial');
+        params.delete('ytp-random-initial');
         window.location.href = `${window.location.pathname}?${params.toString()}`;
       } else {
-        // TODO: refactor to the new redirect() function
-        const redirector = document.createElement('a');
-        redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
-        redirector.setAttribute('hidden', '');
-        redirector.data = {
-          commandMetadata: {
-            webCommandMetadata: {
-              url: `/watch?v=${videos[videoIndex][0]}&list=${params.get('list')}&ytpa-random=${ytpaRandom}`,
-              webPageType: 'WEB_PAGE_TYPE_WATCH',
-              rootVe: 3832, // ??? required though
+        // Use the redirect() function for consistent navigation
+        try {
+          redirect(videos[videoIndex][0], params.get('list'), ytpRandom);
+        } catch (error) {
+          console.error(
+            '[Play All] Error using redirect(), falling back to manual redirect:',
+            error
+          );
+          // Fallback to manual redirect if the redirect() function fails
+          const redirector = document.createElement('a');
+          redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
+          redirector.setAttribute('hidden', '');
+          redirector.data = {
+            commandMetadata: {
+              webCommandMetadata: {
+                url: `/watch?v=${videos[videoIndex][0]}&list=${params.get('list')}&ytp-random=${ytpRandom}`,
+                webPageType: 'WEB_PAGE_TYPE_WATCH',
+                rootVe: 3832,
+              },
             },
-          },
-          watchEndpoint: {
-            videoId: videos[videoIndex][0],
-            playlistId: params.get('list'),
-          },
-        };
-        document.querySelector('ytd-playlist-panel-renderer #items').append(redirector);
-        redirector.click();
+            watchEndpoint: {
+              videoId: videos[videoIndex][0],
+              playlistId: params.get('list'),
+            },
+          };
+          const listContainer = document.querySelector('ytd-playlist-panel-renderer #items');
+          if (listContainer instanceof HTMLElement) {
+            listContainer.append(redirector);
+          } else {
+            document.body.appendChild(redirector);
+          }
+          redirector.click();
+        }
       }
     };
 
@@ -1688,65 +1926,113 @@
       if (playlistContainer === null) {
         return;
       }
-      if (playlistContainer.hasAttribute('ytpa-random')) {
+      if (playlistContainer.hasAttribute('ytp-random')) {
         return;
       }
 
-      playlistContainer.setAttribute('ytpa-random', 'applied');
-      // Signal to CSS that random mode is active (used instead of :has() for Firefox)
-      document.body.classList.add('ytpa-has-random');
-      playlistContainer.querySelector('.header').insertAdjacentHTML(
-        'afterend',
-        `
-                <div class="ytpa-random-notice">
+      playlistContainer.setAttribute('ytp-random', 'applied');
+      const headerContainer = playlistContainer.querySelector('.header');
+      if (headerContainer) {
+        headerContainer.insertAdjacentHTML(
+          'afterend',
+          `
+                <div class="ytp-random-notice">
                     This playlist is using random play.<br>
                     The videos will <strong>not be played in the order</strong> listed here.
                 </div>
             `
-      );
+        );
+      }
 
       const storage = getStorage();
-      playlistContainer.querySelectorAll('#wc-endpoint').forEach(element => {
-        const videoId = new URLSearchParams(new URL(element.href).searchParams).get('v');
+
+      // Robustly collect playlist anchors - different YT layouts use different selectors
+      const anchorSelectors = [
+        '#wc-endpoint',
+        'ytd-playlist-panel-video-renderer a#wc-endpoint',
+        'ytd-playlist-panel-video-renderer a',
+        'a#video-title',
+        '#secondary ytd-playlist-panel-renderer a[href*="/watch?"]',
+      ];
+
+      const anchors = [];
+      anchorSelectors.forEach(sel => {
+        playlistContainer.querySelectorAll(sel).forEach(a => {
+          if (a instanceof Element && a.tagName === 'A') anchors.push(/** @type {any} */ (a));
+        });
+      });
+
+      // Deduplicate by href
+      const uniq = [];
+      const seen = new Set();
+      anchors.forEach(a => {
+        const href = a.href || a.getAttribute('href') || '';
+        if (!seen.has(href)) {
+          seen.add(href);
+          uniq.push(a);
+        }
+      });
+
+      const navigate = href => (window.location.href = href);
+
+      uniq.forEach(element => {
+        let videoId = null;
+        try {
+          videoId = new URL(element.href, window.location.origin).searchParams.get('v');
+        } catch {
+          videoId = new URLSearchParams(element.search || '').get('v');
+        }
+
+        if (!videoId) return;
+
         if (!isWatched(videoId)) {
           storage[videoId] = false;
         }
 
-        element.href += '&ytpa-random=' + ytpaRandom;
+        // Ensure ytp-random param present
+        try {
+          const u = new URL(element.href, window.location.origin);
+          u.searchParams.set('ytp-random', ytpRandom);
+          element.href = u.toString();
+        } catch {}
+
         // This bypasses the client side routing
         element.addEventListener('click', event => {
           event.preventDefault();
-
-          window.location.href = element.href;
+          navigate(element.href);
         });
 
         const entryKey = getVideoId(element.href);
         if (isWatched(entryKey)) {
-          element.parentElement.setAttribute('hidden', '');
+          element.parentElement?.setAttribute('hidden', '');
         }
       });
       localStorage.setItem(getStorageKey(), JSON.stringify(storage));
 
-      if (urlParams.get('ytpa-random-initial') === '1' || isWatched(getVideoId(location.href))) {
+      if (urlParams.get('ytp-random-initial') === '1' || isWatched(getVideoId(location.href))) {
         playNextRandom();
 
         return;
       }
 
       const header = playlistContainer.querySelector('h3 a');
-      header.innerHTML += ` <span class="ytpa-badge ytpa-random-badge">${ytpaRandom} <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`;
-      header.href = 'javascript:none';
-      header.querySelector('.ytpa-random-badge').addEventListener('click', event => {
-        event.preventDefault();
+      if (header && header.tagName === 'A') {
+        const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
+        anchorHeader.innerHTML += ` <span class="ytp-badge ytp-random-badge">${ytpRandom} <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`;
+        anchorHeader.href = 'javascript:void(0)';
+        const badge = anchorHeader.querySelector('.ytp-random-badge');
+        if (badge) {
+          badge.addEventListener('click', event => {
+            event.preventDefault();
 
-        localStorage.removeItem(getStorageKey());
+            localStorage.removeItem(getStorageKey());
 
-        const params = new URLSearchParams(location.search);
-        params.delete('ytpa-random');
-        // Remove the body class before navigating away
-        document.body.classList.remove('ytpa-has-random');
-        window.location.href = `${window.location.pathname}?${params.toString()}`;
-      });
+            const params = new URLSearchParams(location.search);
+            params.delete('ytp-random');
+            window.location.href = `${window.location.pathname}?${params.toString()}`;
+          });
+        }
+      }
 
       document.addEventListener(
         'keydown',
@@ -1774,40 +2060,51 @@
         const videoId = getVideoId(location.href);
 
         const params = new URLSearchParams(location.search);
-        params.set('ytpa-random', ytpaRandom);
+        params.set('ytp-random', ytpRandom);
         window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
 
         const player = getPlayer();
+        if (!player || typeof player.getProgressState !== 'function') {
+          return;
+        }
+
         const progressState = player.getProgressState();
+        if (
+          !progressState ||
+          typeof progressState.current !== 'number' ||
+          typeof progressState.duration !== 'number'
+        ) {
+          return;
+        }
 
         // Do not listen for watch progress when watching advertisements
         if (!isAdPlaying()) {
           if (progressState.current / progressState.duration >= 0.9) {
-            markWatched(videoId);
+            if (videoId) markWatched(videoId);
           }
 
           // Autoplay random video
           if (progressState.current >= progressState.duration - 2) {
             // make sure vanilla autoplay doesnt take over
-            player.pauseVideo();
-            player.seekTo(0);
+            if (typeof player.pauseVideo === 'function') player.pauseVideo();
+            if (typeof player.seekTo === 'function') player.seekTo(0);
             playNextRandom();
           }
         }
 
         const nextButton = document.querySelector(
-          '#ytd-player .ytp-next-button.ytp-button:not([ytpa-random="applied"])'
+          '#ytd-player .ytp-next-button.ytp-button:not([ytp-random="applied"])'
         );
-        if (nextButton) {
+        if (nextButton instanceof HTMLElement) {
           // Replace with span to prevent anchor click events
           const newButton = document.createElement('span');
           newButton.className = nextButton.className;
           newButton.innerHTML = nextButton.innerHTML;
           nextButton.replaceWith(newButton);
 
-          newButton.setAttribute('ytpa-random', 'applied');
-          newButton.addEventListener('click', _event => {
-            markWatched(videoId);
+          newButton.setAttribute('ytp-random', 'applied');
+          newButton.addEventListener('click', () => {
+            if (videoId) markWatched(videoId);
             playNextRandom();
           });
         }
@@ -1816,13 +2113,10 @@
 
     setInterval(applyRandomPlay, 1000);
   })();
-})().catch(error => {
-  // Only log critical errors
-  if (typeof console !== 'undefined' && console.error) {
-    console.error(
-      '%cYTPA - YouTube Play All\n',
-      'color: #bf4bcc; font-size: 32px; font-weight: bold',
-      error
-    );
-  }
-});
+})().catch(error =>
+  console.error(
+    '%cytp - YouTube Play All\n',
+    'color: #bf4bcc; font-size: 32px; font-weight: bold',
+    error
+  )
+);

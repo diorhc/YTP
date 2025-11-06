@@ -1232,11 +1232,11 @@ if (typeof window !== 'undefined') {
   } catch {}
 
   // Add initialization health check (non-intrusive)
-  console.log('[YouTube+ v2.0.2] Core utilities merged');
+  console.log('[YouTube+ v2.1] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.0.2',
+    version: '2.1',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1264,7 +1264,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.0.2 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.1 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1312,6 +1312,8 @@ if (typeof window !== 'undefined') {
         },
       },
       storageKey: 'youtube_plus_settings',
+      // runtime setting: hide left side guide/footer when true
+      hideSideGuide: false,
     },
 
     // Cache DOM queries
@@ -1384,6 +1386,12 @@ if (typeof window !== 'undefined') {
         const button = this.getElement(`.${className}`, false);
         if (button) button.style.display = this.settings[setting] ? '' : 'none';
       });
+
+      // Also handle speed options dropdown (attached to body)
+      const speedOptions = document.querySelector('.speed-options');
+      if (speedOptions) {
+        speedOptions.style.display = this.settings.enableSpeedControl ? '' : 'none';
+      }
     },
 
     refreshDownloadButton() {
@@ -1430,23 +1438,20 @@ if (typeof window !== 'undefined') {
         html[light]{--yt-bg-primary:rgba(255,255,255,.85);--yt-bg-secondary:rgba(248,248,248,.85);--yt-bg-tertiary:rgba(240,240,240,.85);--yt-text-primary:#030303;--yt-text-secondary:#606060;--yt-border-color:rgba(0,0,0,.2);--yt-hover-bg:rgba(0,0,0,.05);--yt-shadow:0 4px 12px rgba(0,0,0,.15);--yt-glass-bg:rgba(255,255,255,.7);--yt-glass-border:rgba(0,0,0,.1);--yt-glass-shadow:0 8px 32px rgba(0,0,0,.1);--yt-modal-bg:rgba(0,0,0,.5);--yt-notification-bg:rgba(255,255,255,.95);--yt-panel-bg:rgba(255,255,255,.7);--yt-header-bg:rgba(248,248,248,.8);--yt-input-bg:rgba(0,0,0,.05);--yt-button-bg:rgba(0,0,0,.1);--yt-text-stroke:#030303;}
         .ytp-screenshot-button,.ytp-cobalt-button,.ytp-pip-button{position:relative;width:44px;height:100%;display:inline-flex;align-items:center;justify-content:center;vertical-align:top;transition:opacity .15s,transform .15s;}
         .ytp-screenshot-button:hover,.ytp-cobalt-button:hover,.ytp-pip-button:hover{transform:scale(1.1);}
-  .speed-control-btn{width:4em!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;text-align:center!important;border-radius:var(--yt-radius-sm);font-size:13px;color:var(--yt-text-primary);cursor:pointer;user-select:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;transition:color .2s;}
-  .speed-control-btn:hover{color:var(--yt-accent);font-weight:bold;}
-  .speed-options{position:fixed!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;border-radius:var(--yt-radius-md)!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:0!important;transform:translate(-50%,12px)!important;width:92px!important;z-index:2147483647!important;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);opacity:0;pointer-events:none!important;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box;}
-  .speed-options.visible{opacity:1;pointer-events:auto!important;transform:translate(-50%,0)!important;}
-  .speed-option-item{cursor:pointer!important;height:28px!important;line-height:28px!important;font-size:12px!important;text-align:center!important;transition:background-color .15s,color .15s;}
+        .speed-control-btn{width:4em!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;text-align:center!important;border-radius:var(--yt-radius-sm);font-size:13px;color:var(--yt-text-primary);cursor:pointer;user-select:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;transition:color .2s;}
+        .speed-control-btn:hover{color:var(--yt-accent);font-weight:bold;}
+        .speed-options{position:fixed!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;border-radius:var(--yt-radius-md)!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:0!important;transform:translate(-50%,12px)!important;width:92px!important;z-index:2147483647!important;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);opacity:0;pointer-events:none!important;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box;}
+        .speed-options.visible{opacity:1;pointer-events:auto!important;transform:translate(-50%,0)!important;}
+        .speed-option-item{cursor:pointer!important;height:28px!important;line-height:28px!important;font-size:12px!important;text-align:center!important;transition:background-color .15s,color .15s;}
         .speed-option-active,.speed-option-item:hover{color:var(--yt-accent)!important;font-weight:bold!important;background:var(--yt-hover-bg)!important;}
         #speed-indicator{position:absolute!important;margin:auto!important;top:0!important;right:0!important;bottom:0!important;left:0!important;border-radius:24px!important;font-size:30px!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;z-index:99999!important;width:80px!important;height:80px!important;line-height:80px!important;text-align:center!important;display:none;box-shadow:var(--yt-glass-shadow);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);border:1px solid var(--yt-glass-border);}
-  /* Notification container - bottom centered */
-  .youtube-enhancer-notification-container{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;z-index:2147483647;pointer-events:none;max-width:calc(100% - 32px);width:100%;box-sizing:border-box;padding:0 16px;}
-
-  /* Individual notifications (children of the container). Container uses pointer-events:none so children must opt-in. */
-  .youtube-enhancer-notification{position:relative;max-width:700px;width:auto;background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:8px 14px;font-size:13px;border-radius:var(--yt-radius-md);z-index:inherit;transition:opacity .35s,transform .32s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur); -webkit-backdrop-filter:var(--yt-glass-blur);font-weight:500;box-sizing:border-box;display:flex;align-items:center;gap:10px;pointer-events:auto;}
+        .youtube-enhancer-notification-container{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;z-index:2147483647;pointer-events:none;max-width:calc(100% - 32px);width:100%;box-sizing:border-box;padding:0 16px;}
+        .youtube-enhancer-notification{position:relative;max-width:700px;width:auto;background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:8px 14px;font-size:13px;border-radius:var(--yt-radius-md);z-index:inherit;transition:opacity .35s,transform .32s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur); -webkit-backdrop-filter:var(--yt-glass-blur);font-weight:500;box-sizing:border-box;display:flex;align-items:center;gap:10px;pointer-events:auto;}
         .ytp-plus-settings-button{background:transparent;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:var(--yt-space-sm);margin-right:var(--yt-space-sm);border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background-color .2s,transform .2s;}
         .ytp-plus-settings-button svg{width:24px;height:24px;}
         .ytp-plus-settings-button:hover{background:var(--yt-hover-bg);transform:rotate(30deg);color:var(--yt-text-secondary);}
         .ytp-plus-settings-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:100000;backdrop-filter:blur(8px) saturate(140%);-webkit-backdrop-filter:blur(8px) saturate(140%);animation:ytEnhanceFadeIn .25s ease-out;}
-        .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:20px;width:760px;max-width:94%;max-height:90vh;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.45);animation:ytEnhanceScaleIn .28s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-glass-border);will-change:transform,opacity;display:flex;flex-direction:row}
+        .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:20px;width:760px;max-width:94%;max-height:60vh;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.45);animation:ytEnhanceScaleIn .28s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-glass-border);will-change:transform,opacity;display:flex;flex-direction:row}
         .ytp-plus-settings-sidebar{width:240px;background:var(--yt-header-bg);border-right:1px solid var(--yt-glass-border);display:flex;flex-direction:column;backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
         .ytp-plus-settings-sidebar-header{padding:var(--yt-space-md) var(--yt-space-lg);border-bottom:1px solid var(--yt-glass-border);display:flex;justify-content:space-between;align-items:center;}
         .ytp-plus-settings-title{font-size:18px;font-weight:500;margin:0;color:var(--yt-text-primary);}
@@ -1494,8 +1499,8 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-item{padding:10px 12px;}}
         .ytp-plus-settings-section h1{margin:-95px 90px 8px;font-family:'Montserrat',sans-serif;font-size:52px;font-weight:600;color:transparent;-webkit-text-stroke-width:1px;-webkit-text-stroke-color:var(--yt-text-stroke);cursor:pointer;transition:color .2s;}
         .ytp-plus-settings-section h1:hover{color:var(--yt-accent);-webkit-text-stroke-width:1px;-webkit-text-stroke-color:transparent;}
-  .download-options{position:fixed;background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-md);width:150px;z-index:2147483647;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;transform:translateY(8px);box-sizing:border-box;}
-  .download-options.visible{opacity:1;pointer-events:auto;transform:translateY(0);}
+        .download-options{position:fixed;background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-md);width:150px;z-index:2147483647;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;transform:translateY(8px);box-sizing:border-box;}
+        .download-options.visible{opacity:1;pointer-events:auto;transform:translateY(0);}
         .download-options-list{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;}
         .download-option-item{cursor:pointer;padding:12px;text-align:center;transition:background .2s,color .2s;width:100%;}
         .download-option-item:hover{background:var(--yt-hover-bg);color:var(--yt-accent);}
@@ -1514,7 +1519,7 @@ if (typeof window !== 'undefined') {
         .download-site-name{font-weight:600;color:var(--yt-text-primary);}
         .download-site-desc{font-size:12px;color:var(--yt-text-secondary);margin-top:2px;}
           /* Ensure custom YouTube searchbox input backgrounds are transparent to match theme */
-  .ytSearchboxComponentInputBox { background: transparent !important; }
+        .ytSearchboxComponentInputBox { background: transparent !important; }
         `;
 
       // ✅ Use StyleManager instead of createElement('style')
@@ -1705,13 +1710,29 @@ if (typeof window !== 'undefined') {
           </div>
         `;
 
+      // Track unsaved changes: hide save icon until user modifies something
+      let dirty = false;
+      const saveIconBtn = modal.querySelector('#ytp-plus-save-settings-icon');
+      if (saveIconBtn) saveIconBtn.style.display = 'none';
+      const markDirty = () => {
+        if (!dirty) {
+          dirty = true;
+          if (saveIconBtn) saveIconBtn.style.display = '';
+        }
+      };
+
       // Event delegation for better performance
       modal.addEventListener('click', e => {
         const target = /** @type {HTMLElement} */ (e.target);
         if (target === modal) modal.remove();
+        // Close when clicking the moved close button (or legacy class)
         if (
+          target.id === 'ytp-plus-close-settings' ||
+          target.id === 'ytp-plus-close-settings-icon' ||
           target.classList.contains('ytp-plus-settings-close') ||
-          target.closest('.ytp-plus-settings-close')
+          target.closest('.ytp-plus-settings-close') ||
+          target.closest('#ytp-plus-close-settings') ||
+          target.closest('#ytp-plus-close-settings-icon')
         ) {
           modal.remove();
         }
@@ -1722,20 +1743,27 @@ if (typeof window !== 'undefined') {
           return;
         }
 
-        if (target.classList.contains('ytp-plus-settings-nav-item')) {
-          // Handle sidebar navigation
-          const section = /** @type {HTMLElement} */ (target).dataset.section;
-          modal
-            .querySelectorAll('.ytp-plus-settings-nav-item')
-            .forEach(item => item.classList.remove('active'));
-          modal
-            .querySelectorAll('.ytp-plus-settings-section')
-            .forEach(section => section.classList.add('hidden'));
-
-          target.classList.add('active');
-          modal
-            .querySelector(`.ytp-plus-settings-section[data-section="${section}"]`)
-            .classList.remove('hidden');
+        // Handle sidebar navigation (support clicks on children by using closest)
+        {
+          const navItem = /** @type {HTMLElement | null} */ (
+            target.classList && target.classList.contains('ytp-plus-settings-nav-item')
+              ? target
+              : target.closest && target.closest('.ytp-plus-settings-nav-item')
+          );
+          if (navItem) {
+            const section = /** @type {HTMLElement} */ (navItem).dataset.section;
+            modal
+              .querySelectorAll('.ytp-plus-settings-nav-item')
+              .forEach(item => item.classList.remove('active'));
+            modal
+              .querySelectorAll('.ytp-plus-settings-section')
+              .forEach(s => s.classList.add('hidden'));
+            navItem.classList.add('active');
+            const targetSection = modal.querySelector(
+              `.ytp-plus-settings-section[data-section="${section}"]`
+            );
+            if (targetSection) targetSection.classList.remove('hidden');
+          }
         }
 
         if (target.classList.contains('ytp-plus-settings-checkbox')) {
@@ -1745,6 +1773,11 @@ if (typeof window !== 'undefined') {
           // Сохранение простых настроек (enableSpeedControl, enableScreenshot, enableDownload)
           if (!setting.startsWith('downloadSite_')) {
             this.settings[setting] = /** @type {HTMLInputElement} */ (target).checked;
+
+            // Mark modal as dirty so save icon becomes visible
+            try {
+              markDirty();
+            } catch {}
 
             // Показывать/скрывать сабменю при переключении Download
             if (setting === 'enableDownload') {
@@ -1763,6 +1796,11 @@ if (typeof window !== 'undefined') {
             }
             const checkbox = /** @type {HTMLElement} */ (target);
             this.settings.downloadSites[key] = /** @type {HTMLInputElement} */ (checkbox).checked;
+
+            // Mark modal as dirty when toggling download site
+            try {
+              markDirty();
+            } catch {}
             // Toggle visibility of controls for this site (if present in DOM)
             try {
               const container = checkbox.closest('.download-site-option');
@@ -1815,6 +1853,11 @@ if (typeof window !== 'undefined') {
             target
           ).value;
 
+          // Mark modal as dirty when customizing download site fields
+          try {
+            markDirty();
+          } catch {}
+
           // Обновить имя в UI в реальном времени
           if (field === 'name') {
             const nameDisplay = target
@@ -1843,7 +1886,7 @@ if (typeof window !== 'undefined') {
           }
         }
 
-        if (target.id === 'ytp-plus-save-settings') {
+        if (target.id === 'ytp-plus-save-settings' || target.id === 'ytp-plus-save-settings-icon') {
           this.saveSettings();
           modal.remove();
           this.showNotification(t('settingsSaved'));
@@ -2436,6 +2479,9 @@ if (typeof window !== 'undefined') {
     },
 
     addSpeedControlButton(controls) {
+      // Check if speed control is enabled in settings
+      if (!this.settings.enableSpeedControl) return;
+
       const speedBtn = document.createElement('button');
       speedBtn.type = 'button';
       speedBtn.className = 'ytp-button speed-control-btn';
@@ -2595,6 +2641,66 @@ if (typeof window !== 'undefined') {
       });
 
       controls.insertBefore(speedBtn, controls.firstChild);
+    },
+
+    // ------------------ Side Guide Toggle ------------------
+    applyGuideVisibility() {
+      try {
+        const enabled = Boolean(YouTubeUtils.storage.get('ytplus.hideGuide', false));
+        document.documentElement.classList.toggle('ytp-hide-guide', enabled);
+        // update floating button appearance if present
+        const btn = document.getElementById('ytplus-guide-toggle-btn');
+        if (btn) {
+          btn.setAttribute('aria-pressed', String(enabled));
+          btn.title = enabled ? 'Show side guide' : 'Hide side guide';
+        }
+      } catch (e) {
+        console.warn('[YouTube+] applyGuideVisibility failed:', e);
+      }
+    },
+
+    toggleSideGuide() {
+      try {
+        const current = Boolean(YouTubeUtils.storage.get('ytplus.hideGuide', false));
+        const next = !current;
+        YouTubeUtils.storage.set('ytplus.hideGuide', next);
+        this.applyGuideVisibility();
+      } catch (e) {
+        console.warn('[YouTube+] toggleSideGuide failed:', e);
+      }
+    },
+
+    createGuideToggleButton() {
+      try {
+        if (document.getElementById('ytplus-guide-toggle-btn')) return;
+        const btn = document.createElement('button');
+        btn.id = 'ytplus-guide-toggle-btn';
+        btn.type = 'button';
+        btn.style.cssText =
+          'position:fixed;right:12px;bottom:12px;z-index:100000;background:var(--yt-spec-call-to-action);color:#fff;border:none;border-radius:8px;padding:8px 10px;box-shadow:0 6px 18px rgba(0,0,0,0.3);cursor:pointer;opacity:0.95;font-size:13px;';
+        btn.setAttribute('aria-pressed', 'false');
+        btn.title = 'Hide side guide';
+        btn.textContent = 'Toggle Guide';
+        btn.addEventListener('click', e => {
+          e.preventDefault();
+          e.stopPropagation();
+          this.toggleSideGuide();
+        });
+
+        // keyboard support
+        btn.addEventListener('keydown', e => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            this.toggleSideGuide();
+          }
+        });
+
+        document.body.appendChild(btn);
+        // Apply current stored value
+        this.applyGuideVisibility();
+      } catch (e) {
+        console.warn('[YouTube+] createGuideToggleButton failed:', e);
+      }
     },
 
     captureFrame() {

@@ -70,13 +70,16 @@ module.exports = [
       },
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
       'no-console': 'off',
       'prefer-const': 'warn',
       'no-var': 'warn',
       eqeqeq: ['warn', 'smart'],
       curly: ['warn', 'multi-line'],
       'no-undef': 'error',
+      'no-prototype-builtins': 'warn',
+      // Allow debug flag patterns like: DEBUG && console.log()
+      'no-unused-expressions': ['warn', { allowShortCircuit: true, allowTernary: true }],
     },
   },
 ];

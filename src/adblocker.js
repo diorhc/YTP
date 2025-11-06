@@ -83,37 +83,53 @@
      */
     settings: {
       /**
-       * Load settings from localStorage
+       * Load settings from localStorage with validation
        * @returns {void}
        */
       load() {
         try {
           const saved = localStorage.getItem(AdBlocker.config.storageKey);
-          if (saved) {
-            const parsed = JSON.parse(saved);
-            AdBlocker.config.enabled = parsed.enabled ?? true;
-            AdBlocker.config.enableLogging = parsed.enableLogging ?? false;
+          if (!saved) return;
+
+          const parsed = JSON.parse(saved);
+          if (typeof parsed !== 'object' || parsed === null) {
+            console.warn('[AdBlocker] Invalid settings format');
+            return;
           }
-        } catch {
-          // Silently fail if localStorage is unavailable
+
+          // Validate and apply settings
+          if (typeof parsed.enabled === 'boolean') {
+            AdBlocker.config.enabled = parsed.enabled;
+          } else {
+            AdBlocker.config.enabled = true; // Default to enabled
+          }
+
+          if (typeof parsed.enableLogging === 'boolean') {
+            AdBlocker.config.enableLogging = parsed.enableLogging;
+          } else {
+            AdBlocker.config.enableLogging = false; // Default to disabled
+          }
+        } catch (error) {
+          console.error('[AdBlocker] Error loading settings:', error);
+          // Set safe defaults on error
+          AdBlocker.config.enabled = true;
+          AdBlocker.config.enableLogging = false;
         }
       },
 
       /**
-       * Save settings to localStorage
+       * Save settings to localStorage with error handling
        * @returns {void}
        */
       save() {
         try {
-          localStorage.setItem(
-            AdBlocker.config.storageKey,
-            JSON.stringify({
-              enabled: AdBlocker.config.enabled,
-              enableLogging: AdBlocker.config.enableLogging,
-            })
-          );
-        } catch {
-          // Silently fail if localStorage is unavailable
+          const settingsToSave = {
+            enabled: AdBlocker.config.enabled,
+            enableLogging: AdBlocker.config.enableLogging,
+          };
+          localStorage.setItem(AdBlocker.config.storageKey, JSON.stringify(settingsToSave));
+        } catch (error) {
+          console.error('[AdBlocker] Error saving settings:', error);
         }
       },
     },
