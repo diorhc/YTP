@@ -199,11 +199,19 @@ function collectModuleFiles() {
   return files;
 }
 
+/**
+ * Build the userscript once to the default output location
+ * @returns {boolean} True if build succeeded, false otherwise
+ */
 function buildOnce() {
   // Delegate to buildOnceCustom using default OUT
   return buildOnceCustom(OUT);
 }
 
+/**
+ * Watch source files for changes and rebuild automatically
+ * @returns {import('chokidar').FSWatcher|import('fs').FSWatcher} File system watcher instance
+ */
 function watchAndBuild() {
   let timer = null;
   const srcDir = path.join(ROOT, 'src');
@@ -312,40 +320,57 @@ async function buildOnceCustom(outPath) {
   if (verbose) console.log(`Found ${files.length} module(s) to merge`);
 
   const parts = [header.trim(), '\n'];
+  let mergedCount = 0;
+  let skippedCount = 0;
+
   for (const f of files) {
     // Handle both object {name, dir} and string formats
     const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
     const p = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
     const content = readFileSafe(p);
     if (content === null) {
-      if (verbose) console.warn(`Warning: Could not read ${p}`);
+      console.warn(`⚠️  Could not read: ${path.relative(ROOT, p)}`);
+      skippedCount++;
       continue;
     }
     const clean = stripMeta(content).trim();
+    if (!clean) {
+      console.warn(`⚠️  Empty module: ${path.relative(ROOT, p)}`);
+      skippedCount++;
+      continue;
+    }
     const displayName = typeof f === 'string' ? path.basename(f) : f.name;
     parts.push(`// --- MODULE: ${displayName} ---`);
     parts.push(clean);
     if (verbose) console.log(`  ✓ Merged: ${displayName}`);
+    mergedCount++;
+  }
+
+  if (skippedCount > 0) {
+    console.warn(`⚠️  Skipped ${skippedCount} module(s) due to errors or empty content`);
   }
 
   const out = parts.join('\n\n') + '\n';
   fs.writeFileSync(outPath, out, 'utf8');
-  console.log(`Built ${outPath} from ${files.length} modules:`);
+  console.log(`\n✓ Built ${path.relative(ROOT, outPath)} from ${mergedCount} modules:`);
   for (const f of files) {
     // Handle both object {name, dir} and string formats
     const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
     const fp = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
     const rel = path.relative(ROOT, fp).replace(/\\/g, '/');
-    console.log(' -', rel);
+    console.log('  ✓', rel);
   }
 
   // Syntax check using vm
   if (verbose) console.log('Running syntax validation...');
   try {
     new vm.Script(out, { filename: outPath });
-    console.log('Basic syntax check passed (vm.Script)');
+    console.log('✓ Basic syntax check passed (vm.Script)');
   } catch (e) {
-    console.error('Syntax check failed:', e && e.message);
+    console.error('❌ Syntax check failed:', e && e.message);
+    if (verbose && e.stack) {
+      console.error('Stack trace:', e.stack);
+    }
     return false;
   }
 
@@ -367,7 +392,7 @@ async function buildOnceCustom(outPath) {
     }
     if (eslintPath && fs.existsSync(eslintPath)) {
       try {
-        console.log('Running eslint...');
+        console.log('Running ESLint validation...');
         // Prefer flat config if present
         const flatConfig = path.join(ROOT, 'eslint.config.cjs');
         if (fs.existsSync(flatConfig)) {
@@ -384,10 +409,13 @@ async function buildOnceCustom(outPath) {
             execSync(`"${eslintPath}" --no-warn-ignored "${outPath}"`, { stdio: 'inherit' });
           }
         }
-        if (verbose) console.log('ESLint validation passed');
-        console.log('ESLint passed');
-      } catch {
-        console.error('ESLint reported problems (non-zero exit)');
+        if (verbose) console.log('✓ ESLint validation passed');
+        console.log('✓ ESLint passed');
+      } catch (err) {
+        console.error('❌ ESLint reported problems');
+        if (verbose) {
+          console.error('ESLint exit code:', err.status || 'unknown');
+        }
         return false;
       }
     }

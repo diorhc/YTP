@@ -1,0 +1,11 @@
+{
+  "timestamp": "2025-11-10T08:21:06.370Z",
+  "size": 752459,
+  "sizeFormatted": "734.82 KB",
+  "status": "error",
+  "limits": {
+    "target": 256000,
+    "warning": 358400,
+    "error": 512000
+  }
+}

@@ -14,6 +14,7 @@ const modules = [
   'stats',
   'playlist-search',
   'style',
+  'report',
 ];
 
 console.log('Проверка модулей в youtube.user.js:\n');

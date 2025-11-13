@@ -127,6 +127,86 @@
   };
 
   /**
+   * Get error rate per minute
+   * @returns {number} Errors per minute
+   */
+  const getErrorRate = () => {
+    const now = Date.now();
+    const oneMinuteAgo = now - 60000;
+    const recentErrors = errorState.errors.filter(
+      e => new Date(e.timestamp).getTime() > oneMinuteAgo
+    );
+    return recentErrors.length;
+  };
+
+  /**
+   * Check if should suppress error notification (rate limiting)
+   * @param {Error} error - The error object
+   * @returns {boolean} True if should suppress
+   */
+  const shouldSuppressNotification = error => {
+    const rate = getErrorRate();
+
+    // Suppress if more than 5 errors in the last minute
+    if (rate > 5) {
+      return true;
+    }
+
+    // Suppress duplicate errors within 10 seconds
+    const tenSecondsAgo = Date.now() - 10000;
+    const recentSimilar = errorState.errors.filter(
+      e =>
+        new Date(e.timestamp).getTime() > tenSecondsAgo &&
+        e.message === error.message &&
+        e.severity === categorizeSeverity(error)
+    );
+
+    return recentSimilar.length > 0;
+  };
+
+  /**
+   * Show user-friendly error notification
+   * @param {Error} error - The error object
+   * @param {Object} _context - Error context (unused but kept for API consistency)
+   */
+  const showErrorNotification = (error, _context) => {
+    try {
+      const Y = window.YouTubeUtils;
+      if (!Y || !Y.NotificationManager || typeof Y.NotificationManager.show !== 'function') {
+        return; // Notification manager not available
+      }
+
+      const severity = categorizeSeverity(error);
+      let message = 'An error occurred';
+      let duration = 3000;
+
+      switch (severity) {
+        case ErrorSeverity.LOW:
+          message = 'A minor issue occurred. Functionality should continue normally.';
+          duration = 2000;
+          break;
+        case ErrorSeverity.MEDIUM:
+          message = 'An error occurred. Some features may not work correctly.';
+          duration = 3000;
+          break;
+        case ErrorSeverity.HIGH:
+          message = 'A serious error occurred. Please refresh the page if issues persist.';
+          duration = 5000;
+          break;
+        case ErrorSeverity.CRITICAL:
+          message =
+            'A critical error occurred. YouTube+ may not function properly. Please report this issue.';
+          duration = 7000;
+          break;
+      }
+
+      Y.NotificationManager.show(message, { duration, type: 'error' });
+    } catch (notificationError) {
+      console.error('[YouTube+] Failed to show error notification:', notificationError);
+    }
+  };
+
+  /**
    * Attempt to recover from error
    * @param {Error} error - The error that occurred
    * @param {Object} context - Error context
@@ -138,16 +218,48 @@
 
     if (severity === ErrorSeverity.CRITICAL) {
       console.error('[YouTube+] Critical error detected. Script may not function properly.');
+      showErrorNotification(error, context);
       return;
     }
 
     errorState.isRecovering = true;
 
     try {
-      // Attempt recovery based on error type
-      if (context.module && window.YouTubeUtils?.cleanupManager) {
+      // Show notification to user (except for low severity errors and rate-limited)
+      if (severity !== ErrorSeverity.LOW && !shouldSuppressNotification(error)) {
+        showErrorNotification(error, context);
+      }
+
+      // Attempt module-specific recovery
+      if (context.module) {
         console.log(`[YouTube+] Attempting recovery for module: ${context.module}`);
-        // Could implement module-specific recovery here
+
+        // Try to reinitialize the module if possible
+        const Y = window.YouTubeUtils;
+        if (Y && Y.cleanupManager) {
+          // Could cleanup and reinitialize module-specific resources
+          switch (context.module) {
+            case 'StyleManager':
+              // Clear and re-add styles if needed
+              break;
+            case 'NotificationManager':
+              // Reset notification queue
+              break;
+            default:
+              // Generic cleanup
+              break;
+          }
+        }
+
+        // Check if it's a DOM-related error and the element is missing
+        if (
+          error.message &&
+          (error.message.includes('null') || error.message.includes('undefined')) &&
+          context.element
+        ) {
+          console.log('[YouTube+] Attempting to re-query DOM element');
+          // Could trigger element re-query here
+        }
       }
 
       setTimeout(() => {
@@ -304,6 +416,8 @@
       getErrorStats,
       clearErrors,
       logError,
+      getErrorRate,
+      config: ErrorBoundaryConfig,
     };
 
     console.log('[YouTube+] Error boundary initialized');

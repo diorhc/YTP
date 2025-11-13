@@ -1,7 +1,7 @@
 {
   "name": "youtubeplus",
   "version": "2.1",
-  "description": "Professional-grade YouTube enhancement userscript with modular architecture, comprehensive error handling, and automated testing",
+  "description": "Professional-grade YouTube enhancement userscript with modular architecture, comprehensive error handling, performance monitoring, and automated testing",
   "private": true,
   "author": "diorhc",
   "license": "MIT",
@@ -34,6 +34,7 @@
     "build:minify": "node build.js --minify",
     "build:watch": "node build.js --watch",
     "build:analyze": "npm run build && npm run benchmark",
+    "build:sourcemap": "npm run build && node generate-sourcemap.js",
     "lint": "eslint --no-warn-ignored \"src/**/*.js\" \"build.js\"",
     "lint:fix": "eslint --no-warn-ignored \"src/**/*.js\" \"build.js\" --fix",
     "typecheck": "tsc --noEmit",
@@ -53,7 +54,9 @@
     "validate": "npm run typecheck && npm run lint && npm run test:unit",
     "validate:build": "node validate-build.js",
     "benchmark": "node benchmark.js",
-    "clean": "node -e \"require('fs').rmSync('coverage', {recursive: true, force: true}); require('fs').rmSync('youtube.user.js', {force: true});\" && echo Cleaned build artifacts",
+    "size": "node check-bundle-size.js",
+    "size:check": "node check-bundle-size.js --fail-on-error",
+    "clean": "node -e \"require('fs').rmSync('coverage', {recursive: true, force: true}); require('fs').rmSync('youtube.user.js', {force: true}); require('fs').rmSync('youtube.user.js.map', {force: true}); require('fs').rmSync('bundle-size-report.json', {force: true});\" && echo Cleaned build artifacts",
     "check:deps": "npm outdated || true",
     "update:deps": "npm update && npm audit fix",
     "ci": "npm run typecheck && npm run lint && npm run test:unit && npm run build"

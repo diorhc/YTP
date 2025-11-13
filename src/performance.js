@@ -2,6 +2,8 @@
 (function () {
   'use strict';
 
+  /* global Blob, URL */
+
   /**
    * Performance monitoring configuration
    */
@@ -212,6 +214,67 @@
   };
 
   /**
+   * Get memory usage information
+   * @returns {Object|null} Memory usage data
+   */
+  const getMemoryUsage = () => {
+    if (typeof performance === 'undefined' || !performance.memory) {
+      return null;
+    }
+
+    try {
+      const memory = performance.memory;
+      return {
+        usedJSHeapSize: memory.usedJSHeapSize,
+        totalJSHeapSize: memory.totalJSHeapSize,
+        jsHeapSizeLimit: memory.jsHeapSizeLimit,
+        usedPercent: ((memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100).toFixed(2),
+      };
+    } catch {
+      return null;
+    }
+  };
+
+  /**
+   * Track memory usage as a metric
+   */
+  const trackMemory = () => {
+    const memory = getMemoryUsage();
+    if (memory) {
+      recordMetric('memory-usage', memory.usedJSHeapSize, {
+        totalJSHeapSize: memory.totalJSHeapSize,
+        usedPercent: memory.usedPercent,
+      });
+    }
+  };
+
+  /**
+   * Check if metrics exceed thresholds
+   * @param {Object} thresholds - Threshold configuration
+   * @returns {Array} Array of threshold violations
+   */
+  const checkThresholds = thresholds => {
+    const violations = [];
+    const allStats = getStats(undefined);
+
+    if (!allStats || !allStats.metrics) return violations;
+
+    Object.entries(thresholds).forEach(([metricName, threshold]) => {
+      const stat = allStats.metrics[metricName];
+      if (stat && stat.avg > threshold) {
+        violations.push({
+          metric: metricName,
+          threshold,
+          actual: stat.avg,
+          exceeded: stat.avg - threshold,
+        });
+      }
+    });
+
+    return violations;
+  };
+
+  /**
    * Export metrics to JSON
    * @returns {string} JSON string of metrics
    */
@@ -220,12 +283,72 @@
       timestamp: new Date().toISOString(),
       userAgent: navigator.userAgent,
       url: window.location.href,
+      memory: getMemoryUsage(),
       stats: getStats(undefined),
       measures: metrics.measures,
       customMetrics: Object.fromEntries(metrics.timings),
     };
 
     return JSON.stringify(data, null, 2);
+  };
+
+  /**
+   * Export metrics to downloadable file
+   * @param {string} filename - Filename for export
+   * @returns {boolean} Success status
+   */
+  const exportToFile = (filename = 'youtube-plus-performance.json') => {
+    try {
+      const data = exportMetrics();
+      if (typeof Blob === 'undefined') {
+        console.warn('[YouTube+ Perf] Blob API not available');
+        return false;
+      }
+      const blob = new Blob([data], { type: 'application/json' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+      return true;
+    } catch (e) {
+      console.error('[YouTube+ Perf] Failed to export to file:', e);
+      return false;
+    }
+  };
+
+  /**
+   * Aggregate metrics by time period
+   * @param {number} periodMs - Time period in milliseconds
+   * @returns {Array} Aggregated metrics
+   */
+  const aggregateByPeriod = (periodMs = 60000) => {
+    const periods = new Map();
+
+    metrics.measures.forEach(measure => {
+      const periodStart = Math.floor(measure.timestamp / periodMs) * periodMs;
+      if (!periods.has(periodStart)) {
+        periods.set(periodStart, []);
+      }
+      periods.get(periodStart).push(measure);
+    });
+
+    const aggregated = [];
+    periods.forEach((measures, periodStart) => {
+      const durations = measures.map(m => m.duration);
+      aggregated.push({
+        period: new Date(periodStart).toISOString(),
+        count: durations.length,
+        min: Math.min(...durations),
+        max: Math.max(...durations),
+        avg: durations.reduce((a, b) => a + b, 0) / durations.length,
+      });
+    });
+
+    return aggregated;
   };
 
   /**
@@ -329,9 +452,14 @@
       recordMetric,
       getStats,
       exportMetrics,
+      exportToFile,
       clearMetrics,
       monitorMutations,
       getPerformanceEntries,
+      getMemoryUsage,
+      trackMemory,
+      checkThresholds,
+      aggregateByPeriod,
       config: PerformanceConfig,
     };
 

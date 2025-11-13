@@ -244,28 +244,176 @@
       cleanupManager.registerTimeout(id);
     });
 
-  // Minimal storage wrapper
+  /**
+   * Sanitize HTML string to prevent XSS attacks
+   * @param {string} html - HTML string to sanitize
+   * @returns {string} Sanitized HTML
+   */
+  const sanitizeHTML = html => {
+    if (typeof html !== 'string') return '';
+
+    // Check for extremely long strings (potential DoS)
+    if (html.length > 1000000) {
+      console.warn('[YouTube+] HTML content too large, truncating');
+      html = html.substring(0, 1000000);
+    }
+
+    /** @type {Record<string, string>} */
+    const map = {
+      '<': '&lt;',
+      '>': '&gt;',
+      '&': '&amp;',
+      '"': '&quot;',
+      "'": '&#39;',
+      '/': '&#x2F;',
+      '`': '&#x60;',
+      '=': '&#x3D;',
+    };
+
+    return html.replace(/[<>&"'\/`=]/g, char => map[char] || char);
+  };
+
+  /**
+   * Validate URL to prevent injection attacks
+   * @param {string} url - URL to validate
+   * @returns {boolean} Whether URL is safe
+   */
+  const isValidURL = url => {
+    if (typeof url !== 'string') return false;
+    if (url.length > 2048) return false; // RFC 2616
+    if (/^\s|\s$/.test(url)) return false; // No leading/trailing whitespace
+
+    try {
+      const parsed = new URL(url);
+      // Only allow http/https protocols
+      if (!['http:', 'https:'].includes(parsed.protocol)) return false;
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * Retry an async operation with exponential backoff
+   * @template T
+   * @param {() => Promise<T>} fn - Async function to retry
+   * @param {number} maxRetries - Maximum number of retries
+   * @param {number} baseDelay - Base delay in milliseconds
+   * @returns {Promise<T>} Result of the async operation
+   */
+  const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000) => {
+    let lastError;
+    for (let i = 0; i < maxRetries; i++) {
+      try {
+        return await fn();
+      } catch (error) {
+        lastError = error;
+        if (i < maxRetries - 1) {
+          const delay = baseDelay * Math.pow(2, i);
+          await new Promise(resolve => setTimeout(resolve, delay));
+        }
+      }
+    }
+    throw lastError;
+  };
+
+  // Enhanced storage wrapper with better validation
   const storage = {
+    /**
+     * Get value from localStorage with validation
+     * @param {string} key - Storage key
+     * @param {*} def - Default value
+     * @returns {*} Stored value or default
+     */
     get(key, def = null) {
+      // Validate key format
+      if (typeof key !== 'string' || !/^[a-zA-Z0-9_\-\.]+$/.test(key)) {
+        logError('storage', 'Invalid key format', new Error(`Invalid key: ${key}`));
+        return def;
+      }
+
       try {
         const v = localStorage.getItem(key);
-        return v === null ? def : JSON.parse(v);
-      } catch {
+        if (v === null) return def;
+
+        // Check size before parsing
+        if (v.length > 5 * 1024 * 1024) {
+          // 5MB limit
+          logError('storage', 'Stored value too large', new Error(`Key: ${key}`));
+          return def;
+        }
+
+        return JSON.parse(v);
+      } catch (e) {
+        logError('storage', 'Failed to parse stored value', e);
         return def;
       }
     },
+
+    /**
+     * Set value in localStorage with validation
+     * @param {string} key - Storage key
+     * @param {*} val - Value to store
+     * @returns {boolean} Whether operation succeeded
+     */
     set(key, val) {
+      // Validate key format
+      if (typeof key !== 'string' || !/^[a-zA-Z0-9_\-\.]+$/.test(key)) {
+        logError('storage', 'Invalid key format', new Error(`Invalid key: ${key}`));
+        return false;
+      }
+
       try {
-        localStorage.setItem(key, JSON.stringify(val));
+        const serialized = JSON.stringify(val);
+
+        // Check size limit (5MB)
+        if (serialized.length > 5 * 1024 * 1024) {
+          logError('storage', 'Value too large to store', new Error(`Key: ${key}`));
+          return false;
+        }
+
+        localStorage.setItem(key, serialized);
         return true;
-      } catch {
+      } catch (e) {
+        logError('storage', 'Failed to store value', e);
         return false;
       }
     },
+
+    /**
+     * Remove value from localStorage
+     * @param {string} key - Storage key
+     */
     remove(key) {
       try {
         localStorage.removeItem(key);
-      } catch {}
+      } catch (e) {
+        logError('storage', 'Failed to remove value', e);
+      }
+    },
+
+    /**
+     * Clear all localStorage
+     */
+    clear() {
+      try {
+        localStorage.clear();
+      } catch (e) {
+        logError('storage', 'Failed to clear storage', e);
+      }
+    },
+
+    /**
+     * Check if key exists
+     * @param {string} key - Storage key
+     * @returns {boolean} Whether key exists
+     */
+    has(key) {
+      try {
+        return localStorage.getItem(key) !== null;
+      } catch {
+        return false;
+      }
     },
   };
 
@@ -281,5 +429,8 @@
     U.createElement = U.createElement || createElement;
     U.waitForElement = U.waitForElement || waitForElement;
     U.storage = U.storage || storage;
+    U.sanitizeHTML = U.sanitizeHTML || sanitizeHTML;
+    U.isValidURL = U.isValidURL || isValidURL;
+    U.retryWithBackoff = U.retryWithBackoff || retryWithBackoff;
   }
 })();

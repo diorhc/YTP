@@ -1,0 +1,9 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Run full test suite before push
+npm run test
+
+# Validate build
+npm run build
+npm run validate:build

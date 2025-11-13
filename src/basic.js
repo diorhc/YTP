@@ -9,6 +9,7 @@ const YouTubeUtils = (() => {
       basicTab: 'Basic',
       advancedTab: 'Advanced',
       experimentalTab: 'Experimental',
+      reportTab: 'Report',
       aboutTab: 'About',
       closeButton: 'Close',
       saveChanges: 'Save Changes',
@@ -56,6 +57,7 @@ const YouTubeUtils = (() => {
       basicTab: 'Основные',
       advancedTab: 'Расширенные',
       experimentalTab: 'Экспериментальные',
+      reportTab: 'Отчет',
       aboutTab: 'О программе',
       closeButton: 'Закрыть',
       saveChanges: 'Сохранить изменения',
@@ -163,11 +165,18 @@ const YouTubeUtils = (() => {
 
   /**
    * Sanitize HTML string to prevent XSS
+   * Enhanced with additional security checks
    * @param {string} html - HTML string to sanitize
    * @returns {string} Sanitized HTML
    */
   const sanitizeHTML = html => {
     if (typeof html !== 'string') return '';
+
+    // Check for extremely long strings (potential DoS)
+    if (html.length > 1000000) {
+      console.warn('[YouTube+] HTML content too large, truncating');
+      html = html.substring(0, 1000000);
+    }
 
     /** @type {Record<string, string>} */
     const map = {
@@ -177,18 +186,24 @@ const YouTubeUtils = (() => {
       '"': '&quot;',
       "'": '&#39;',
       '/': '&#x2F;',
+      '`': '&#x60;',
+      '=': '&#x3D;',
     };
 
-    return html.replace(/[<>&"'\/]/g, char => map[char]);
+    return html.replace(/[<>&"'\/`=]/g, char => map[char] || char);
   };
 
   /**
    * Validate URL to prevent injection attacks
+   * Enhanced with additional protocol and domain checks
    * @param {string} url - URL to validate
    * @returns {boolean} Whether URL is safe
    */
   const isValidURL = url => {
     if (typeof url !== 'string') return false;
+    if (url.length > 2048) return false; // RFC 2616 recommends 2048 chars max
+    if (url.trim() !== url) return false; // No leading/trailing whitespace
+
     try {
       const parsed = new URL(url);
       // Only allow http and https protocols
@@ -199,7 +214,7 @@ const YouTubeUtils = (() => {
   };
 
   /**
-   * Safe localStorage wrapper
+   * Safe localStorage wrapper with enhanced validation
    */
   const storage = {
     /**
@@ -214,8 +229,30 @@ const YouTubeUtils = (() => {
           logError('Storage', 'Invalid storage key', new Error('Key must be a non-empty string'));
           return defaultValue;
         }
+        // Validate key format (alphanumeric, -, _, .)
+        if (!/^[a-zA-Z0-9_.-]+$/.test(key)) {
+          logError(
+            'Storage',
+            'Invalid key format',
+            new Error(`Key contains invalid characters: ${key}`)
+          );
+          return defaultValue;
+        }
         const value = localStorage.getItem(key);
-        return value !== null ? JSON.parse(value) : defaultValue;
+        if (value === null) return defaultValue;
+
+        // Validate JSON size before parsing
+        if (value.length > 5242880) {
+          // 5MB limit
+          logError(
+            'Storage',
+            'Stored value too large',
+            new Error(`Value exceeds 5MB limit for key: ${key}`)
+          );
+          return defaultValue;
+        }
+
+        return JSON.parse(value);
       } catch (e) {
         logError('Storage', `Failed to get item: ${key}`, e);
         return defaultValue;
@@ -223,7 +260,7 @@ const YouTubeUtils = (() => {
     },
 
     /**
-     * Set item to localStorage with JSON serialization
+     * Set item to localStorage with JSON serialization and validation
      * @param {string} key - Storage key
      * @param {*} value - Value to store
      * @returns {boolean} Success status
@@ -234,7 +271,29 @@ const YouTubeUtils = (() => {
           logError('Storage', 'Invalid storage key', new Error('Key must be a non-empty string'));
           return false;
         }
-        localStorage.setItem(key, JSON.stringify(value));
+        // Validate key format
+        if (!/^[a-zA-Z0-9_.-]+$/.test(key)) {
+          logError(
+            'Storage',
+            'Invalid key format',
+            new Error(`Key contains invalid characters: ${key}`)
+          );
+          return false;
+        }
+
+        // Serialize and validate size
+        const serialized = JSON.stringify(value);
+        if (serialized.length > 5242880) {
+          // 5MB limit
+          logError(
+            'Storage',
+            'Value too large',
+            new Error(`Serialized value exceeds 5MB limit for key: ${key}`)
+          );
+          return false;
+        }
+
+        localStorage.setItem(key, serialized);
         return true;
       } catch (e) {
         logError('Storage', `Failed to set item: ${key}`, e);
@@ -1520,6 +1579,20 @@ if (typeof window !== 'undefined') {
         .download-site-desc{font-size:12px;color:var(--yt-text-secondary);margin-top:2px;}
           /* Ensure custom YouTube searchbox input backgrounds are transparent to match theme */
         .ytSearchboxComponentInputBox { background: transparent !important; }
+          /* Fix native select/option contrast inside settings modal */
+          .ytp-plus-settings-panel select,
+          .ytp-plus-settings-panel select option {
+            background: var(--yt-panel-bg) !important;
+            color: var(--yt-text-primary) !important;
+          }
+          /* Improve select appearance and ensure options are legible */
+          .ytp-plus-settings-panel select {
+            -webkit-appearance: menulist !important;
+            appearance: menulist !important;
+            padding: 6px 8px !important;
+            border-radius: 6px !important;
+            border: 1px solid var(--yt-glass-border) !important;
+          }
         `;
 
       // ✅ Use StyleManager instead of createElement('style')
@@ -1586,6 +1659,15 @@ if (typeof window !== 'undefined') {
                     <path fill-rule="evenodd" clip-rule="evenodd" d="M18.019 4V15.0386L6.27437 39.3014C5.48686 40.9283 6.16731 42.8855 7.79421 43.673C8.23876 43.8882 8.72624 44 9.22013 44H38.7874C40.5949 44 42.0602 42.5347 42.0602 40.7273C42.0602 40.2348 41.949 39.7488 41.7351 39.3052L30.0282 15.0386V4H18.019Z" stroke="currentColor" stroke-width="4" stroke-linejoin="round"></path> <path d="M10.9604 29.9998C13.1241 31.3401 15.2893 32.0103 17.4559 32.0103C19.6226 32.0103 21.7908 31.3401 23.9605 29.9998C26.1088 28.6735 28.2664 28.0103 30.433 28.0103C32.5997 28.0103 34.7755 28.6735 36.9604 29.9998" stroke="currentColor" stroke-width="4" stroke-linecap="round"></path>
                   </svg>
                   ${t('experimentalTab')}
+                </div>
+                <div class="ytp-plus-settings-nav-item" data-section="report">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                    <polyline points="14 2 14 8 20 8"></polyline>
+                    <line x1="12" y1="18" x2="12" y2="12"></line>
+                    <line x1="12" y1="9" x2="12.01" y2="9"></line>
+                  </svg>
+                  ${t('reportTab')}
                 </div>
                 <div class="ytp-plus-settings-nav-item" data-section="about">
                   <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1694,6 +1776,9 @@ if (typeof window !== 'undefined') {
                 </div>
 
                 <div class="ytp-plus-settings-section hidden" data-section="experimental">
+                </div>
+
+                <div class="ytp-plus-settings-section hidden" data-section="report">
                 </div>
                 
                 <div class="ytp-plus-settings-section hidden" data-section="about">
@@ -2126,6 +2211,23 @@ if (typeof window !== 'undefined') {
           }
         }
       });
+
+      // Allow report module to populate the report settings section if available
+      try {
+        if (
+          typeof window !== 'undefined' &&
+          /** @type {any} */ (window).youtubePlusReport &&
+          typeof (/** @type {any} */ (window).youtubePlusReport.render) === 'function'
+        ) {
+          try {
+            /** @type {any} */ (window).youtubePlusReport.render(modal);
+          } catch (e) {
+            YouTubeUtils.logError('Report', 'report.render failed', e);
+          }
+        }
+      } catch (e) {
+        YouTubeUtils.logError('Report', 'Failed to initialize report section', e);
+      }
 
       return modal;
     },

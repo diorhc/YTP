@@ -95,6 +95,13 @@ yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {
   display: none !important;
 }
 
+/* ===== YouTube Transparent header (from styles.json) ===== */
+#masthead-container {
+  #background.ytd-masthead {
+    background-color: #00000000 !important;
+  }
+}
+
 /* ===== Toggle side guide - полностью убирает боковую панель ===== */
 ytd-mini-guide-renderer,
 [theater=""] #contentContainer::after {
@@ -126,11 +133,6 @@ ytd-guide-renderer #footer {
 ytd-guide-section-renderer,
 ytd-guide-collapsible-section-entry-renderer {
   border: none !important;
-}
-
-ytd-watch-metadata[description-collapsed][enable-color-sampling] #description.ytd-watch-metadata:hover {
-    --ytd-text-inline-expander-button-color: var(--yt-spec-text-primary));
-    background: var(--yt-spec-additive-background);
 }
 
 `;
