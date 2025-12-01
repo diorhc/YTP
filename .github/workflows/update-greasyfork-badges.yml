@@ -1,0 +1,43 @@
+name: Update GreasyFork Badges
+
+on:
+  schedule:
+    # Запускать каждый день в 00:00 UTC
+    - cron: '0 0 * * *'
+  workflow_dispatch: # Позволяет запускать вручную
+
+jobs:
+  update-badges:
+    runs-on: ubuntu-latest
+    
+    permissions:
+      contents: write
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+      
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+      
+      - name: Update GreasyFork badges
+        run: |
+          node scripts/update-greasyfork-badges.js https://greasyfork.org/ru/scripts/537017-youtube README.md
+      
+      - name: Check for changes
+        id: git-check
+        run: |
+          git diff --exit-code README.md || echo "changed=true" >> $GITHUB_OUTPUT
+      
+      - name: Commit and push if changed
+        if: steps.git-check.outputs.changed == 'true'
+        run: |
+          git config --local user.email "github-actions[bot]@users.noreply.github.com"
+          git config --local user.name "github-actions[bot]"
+          git add README.md
+          git commit -m "chore: auto-update GreasyFork badges [skip ci]"
+          git push

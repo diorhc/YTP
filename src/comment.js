@@ -6,45 +6,30 @@
 (function () {
   'use strict';
 
-  // Internationalization (i18n) system
-  const i18n = {
-    en: {
-      commentManager: 'Comment Manager',
-      deleteSelected: 'Delete Selected',
-      selectAll: 'Select All',
-      clearAll: 'Clear All',
-      selectComment: 'Select comment',
-      togglePanel: 'Toggle panel',
-      commentManagerControls: 'Comment manager controls',
-      commentManagement: 'Comment Management',
-      enableCommentManager: 'Enable comment manager',
-      bulkDeleteDescription: 'Add checkboxes and bulk delete functionality to your comments',
-    },
-    ru: {
-      commentManager: 'Менеджер комментариев',
-      deleteSelected: 'Удалить выбранные',
-      selectAll: 'Выбрать все',
-      clearAll: 'Очистить все',
-      selectComment: 'Выбрать комментарий',
-      togglePanel: 'Переключить панель',
-      commentManagerControls: 'Управление менеджером комментариев',
-      commentManagement: 'Управление комментариями',
-      enableCommentManager: 'Включить менеджер комментариев',
-      bulkDeleteDescription: 'Добавить чекбоксы и функцию массового удаления к вашим комментариям',
-    },
+  // Use centralized i18n where available to avoid duplicate translation objects
+  const _globalI18n =
+    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  const t = (key, params = {}) => {
+    try {
+      if (_globalI18n && typeof _globalI18n.t === 'function') {
+        return _globalI18n.t(key, params);
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.t === 'function'
+      ) {
+        return window.YouTubeUtils.t(key, params);
+      }
+    } catch {
+      // fall through
+    }
+    if (!key || typeof key !== 'string') return '';
+    if (Object.keys(params).length === 0) return key;
+    let result = key;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
   };
-
-  // Get browser language
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  // Translation function
-  function t(key) {
-    const lang = getLanguage();
-    return i18n[lang][key] || i18n.en[key] || key;
-  }
 
   /**
    * Configuration object for comment manager
@@ -309,12 +294,16 @@
     );
 
     const selectAllButton = createActionButton(t('selectAll'), CONFIG.classes.buttonPrimary, () => {
-      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = true));
+      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => {
+        cb.checked = true;
+      });
       updateDeleteButtonState();
     });
 
     const clearAllButton = createActionButton(t('clearAll'), CONFIG.classes.buttonSuccess, () => {
-      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = false));
+      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => {
+        cb.checked = false;
+      });
       updateDeleteButtonState();
     });
 
@@ -361,7 +350,12 @@
       }, index * CONFIG.deleteDelay);
     });
 
-    setTimeout(() => (state.isProcessing = false), checkedBoxes.length * CONFIG.deleteDelay + 1000);
+    setTimeout(
+      () => {
+        state.isProcessing = false;
+      },
+      checkedBoxes.length * CONFIG.deleteDelay + 1000
+    );
   }, 'deleteSelectedComments');
 
   /**
@@ -526,8 +520,9 @@
     }
 
     const handleAdvancedNavClick = e => {
-      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      if (target.dataset?.section === 'advanced') {
+      const { target } = e;
+      const element = /** @type {HTMLElement} */ (target);
+      if (element.dataset?.section === 'advanced') {
         setTimeout(addCommentManagerSettings, 50);
       }
     };
@@ -541,6 +536,14 @@
       );
     }
   }, 'init');
+
+  // Export module to global scope for module loader
+  if (typeof window !== 'undefined') {
+    window.YouTubeComments = {
+      init,
+      version: '2.2',
+    };
+  }
 
   // Start the module
   init();

@@ -1,31 +1,30 @@
 (function () {
   'use strict';
 
-  // Internationalization
-  const i18n = {
-    en: {
-      close: 'Close',
-      thumbnailPreview: 'Thumbnail Preview',
-      clickToOpen: 'Click to open in new tab',
-      download: 'Download',
-    },
-    ru: {
-      close: 'Закрыть',
-      thumbnailPreview: 'Предпросмотр миниатюры',
-      clickToOpen: 'Нажмите, чтобы открыть в новой вкладке',
-      download: 'Скачать',
-    },
+  // Use centralized i18n where available to avoid duplicate translation objects
+  const _globalI18n =
+    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  const t = (key, params = {}) => {
+    try {
+      if (_globalI18n && typeof _globalI18n.t === 'function') {
+        return _globalI18n.t(key, params);
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.t === 'function'
+      ) {
+        return window.YouTubeUtils.t(key, params);
+      }
+    } catch {
+      // fall through
+    }
+    if (!key || typeof key !== 'string') return '';
+    if (Object.keys(params).length === 0) return key;
+    let result = key;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
   };
-
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  function t(key) {
-    const lang = getLanguage();
-    return i18n[lang][key] || i18n.en[key] || key;
-  }
 
   /**
    * Extract video ID from thumbnail source with validation
@@ -39,12 +38,12 @@
       const videoId = match ? match[1] : null;
       // Validate video ID format (11 characters, alphanumeric + - and _)
       if (videoId && !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-        console.warn('[Thumbnail] Invalid video ID format:', videoId);
+        console.warn('[YouTube+][Thumbnail]', 'Invalid video ID format:', videoId);
         return null;
       }
       return videoId;
     } catch (error) {
-      console.error('[Thumbnail] Error extracting video ID:', error);
+      console.error('[YouTube+][Thumbnail]', 'Error extracting video ID:', error);
       return null;
     }
   }
@@ -61,12 +60,12 @@
       const shortsId = match ? match[1] : null;
       // Validate shorts ID format (11 characters, alphanumeric + - and _)
       if (shortsId && !/^[a-zA-Z0-9_-]{11}$/.test(shortsId)) {
-        console.warn('[Thumbnail] Invalid shorts ID format:', shortsId);
+        console.warn('[YouTube+][Thumbnail]', 'Invalid shorts ID format:', shortsId);
         return null;
       }
       return shortsId;
     } catch (error) {
-      console.error('[Thumbnail] Error extracting shorts ID:', error);
+      console.error('[YouTube+][Thumbnail]', 'Error extracting shorts ID:', error);
       return null;
     }
   }
@@ -76,90 +75,148 @@
    * @param {string} url - Image URL to check
    * @returns {Promise<boolean>} True if image exists and is accessible
    */
+  /**
+   * Validate URL string format
+   * @param {string} url - URL to validate
+   * @returns {boolean} True if valid
+   */
+  function isValidUrlString(url) {
+    if (!url || typeof url !== 'string') {
+      console.warn('[YouTube+][Thumbnail]', 'Invalid URL provided');
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Validate URL protocol (HTTPS only)
+   * @param {URL} parsedUrl - Parsed URL object
+   * @returns {boolean} True if valid
+   */
+  function hasValidProtocol(parsedUrl) {
+    if (parsedUrl.protocol !== 'https:') {
+      console.warn('[YouTube+][Thumbnail]', 'Only HTTPS URLs are allowed');
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Validate URL domain (YouTube only)
+   * @param {URL} parsedUrl - Parsed URL object
+   * @returns {boolean} True if valid
+   */
+  function hasValidDomain(parsedUrl) {
+    const { hostname } = parsedUrl;
+    if (!hostname.endsWith('ytimg.com') && !hostname.endsWith('youtube.com')) {
+      console.warn('[YouTube+][Thumbnail]', 'Only YouTube image domains are allowed');
+      return false;
+    }
+    return true;
+  }
+
+  /**
+   * Parse and validate URL
+   * @param {string} url - URL to parse
+   * @returns {URL|null} Parsed URL or null if invalid
+   */
+  function parseAndValidateUrl(url) {
+    try {
+      const parsedUrl = new URL(url);
+      if (!hasValidProtocol(parsedUrl)) return null;
+      if (!hasValidDomain(parsedUrl)) return null;
+      return parsedUrl;
+    } catch (error) {
+      console.error('[YouTube+][Thumbnail]', 'Invalid URL:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Check image via HEAD request
+   * @param {string} url - Image URL
+   * @returns {Promise<boolean>} True if image exists
+   */
+  async function checkViaHeadRequest(url) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+    try {
+      const response = await fetch(url, {
+        method: 'HEAD',
+        signal: controller.signal,
+      }).catch(() => null);
+
+      clearTimeout(timeoutId);
+      return response ? response.ok : true;
+    } catch {
+      clearTimeout(timeoutId);
+      return null;
+    }
+  }
+
+  /**
+   * Cleanup image element
+   * @param {HTMLImageElement} img - Image element
+   */
+  function cleanupImageElement(img) {
+    if (img.parentNode) {
+      document.body.removeChild(img);
+    }
+  }
+
+  /**
+   * Check image via image load test
+   * @param {string} url - Image URL
+   * @returns {Promise<boolean>} True if image loads
+   */
+  function checkViaImageLoad(url) {
+    return new Promise(resolve => {
+      const img = document.createElement('img');
+      img.style.display = 'none';
+
+      const timeout = setTimeout(() => {
+        cleanupImageElement(img);
+        resolve(false);
+      }, 3000);
+
+      img.onload = () => {
+        clearTimeout(timeout);
+        cleanupImageElement(img);
+        resolve(true);
+      };
+
+      img.onerror = () => {
+        clearTimeout(timeout);
+        cleanupImageElement(img);
+        resolve(false);
+      };
+
+      document.body.appendChild(img);
+      img.src = url;
+    });
+  }
+
+  /**
+   * Check if image exists at URL
+   * @param {string} url - Image URL to check
+   * @returns {Promise<boolean>} True if image exists
+   */
   async function checkImageExists(url) {
     try {
-      // Validate URL
-      if (!url || typeof url !== 'string') {
-        console.warn('[Thumbnail] Invalid URL provided');
-        return false;
-      }
+      if (!isValidUrlString(url)) return false;
 
-      // Validate URL format and protocol
-      let parsedUrl;
-      try {
-        parsedUrl = new URL(url);
-        // Only allow https protocol for security
-        if (parsedUrl.protocol !== 'https:') {
-          console.warn('[Thumbnail] Only HTTPS URLs are allowed');
-          return false;
-        }
-        // Validate domain (only allow YouTube image domains)
-        if (
-          !parsedUrl.hostname.endsWith('ytimg.com') &&
-          !parsedUrl.hostname.endsWith('youtube.com')
-        ) {
-          console.warn('[Thumbnail] Only YouTube image domains are allowed');
-          return false;
-        }
-      } catch (error) {
-        console.error('[Thumbnail] Invalid URL:', error);
-        return false;
-      }
+      const parsedUrl = parseAndValidateUrl(url);
+      if (!parsedUrl) return false;
 
-      // Try HEAD request first with timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout
+      // Try HEAD request first
+      const headResult = await checkViaHeadRequest(url);
+      if (headResult !== null) return headResult;
 
-      try {
-        const corsTest = await fetch(url, {
-          method: 'HEAD',
-          signal: controller.signal,
-        }).catch(() => null);
-
-        clearTimeout(timeoutId);
-
-        if (corsTest) {
-          return corsTest.ok;
-        } else {
-          return true; // Fallback if HEAD request fails
-        }
-      } catch {
-        clearTimeout(timeoutId);
-
-        // Fallback to image load test
-        return new Promise(resolve => {
-          const img = document.createElement('img');
-          img.style.display = 'none';
-
-          const timeout = setTimeout(() => {
-            if (img.parentNode) {
-              document.body.removeChild(img);
-            }
-            resolve(false);
-          }, 3000); // 3 second timeout for image load
-
-          img.onload = () => {
-            clearTimeout(timeout);
-            if (img.parentNode) {
-              document.body.removeChild(img);
-            }
-            resolve(true);
-          };
-
-          img.onerror = () => {
-            clearTimeout(timeout);
-            if (img.parentNode) {
-              document.body.removeChild(img);
-            }
-            resolve(false);
-          };
-
-          document.body.appendChild(img);
-          img.src = url;
-        });
-      }
+      // Fallback to image load test
+      return await checkViaImageLoad(url);
     } catch (error) {
-      console.error('[Thumbnail] Error checking image:', error);
+      console.error('[YouTube+][Thumbnail]', 'Error checking image:', error);
       return false;
     }
   }
@@ -204,64 +261,123 @@
    * @param {HTMLElement} overlayElement - Overlay element containing the button
    * @returns {Promise<void>}
    */
+  /**
+   * Validate video ID format
+   * @param {string} videoId - Video ID to validate
+   * @returns {boolean} True if valid
+   */
+  function isValidVideoId(videoId) {
+    return videoId && typeof videoId === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(videoId);
+  }
+
+  /**
+   * Validate overlay element
+   * @param {HTMLElement} overlayElement - Overlay element to validate
+   * @returns {boolean} True if valid
+   */
+  function isValidOverlayElement(overlayElement) {
+    return overlayElement && overlayElement instanceof HTMLElement;
+  }
+
+  /**
+   * Get thumbnail URLs for shorts
+   * @param {string} videoId - Video ID
+   * @returns {{primary: string, fallback: string}} Thumbnail URLs
+   */
+  function getShortsThumbnailUrls(videoId) {
+    return {
+      primary: `https://i.ytimg.com/vi/${videoId}/oardefault.jpg`,
+      fallback: `https://i.ytimg.com/vi/${videoId}/oar2.jpg`,
+    };
+  }
+
+  /**
+   * Get thumbnail URLs for regular videos
+   * @param {string} videoId - Video ID
+   * @returns {{primary: string, fallback: string}} Thumbnail URLs
+   */
+  function getVideoThumbnailUrls(videoId) {
+    return {
+      primary: `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`,
+      fallback: `https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`,
+    };
+  }
+
+  /**
+   * Load and show best available thumbnail
+   * @param {string} videoId - Video ID
+   * @param {boolean} isShorts - Whether this is a shorts video
+   */
+  async function loadAndShowThumbnail(videoId, isShorts) {
+    const urls = isShorts ? getShortsThumbnailUrls(videoId) : getVideoThumbnailUrls(videoId);
+    const isPrimaryAvailable = await checkImageExists(urls.primary);
+    showImageModal(isPrimaryAvailable ? urls.primary : urls.fallback);
+  }
+
+  /**
+   * Replace SVG with spinner
+   * @param {HTMLElement} overlayElement - Overlay element
+   * @param {SVGElement} originalSvg - Original SVG element
+   * @returns {HTMLElement} Spinner element
+   */
+  function replaceWithSpinner(overlayElement, originalSvg) {
+    const spinner = createSpinner();
+    overlayElement.replaceChild(spinner, originalSvg);
+    return spinner;
+  }
+
+  /**
+   * Restore original SVG after loading
+   * @param {HTMLElement} overlayElement - Overlay element
+   * @param {HTMLElement} spinner - Spinner element
+   * @param {SVGElement} originalSvg - Original SVG element
+   */
+  function restoreOriginalSvg(overlayElement, spinner, originalSvg) {
+    try {
+      if (spinner && spinner.parentNode) {
+        overlayElement.replaceChild(originalSvg, spinner);
+      }
+    } catch (restoreError) {
+      console.error('[YouTube+][Thumbnail]', 'Error restoring original SVG:', restoreError);
+      if (spinner && spinner.parentNode) {
+        spinner.parentNode.removeChild(spinner);
+      }
+    }
+  }
+
+  /**
+   * Open thumbnail in modal viewer
+   * @param {string} videoId - Video ID
+   * @param {boolean} isShorts - Whether this is a shorts video
+   * @param {HTMLElement} overlayElement - Overlay element
+   */
   async function openThumbnail(videoId, isShorts, overlayElement) {
     try {
-      // Validate inputs
-      if (!videoId || typeof videoId !== 'string' || !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-        console.error('[Thumbnail] Invalid video ID:', videoId);
+      if (!isValidVideoId(videoId)) {
+        console.error('[YouTube+][Thumbnail]', 'Invalid video ID:', videoId);
         return;
       }
 
-      if (!overlayElement || !(overlayElement instanceof HTMLElement)) {
-        console.error('[Thumbnail] Invalid overlay element');
+      if (!isValidOverlayElement(overlayElement)) {
+        console.error('[YouTube+][Thumbnail]', 'Invalid overlay element');
         return;
       }
 
       const originalSvg = overlayElement.querySelector('svg');
       if (!originalSvg) {
-        console.warn('[Thumbnail] No SVG found in overlay element');
+        console.warn('[YouTube+][Thumbnail]', 'No SVG found in overlay element');
         return;
       }
 
-      const spinner = createSpinner();
-      overlayElement.replaceChild(spinner, originalSvg);
+      const spinner = replaceWithSpinner(overlayElement, originalSvg);
 
       try {
-        if (isShorts) {
-          const oardefaultUrl = `https://i.ytimg.com/vi/${videoId}/oardefault.jpg`;
-          const isOarDefaultAvailable = await checkImageExists(oardefaultUrl);
-
-          if (isOarDefaultAvailable) {
-            showImageModal(oardefaultUrl);
-          } else {
-            showImageModal(`https://i.ytimg.com/vi/${videoId}/oar2.jpg`);
-          }
-        } else {
-          const maxresdefaultUrl = `https://i.ytimg.com/vi/${videoId}/maxresdefault.jpg`;
-          const isMaxResAvailable = await checkImageExists(maxresdefaultUrl);
-
-          if (isMaxResAvailable) {
-            showImageModal(maxresdefaultUrl);
-          } else {
-            showImageModal(`https://i.ytimg.com/vi/${videoId}/mqdefault.jpg`);
-          }
-        }
+        await loadAndShowThumbnail(videoId, isShorts);
       } finally {
-        // Restore original svg
-        try {
-          if (spinner && spinner.parentNode) {
-            overlayElement.replaceChild(originalSvg, spinner);
-          }
-        } catch (restoreError) {
-          console.error('[Thumbnail] Error restoring original SVG:', restoreError);
-          // Fallback: remove spinner if original not found
-          if (spinner && spinner.parentNode) {
-            spinner.parentNode.removeChild(spinner);
-          }
-        }
+        restoreOriginalSvg(overlayElement, spinner, originalSvg);
       }
     } catch (error) {
-      console.error('[Thumbnail] Error opening thumbnail:', error);
+      console.error('[YouTube+][Thumbnail]', 'Error opening thumbnail:', error);
     }
   }
 
@@ -324,37 +440,174 @@
   })();
 
   /**
+   * Validate modal URL security
+   * @param {string} url - URL to validate
+   * @returns {boolean} True if valid
+   */
+  function validateModalUrl(url) {
+    if (!url || typeof url !== 'string') {
+      console.error('[YouTube+][Thumbnail]', 'Invalid URL provided to modal');
+      return false;
+    }
+
+    try {
+      const parsedUrl = new URL(url);
+      if (parsedUrl.protocol !== 'https:') {
+        console.error('[YouTube+][Thumbnail]', 'Only HTTPS URLs are allowed');
+        return false;
+      }
+      const allowedDomains = ['ytimg.com', 'youtube.com', 'ggpht.com', 'googleusercontent.com'];
+      if (!allowedDomains.some(d => parsedUrl.hostname.endsWith(d))) {
+        console.error('[YouTube+][Thumbnail]', 'Image domain not allowed:', parsedUrl.hostname);
+        return false;
+      }
+      return true;
+    } catch (urlError) {
+      console.error('[YouTube+][Thumbnail]', 'Invalid URL format:', urlError);
+      return false;
+    }
+  }
+
+  /**
+   * Create modal image element
+   * @param {string} url - Image URL
+   * @returns {HTMLImageElement} Image element
+   */
+  function createModalImage(url) {
+    const img = document.createElement('img');
+    img.className = 'thumbnail-modal-img';
+    img.src = url;
+    img.alt = t('thumbnailPreview');
+    img.title = '';
+    img.style.cursor = 'pointer';
+    img.addEventListener('click', () => window.open(img.src, '_blank'));
+    return img;
+  }
+
+  /**
+   * Create close button for modal
+   * @param {HTMLElement} overlay - Overlay element to remove on click
+   * @returns {HTMLButtonElement} Close button
+   */
+  function createCloseButton(overlay) {
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'thumbnail-modal-close thumbnail-modal-action-btn';
+    closeBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `;
+    closeBtn.title = t('close');
+    closeBtn.setAttribute('aria-label', t('close'));
+    closeBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      overlay.remove();
+    });
+    return closeBtn;
+  }
+
+  /**
+   * Create open in new tab button for modal
+   * @param {HTMLImageElement} img - Image element
+   * @returns {HTMLButtonElement} New tab button
+   */
+  function createNewTabButton(img) {
+    const newTabBtn = document.createElement('button');
+    newTabBtn.className = 'thumbnail-modal-open thumbnail-modal-action-btn';
+    newTabBtn.innerHTML = `\n            <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">\n        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>\n        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>\n        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>\n      </svg>\n        `;
+    newTabBtn.title = t('clickToOpen');
+    newTabBtn.setAttribute('aria-label', t('clickToOpen'));
+    newTabBtn.addEventListener('click', e => {
+      e.preventDefault();
+      e.stopPropagation();
+      window.open(img.src, '_blank');
+    });
+    return newTabBtn;
+  }
+
+  /**
+   * Download image as blob
+   * @param {string} imgSrc - Image source URL
+   * @returns {Promise<void>}
+   */
+  async function downloadImageAsBlob(imgSrc) {
+    const response = await fetch(imgSrc);
+    if (!response.ok) throw new Error('Network response was not ok');
+    const blob = await response.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+
+    try {
+      const urlObj = new URL(imgSrc);
+      const segments = urlObj.pathname.split('/');
+      a.download = segments[segments.length - 1] || 'thumbnail.jpg';
+    } catch {
+      a.download = 'thumbnail.jpg';
+    }
+
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
+  }
+
+  /**
+   * Create download button for modal
+   * @param {HTMLImageElement} img - Image element
+   * @returns {HTMLButtonElement} Download button
+   */
+  function createDownloadButton(img) {
+    const downloadBtn = document.createElement('button');
+    downloadBtn.className = 'thumbnail-modal-download thumbnail-modal-action-btn';
+    downloadBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>\n                <polyline points="7 10 12 15 17 10"/>\n                <line x1="12" y1="15" x2="12" y2="3"/>\n            </svg>\n        `;
+    downloadBtn.title = t('download');
+    downloadBtn.setAttribute('aria-label', t('download'));
+    downloadBtn.addEventListener('click', async e => {
+      e.preventDefault();
+      e.stopPropagation();
+      try {
+        await downloadImageAsBlob(img.src);
+      } catch {
+        window.open(img.src, '_blank');
+      }
+    });
+    return downloadBtn;
+  }
+
+  /**
+   * Setup modal keyboard handlers
+   * @param {HTMLElement} overlay - Overlay element
+   */
+  function setupModalKeyboard(overlay) {
+    function escHandler(e) {
+      if (e.key === 'Escape') {
+        overlay.remove();
+        window.removeEventListener('keydown', escHandler, true);
+      }
+    }
+    window.addEventListener('keydown', escHandler, true);
+  }
+
+  /**
+   * Setup modal image error handler
+   * @param {HTMLImageElement} img - Image element
+   * @param {HTMLElement} content - Content container
+   */
+  function setupImageErrorHandler(img, content) {
+    img.addEventListener('error', () => {
+      const err = document.createElement('div');
+      err.textContent = t('thumbnailLoadFailed');
+      err.style.color = 'white';
+      content.appendChild(err);
+    });
+  }
+
+  /**
    * Show image in modal with error handling and security
    * @param {string} url - Image URL to display
    * @returns {void}
    */
   function showImageModal(url) {
     try {
-      // Validate URL
-      if (!url || typeof url !== 'string') {
-        console.error('[Thumbnail] Invalid URL provided to modal');
-        return;
-      }
-
-      // Validate URL format and security
-      try {
-        const parsedUrl = new URL(url);
-        // Only allow HTTPS protocol
-        if (parsedUrl.protocol !== 'https:') {
-          console.error('[Thumbnail] Only HTTPS URLs are allowed');
-          return;
-        }
-        // Validate domain (allow common YouTube image domains)
-        // Avatars and some images may be hosted on ggpht.com or googleusercontent.com
-        const allowedDomains = ['ytimg.com', 'youtube.com', 'ggpht.com', 'googleusercontent.com'];
-        if (!allowedDomains.some(d => parsedUrl.hostname.endsWith(d))) {
-          console.error('[Thumbnail] Image domain not allowed:', parsedUrl.hostname);
-          return;
-        }
-      } catch (urlError) {
-        console.error('[Thumbnail] Invalid URL format:', urlError);
-        return;
-      }
+      if (!validateModalUrl(url)) return;
 
       // Remove existing modals
       document.querySelectorAll('.thumbnail-modal-overlay').forEach(m => m.remove());
@@ -365,83 +618,15 @@
       const content = document.createElement('div');
       content.className = 'thumbnail-modal-content';
 
-      // create image element
-      const img = document.createElement('img');
-      img.className = 'thumbnail-modal-img';
-      img.src = url;
-      img.alt = t('thumbnailPreview');
-      // remove tooltip/title text per request
-      img.title = '';
-      img.style.cursor = 'pointer';
-      img.addEventListener('click', () => window.open(img.src, '_blank'));
+      const img = createModalImage(url);
 
       const optionsDiv = document.createElement('div');
       optionsDiv.className = 'thumbnail-modal-options';
 
-      // close button placed on the overlay (outside modal content)
-      const closeBtn = document.createElement('button');
-      closeBtn.className = 'thumbnail-modal-close';
-      closeBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `;
-      closeBtn.title = t('close');
-      closeBtn.setAttribute('aria-label', t('close'));
-      closeBtn.addEventListener('click', e => {
-        e.preventDefault();
-        e.stopPropagation();
-        overlay.remove();
-      });
+      const closeBtn = createCloseButton(overlay);
+      const newTabBtn = createNewTabButton(img);
+      const downloadBtn = createDownloadButton(img);
 
-      // open-in-new-tab button (uses extension-like puzzle icon)
-      const newTabBtn = document.createElement('button');
-      newTabBtn.className = 'thumbnail-modal-open';
-      newTabBtn.innerHTML = `\n            <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">\n        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>\n        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>\n        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>\n      </svg>\n        `;
-      newTabBtn.title = t('clickToOpen');
-      newTabBtn.setAttribute('aria-label', t('clickToOpen'));
-      newTabBtn.addEventListener('click', e => {
-        e.preventDefault();
-        e.stopPropagation();
-        window.open(img.src, '_blank');
-      });
-
-      // download button
-      const downloadBtn = document.createElement('button');
-      downloadBtn.className = 'thumbnail-modal-download';
-      downloadBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>\n                <polyline points="7 10 12 15 17 10"/>\n                <line x1="12" y1="15" x2="12" y2="3"/>\n            </svg>\n        `;
-      downloadBtn.title = t('download');
-      downloadBtn.setAttribute('aria-label', t('download'));
-      downloadBtn.addEventListener('click', async e => {
-        e.preventDefault();
-        e.stopPropagation();
-        try {
-          // Try to download by fetching the image as a blob first. Browsers often ignore
-          // the `download` attribute for cross-origin links, so fetching and creating
-          // an object URL forces a download when allowed by CORS.
-          const response = await fetch(img.src);
-          if (!response.ok) throw new Error('Network response was not ok');
-          const blob = await response.blob();
-          const blobUrl = URL.createObjectURL(blob);
-          const a = document.createElement('a');
-          a.href = blobUrl;
-          // Derive a sensible filename from the image URL, fallback to thumbnail.jpg
-          try {
-            const urlObj = new URL(img.src);
-            const segments = urlObj.pathname.split('/');
-            a.download = segments[segments.length - 1] || 'thumbnail.jpg';
-          } catch {
-            a.download = 'thumbnail.jpg';
-          }
-          document.body.appendChild(a);
-          a.click();
-          a.remove();
-          // Revoke object URL shortly after to free memory
-          setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
-        } catch {
-          // If fetch failed (CORS or network), fallback to opening in a new tab so user
-          // can still save the image manually.
-          window.open(img.src, '_blank');
-        }
-      });
-
-      // append modal pieces: create wrapper with content and an actions column
       content.appendChild(img);
       content.appendChild(optionsDiv);
 
@@ -451,12 +636,6 @@
       const actionsDiv = document.createElement('div');
       actionsDiv.className = 'thumbnail-modal-actions';
 
-      // style action buttons consistently
-      closeBtn.classList.add('thumbnail-modal-action-btn');
-      newTabBtn.classList.add('thumbnail-modal-action-btn');
-      downloadBtn.classList.add('thumbnail-modal-action-btn');
-
-      // put close first, then open (new-tab), then download (last)
       actionsDiv.appendChild(closeBtn);
       actionsDiv.appendChild(newTabBtn);
       actionsDiv.appendChild(downloadBtn);
@@ -465,28 +644,16 @@
       wrapper.appendChild(actionsDiv);
       overlay.appendChild(wrapper);
 
-      overlay.addEventListener('click', e => {
-        if (e.target === overlay) overlay.remove();
+      overlay.addEventListener('click', ({ target }) => {
+        if (target === overlay) overlay.remove();
       });
 
-      function escHandler(e) {
-        if (e.key === 'Escape') {
-          overlay.remove();
-          window.removeEventListener('keydown', escHandler, true);
-        }
-      }
-      window.addEventListener('keydown', escHandler, true);
-
-      img.addEventListener('error', () => {
-        const err = document.createElement('div');
-        err.textContent = 'Не удалось загрузить изображение';
-        err.style.color = 'white';
-        content.appendChild(err);
-      });
+      setupModalKeyboard(overlay);
+      setupImageErrorHandler(img, content);
 
       document.body.appendChild(overlay);
     } catch (error) {
-      console.error('[Thumbnail] Error showing modal:', error);
+      console.error('[YouTube+][Thumbnail]', 'Error showing modal:', error);
     }
   }
 
@@ -501,118 +668,160 @@
     return url.pathname === '/watch' && url.searchParams.has('v');
   }
 
+  /**
+   * Get current video ID from URL
+   * @returns {string|null} Video ID or null
+   */
+  function getCurrentVideoId() {
+    return new URLSearchParams(window.location.search).get('v');
+  }
+
+  /**
+   * Remove old thumbnail overlay
+   */
+  function removeOldOverlay() {
+    const oldOverlay = document.querySelector('#thumbnailPreview-player-overlay');
+    if (oldOverlay) {
+      oldOverlay.remove();
+    }
+  }
+
+  /**
+   * Check if thumbnail update should be skipped
+   * @param {string|null} newVideoId - New video ID
+   * @returns {boolean} True if should skip
+   */
+  function shouldSkipThumbnailUpdate(newVideoId) {
+    return !newVideoId || newVideoId === thumbnailPreviewCurrentVideoId || thumbnailPreviewClosed;
+  }
+
+  /**
+   * Find player element with retry logic
+   * @returns {HTMLElement|null} Player element or null
+   */
+  function findPlayerElement() {
+    return document.querySelector('#movie_player') || document.querySelector('ytd-player');
+  }
+
+  /**
+   * Create thumbnail overlay for player
+   * @param {string} videoId - Video ID
+   * @param {HTMLElement} player - Player element
+   * @returns {HTMLElement} Created overlay element
+   */
+  function createPlayerThumbnailOverlay(videoId, player) {
+    const overlay = /** @type {any} */ (createThumbnailOverlay(videoId, player));
+    overlay.id = 'thumbnailPreview-player-overlay';
+    overlay.dataset.videoId = videoId;
+    overlay.style.cssText = `
+      position: absolute;
+      top: 10%;
+      right: 8px;
+      width: 36px;
+      height: 36px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      border-radius: 6px;
+      cursor: pointer;
+      z-index: 1001;
+      transition: all 0.15s ease;
+      opacity: 0;
+    `;
+    return overlay;
+  }
+
+  /**
+   * Attempt to insert thumbnail overlay
+   */
+  function attemptInsertion() {
+    const player = findPlayerElement();
+
+    if (!player) {
+      thumbnailInsertionAttempts++;
+      if (thumbnailInsertionAttempts < MAX_ATTEMPTS) {
+        setTimeout(attemptInsertion, RETRY_DELAY);
+      } else {
+        thumbnailInsertionAttempts = 0;
+      }
+      return;
+    }
+
+    const overlayId = 'thumbnailPreview-player-overlay';
+    let overlay = player.querySelector(`#${overlayId}`);
+
+    if (!overlay) {
+      overlay = createPlayerThumbnailOverlay(thumbnailPreviewCurrentVideoId, player);
+
+      // Add hover and focus behaviour so overlay becomes fully visible when interacted with
+      overlay.tabIndex = 0; // make focusable for keyboard users
+      overlay.onmouseenter = () => {
+        try {
+          overlay.style.opacity = '0.5';
+        } catch {}
+      };
+      overlay.onmouseleave = () => {
+        try {
+          overlay.style.opacity = '0';
+        } catch {}
+      };
+      overlay.onfocus = () => {
+        try {
+          overlay.style.opacity = '0.5';
+        } catch {}
+      };
+      overlay.onblur = () => {
+        try {
+          overlay.style.opacity = '0';
+        } catch {}
+      };
+      // allow Enter/Space to open the thumbnail
+      overlay.addEventListener('keydown', e => {
+        // cast to KeyboardEvent for lint/type safety
+        const ke = /** @type {KeyboardEvent} */ (e);
+        if (ke && (ke.key === 'Enter' || ke.key === ' ')) {
+          ke.preventDefault();
+          overlay.click();
+        }
+      });
+
+      // ensure the player is positioned to allow absolute child
+      const playerAny = /** @type {any} */ (player);
+      if (/** @type {any} */ (getComputedStyle(playerAny)).position === 'static') {
+        playerAny.style.position = 'relative';
+      }
+      playerAny.appendChild(overlay);
+      return;
+    }
+
+    // overlay already exists — verify it matches current video ID, otherwise remove and recreate
+    if (overlay.dataset.videoId !== thumbnailPreviewCurrentVideoId) {
+      overlay.remove();
+      // Recursively call to create new overlay
+      attemptInsertion();
+    }
+
+    thumbnailInsertionAttempts = 0;
+  }
+
+  /**
+   * Add or update thumbnail image on watch page
+   */
   function addOrUpdateThumbnailImage() {
     if (!isWatchPage()) return;
 
-    const newVideoId = new URLSearchParams(window.location.search).get('v');
+    const newVideoId = getCurrentVideoId();
 
     if (newVideoId !== thumbnailPreviewCurrentVideoId) {
       thumbnailPreviewClosed = false;
-      // Remove old overlay when video changes to prevent showing stale thumbnails
-      const oldOverlay = document.querySelector('#thumbnailPreview-player-overlay');
-      if (oldOverlay) {
-        oldOverlay.remove();
-      }
+      removeOldOverlay();
     }
 
-    if (!newVideoId || newVideoId === thumbnailPreviewCurrentVideoId || thumbnailPreviewClosed) {
+    if (shouldSkipThumbnailUpdate(newVideoId)) {
       return;
     }
 
     thumbnailPreviewCurrentVideoId = newVideoId;
-
-    function attemptInsertion() {
-      const player =
-        document.querySelector('#movie_player') || document.querySelector('ytd-player');
-      if (!player) {
-        thumbnailInsertionAttempts++;
-        if (thumbnailInsertionAttempts < MAX_ATTEMPTS) {
-          setTimeout(attemptInsertion, RETRY_DELAY);
-        } else {
-          thumbnailInsertionAttempts = 0;
-        }
-        return;
-      }
-
-      // Add or update a small overlay icon at top-left of the player
-      const overlayId = 'thumbnailPreview-player-overlay';
-      let overlay = player.querySelector(`#${overlayId}`);
-
-      if (!overlay) {
-        // create a standard thumb-overlay and adapt it for the top-left player position
-        overlay = /** @type {any} */ (
-          createThumbnailOverlay(thumbnailPreviewCurrentVideoId, player)
-        );
-        overlay.id = overlayId;
-        overlay.dataset.videoId = thumbnailPreviewCurrentVideoId; // Store video ID
-        // override position/size for player overlay (top-left)
-        overlay.style.cssText = `
-                    position: absolute;
-                    top: 10%;
-                    right: 8px;
-                    width: 36px;
-                    height: 36px;
-                    display: flex;
-                    align-items: center;
-                    justify-content: center;
-                    border-radius: 6px;
-                    cursor: pointer;
-                    z-index: 1001;
-                    transition: all 0.15s ease;
-                    opacity: 0;
-                `;
-
-        // Add hover and focus behaviour so overlay becomes fully visible when interacted with
-        overlay.tabIndex = 0; // make focusable for keyboard users
-        overlay.onmouseenter = () => {
-          try {
-            overlay.style.opacity = '0.5';
-          } catch {}
-        };
-        overlay.onmouseleave = () => {
-          try {
-            overlay.style.opacity = '0';
-          } catch {}
-        };
-        overlay.onfocus = () => {
-          try {
-            overlay.style.opacity = '0.5';
-          } catch {}
-        };
-        overlay.onblur = () => {
-          try {
-            overlay.style.opacity = '0';
-          } catch {}
-        };
-        // allow Enter/Space to open the thumbnail
-        overlay.addEventListener('keydown', e => {
-          // cast to KeyboardEvent for lint/type safety
-          const ke = /** @type {KeyboardEvent} */ (e);
-          if (ke && (ke.key === 'Enter' || ke.key === ' ')) {
-            ke.preventDefault();
-            overlay.click();
-          }
-        });
-
-        // ensure the player is positioned to allow absolute child
-        const playerAny = /** @type {any} */ (player);
-        if (/** @type {any} */ (getComputedStyle(playerAny)).position === 'static') {
-          playerAny.style.position = 'relative';
-        }
-        playerAny.appendChild(overlay);
-      } else {
-        // overlay already exists — verify it matches current video ID, otherwise remove and recreate
-        if (overlay.dataset.videoId !== thumbnailPreviewCurrentVideoId) {
-          overlay.remove();
-          // Recursively call to create new overlay
-          attemptInsertion();
-          return;
-        }
-      }
-
-      thumbnailInsertionAttempts = 0;
-    }
-
     attemptInsertion();
   }
 
@@ -690,45 +899,111 @@
     return overlay;
   }
 
+  /**
+   * Find thumbnail container from image
+   * @param {HTMLImageElement} img - Image element
+   * @returns {HTMLElement|null} Thumbnail container
+   */
+  function findThumbnailContainerFromImage(img) {
+    return img.closest('yt-thumbnail-view-model') || img.parentElement;
+  }
+
+  /**
+   * Find thumbnail container for shorts
+   * @param {HTMLImageElement} shortsImg - Shorts image
+   * @returns {HTMLElement|null} Thumbnail container
+   */
+  function findShortsThumbnailContainer(shortsImg) {
+    if (!shortsImg) return null;
+
+    return (
+      shortsImg.closest('.ytCoreImageHost') ||
+      shortsImg.closest('[class*="ThumbnailContainer"]') ||
+      shortsImg.closest('[class*="ImageHost"]') ||
+      shortsImg.parentElement
+    );
+  }
+
+  /**
+   * Extract video ID and container from regular video
+   * @param {HTMLElement} container - Container element
+   * @returns {{videoId: string|null, thumbnailContainer: HTMLElement|null}} Result
+   */
+  function extractVideoInfo(container) {
+    const img = container.querySelector('img[src*="ytimg.com"]');
+    if (!img?.src) return { videoId: null, thumbnailContainer: null };
+
+    const videoId = extractVideoId(img.src);
+    const thumbnailContainer = findThumbnailContainerFromImage(img);
+    return { videoId, thumbnailContainer };
+  }
+
+  /**
+   * Extract shorts ID and container
+   * @param {HTMLElement} container - Container element
+   * @returns {{videoId: string|null, thumbnailContainer: HTMLElement|null}} Result
+   */
+  function extractShortsInfo(container) {
+    const link = container.querySelector('a[href*="/shorts/"]');
+    if (!link?.href) return { videoId: null, thumbnailContainer: null };
+
+    const videoId = extractShortsId(link.href);
+    const shortsImg = container.querySelector('img[src*="ytimg.com"]');
+    const thumbnailContainer = findShortsThumbnailContainer(shortsImg);
+    return { videoId, thumbnailContainer };
+  }
+
+  /**
+   * Ensure container has relative positioning
+   * @param {HTMLElement} thumbnailContainer - Thumbnail container
+   * @returns {void}
+   */
+  function ensureRelativePosition(thumbnailContainer) {
+    if (getComputedStyle(thumbnailContainer).position === 'static') {
+      thumbnailContainer.style.position = 'relative';
+    }
+  }
+
+  /**
+   * Setup hover effects for overlay
+   * @param {HTMLElement} thumbnailContainer - Thumbnail container
+   * @param {HTMLElement} overlay - Overlay element
+   * @returns {void}
+   */
+  function setupOverlayHoverEffects(thumbnailContainer, overlay) {
+    thumbnailContainer.onmouseenter = () => {
+      overlay.style.opacity = '1';
+    };
+    thumbnailContainer.onmouseleave = () => {
+      overlay.style.opacity = '0';
+    };
+  }
+
+  /**
+   * Add thumbnail overlay to container
+   * @param {HTMLElement} container - Container element
+   * @returns {void}
+   */
   function addThumbnailOverlay(container) {
     if (container.querySelector('.thumb-overlay')) return;
 
-    let videoId = null;
-    let thumbnailContainer = null;
+    // Try regular video first
+    let { videoId, thumbnailContainer } = extractVideoInfo(container);
 
-    const img = container.querySelector('img[src*="ytimg.com"]');
-    if (img?.src) {
-      videoId = extractVideoId(img.src);
-      thumbnailContainer = img.closest('yt-thumbnail-view-model') || img.parentElement;
-    }
-
+    // If no video found, try shorts
     if (!videoId) {
-      const link = container.querySelector('a[href*="/shorts/"]');
-      if (link?.href) {
-        videoId = extractShortsId(link.href);
-
-        const shortsImg = container.querySelector('img[src*="ytimg.com"]');
-        if (shortsImg) {
-          thumbnailContainer =
-            shortsImg.closest('.ytCoreImageHost') ||
-            shortsImg.closest('[class*="ThumbnailContainer"]') ||
-            shortsImg.closest('[class*="ImageHost"]') ||
-            shortsImg.parentElement;
-        }
-      }
+      ({ videoId, thumbnailContainer } = extractShortsInfo(container));
     }
 
     if (!videoId || !thumbnailContainer) return;
 
-    if (getComputedStyle(thumbnailContainer).position === 'static') {
-      thumbnailContainer.style.position = 'relative';
-    }
+    ensureRelativePosition(thumbnailContainer);
+
     const overlay = createThumbnailOverlay(videoId, container);
     overlay.className = 'thumb-overlay';
     thumbnailContainer.appendChild(overlay);
 
-    thumbnailContainer.onmouseenter = () => (overlay.style.opacity = '1');
-    thumbnailContainer.onmouseleave = () => (overlay.style.opacity = '0');
+    setupOverlayHoverEffects(thumbnailContainer, overlay);
   }
 
   function createAvatarOverlay() {
@@ -787,6 +1062,23 @@
 
   function addAvatarOverlay(img) {
     const container = img.parentElement;
+    if (!container) return;
+
+    // Don't add avatar overlay on avatar buttons or when inside a button.
+    // This avoids adding the overlay on elements like `avatar-btn` which are
+    // already interactive controls and may conflict with their behavior.
+    if (
+      img.closest('.avatar-btn, #avatar-btn') ||
+      container.closest('.avatar-btn, #avatar-btn') ||
+      img.closest('button') ||
+      container.closest('button') ||
+      // Skip when inside the thumbnail modal wrapper (don't add overlays inside modals)
+      img.closest('.thumbnail-modal-wrapper') ||
+      container.closest('.thumbnail-modal-wrapper')
+    ) {
+      return;
+    }
+
     if (container.querySelector('.avatar-overlay')) return;
 
     if (getComputedStyle(container).position === 'static') {
@@ -805,8 +1097,12 @@
 
     container.appendChild(overlay);
 
-    container.onmouseenter = () => (overlay.style.opacity = '1');
-    container.onmouseleave = () => (overlay.style.opacity = '0');
+    container.onmouseenter = () => {
+      overlay.style.opacity = '1';
+    };
+    container.onmouseleave = () => {
+      overlay.style.opacity = '0';
+    };
   }
 
   function createBannerOverlay() {
@@ -891,8 +1187,12 @@
 
     container.appendChild(overlay);
 
-    container.onmouseenter = () => (overlay.style.opacity = '1');
-    container.onmouseleave = () => (overlay.style.opacity = '0');
+    container.onmouseenter = () => {
+      overlay.style.opacity = '1';
+    };
+    container.onmouseleave = () => {
+      overlay.style.opacity = '0';
+    };
   }
 
   function processAvatars() {
@@ -946,12 +1246,21 @@
   }
 
   function processThumbnails() {
-    document.querySelectorAll('yt-thumbnail-view-model').forEach(addThumbnailOverlay);
-    document.querySelectorAll('.ytd-thumbnail').forEach(addThumbnailOverlay);
+    // Cache NodeLists to avoid repeated DOM lookups and reduce GC churn
+    const n1 = document.querySelectorAll('yt-thumbnail-view-model');
+    for (let i = 0; i < n1.length; i++) addThumbnailOverlay(n1[i]);
 
-    document.querySelectorAll('ytm-shorts-lockup-view-model').forEach(addThumbnailOverlay);
-    document.querySelectorAll('.shortsLockupViewModelHost').forEach(addThumbnailOverlay);
-    document.querySelectorAll('[class*="shortsLockupViewModelHost"]').forEach(addThumbnailOverlay);
+    const n2 = document.querySelectorAll('.ytd-thumbnail');
+    for (let i = 0; i < n2.length; i++) addThumbnailOverlay(n2[i]);
+
+    const n3 = document.querySelectorAll('ytm-shorts-lockup-view-model');
+    for (let i = 0; i < n3.length; i++) addThumbnailOverlay(n3[i]);
+
+    const n4 = document.querySelectorAll('.shortsLockupViewModelHost');
+    for (let i = 0; i < n4.length; i++) addThumbnailOverlay(n4[i]);
+
+    const n5 = document.querySelectorAll('[class*="shortsLockupViewModelHost"]');
+    for (let i = 0; i < n5.length; i++) addThumbnailOverlay(n5[i]);
   }
 
   function processAll() {
@@ -988,8 +1297,8 @@
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
 
-    history.pushState = function () {
-      originalPushState.apply(history, arguments);
+    history.pushState = function (...args) {
+      originalPushState.call(history, ...args);
       setTimeout(() => {
         if (location.href !== currentUrl) {
           currentUrl = location.href;
@@ -998,8 +1307,8 @@
       }, 100);
     };
 
-    history.replaceState = function () {
-      originalReplaceState.apply(history, arguments);
+    history.replaceState = function (...args) {
+      originalReplaceState.call(history, ...args);
       setTimeout(() => {
         if (location.href !== currentUrl) {
           currentUrl = location.href;
@@ -1008,7 +1317,7 @@
       }, 100);
     };
 
-    window.addEventListener('popstate', function () {
+    window.addEventListener('popstate', () => {
       setTimeout(() => {
         if (location.href !== currentUrl) {
           currentUrl = location.href;
@@ -1017,7 +1326,7 @@
       }, 100);
     });
 
-    setInterval(function () {
+    setInterval(() => {
       if (location.href !== currentUrl) {
         currentUrl = location.href;
         setTimeout(addOrUpdateThumbnailImage, 300);
@@ -1027,7 +1336,7 @@
 
   function initialize() {
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', function () {
+      document.addEventListener('DOMContentLoaded', () => {
         setTimeout(init, 100);
       });
     } else {

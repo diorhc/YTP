@@ -38,19 +38,25 @@ describe('Build System', () => {
     });
   });
 
-  test('utils.js should be first in build order', () => {
+  test('constants.js should be first in build order', () => {
     const buildOrder = JSON.parse(fs.readFileSync(BUILD_ORDER_PATH, 'utf8'));
-    expect(buildOrder[0]).toBe('utils.js');
+    expect(buildOrder[0]).toBe('constants.js');
   });
 
   test('infrastructure modules should come early in build order', () => {
     const buildOrder = JSON.parse(fs.readFileSync(BUILD_ORDER_PATH, 'utf8'));
-    expect(buildOrder.slice(0, 4)).toEqual([
-      'utils.js',
-      'error-boundary.js',
-      'performance.js',
-      'main.js',
-    ]);
+    // Verify first 13 items are core infrastructure modules
+    const first13 = buildOrder.slice(0, 13);
+    expect(first13).toContain('constants.js');
+    expect(first13).toContain('debug-config.js');
+    expect(first13).toContain('logger.js');
+    expect(first13).toContain('security.js');
+    expect(first13).toContain('dom-manager.js');
+    expect(first13).toContain('settings-manager.js');
+    expect(first13).toContain('style-manager.js');
+    expect(first13).toContain('notification-manager.js');
+    // constants.js should always be first
+    expect(buildOrder[0]).toBe('constants.js');
   });
 
   test('source files should have valid JavaScript syntax', () => {

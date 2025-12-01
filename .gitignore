@@ -1,13 +1,16 @@
 # Dependencies
 node_modules/
-package-lock.json
+# package-lock.json should be committed for CI/CD
+# yarn.lock and pnpm-lock.yaml are alternatives
 yarn.lock
 pnpm-lock.yaml
 
 # Build outputs
 dist/
+# Keep youtube.user.js for releases
 youtube.user.js
-*.user.js
+youtube.user.unoptimized.js
+*.user.js.map
 
 # IDE and editors
 .vscode/
@@ -53,14 +56,24 @@ test-results/
 ehthumbs.db
 Thumbs.db
 
-#Optional: Documentation build artifacts (uncomment if needed)
+# Documentation (kept locally, not committed)
 docs/
-GREASYFORK_PUBLISH.md
-GREASYFORK_PUBLISH en.md
 
 # Linting/analysis outputs
 eslint-output.json
+eslint-report.json
 *.sarif
+
+# Build/analysis reports
+bundle-size-report.json
+bundle-analysis.json
+.tsbuildinfo
+youtube.user.js.map
+
+# Development helper scripts (not needed in repo)
+test-modules-node.js
+fix-ts-errors.js
+check-modules.js
 
 # Backup files
 *.bak

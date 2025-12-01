@@ -2,39 +2,30 @@
 (function () {
   'use strict';
 
-  // Internationalization
-  const i18n = {
-    en: {
-      pipTitle: 'Picture-in-Picture',
-      pipDescription: 'Add Picture-in-Picture functionality with keyboard shortcut',
-      pipShortcutTitle: 'PiP Keyboard Shortcut',
-      pipShortcutDescription: 'Customize keyboard combination to toggle PiP mode',
-      none: 'None',
-      ctrl: 'Ctrl',
-      alt: 'Alt',
-      shift: 'Shift',
-    },
-    ru: {
-      pipTitle: 'Картинка в картинке',
-      pipDescription: 'Добавляет функцию «Картинка в картинке» с клавишной комбинацией',
-      pipShortcutTitle: 'Клавишная комбинация PiP',
-      pipShortcutDescription: 'Настройка клавиатурной комбинации для переключения режима PiP',
-      none: 'Нет',
-      ctrl: 'Ctrl',
-      alt: 'Alt',
-      shift: 'Shift',
-    },
+  // Use centralized i18n where available
+  const _globalI18n_pip =
+    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  const t = (key, params = {}) => {
+    try {
+      if (_globalI18n_pip && typeof _globalI18n_pip.t === 'function') {
+        return _globalI18n_pip.t(key, params);
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.t === 'function'
+      ) {
+        return window.YouTubeUtils.t(key, params);
+      }
+    } catch {
+      // fallback
+    }
+    if (!key || typeof key !== 'string') return '';
+    if (Object.keys(params).length === 0) return key;
+    let result = key;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
   };
-
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  function t(key) {
-    const lang = getLanguage();
-    return i18n[lang][key] || i18n.en[key] || key;
-  }
 
   /**
    * PiP settings configuration
@@ -68,7 +59,7 @@
 
       return null;
     } catch (error) {
-      console.error('[PiP] Error getting video element:', error);
+      console.error('[YouTube+][PiP]', 'Error getting video element:', error);
       return null;
     }
   };
@@ -151,39 +142,62 @@
    * Load settings from localStorage with validation
    * @returns {void}
    */
+  /**
+   * Validate and merge shortcut settings
+   * @param {Object} parsedShortcut - Parsed shortcut object
+   * @returns {void}
+   */
+  const mergeShortcutSettings = parsedShortcut => {
+    if (!parsedShortcut || typeof parsedShortcut !== 'object') return;
+
+    if (typeof parsedShortcut.key === 'string' && parsedShortcut.key.length > 0) {
+      pipSettings.shortcut.key = parsedShortcut.key;
+    }
+    if (typeof parsedShortcut.shiftKey === 'boolean') {
+      pipSettings.shortcut.shiftKey = parsedShortcut.shiftKey;
+    }
+    if (typeof parsedShortcut.altKey === 'boolean') {
+      pipSettings.shortcut.altKey = parsedShortcut.altKey;
+    }
+    if (typeof parsedShortcut.ctrlKey === 'boolean') {
+      pipSettings.shortcut.ctrlKey = parsedShortcut.ctrlKey;
+    }
+  };
+
+  /**
+   * Validate parsed settings object
+   * @param {*} parsed - Parsed settings
+   * @returns {boolean} True if valid
+   */
+  const isValidSettings = parsed => {
+    if (typeof parsed !== 'object' || parsed === null) {
+      console.warn('[YouTube+][PiP]', 'Invalid settings format');
+      return false;
+    }
+    return true;
+  };
+
+  /**
+   * Load settings from localStorage
+   * @returns {void}
+   */
   const loadSettings = () => {
     try {
       const saved = localStorage.getItem(pipSettings.storageKey);
       if (!saved) return;
 
       const parsed = JSON.parse(saved);
-      if (typeof parsed !== 'object' || parsed === null) {
-        console.warn('[PiP] Invalid settings format');
-        return;
-      }
+      if (!isValidSettings(parsed)) return;
 
-      // Validate and merge settings
+      // Merge enabled setting
       if (typeof parsed.enabled === 'boolean') {
         pipSettings.enabled = parsed.enabled;
       }
 
-      // Validate shortcut object
-      if (parsed.shortcut && typeof parsed.shortcut === 'object') {
-        if (typeof parsed.shortcut.key === 'string' && parsed.shortcut.key.length > 0) {
-          pipSettings.shortcut.key = parsed.shortcut.key;
-        }
-        if (typeof parsed.shortcut.shiftKey === 'boolean') {
-          pipSettings.shortcut.shiftKey = parsed.shortcut.shiftKey;
-        }
-        if (typeof parsed.shortcut.altKey === 'boolean') {
-          pipSettings.shortcut.altKey = parsed.shortcut.altKey;
-        }
-        if (typeof parsed.shortcut.ctrlKey === 'boolean') {
-          pipSettings.shortcut.ctrlKey = parsed.shortcut.ctrlKey;
-        }
-      }
+      // Merge shortcut settings
+      mergeShortcutSettings(parsed.shortcut);
     } catch (e) {
-      console.error('[PiP] Error loading settings:', e);
+      console.error('[YouTube+][PiP]', 'Error loading settings:', e);
     }
   };
 
@@ -199,7 +213,7 @@
       };
       localStorage.setItem(pipSettings.storageKey, JSON.stringify(settingsToSave));
     } catch (e) {
-      console.error('[PiP] Error saving settings:', e);
+      console.error('[YouTube+][PiP]', 'Error saving settings:', e);
     }
   };
 
@@ -257,15 +271,11 @@
    * Add PiP settings UI to advanced settings modal
    * @returns {void}
    */
-  const addPipSettingsToModal = () => {
-    // ✅ Use cached querySelector
-    const advancedSection = YouTubeUtils.querySelector(
-      '.ytp-plus-settings-section[data-section="advanced"]'
-    );
-    if (!advancedSection || YouTubeUtils.querySelector('.pip-settings-item')) return;
-
-    // Add styles if they don't exist
-    // ✅ Use StyleManager instead of createElement('style')
+  /**
+   * Initialize PiP styles
+   * @private
+   */
+  const initPipStyles = () => {
     if (!document.getElementById('pip-styles')) {
       const styles = `
           .pip-shortcut-editor { display: flex; align-items: center; gap: 8px; }
@@ -273,8 +283,29 @@
         `;
       YouTubeUtils.StyleManager.add('pip-styles', styles);
     }
+  };
 
-    // Enable/disable toggle
+  /**
+   * Get modifier string from settings
+   * @returns {string} Modifier combination string
+   * @private
+   */
+  const getModifierValue = () => {
+    const { ctrlKey, altKey, shiftKey } = pipSettings.shortcut;
+    const mods = [];
+    if (ctrlKey) mods.push('ctrl');
+    if (altKey) mods.push('alt');
+    if (shiftKey) mods.push('shift');
+    return mods.length > 0 ? mods.join('+') : 'none';
+  };
+
+  /**
+   * Create enable toggle item
+   * @param {HTMLElement} advancedSection - Parent section
+   * @returns {HTMLElement} Shortcut item for later reference
+   * @private
+   */
+  const createEnableToggle = advancedSection => {
     const enableItem = document.createElement('div');
     enableItem.className = 'ytp-plus-settings-item pip-settings-item';
     enableItem.innerHTML = `
@@ -286,28 +317,21 @@
       `;
     advancedSection.appendChild(enableItem);
 
-    // Shortcut settings
+    const shortcutItem = createShortcutItem();
+    advancedSection.appendChild(shortcutItem);
+
+    return shortcutItem;
+  };
+
+  /**
+   * Create shortcut configuration item
+   * @returns {HTMLElement} Shortcut item element
+   * @private
+   */
+  const createShortcutItem = () => {
     const shortcutItem = document.createElement('div');
     shortcutItem.className = 'ytp-plus-settings-item pip-shortcut-item';
     shortcutItem.style.display = pipSettings.enabled ? 'flex' : 'none';
-
-    const { ctrlKey, altKey, shiftKey } = pipSettings.shortcut;
-    const modifierValue =
-      ctrlKey && altKey && shiftKey
-        ? 'ctrl+alt+shift'
-        : ctrlKey && altKey
-          ? 'ctrl+alt'
-          : ctrlKey && shiftKey
-            ? 'ctrl+shift'
-            : altKey && shiftKey
-              ? 'alt+shift'
-              : ctrlKey
-                ? 'ctrl'
-                : altKey
-                  ? 'alt'
-                  : shiftKey
-                    ? 'shift'
-                    : 'none';
 
     shortcutItem.innerHTML = `
         <div>
@@ -315,66 +339,122 @@
           <div class="ytp-plus-settings-item-description">${t('pipShortcutDescription')}</div>
         </div>
         <div class="pip-shortcut-editor">
-          <select id="pip-modifier-combo">
-            ${[
-              'none',
-              'ctrl',
-              'alt',
-              'shift',
-              'ctrl+alt',
-              'ctrl+shift',
-              'alt+shift',
-              'ctrl+alt+shift',
-            ]
-              .map(
-                v =>
-                  `<option value="${v}" ${v === modifierValue ? 'selected' : ''}>${
-                    v === 'none'
-                      ? t('none')
-                      : v
-                          .replace(/\+/g, '+')
-                          .split('+')
-                          .map(k => t(k.toLowerCase()))
-                          .join('+')
-                          .split('+')
-                          .map(k => k.charAt(0).toUpperCase() + k.slice(1))
-                          .join('+')
-                  }</option>`
-              )
-              .join('')}
-          </select>
+          <div id="pip-modifier-combo"></div>
           <span>+</span>
           <input type="text" id="pip-key" value="${pipSettings.shortcut.key}" maxlength="1" style="width: 30px; text-align: center;">
         </div>
       `;
-    advancedSection.appendChild(shortcutItem);
 
-    // Event listeners
+    return shortcutItem;
+  };
+
+  /**
+   * Setup enable checkbox event handler
+   * @param {HTMLElement} shortcutItem - Shortcut item to toggle
+   * @private
+   */
+  const setupEnableCheckbox = shortcutItem => {
     document.getElementById('pip-enable-checkbox').addEventListener('change', e => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      pipSettings.enabled = target.checked;
+      const { target } = /** @type {{ target: EventTarget & HTMLInputElement }} */ (e);
+      const { checked } = /** @type {HTMLInputElement} */ (target);
+      pipSettings.enabled = checked;
       shortcutItem.style.display = pipSettings.enabled ? 'flex' : 'none';
       saveSettings();
     });
+  };
 
-    document.getElementById('pip-modifier-combo').addEventListener('change', e => {
-      const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
-      const value = target.value;
+  /**
+   * Create label for modifier value
+   * @param {string} v - Modifier value
+   * @returns {string} Formatted label
+   * @private
+   */
+  const createModifierLabel = v => {
+    if (v === 'none') return t('none');
+    return v
+      .replace(/\+/g, '+')
+      .split('+')
+      .map(k => t(k.toLowerCase()))
+      .join('+')
+      .split('+')
+      .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+      .join('+');
+  };
+
+  /**
+   * Setup custom modifier select
+   * @param {string} modifierValue - Current modifier value
+   * @private
+   */
+  const setupModifierSelect = modifierValue => {
+    const native = document.getElementById('pip-modifier-combo');
+    if (!native) return;
+
+    const opts = [
+      'none',
+      'ctrl',
+      'alt',
+      'shift',
+      'ctrl+alt',
+      'ctrl+shift',
+      'alt+shift',
+      'ctrl+alt+shift',
+    ];
+
+    const factory = window.YouTubePlusHelpers?.DOM?.createCustomSelect;
+    if (typeof factory !== 'function') return;
+
+    const custom = factory();
+    custom.setOptions(opts.map(v => ({ value: v, text: createModifierLabel(v) })));
+    custom.value = modifierValue;
+
+    try {
+      native.parentNode.replaceChild(custom, native);
+    } catch {
+      return;
+    }
+
+    custom.addEventListener('change', () => {
+      const value = custom.value || '';
       pipSettings.shortcut.ctrlKey = value.includes('ctrl');
       pipSettings.shortcut.altKey = value.includes('alt');
       pipSettings.shortcut.shiftKey = value.includes('shift');
       saveSettings();
     });
+  };
 
+  /**
+   * Setup key input handler
+   * @private
+   */
+  const setupKeyInput = () => {
     document.getElementById('pip-key').addEventListener('input', e => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      if (target.value) {
-        pipSettings.shortcut.key = target.value.toUpperCase();
+      const { target } = /** @type {{ target: EventTarget & HTMLInputElement }} */ (e);
+      const { value: val } = /** @type {HTMLInputElement} */ (target);
+      if (val) {
+        pipSettings.shortcut.key = val.toUpperCase();
         saveSettings();
       }
     });
 
     document.getElementById('pip-key').addEventListener('keydown', e => e.stopPropagation());
+  };
+
+  /**
+   * Add PiP settings to modal
+   * @private
+   */
+  const addPipSettingsToModal = () => {
+    const advancedSection = YouTubeUtils.querySelector(
+      '.ytp-plus-settings-section[data-section="advanced"]'
+    );
+    if (!advancedSection || YouTubeUtils.querySelector('.pip-settings-item')) return;
+
+    initPipStyles();
+    const shortcutItem = createEnableToggle(advancedSection);
+    setupEnableCheckbox(shortcutItem);
+    setupModifierSelect(getModifierValue());
+    setupKeyInput();
   };
 
   // Initialize
@@ -393,7 +473,7 @@
       // ✅ Use cached querySelector and guard by tagName to avoid referencing DOM lib types in TS
       const video = getVideoElement();
       if (video) {
-        void togglePictureInPicture(video);
+        togglePictureInPicture(video);
       }
       e.preventDefault();
     }
@@ -482,8 +562,8 @@
 
   // ✅ Register global click listener in cleanupManager
   const clickHandler = e => {
-    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-    if (target.classList && target.classList.contains('ytp-plus-settings-nav-item')) {
+    const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
+    if (target?.classList && target.classList.contains('ytp-plus-settings-nav-item')) {
       if (target.dataset?.section === 'advanced') {
         setTimeout(addPipSettingsToModal, 50);
       }

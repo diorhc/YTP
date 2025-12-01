@@ -19,49 +19,30 @@
 
   if (isStudioPage()) return;
 
-  // Internationalization (i18n) system
-  const i18n = {
-    en: {
-      stats: 'Stats',
-      channelStats: 'Channel Stats',
-      videoStats: 'Video Stats',
-      liveStats: 'Live Stats',
-      shortsStats: 'Shorts Stats',
-      close: 'Close',
-      channel: 'Channel',
-      live: 'Live',
-      shorts: 'Shorts',
-      statisticsButton: 'Statistics Button',
-      statisticsButtonDescription:
-        'Show statistics button on videos and channel menu for quick access to statistics',
-    },
-    ru: {
-      stats: 'Статистика',
-      channelStats: 'Статистика канала',
-      videoStats: 'Статистика видео',
-      liveStats: 'Статистика трансляции',
-      shortsStats: 'Статистика Shorts',
-      close: 'Закрыть',
-      channel: 'Канал',
-      live: 'Эфир',
-      shorts: 'Shorts',
-      statisticsButton: 'Кнопка статистики',
-      statisticsButtonDescription:
-        'Показывать кнопку статистики на видео и в меню канала для быстрого доступа',
-    },
+  // Use centralized i18n where available to avoid duplicate translation objects
+  const _globalI18n =
+    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  const t = (key, params = {}) => {
+    try {
+      if (_globalI18n && typeof _globalI18n.t === 'function') {
+        return _globalI18n.t(key, params);
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.t === 'function'
+      ) {
+        return window.YouTubeUtils.t(key, params);
+      }
+    } catch {
+      // fall through
+    }
+    if (!key || typeof key !== 'string') return '';
+    if (Object.keys(params).length === 0) return key;
+    let result = key;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
   };
-
-  // Get browser language
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  // Translation function
-  function t(key) {
-    const lang = getLanguage();
-    return i18n[lang][key] || i18n.en[key] || key;
-  }
 
   // Glassmorphism styles for stats button and menu (shorts-keyboard-feedback look)
   const styles = `
@@ -70,21 +51,84 @@
             .shortsStats{display:flex;align-items:center;justify-content:center;margin-top:16px;margin-bottom:16px;width:48px;height:48px;border-radius:50%;cursor:pointer;background:rgba(255,255,255,0.12);box-shadow:0 12px 30px rgba(0,0,0,0.32);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1.25px solid rgba(255,255,255,0.12);transition:transform .22s ease}html[dark] .shortsStats{background:rgba(24,24,24,0.68);border:1.25px solid rgba(255,255,255,0.08)}html:not([dark]) .shortsStats{background:rgba(255,255,255,0.12);border:1.25px solid rgba(0,0,0,0.06)}
             .shortsStats:hover{transform:translateY(-3px)}.shortsStats svg{width:24px;height:24px;fill:#222}html[dark] .shortsStats svg{fill:#fff}html:not([dark]) .shortsStats svg{fill:#222}
             .stats-menu-container{position:relative;display:inline-block}.stats-horizontal-menu{position:absolute;display:flex;left:100%;top:0;height:100%;visibility:hidden;opacity:0;transition:visibility 0s,opacity 0.2s linear;z-index:100}.stats-menu-container:hover .stats-horizontal-menu{visibility:visible;opacity:1}.stats-menu-button{margin-left:8px;white-space:nowrap}
-            /* Modal overlay and content with stronger glassmorphism */
+            /* Modal overlay and container with glassmorphism */
             .stats-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.55));z-index:99999;display:flex;align-items:center;justify-content:center;animation:fadeInModal .18s;backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%)}
-            .stats-modal-content{background:rgba(24,24,24,0.72);border-radius:20px;box-shadow:0 18px 40px rgba(0,0,0,0.45);max-width:78vw;max-height:88vh;overflow:auto;position:relative;display:flex;flex-direction:column;align-items:center;gap:12px;animation:scaleInModal .18s;border:1.5px solid rgba(255,255,255,0.08);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%)}
-            html[dark] .stats-modal-content{background:rgba(24,24,24,0.72)}html:not([dark]) .stats-modal-content{background:rgba(255,255,255,0.92);color:#222;border:1.25px solid rgba(0,0,0,0.06)}
-            /* New layout: wrapper to put iframe and action buttons side-by-side */
-            .stats-modal-wrapper{display:flex;align-items:flex-start;gap:12px}
-            .stats-modal-actions{display:flex;flex-direction:column;gap:10px;margin-top:6px}
-            .stats-modal-action-btn{width:40px;height:40px;border-radius:50%;background:rgba(0,0,0,0.06);border:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 6px 18px rgba(0,0,0,0.2);transition:transform .12s ease,background .12s;color:#fff}
-            .stats-modal-action-btn:hover{transform:translateY(-2px)}
-            /* keep the old absolute close for fallback as a separately-named class */
-            .stats-modal-close-abs{position:absolute;top:12px;right:16px;background:transparent;color:#fff;border:none;font-size:26px;line-height:1;width:40px;height:40px;cursor:pointer;transition:transform .18s ease,color .18s;z-index:3;display:flex;align-items:center;justify-content:center;border-radius:10px}
-            .stats-modal-close-abs:hover{color:#ff6b6b;transform:rotate(90deg) scale(1.25);}
-            .stats-modal-iframe{width:70vw;height:68vh;box-shadow:0 12px 36px rgba(0,0,0,0.36);background:#111;border:1px solid rgba(255,255,255,0.06)}
-            .stats-modal-title{font-size:18px;font-weight:600;color:#fff;margin-bottom:6px;text-align:center;text-shadow:0 6px 18px rgba(0,0,0,0.25)}html:not([dark]) .stats-modal-title{color:#111}
-            @keyframes fadeInModal{from{opacity:0}to{opacity:1}}@keyframes scaleInModal{from{transform:scale(0.985);opacity:0.6}to{transform:scale(1);opacity:1}}
+            .stats-modal-container{max-width:900px;width:90vw;max-height:90vh;display:flex;flex-direction:column}
+            .stats-modal-content{background:rgba(24,24,24,0.92);border-radius:20px;box-shadow:0 18px 40px rgba(0,0,0,0.45);overflow:hidden;display:flex;flex-direction:column;animation:scaleInModal .18s;border:1.5px solid rgba(255,255,255,0.08);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%)}
+            html[dark] .stats-modal-content{background:rgba(24,24,24,0.92)}
+            html:not([dark]) .stats-modal-content{background:rgba(255,255,255,0.95);color:#222;border:1.25px solid rgba(0,0,0,0.06)}
+            .stats-modal-close{background:transparent;border:none;color:#fff;font-size:36px;line-height:1;width:36px;height:36px;cursor:pointer;transition:transform .15s ease,color .15s;display:flex;align-items:center;justify-content:center;border-radius:8px;padding:0}
+            .stats-modal-close:hover{color:#ff6b6b;transform:scale(1.1)}
+            html:not([dark]) .stats-modal-close{color:#666}
+            html:not([dark]) .stats-modal-close:hover{color:#ff6b6b}
+            
+            /* Modal body */
+            .stats-modal-body{padding:24px;overflow-y:auto;flex:1}
+            /* Thumbnail preview */
+            /* Thumbnail/title layout: title centered above a row with image left and stats grid right */
+            .stats-thumb-title-centered{font-size:16px;font-weight:600;color:#fff;margin:0 0 12px 0;text-align:center}
+            html:not([dark]) .stats-thumb-title-centered{color:#111}
+            .stats-thumb-row{display:flex;gap:16px;align-items:flex-start;margin-bottom:16px}
+            .stats-thumb-img{width:450px;height:260px;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid rgba(255,255,255,0.06)}
+            html:not([dark]) .stats-thumb-img{border:1px solid rgba(0,0,0,0.06)}
+            /* ensure the grid takes remaining horizontal space */
+            .stats-thumb-row .stats-grid{flex:1}
+            .stats-thumb-left{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+            .stats-thumb-left .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
+            html:not([dark]) .stats-thumb-left .stats-thumb-sub{color:rgba(0,0,0,0.6)}
+            /* extras row under thumbnail: inline, single line */
+            .stats-thumb-extras{display:flex;flex-direction:row;gap:10px;align-items:center;margin-top:8px}
+            .stats-thumb-extras .stats-card{padding:8px 10px}
+            .stats-thumb-meta{display:flex;flex-direction:column;justify-content:center}
+            .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
+            html:not([dark]) .stats-thumb-sub{color:rgba(0,0,0,0.6)}
+            
+            /* Loading state */
+            .stats-loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#fff}
+            html:not([dark]) .stats-loader{color:#666}
+            .stats-spinner{width:60px;height:60px;animation:spin 1s linear infinite;margin-bottom:16px}
+            .stats-spinner circle{stroke-dasharray:80;stroke-dashoffset:60;animation:dash 1.5s ease-in-out infinite}
+            
+            /* Error state */
+            .stats-error{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#ff6b6b;text-align:center}
+            .stats-error-icon{width:60px;height:60px;margin-bottom:16px;stroke:#ff6b6b}
+            
+            /* Stats grid */
+            .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
+            
+            /* Stats card */
+            .stats-card{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px;display:flex;align-items:center;gap:16px;border:1px solid rgba(255,255,255,0.1);transition:transform .2s ease,box-shadow .2s ease}
+            html:not([dark]) .stats-card{background:rgba(0,0,0,0.03);border:1px solid rgba(0,0,0,0.1)}
+            .stats-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,0.3)}
+            
+            /* Stats icon */
+            .stats-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+            .stats-icon svg{width:24px;height:24px}
+            .stats-icon-views{background:rgba(59,130,246,0.15);color:#3b82f6}
+            .stats-icon-likes{background:rgba(34,197,94,0.15);color:#22c55e}
+            .stats-icon-dislikes{background:rgba(239,68,68,0.15);color:#ef4444}
+            .stats-icon-comments{background:rgba(168,85,247,0.15);color:#a855f7}
+            .stats-icon-viewers{background:rgba(234,179,8,0.15);color:#eab308}
+            .stats-icon-subscribers{background:rgba(236,72,153,0.15);color:#ec4899}
+            .stats-icon-videos{background:rgba(14,165,233,0.15);color:#0ea5e9}
+            
+            /* Stats info */
+            .stats-info{flex:1;min-width:0}
+            .stats-label{font-size:14px;color:rgba(255,255,255,0.7);margin-bottom:4px;font-weight:500}
+            html:not([dark]) .stats-label{color:rgba(0,0,0,0.6)}
+            .stats-value{font-size:28px;font-weight:700;color:#fff;line-height:1.2;margin-bottom:2px}
+            html:not([dark]) .stats-value{color:#111}
+            .stats-exact{font-size:13px;color:rgba(255,255,255,0.5);font-weight:400}
+            html:not([dark]) .stats-exact{color:rgba(0,0,0,0.5)}
+            
+            /* Animations */
+            @keyframes fadeInModal{from{opacity:0}to{opacity:1}}
+            @keyframes scaleInModal{from{transform:scale(0.95);opacity:0}to{transform:scale(1);opacity:1}}
+            @keyframes spin{to{transform:rotate(360deg)}}
+            @keyframes dash{0%{stroke-dashoffset:80}50%{stroke-dashoffset:10}100%{stroke-dashoffset:80}}
+            
+            /* Responsive */
+            @media(max-width:768px){.stats-modal-container{width:95vw}.stats-grid{grid-template-columns:1fr}.stats-card{padding:16px}}
         `;
 
   // Settings state
@@ -151,6 +195,38 @@
    * Get current video URL with validation
    * @returns {string|null} Valid YouTube video URL or null
    */
+  /**
+   * Validate if a string is a valid YouTube video ID
+   * @param {string} id - Video ID to validate
+   * @returns {boolean} True if valid
+   */
+  function isValidVideoId(id) {
+    return id && /^[a-zA-Z0-9_-]{11}$/.test(id);
+  }
+
+  /**
+   * Extract video ID from URL parameters
+   * @returns {string|null} Video ID or null
+   */
+  function getVideoIdFromParams() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const videoId = urlParams.get('v');
+    return isValidVideoId(videoId) ? `https://www.youtube.com/watch?v=${videoId}` : null;
+  }
+
+  /**
+   * Extract video ID from shorts URL
+   * @param {string} url - Current URL
+   * @returns {string|null} Video ID or null
+   */
+  function getVideoIdFromShorts(url) {
+    const shortsMatch = url.match(/\/shorts\/([^?]+)/);
+    if (shortsMatch && isValidVideoId(shortsMatch[1])) {
+      return `https://www.youtube.com/shorts/${shortsMatch[1]}`;
+    }
+    return null;
+  }
+
   function getCurrentVideoUrl() {
     try {
       const url = window.location.href;
@@ -160,20 +236,12 @@
         return null;
       }
 
-      const urlParams = new URLSearchParams(window.location.search);
-      const videoId = urlParams.get('v');
+      // Try to get video ID from query params first
+      const fromParams = getVideoIdFromParams();
+      if (fromParams) return fromParams;
 
-      // Validate video ID format (11 characters, alphanumeric + - and _)
-      if (videoId && /^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-        return `https://www.youtube.com/watch?v=${videoId}`;
-      }
-
-      const shortsMatch = url.match(/\/shorts\/([^?]+)/);
-      if (shortsMatch && /^[a-zA-Z0-9_-]{11}$/.test(shortsMatch[1])) {
-        return `https://www.youtube.com/shorts/${shortsMatch[1]}`;
-      }
-
-      return null;
+      // Try to get from shorts URL
+      return getVideoIdFromShorts(url);
     } catch (error) {
       YouTubeUtils?.logError?.('Stats', 'Failed to get video URL', error);
       return null;
@@ -208,41 +276,38 @@
   }
 
   /**
-   * Check channel tabs with rate limiting and enhanced security
-   * @param {string} url - Channel URL to check
-   * @returns {Promise<void>}
+   * Validate YouTube URL
+   * @param {string} url - URL to validate
+   * @returns {boolean} True if valid YouTube URL
    */
-  async function checkChannelTabs(url) {
-    if (isChecking) return;
-
-    // Validate URL
+  function validateYouTubeUrl(url) {
     if (!url || typeof url !== 'string') {
-      return;
+      return false;
     }
 
     try {
-      // Parse and validate URL
       const parsedUrl = new URL(url);
       if (parsedUrl.hostname !== 'www.youtube.com' && parsedUrl.hostname !== 'youtube.com') {
         console.warn('[YouTube+][Stats] Invalid domain for channel check');
-        return;
+        return false;
       }
+      return true;
     } catch (error) {
       YouTubeUtils?.logError?.('Stats', 'Invalid URL for channel check', error);
-      return;
+      return false;
     }
+  }
 
-    // Rate limiting
-    if (!rateLimiter.canRequest('checkChannelTabs')) {
-      return;
-    }
-
-    isChecking = true;
+  /**
+   * Fetch channel page HTML with timeout
+   * @param {string} url - URL to fetch
+   * @returns {Promise<string|null>} HTML content or null on error
+   */
+  async function fetchChannelHtml(url) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
-
       const response = await fetch(url, {
         credentials: 'same-origin',
         signal: controller.signal,
@@ -255,8 +320,7 @@
 
       if (!response.ok) {
         console.warn(`[YouTube+][Stats] HTTP ${response.status} when checking channel tabs`);
-        isChecking = false;
-        return;
+        return null;
       }
 
       const html = await response.text();
@@ -265,56 +329,179 @@
       if (html.length > 5000000) {
         // 5MB limit
         console.warn('[YouTube+][Stats] Response too large, skipping parse');
-        isChecking = false;
-        return;
+        return null;
       }
 
-      const match = html.match(/var ytInitialData = (.+?);<\/script>/);
-
-      if (!match || !match[1]) {
-        isChecking = false;
-        return;
-      }
-
-      // Safe JSON parse with try-catch
-      let data;
-      try {
-        data = JSON.parse(match[1]);
-      } catch (parseError) {
-        YouTubeUtils?.logError?.('Stats', 'Failed to parse ytInitialData', parseError);
-        isChecking = false;
-        return;
-      }
-
-      const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
-
-      let hasStreams = false;
-      let hasShorts = false;
-
-      tabs.forEach(tab => {
-        const tabUrl = tab?.tabRenderer?.endpoint?.commandMetadata?.webCommandMetadata?.url;
-        if (tabUrl && typeof tabUrl === 'string') {
-          if (/\/streams$/.test(tabUrl)) hasStreams = true;
-          if (/\/shorts$/.test(tabUrl)) hasShorts = true;
-        }
-      });
-
-      channelFeatures = {
-        hasStreams: hasStreams,
-        hasShorts: hasShorts,
-      };
-
-      const existingMenu = document.querySelector('.stats-menu-container');
-      if (existingMenu) {
-        existingMenu.remove();
-        createStatsMenu();
-      }
+      return html;
     } catch (error) {
       if (error.name === 'AbortError') {
         console.warn('[YouTube+][Stats] Channel check timed out');
-      } else {
-        YouTubeUtils?.logError?.('Stats', 'Failed to check channel tabs', error);
       }
+      throw error;
+    }
+  }
+
+  /**
+   * Extract YouTube initial data from HTML
+   * @param {string} html - HTML content
+   * @returns {Object|null} Parsed YouTube data or null
+   */
+  function extractYouTubeData(html) {
+    const match = html.match(/var ytInitialData = (.+?);<\/script>/);
+
+    if (!match || !match[1]) {
+      return null;
+    }
+
+    try {
+      return JSON.parse(match[1]);
+    } catch (parseError) {
+      YouTubeUtils?.logError?.('Stats', 'Failed to parse ytInitialData', parseError);
+      return null;
+    }
+  }
+
+  /**
+   * Analyze channel tabs for streams and shorts
+   * @param {Object} data - YouTube initial data
+   * @returns {{hasStreams: boolean, hasShorts: boolean}} Channel features
+   */
+  /**
+   * Extract tab URL from tab renderer
+   * @param {Object} tab - Tab object
+   * @returns {string|null} Tab URL or null
+   */
+  function getTabUrl(tab) {
+    return tab?.tabRenderer?.endpoint?.commandMetadata?.webCommandMetadata?.url || null;
+  }
+
+  /**
+   * Check if tab matches a URL pattern
+   * @param {string} url - Tab URL
+   * @param {RegExp} pattern - Pattern to match
+   * @returns {boolean} True if matches
+   */
+  function tabMatches(url, pattern) {
+    return typeof url === 'string' && pattern.test(url);
+  }
+
+  /**
+   * Analyze channel tabs for presence of streams and shorts
+   * @param {Object} data - Channel data
+   * @returns {{hasStreams: boolean, hasShorts: boolean}} Tab analysis result
+   */
+  /**
+   * Check if tab is a streams tab
+   * @param {string} tabUrl - Tab URL
+   * @returns {boolean} True if streams tab
+   */
+  function isStreamsTab(tabUrl) {
+    return tabMatches(tabUrl, /\/streams$/);
+  }
+
+  /**
+   * Check if tab is a shorts tab
+   * @param {string} tabUrl - Tab URL
+   * @returns {boolean} True if shorts tab
+   */
+  function isShortsTab(tabUrl) {
+    return tabMatches(tabUrl, /\/shorts$/);
+  }
+
+  /**
+   * Check if both streams and shorts are found
+   * @param {boolean} hasStreams - Has streams flag
+   * @param {boolean} hasShorts - Has shorts flag
+   * @returns {boolean} True if both found
+   */
+  function hasBothContentTypes(hasStreams, hasShorts) {
+    return hasStreams && hasShorts;
+  }
+
+  /**
+   * Update content type flags based on tab URL
+   * @param {string} tabUrl - Tab URL
+   * @param {Object} flags - Flags object with hasStreams and hasShorts
+   */
+  function updateContentTypeFlags(tabUrl, flags) {
+    if (!flags.hasStreams && isStreamsTab(tabUrl)) {
+      flags.hasStreams = true;
+    }
+    if (!flags.hasShorts && isShortsTab(tabUrl)) {
+      flags.hasShorts = true;
+    }
+  }
+
+  /**
+   * Analyze channel tabs to determine available content types
+   * @param {Object} data - Channel data
+   * @returns {{hasStreams: boolean, hasShorts: boolean}} Analysis result
+   */
+  function analyzeChannelTabs(data) {
+    const tabs = data?.contents?.twoColumnBrowseResultsRenderer?.tabs || [];
+    const flags = { hasStreams: false, hasShorts: false };
+
+    for (const tab of tabs) {
+      const tabUrl = getTabUrl(tab);
+      if (!tabUrl) continue;
+
+      updateContentTypeFlags(tabUrl, flags);
+
+      // Early exit if both found
+      if (hasBothContentTypes(flags.hasStreams, flags.hasShorts)) break;
+    }
+
+    return flags;
+  }
+
+  /**
+   * Refresh stats menu after checking tabs
+   */
+  function refreshStatsMenu() {
+    const existingMenu = document.querySelector('.stats-menu-container');
+    if (existingMenu) {
+      existingMenu.remove();
+      createStatsMenu();
+    }
+  }
+
+  /**
+   * Check channel tabs with rate limiting and enhanced security
+   * @param {string} url - Channel URL to check
+   * @returns {Promise<void>}
+   */
+  async function checkChannelTabs(url) {
+    if (isChecking) return;
+
+    // Validate URL
+    if (!validateYouTubeUrl(url)) {
+      return;
+    }
+
+    // Rate limiting
+    if (!rateLimiter.canRequest('checkChannelTabs')) {
+      return;
+    }
+
+    isChecking = true;
+
+    try {
+      const html = await fetchChannelHtml(url);
+      if (!html) {
+        isChecking = false;
+        return;
+      }
+
+      const data = extractYouTubeData(html);
+      if (!data) {
+        isChecking = false;
+        return;
+      }
+
+      channelFeatures = analyzeChannelTabs(data);
+      refreshStatsMenu();
+    } catch (error) {
+      YouTubeUtils?.logError?.('Stats', 'Failed to check channel tabs', error);
     } finally {
       isChecking = false;
     }
@@ -371,14 +558,16 @@
       }
     };
 
-  function createStatsIcon(isShorts = false) {
+  function createStatsIcon() {
     const icon = document.createElement('div');
-    icon.className = isShorts ? 'shortsStats' : 'videoStats';
+    // single universal icon for all pages
+    icon.className = 'videoStats';
 
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const SVG_NS = window.YouTubePlusConstants?.SVG_NS || 'http://www.w3.org/2000/svg';
+    const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('viewBox', '0 0 512 512');
 
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const path = document.createElementNS(SVG_NS, 'path');
     path.setAttribute(
       'd',
       'M500 89c13.8-11 16-31.2 5-45s-31.2-16-45-5L319.4 151.5 211.2 70.4c-11.7-8.8-27.8-8.5-39.2 .6L12 199c-13.8 11-16 31.2-5 45s31.2 16 45 5L192.6 136.5l108.2 81.1c11.7 8.8 27.8 8.5 39.2-.6L500 89zM160 256l0 192c0 17.7 14.3 32 32 32s32-14.3 32-32l0-192c0-17.7-14.3-32-32-32s-32 14.3-32 32zM32 352l0 96c0 17.7 14.3 32 32 32s32-14.3 32-32l0-96c0-17.7-14.3-32-32-32s-32 14.3-32 32zm288-64c-17.7 0-32 14.3-32 32l0 128c0 17.7 14.3 32 32 32s32-14.3 32-32l0-128c0-17.7-14.3-32-32-32zm96-32l0 192c0 17.7 14.3 32 32 32s32-14.3 32-32l0-192c0-17.7-14.3-32-32-32s-32 14.3-32 32z'
@@ -387,41 +576,45 @@
     svg.appendChild(path);
     icon.appendChild(svg);
 
-    icon.addEventListener('click', function (e) {
+    icon.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
       const videoUrl = getCurrentVideoUrl();
       if (videoUrl) {
-        openStatsModal(`https://stats.afkarxyz.fun/?directVideo=${encodeURIComponent(videoUrl)}`);
+        const urlParams = new URLSearchParams(new URL(videoUrl).search);
+        const videoId = urlParams.get('v') || videoUrl.match(/\/shorts\/([^?]+)/)?.[1];
+        if (videoId) {
+          openStatsModal('video', videoId);
+        }
       }
     });
 
     return icon;
   }
 
-  function insertIconForRegularVideo() {
+  function insertUniversalIcon() {
     if (!statsButtonEnabled) return;
-    const targetSelector = '#owner';
-    const target = document.querySelector(targetSelector);
 
-    if (target && !document.querySelector('.videoStats')) {
-      const statsIcon = createStatsIcon();
-      target.appendChild(statsIcon);
+    // Try to insert into masthead area (requested: "style-scope ytd-masthead").
+    // Prefer element matching 'ytd-masthead.style-scope' if present, otherwise fallback to 'ytd-masthead'.
+    let masthead = document.querySelector('ytd-masthead.style-scope');
+    if (!masthead) masthead = document.querySelector('ytd-masthead');
+
+    if (!masthead || document.querySelector('.videoStats')) return;
+
+    const statsIcon = createStatsIcon();
+
+    // Preferred target: element with id="end" and class containing 'style-scope' inside masthead
+    let endElem = masthead.querySelector('#end.style-scope.ytd-masthead');
+    if (!endElem) endElem = masthead.querySelector('#end');
+
+    if (endElem) {
+      // Insert as first child of #end so it appears at the beginning
+      endElem.insertBefore(statsIcon, endElem.firstChild);
+    } else {
+      // Fallback: append to masthead
+      masthead.appendChild(statsIcon);
     }
-  }
-
-  function insertIconForShorts() {
-    if (!statsButtonEnabled) return false;
-    const likeButtonContainer = document.querySelector(
-      'ytd-reel-video-renderer[is-active] #like-button'
-    );
-
-    if (likeButtonContainer && !document.querySelector('.shortsStats')) {
-      const iconDiv = createStatsIcon(true);
-      likeButtonContainer.parentNode.insertBefore(iconDiv, likeButtonContainer);
-      return true;
-    }
-    return false;
   }
 
   function createButton(text, svgPath, viewBox, className, onClick) {
@@ -437,7 +630,7 @@
     button.style.justifyContent = 'center';
     button.style.gap = '8px';
 
-    button.addEventListener('click', function (e) {
+    button.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
       onClick();
@@ -486,69 +679,578 @@
   }
 
   /**
-   * Open stats modal with enhanced security
-   * @param {string} url - URL to display in iframe
+   * InnerTube API configuration
    */
-  function openStatsModal(url) {
-    // Validate URL
-    if (!url || typeof url !== 'string') {
-      console.error('[YouTube+][Stats] Invalid URL for modal');
-      return;
-    }
+  const INNERTUBE_API_KEY = 'AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+  const INNERTUBE_CLIENT_VERSION = '2.20201209.01.00';
+
+  /**
+   * Fetch video stats from InnerTube API (more complete data)
+   * @param {string} videoId - Video ID
+   * @returns {Promise<Object|null>} Video stats with views, likes, country, monetization
+   */
+  /**
+   * Create InnerTube API request body
+   * @param {string} videoId - Video ID
+   * @returns {Object} Request body
+   */
+  function createInnerTubeRequestBody(videoId) {
+    return {
+      context: {
+        client: {
+          clientName: 'WEB',
+          clientVersion: INNERTUBE_CLIENT_VERSION,
+          hl: 'en',
+          gl: 'US',
+        },
+      },
+      videoId,
+    };
+  }
+
+  /**
+   * Create InnerTube API fetch options
+   * @param {string} videoId - Video ID
+   * @returns {Object} Fetch options
+   */
+  function createInnerTubeFetchOptions(videoId) {
+    return {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-YouTube-Client-Name': '1',
+        'X-YouTube-Client-Version': INNERTUBE_CLIENT_VERSION,
+      },
+      body: JSON.stringify(createInnerTubeRequestBody(videoId)),
+    };
+  }
+
+  /**
+   * Extract best thumbnail URL from details
+   * @param {Object} details - Video details
+   * @returns {string|null} Thumbnail URL
+   */
+  function extractThumbnailUrl(details) {
+    const thumbnails = details.thumbnail?.thumbnails;
+    return thumbnails?.[thumbnails.length - 1]?.url || null;
+  }
+
+  /**
+   * Parse video stats from InnerTube response
+   * @param {Object} data - InnerTube response data
+   * @returns {Object} Parsed video stats
+   */
+  function parseVideoStatsFromResponse(data) {
+    const details = data.videoDetails || {};
+    const microformat = data.microformat?.playerMicroformatRenderer || {};
+
+    return {
+      videoId: details.videoId,
+      title: details.title,
+      views: details.viewCount ? parseInt(details.viewCount, 10) : null,
+      likes: null, // Will be fetched separately
+      thumbnail: extractThumbnailUrl(details),
+      duration: details.lengthSeconds,
+      country: microformat.availableCountries?.[0] || null,
+      monetized: microformat.isFamilySafe !== undefined,
+      channelId: details.channelId,
+    };
+  }
+
+  /**
+   * Fetch video stats from InnerTube API
+   * @param {string} videoId - Video ID
+   * @returns {Promise<Object|null>} Video stats or null
+   */
+  async function fetchVideoStatsInnerTube(videoId) {
+    if (!videoId) return null;
 
     try {
-      // Parse and validate URL
-      const parsedUrl = new URL(url);
-      const allowedDomains = ['stats.afkarxyz.fun', 'livecounts.io', 'api.livecounts.io'];
+      const url = `https://www.youtube.com/youtubei/v1/player?key=${INNERTUBE_API_KEY}&prettyPrint=false`;
+      const response = await fetch(url, createInnerTubeFetchOptions(videoId));
 
-      if (!allowedDomains.includes(parsedUrl.hostname)) {
-        console.error(
-          `[YouTube+][Stats] URL domain ${parsedUrl.hostname} not in allowlist:`,
-          allowedDomains
-        );
-        return;
+      if (!response.ok) {
+        console.warn(`[YouTube+][Stats] InnerTube API failed:`, response.status);
+        return null;
       }
 
-      // Ensure HTTPS
-      if (parsedUrl.protocol !== 'https:') {
-        console.error('[YouTube+][Stats] Only HTTPS URLs are allowed');
-        return;
-      }
+      const data = await response.json();
+      return parseVideoStatsFromResponse(data);
     } catch (error) {
-      YouTubeUtils?.logError?.('Stats', 'Invalid URL for modal', error);
-      return;
+      console.error('[YouTube+][Stats] InnerTube fetch error:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch dislikes from Return YouTube Dislike API
+   * @param {string} videoId - Video ID
+   * @returns {Promise<Object|null>} Likes and dislikes data
+   */
+  async function fetchDislikesData(videoId) {
+    if (!videoId) return null;
+
+    try {
+      const response = await fetch(`https://returnyoutubedislikeapi.com/votes?videoId=${videoId}`);
+      if (!response.ok) return null;
+
+      const data = await response.json();
+      return {
+        likes: data.likes || null,
+        dislikes: data.dislikes || null,
+        rating: data.rating || null,
+      };
+    } catch (error) {
+      console.error('[YouTube+][Stats] Failed to fetch dislikes:', error);
+      return null;
+    }
+  }
+
+  /**
+   * Fetch video or channel stats from API (combines InnerTube + RYD)
+   * @param {string} type - 'video' or 'channel'
+   * @param {string} id - Video ID or Channel ID
+   * @returns {Promise<Object|null>} Stats data or null on error
+   */
+  async function fetchStats(type, id) {
+    if (!id) return { ok: false, status: 0, data: null };
+
+    try {
+      if (type === 'video') {
+        // Use InnerTube API for video data
+        const videoData = await fetchVideoStatsInnerTube(id);
+        if (!videoData) {
+          return { ok: false, status: 404, data: null };
+        }
+
+        // Fetch likes/dislikes from RYD API
+        const dislikeData = await fetchDislikesData(id);
+        if (dislikeData) {
+          videoData.likes = dislikeData.likes;
+          videoData.dislikes = dislikeData.dislikes;
+          videoData.rating = dislikeData.rating;
+        }
+
+        return { ok: true, status: 200, data: videoData };
+      }
+
+      // For channels, use existing API
+      const endpoint = `https://api.livecounts.io/youtube-live-subscriber-counter/stats/${id}`;
+      const response = await fetch(endpoint, {
+        method: 'GET',
+        headers: {
+          Accept: 'application/json',
+        },
+      });
+
+      if (!response.ok) {
+        console.warn(`[YouTube+][Stats] Failed to fetch ${type} stats:`, response.status);
+        return { ok: false, status: response.status, data: null, url: endpoint };
+      }
+
+      const data = await response.json();
+      return { ok: true, status: response.status, data, url: endpoint };
+    } catch (error) {
+      YouTubeUtils?.logError?.('Stats', `Failed to fetch ${type} stats`, error);
+      return { ok: false, status: 0, data: null };
+    }
+  }
+
+  /**
+   * Attempt to read basic video stats from the current page DOM as a fallback
+   * Returns an object with views, likes, comments, subscribers when available
+   */
+  /**
+   * Get video stats from current page DOM
+   * Refactored to use helper functions and reduce complexity
+   * @returns {Object|null} Stats object or null
+   */
+  function getPageVideoStats() {
+    try {
+      // Use centralized helpers from YouTubeStatsHelpers
+      const helpers = window.YouTubeStatsHelpers || {};
+
+      if (!helpers.extractViews) {
+        YouTubeUtils?.logError?.(
+          'Stats',
+          'YouTubeStatsHelpers not loaded',
+          new Error('Missing helpers')
+        );
+        return null;
+      }
+
+      // Merge all extracted stats
+      const result = {
+        ...helpers.extractViews(),
+        ...helpers.extractLikes(),
+        ...helpers.extractDislikes(),
+        ...helpers.extractComments(),
+        ...helpers.extractSubscribers(),
+        ...helpers.extractThumbnail(),
+        ...helpers.extractTitle(),
+      };
+
+      return Object.keys(result).length > 0 ? result : null;
+    } catch (e) {
+      YouTubeUtils?.logError?.('Stats', 'Failed to read page stats', e);
+      return null;
+    }
+  }
+
+  /**
+   * Render a small grid from page-derived stats into container
+   * @param {HTMLElement} container
+   * @param {Object} pageStats
+   */
+  // Helper to create a stats card HTML when value exists
+  function buildPageStatCard(value, labelKey, iconClass, iconSvg) {
+    if (value === undefined || value === null) return '';
+    return `
+        <div class="stats-card">
+          <div class="stats-icon ${iconClass}">
+            ${iconSvg}
+          </div>
+          <div class="stats-info">
+            <div class="stats-label">${t(labelKey)}</div>
+            <div class="stats-value">${formatNumber(value)}</div>
+            <div class="stats-exact">${(value || 0).toLocaleString()}</div>
+          </div>
+        </div>
+      `;
+  }
+
+  // Helper to create a stats-card that shows only a value (no label)
+  // iconOrClass can be either an HTML string (SVG) or a class name like 'stats-icon-views'
+  function buildValueOnlyCard(
+    value,
+    iconOrClass = '',
+    options = { showValue: true, showIcon: true }
+  ) {
+    const { showValue, showIcon } = options;
+    if (!showValue && !showIcon) return '';
+
+    // If value is null/undefined and we are to show value, treat as unknown
+    let displayVal = '';
+    if (showValue) {
+      displayVal = value === undefined || value === null ? t('unknown') : value;
     }
 
-    // Remove any existing overlays
-    document.querySelectorAll('.stats-modal-overlay').forEach(m => m.remove());
+    // Determine whether iconOrClass is HTML (contains '<') or a plain class name
+    let iconContent = '';
+    let extraClass = '';
+    if (showIcon) {
+      if (iconOrClass && typeof iconOrClass === 'string' && iconOrClass.indexOf('<') >= 0) {
+        // it's HTML (SVG), render inside
+        iconContent = iconOrClass;
+      } else if (iconOrClass && typeof iconOrClass === 'string') {
+        // treat as a class name to apply to the icon wrapper
+        extraClass = ` ${iconOrClass}`;
+      }
+    }
 
-    const overlay = document.createElement('div');
-    overlay.className = 'stats-modal-overlay';
-
-    const content = document.createElement('div');
-    content.className = 'stats-modal-content';
-
-    // Create iframe (main content)
-    const iframe = document.createElement('iframe');
-    iframe.className = 'stats-modal-iframe';
-    iframe.src = url;
-    iframe.setAttribute('frameborder', '0');
-    iframe.setAttribute('allowfullscreen', 'true');
-    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-popups');
-    iframe.style.background = '#222';
-
-    // Action buttons column (to the right of iframe)
-    const actionsDiv = document.createElement('div');
-    actionsDiv.className = 'stats-modal-actions';
-
-    // Close button (first) — styled like the Open button (use action-btn class)
-    const closeBtn = document.createElement('button');
-    closeBtn.className = 'stats-modal-action-btn stats-modal-close-btn';
-    closeBtn.innerHTML = `
-      <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
-      </svg>
+    return `
+      <div class="stats-card">
+        <div class="stats-icon${extraClass}">${iconContent}</div>
+        <div class="stats-info">
+          ${showValue ? `<div class="stats-value">${displayVal}</div>` : ''}
+        </div>
+      </div>
     `;
+  }
+
+  /**
+   * Build stat cards for all metrics
+   * @param {Object} pageStats - Page statistics
+   * @returns {Array<string>} Array of card HTML strings
+   * @private
+   */
+  function buildStatCards(pageStats) {
+    const cardConfigs = [
+      {
+        value: pageStats.views,
+        key: 'views',
+        icon: 'stats-icon-views',
+        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+      },
+      {
+        value: pageStats.likes,
+        key: 'likes',
+        icon: 'stats-icon-likes',
+        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>',
+      },
+      {
+        value: pageStats.dislikes,
+        key: 'dislikes',
+        icon: 'stats-icon-dislikes',
+        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path></svg>',
+      },
+      {
+        value: pageStats.comments,
+        key: 'comments',
+        icon: 'stats-icon-comments',
+        svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
+      },
+    ];
+
+    return cardConfigs
+      .map(config => buildPageStatCard(config.value, config.key, config.icon, config.svg))
+      .filter(card => card);
+  }
+
+  /**
+   * Get thumbnail URL from various sources
+   * @param {string} id - Video ID
+   * @param {Object} pageStats - Page statistics
+   * @returns {string} Thumbnail URL or empty string
+   * @private
+   */
+  function getThumbnailUrl(id, pageStats) {
+    if (pageStats && pageStats.thumbnail) {
+      return pageStats.thumbnail;
+    }
+    if (id) {
+      return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
+    }
+    return '';
+  }
+
+  /**
+   * Build extra metadata cards
+   * @param {Object} extras - Extra metadata
+   * @returns {string} HTML for extra cards
+   * @private
+   */
+  function buildExtraCards(extras) {
+    const monetizationText = extras.monetization || t('unknown');
+    const countryText = extras.country || t('unknown');
+    const durationText = extras.duration || t('unknown');
+
+    const extraMonCard = buildValueOnlyCard(monetizationText, 'stats-icon-subscribers', {
+      showValue: false,
+      showIcon: true,
+    });
+    const extraCountryCard = buildValueOnlyCard(countryText, 'stats-icon-views', {
+      showValue: false,
+      showIcon: true,
+    });
+    const extraDurationCard = buildValueOnlyCard(durationText, 'stats-icon-videos', {
+      showValue: true,
+      showIcon: false,
+    });
+
+    return `${extraMonCard}${extraCountryCard}${extraDurationCard}`;
+  }
+
+  /**
+   * Build complete HTML with thumbnail layout
+   * @param {string} titleHtml - Title HTML
+   * @param {string} thumbUrl - Thumbnail URL
+   * @param {string} gridHtml - Grid HTML
+   * @param {Object} extras - Extra metadata
+   * @returns {string} Complete HTML
+   * @private
+   */
+  function buildThumbnailLayout(titleHtml, thumbUrl, gridHtml, extras) {
+    const extraCards = buildExtraCards(extras);
+    const leftHtml = `<div class="stats-thumb-left"><img class="stats-thumb-img" src="${thumbUrl}" alt="thumbnail"><div class="stats-thumb-extras">${extraCards}</div></div>`;
+    return `${titleHtml}<div class="stats-thumb-row">${leftHtml}${gridHtml}</div>`;
+  }
+
+  /**
+   * Render page statistics fallback view
+   * @param {HTMLElement} container - Container element
+   * @param {Object} pageStats - Page statistics
+   * @param {string} id - Video ID
+   */
+  function renderPageFallback(container, pageStats, id) {
+    // Build stat cards
+    const cards = buildStatCards(pageStats);
+    const gridHtml = `<div class="stats-grid">${cards.join('')}</div>`;
+
+    // Get title
+    const title = (pageStats && pageStats.title) || document.title || '';
+    const titleHtml = title ? `<div class="stats-thumb-title-centered">${title}</div>` : '';
+
+    // Get thumbnail and extras
+    const thumbUrl = getThumbnailUrl(id, pageStats);
+    const extras = getVideoExtras(null, pageStats, id);
+
+    // Render appropriate layout
+    if (thumbUrl) {
+      container.innerHTML = buildThumbnailLayout(titleHtml, thumbUrl, gridHtml, extras);
+    } else {
+      container.innerHTML = `${titleHtml}${gridHtml}`;
+    }
+  }
+
+  /**
+   * Format number with K/M/B suffixes
+   * @param {number} num - Number to format
+   * @returns {string} Formatted number
+   */
+  function formatNumber(num) {
+    if (!num || isNaN(num)) return '0';
+    const absNum = Math.abs(num);
+
+    if (absNum >= 1e9) {
+      return `${(num / 1e9).toFixed(1)}B`;
+    }
+    if (absNum >= 1e6) {
+      return `${(num / 1e6).toFixed(1)}M`;
+    }
+    if (absNum >= 1e3) {
+      return `${(num / 1e3).toFixed(1)}K`;
+    }
+    return num.toLocaleString();
+  }
+
+  /**
+   * Create a stats card HTML fragment
+   * @param {string} labelKey
+   * @param {number|null} value
+   * @param {number|null} exact
+   * @param {string} iconClass
+   * @param {string} iconSvg
+   * @returns {string}
+   */
+  function makeStatsCard(labelKey, value, exact, iconClass, iconSvg) {
+    const display = value == null ? t('unknown') : formatNumber(value);
+    // Show exact 0 as "0" (0 is falsy), only show dash when null/undefined
+    const exactText = exact !== null && exact !== undefined ? exact.toLocaleString() : '—';
+    return `
+        <div class="stats-card">
+          <div class="stats-icon ${iconClass}">
+            ${iconSvg}
+          </div>
+          <div class="stats-info">
+            <div class="stats-label">${t(labelKey)}</div>
+            <div class="stats-value">${display}</div>
+            <div class="stats-exact">${exactText}</div>
+          </div>
+        </div>
+      `;
+  }
+
+  /**
+   * Normalize and pick preferred video fields
+   * @param {Object} stats
+   * @returns {{views: number|null, likes: number|null, dislikes: number|null, comments: number|null, liveViewer: number|null, title: string, thumbUrl: string, country: string|null, monetized: boolean|null}}
+   */
+  /**
+   * Extract video fields from stats object
+   * Simplified by using more consistent field access
+   * @param {Object} stats - Stats object
+   * @param {string} id - Video ID
+   * @returns {Object} Extracted fields
+   */
+  /**
+   * Get first available field from stats object
+   * @param {Object} stats - Stats object
+   * @param {string[]} fields - Field names to check
+   * @returns {*} First available value or null
+   */
+  function getFirstAvailableField(stats, ...fields) {
+    for (const field of fields) {
+      if (stats?.[field] != null) return stats[field];
+    }
+    return null;
+  }
+
+  /**
+   * Get thumbnail URL for video
+   * @param {Object} stats - Stats object
+   * @param {string} id - Video ID
+   * @returns {string} Thumbnail URL
+   */
+  function getThumbnailUrl(stats, id) {
+    return stats?.thumbnail || (id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : '');
+  }
+
+  /**
+   * Extract video fields from stats object
+   * @param {Object} stats - Stats data
+   * @param {string} id - Video ID
+   * @returns {Object} Extracted fields
+   */
+  function extractVideoFields(stats, id) {
+    return {
+      views: getFirstAvailableField(stats, 'liveViews', 'views', 'viewCount'),
+      likes: getFirstAvailableField(stats, 'liveLikes', 'likes', 'likeCount'),
+      dislikes: getFirstAvailableField(stats, 'dislikes', 'liveDislikes', 'dislikeCount'),
+      comments: getFirstAvailableField(stats, 'liveComments', 'comments', 'commentCount'),
+      liveViewer: getFirstAvailableField(stats, 'liveViewer', 'live_viewers'),
+      title: stats?.title || document.title || '',
+      thumbUrl: getThumbnailUrl(stats, id),
+      country: getFirstAvailableField(stats, 'country'),
+      monetized: stats?.monetized ?? null,
+      duration: getFirstAvailableField(stats, 'duration'),
+    };
+  }
+
+  /**
+   * Merge API-provided video stats with page-derived stats
+   * Simplified to use helper function for field extraction
+   * @param {Object|null} apiStats - API stats
+   * @param {Object|null} pageStats - Page stats
+   * @returns {Object} Merged stats
+   */
+  function mergeVideoStats(apiStats, pageStats) {
+    if (!pageStats) return apiStats || {};
+
+    const getValue = (...fields) => {
+      for (const field of fields) {
+        if (apiStats?.[field] != null) return apiStats[field];
+      }
+      for (const field of fields) {
+        if (pageStats?.[field] != null) return pageStats[field];
+      }
+      return null;
+    };
+
+    return {
+      ...apiStats,
+      views: getValue('views', 'viewCount'),
+      likes: getValue('likes', 'likeCount'),
+      dislikes: getValue('dislikes'),
+      comments: getValue('comments', 'commentCount'),
+      thumbnail: getValue('thumbnail'),
+      title: getValue('title'),
+      liveViewer: getValue('liveViewer'),
+    };
+  }
+
+  /**
+   * Extract extra metadata (duration, monetization, country) from API or page
+   * @param {Object|null} apiStats - API stats
+   * @param {Object|null} pageStats - Page stats
+   * @returns {{duration: string|null, monetization: string|null, country: string|null}} Metadata
+   */
+  function getVideoExtras(apiStats, pageStats) {
+    const helpers = window.YouTubeStatsHelpers || {};
+    const duration = helpers.getDurationFromSources?.(apiStats) || null;
+    const country = helpers.getCountryFromSources?.(apiStats, pageStats) || null;
+    const monetization = helpers.getMonetizationFromSources?.(apiStats, pageStats, t) || null;
+    return { duration, country, monetization };
+  }
+
+  /**
+   * Open stats modal with live data display
+   * @param {string} type - 'video' or 'channel'
+   * @param {string} id - Video ID or Channel ID
+   */
+  /**
+   * Create close button for stats modal
+   * @param {HTMLElement} overlay - Overlay element to close
+   * @returns {HTMLElement} Close button
+   */
+  function createStatsModalCloseButton(overlay) {
+    const closeBtn = document.createElement('button');
+    closeBtn.className = 'thumbnail-modal-close thumbnail-modal-action-btn';
+    closeBtn.innerHTML = `
+            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+            </svg>
+            `;
     closeBtn.title = t('close');
     closeBtn.setAttribute('aria-label', t('close'));
     closeBtn.addEventListener('click', e => {
@@ -556,42 +1258,66 @@
       e.stopPropagation();
       overlay.remove();
     });
+    return closeBtn;
+  }
 
-    // Open in new tab button (second)
-    const openBtn = document.createElement('button');
-    openBtn.className = 'stats-modal-open stats-modal-action-btn';
-    openBtn.innerHTML = `
-      <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">
-        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>
-        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>
-        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>
+  /**
+   * Create loading spinner element
+   * @returns {HTMLElement} Loading spinner
+   */
+  function createLoadingSpinner() {
+    const loader = document.createElement('div');
+    loader.className = 'stats-loader';
+    loader.innerHTML = `
+      <svg class="stats-spinner" viewBox="0 0 50 50">
+        <circle cx="25" cy="25" r="20" fill="none" stroke="currentColor" stroke-width="4"></circle>
       </svg>
+      <p>${t('loadingStats')}</p>
     `;
-    openBtn.title = t('clickToOpen');
-    openBtn.setAttribute('aria-label', t('clickToOpen'));
-    openBtn.addEventListener('click', e => {
-      e.preventDefault();
-      e.stopPropagation();
-      window.open(url, '_blank');
-    });
+    return loader;
+  }
 
-    // Append buttons into actions column (close first, then open)
-    actionsDiv.appendChild(closeBtn);
-    actionsDiv.appendChild(openBtn);
+  /**
+   * Create stats modal structure
+   * @param {HTMLElement} overlay - Overlay element
+   * @returns {{body: HTMLElement, container: HTMLElement}} Modal elements
+   */
+  function createStatsModalStructure(overlay) {
+    const container = document.createElement('div');
+    container.className = 'stats-modal-container';
 
-    // Wrapper to hold iframe + actions side-by-side
+    const content = document.createElement('div');
+    content.className = 'stats-modal-content';
+
+    const body = document.createElement('div');
+    body.className = 'stats-modal-body';
+    body.appendChild(createLoadingSpinner());
+
+    content.appendChild(body);
+
     const wrapper = document.createElement('div');
-    wrapper.className = 'stats-modal-wrapper';
-    // Put iframe inside content area so content styling remains
-    content.appendChild(iframe);
+    wrapper.className = 'thumbnail-modal-wrapper';
+
+    const actionsDiv = document.createElement('div');
+    actionsDiv.className = 'thumbnail-modal-actions';
+    actionsDiv.appendChild(createStatsModalCloseButton(overlay));
 
     wrapper.appendChild(content);
     wrapper.appendChild(actionsDiv);
-    overlay.appendChild(wrapper);
+    container.appendChild(wrapper);
 
-    // Close overlay when clicking outside
-    overlay.addEventListener('click', e => {
-      if (e.target === overlay) overlay.remove();
+    return { body, container };
+  }
+
+  /**
+   * Setup modal event handlers
+   * @param {HTMLElement} overlay - Overlay element
+   * @returns {void}
+   */
+  function setupModalEventHandlers(overlay) {
+    // Close when clicking outside
+    overlay.addEventListener('click', ({ target }) => {
+      if (target === overlay) overlay.remove();
     });
 
     // ESC to close
@@ -602,8 +1328,313 @@
       }
     }
     window.addEventListener('keydown', escHandler, true);
+  }
 
+  /**
+   * Render error message in modal
+   * @param {HTMLElement} body - Body element
+   * @param {Object} result - Fetch result
+   * @returns {void}
+   */
+  function renderErrorMessage(body, result) {
+    const statusText = result?.status ? ` (${result.status})` : '';
+    const endpointHint = result?.url
+      ? `<div style="margin-top:8px;font-size:12px;opacity:0.8;word-break:break-all">${result.url}</div>`
+      : '';
+    body.innerHTML = `
+        <div class="stats-error">
+          <svg class="stats-error-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <circle cx="12" cy="12" r="10"></circle>
+            <line x1="12" y1="8" x2="12" y2="12"></line>
+            <line x1="12" y1="16" x2="12.01" y2="16"></line>
+          </svg>
+          <p>${t('failedToLoadStats')}${statusText}</p>
+          ${endpointHint}
+        </div>
+      `;
+  }
+
+  /**
+   * Handle failed stats fetch
+   * @param {HTMLElement} body - Body element
+   * @param {Object} result - Fetch result
+   * @param {string} id - Video/channel ID
+   * @returns {void}
+   */
+  function handleFailedFetch(body, result, id) {
+    const pageStats = getPageVideoStats();
+    if (pageStats) {
+      renderPageFallback(body, pageStats, id);
+    } else {
+      renderErrorMessage(body, result);
+    }
+  }
+
+  /**
+   * Display stats based on type
+   * @param {HTMLElement} body - Body element
+   * @param {string} type - Stats type (video/channel)
+   * @param {Object} stats - Stats data
+   * @param {string} id - Video/channel ID
+   * @returns {void}
+   */
+  function displayStatsBasedOnType(body, type, stats, id) {
+    if (type === 'video') {
+      try {
+        const pageStats = getPageVideoStats();
+        const merged = mergeVideoStats(stats, pageStats);
+        displayVideoStats(body, merged, id);
+      } catch {
+        displayVideoStats(body, stats, id);
+      }
+    } else {
+      displayChannelStats(body, stats);
+    }
+  }
+
+  /**
+   * Open stats modal
+   * @param {string} type - Stats type (video/channel)
+   * @param {string} id - Video/channel ID
+   * @returns {Promise<void>}
+   */
+  async function openStatsModal(type, id) {
+    if (!type || !id) {
+      console.error('[YouTube+][Stats] Invalid parameters for modal');
+      return;
+    }
+
+    // Remove existing overlays (cache NodeList to avoid repeated lookups)
+    const existingOverlays = document.querySelectorAll('.stats-modal-overlay');
+    for (let i = 0; i < existingOverlays.length; i++) {
+      try {
+        existingOverlays[i].remove();
+      } catch {
+        /* ignore individual failures */
+      }
+    }
+
+    // Create modal structure
+    const overlay = document.createElement('div');
+    overlay.className = 'stats-modal-overlay';
+
+    const { body, container } = createStatsModalStructure(overlay);
+    overlay.appendChild(container);
+
+    setupModalEventHandlers(overlay);
     document.body.appendChild(overlay);
+
+    // Fetch and display stats
+    const result = await fetchStats(type, id);
+
+    if (!result?.ok) {
+      handleFailedFetch(body, result, id);
+      return;
+    }
+
+    displayStatsBasedOnType(body, type, result.data, id);
+  }
+
+  /**
+   * Display video statistics
+   * @param {HTMLElement} container - Container element
+   * @param {Object} stats - Stats data
+   */
+  /**
+   * Get stat card definitions for video stats
+   * @param {Object} fields - Extracted video fields
+   * @returns {Array} Card definitions
+   */
+  function getVideoStatDefinitions(fields) {
+    const { views, likes, dislikes, comments } = fields;
+    return [
+      {
+        label: 'views',
+        value: views,
+        exact: views,
+        iconClass: 'stats-icon-views',
+        iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+      },
+      {
+        label: 'likes',
+        value: likes,
+        exact: likes,
+        iconClass: 'stats-icon-likes',
+        iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>`,
+      },
+      {
+        label: 'dislikes',
+        value: dislikes,
+        exact: dislikes,
+        iconClass: 'stats-icon-dislikes',
+        iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path></svg>`,
+      },
+      {
+        label: 'comments',
+        value: comments,
+        exact: comments,
+        iconClass: 'stats-icon-comments',
+        iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>`,
+      },
+    ];
+  }
+
+  /**
+   * Create live viewer stats card if available
+   * @param {*} liveViewer - Live viewer count
+   * @returns {string} HTML string or empty string
+   */
+  function createLiveViewerCard(liveViewer) {
+    if (liveViewer === undefined || liveViewer === null) return '';
+    return makeStatsCard(
+      'liveViewers',
+      liveViewer,
+      liveViewer,
+      'stats-icon-viewers',
+      `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`
+    );
+  }
+
+  /**
+   * Create monetization meta card
+   * @param {Object} extras - Video extras
+   * @param {Object} stats - Stats object
+   * @returns {string} HTML string
+   */
+  function createMonetizationCard(extras, stats) {
+    if (!extras.monetization) return '';
+    const isMonetized = extras.monetization === t('yes') || stats.monetized === true;
+    const monIcon = isMonetized
+      ? `<svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>`
+      : `<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
+    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-subscribers">${monIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('monetization')}</div><div class="stats-value" style="font-size:16px;">${extras.monetization}</div></div></div>`;
+  }
+
+  /**
+   * Create country meta card with flag
+   * @param {Object} extras - Video extras
+   * @returns {string} HTML string
+   */
+  function createCountryCard(extras) {
+    if (!extras.country || extras.country === t('unknown')) return '';
+    const countryCode = extras.country.toUpperCase();
+    const flagUrl = `https://cdn.jsdelivr.net/gh/lipis/flag-icons@7.3.2/flags/4x3/${countryCode.toLowerCase()}.svg`;
+    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views"><img src="${flagUrl}" alt="${countryCode}" width="32" height="24" style="border-radius:4px;"/></div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryCode}</div></div></div>`;
+  }
+
+  /**
+   * Create duration meta card
+   * @param {Object} extras - Video extras
+   * @returns {string} HTML string
+   */
+  function createDurationCard(extras) {
+    if (!extras.duration || extras.duration === t('unknown')) return '';
+    const durationIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
+    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-videos">${durationIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('duration')}</div><div class="stats-value" style="font-size:16px;">${extras.duration}</div></div></div>`;
+  }
+
+  /**
+   * Build metadata cards HTML
+   * @param {Object} stats - Stats object
+   * @param {Object} extras - Video extras
+   * @returns {string} HTML string
+   */
+  function buildMetaCardsHtml(stats, extras) {
+    const cards = [
+      createMonetizationCard(extras, stats),
+      createCountryCard(extras),
+      createDurationCard(extras),
+    ];
+    return cards.filter(Boolean).join('');
+  }
+
+  /**
+   * Display video statistics
+   * @param {HTMLElement} container - Container element
+   * @param {Object} stats - Stats data
+   * @param {string} id - Video ID
+   */
+  function displayVideoStats(container, stats, id) {
+    const fields = extractVideoFields(stats, id);
+    const { liveViewer, title, thumbUrl } = fields;
+
+    const titleHtml = title ? `<div class="stats-thumb-title-centered">${title}</div>` : '';
+    const defs = getVideoStatDefinitions(fields);
+    const parts = defs.map(d => makeStatsCard(d.label, d.value, d.exact, d.iconClass, d.iconSvg));
+
+    const liveViewerCard = createLiveViewerCard(liveViewer);
+    if (liveViewerCard) parts.push(liveViewerCard);
+
+    const gridHtml = `<div class="stats-grid">${parts.join('')}</div>`;
+
+    if (thumbUrl) {
+      const extras = getVideoExtras(stats, null);
+      const metaCardsHtml = buildMetaCardsHtml(stats, extras);
+      const metaExtrasHtml = metaCardsHtml
+        ? `<div class="stats-thumb-extras" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${metaCardsHtml}</div>`
+        : '';
+      const leftHtml = `<div class="stats-thumb-left"><img class="stats-thumb-img" src="${thumbUrl}" alt="thumbnail">${metaExtrasHtml}</div>`;
+      container.innerHTML = `${titleHtml}<div class="stats-thumb-row">${leftHtml}${gridHtml}</div>`;
+    } else {
+      container.innerHTML = `${titleHtml}${gridHtml}`;
+    }
+  }
+
+  /**
+   * Display channel statistics
+   * @param {HTMLElement} container - Container element
+   * @param {Object} stats - Stats data
+   */
+  function displayChannelStats(container, stats) {
+    const { liveSubscriber, liveViews, liveVideos } = stats;
+
+    container.innerHTML = `
+      <div class="stats-grid">
+        <div class="stats-card">
+          <div class="stats-icon stats-icon-subscribers">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+          </div>
+          <div class="stats-info">
+            <div class="stats-label">${t('subscribers')}</div>
+            <div class="stats-value">${formatNumber(liveSubscriber)}</div>
+            <div class="stats-exact">${(liveSubscriber || 0).toLocaleString()}</div>
+          </div>
+        </div>
+
+        <div class="stats-card">
+          <div class="stats-icon stats-icon-views">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+              <circle cx="12" cy="12" r="3"></circle>
+            </svg>
+          </div>
+          <div class="stats-info">
+            <div class="stats-label">${t('totalViews')}</div>
+            <div class="stats-value">${formatNumber(liveViews)}</div>
+            <div class="stats-exact">${(liveViews || 0).toLocaleString()}</div>
+          </div>
+        </div>
+
+        <div class="stats-card">
+          <div class="stats-icon stats-icon-videos">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              <polygon points="23 7 16 12 23 17 23 7"></polygon>
+              <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
+            </svg>
+          </div>
+          <div class="stats-info">
+            <div class="stats-label">${t('totalVideos')}</div>
+            <div class="stats-value">${formatNumber(liveVideos)}</div>
+            <div class="stats-exact">${(liveVideos || 0).toLocaleString()}</div>
+          </div>
+        </div>
+      </div>
+    `;
   }
 
   function createStatsMenu() {
@@ -685,11 +1716,10 @@
       () => {
         const channelId = getChannelIdentifier();
         if (channelId) {
-          openStatsModal(`https://stats.afkarxyz.fun/?directChannel=${channelId}`);
+          openStatsModal('channel', channelId);
         }
       }
     );
-
     channelButtonContainer.appendChild(channelButton);
     horizontalMenu.appendChild(channelButtonContainer);
 
@@ -705,7 +1735,7 @@
         () => {
           const channelId = getChannelIdentifier();
           if (channelId) {
-            openStatsModal(`https://stats.afkarxyz.fun/?directStream=${channelId}`);
+            openStatsModal('channel', channelId);
           }
         }
       );
@@ -726,7 +1756,7 @@
         () => {
           const channelId = getChannelIdentifier();
           if (channelId) {
-            openStatsModal(`https://stats.afkarxyz.fun/?directShorts=${channelId}`);
+            openStatsModal('channel', channelId);
           }
         }
       );
@@ -766,28 +1796,8 @@
 
   function checkAndInsertIcon() {
     if (!statsButtonEnabled) return;
-    const isShorts = window.location.pathname.includes('/shorts/');
-    if (isShorts) {
-      const shortsObserver = new MutationObserver((_mutations, observer) => {
-        if (insertIconForShorts()) {
-          observer.disconnect();
-        }
-      });
-
-      // ✅ Register observer in cleanupManager
-      YouTubeUtils.cleanupManager.registerObserver(shortsObserver);
-
-      const shortsContainer = document.querySelector('ytd-shorts');
-      if (shortsContainer) {
-        shortsObserver.observe(shortsContainer, {
-          childList: true,
-          subtree: true,
-        });
-        insertIconForShorts();
-      }
-    } else if (getCurrentVideoUrl()) {
-      insertIconForRegularVideo();
-    }
+    // Always ensure universal icon is present in the masthead
+    insertUniversalIcon();
   }
 
   function addSettingsUI() {
@@ -808,13 +1818,12 @@
     section.appendChild(item);
 
     item.querySelector('input').addEventListener('change', e => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      statsButtonEnabled = target.checked;
+      const { target } = e;
+      const input = /** @type {EventTarget & HTMLInputElement} */ (target);
+      statsButtonEnabled = input.checked;
       localStorage.setItem(SETTINGS_KEY, statsButtonEnabled ? 'true' : 'false');
       // Remove all stats buttons and menus
-      document
-        .querySelectorAll('.videoStats,.shortsStats,.stats-menu-container')
-        .forEach(el => el.remove());
+      document.querySelectorAll('.videoStats,.stats-menu-container').forEach(el => el.remove());
       if (statsButtonEnabled) {
         checkAndInsertIcon();
         checkAndAddMenu();
@@ -849,10 +1858,11 @@
   }
 
   const handleExperimentalNavClick = e => {
-    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+    const { target } = e;
+    const el = /** @type {EventTarget & HTMLElement} */ (target);
     if (
-      target.classList?.contains('ytp-plus-settings-nav-item') &&
-      target.dataset?.section === 'experimental'
+      el.classList?.contains('ytp-plus-settings-nav-item') &&
+      el.dataset?.section === 'experimental'
     ) {
       setTimeout(addSettingsUI, 50);
     }
@@ -876,9 +1886,9 @@
 
     history.pushState = (function (f) {
       /** @this {any} */
-      return function () {
+      return function (...args) {
         const fAny = /** @type {any} */ (f);
-        const result = fAny.apply(this, arguments);
+        const result = fAny.call(this, ...args);
         checkUrlChange();
         return result;
       };
@@ -886,9 +1896,9 @@
 
     history.replaceState = (function (f) {
       /** @this {any} */
-      return function () {
+      return function (...args) {
         const fAny = /** @type {any} */ (f);
-        const result = fAny.apply(this, arguments);
+        const result = fAny.call(this, ...args);
         checkUrlChange();
         return result;
       };
@@ -937,7 +1947,7 @@
     }
   });
 
-  document.addEventListener('yt-action', function (event) {
+  document.addEventListener('yt-action', event => {
     const ev = /** @type {CustomEvent<any>} */ (event);
     if (ev.detail && ev.detail.actionName === 'yt-reload-continuation-items-command') {
       if (statsButtonEnabled) {
@@ -969,52 +1979,30 @@
 
   if (isStudioPageCount()) return;
 
-  // Internationalization
-  const i18n = {
-    en: {
-      displayOptions: 'Display Options',
-      channelStatsTitle: 'Channel Stats',
-      channelStatsDescription: 'Show live subscriber/views/videos overlay on channel banner',
-      subscribers: 'Subscribers',
-      views: 'Views',
-      videos: 'Videos',
-      fontFamily: 'Font Family',
-      fontSize: 'Font Size',
-      updateInterval: 'Update Interval',
-      backgroundOpacity: 'Background Opacity',
-      overlayAriaLabel: 'YouTube Channel Statistics Overlay',
-      settingsAriaLabel: 'Open settings menu',
-      settingsMenuAriaLabel: 'Statistics display settings',
-      unknown: 'Unknown',
-    },
-    ru: {
-      displayOptions: 'Параметры отображения',
-      channelStatsTitle: 'Статистика канала',
-      channelStatsDescription:
-        'Показывать наложение с числом подписчиков/просмотров/видео на баннере канала',
-      subscribers: 'Подписчики',
-      views: 'Просмотры',
-      videos: 'Видео',
-      fontFamily: 'Шрифт',
-      fontSize: 'Размер шрифта',
-      updateInterval: 'Интервал обновления',
-      backgroundOpacity: 'Прозрачность фона',
-      overlayAriaLabel: 'Наложение статистики канала YouTube',
-      settingsAriaLabel: 'Открыть меню настроек',
-      settingsMenuAriaLabel: 'Настройки отображения статистики',
-      unknown: 'Неизвестно',
-    },
+  // Use centralized i18n to avoid duplication
+  const _globalI18n_stats =
+    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  const t = (key, params = {}) => {
+    try {
+      if (_globalI18n_stats && typeof _globalI18n_stats.t === 'function') {
+        return _globalI18n_stats.t(key, params);
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.t === 'function'
+      ) {
+        return window.YouTubeUtils.t(key, params);
+      }
+    } catch {
+      // fallback
+    }
+    if (!key || typeof key !== 'string') return '';
+    if (Object.keys(params).length === 0) return key;
+    let result = key;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
   };
-
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  function t(key) {
-    const lang = getLanguage();
-    return i18n[lang][key] || i18n.en[key] || key;
-  }
 
   // Enhanced configuration with better defaults
   const CONFIG = {
@@ -1037,7 +2025,8 @@
     currentChannelName: null,
     enabled: localStorage.getItem(CONFIG.STORAGE_KEY) !== 'false',
     updateInterval:
-      parseInt(localStorage.getItem('youtubeEnhancerInterval')) || CONFIG.DEFAULT_UPDATE_INTERVAL,
+      parseInt(localStorage.getItem('youtubeEnhancerInterval'), 10) ||
+      CONFIG.DEFAULT_UPDATE_INTERVAL,
     overlayOpacity:
       parseFloat(localStorage.getItem('youtubeEnhancerOpacity')) || CONFIG.DEFAULT_OVERLAY_OPACITY,
     lastSuccessfulStats: new Map(),
@@ -1050,15 +2039,15 @@
   // Utility functions
   const utils = {
     log: (message, ...args) => {
-      console.log(`[YouTube Enhancer] ${message}`, ...args);
+      console.log('[YouTube+][Stats]', message, ...args);
     },
 
     warn: (message, ...args) => {
-      console.warn(`[YouTube Enhancer] ${message}`, ...args);
+      console.warn('[YouTube+][Stats]', message, ...args);
     },
 
     error: (message, ...args) => {
-      console.error(`[YouTube Enhancer] ${message}`, ...args);
+      console.error('[YouTube+][Stats]', message, ...args);
     },
 
     // Use shared debounce from YouTubeUtils
@@ -1077,9 +2066,9 @@
       }),
   };
 
-  const OPTIONS = CONFIG.OPTIONS;
-  const FONT_LINK = CONFIG.FONT_LINK;
-  const STATS_API_URL = CONFIG.STATS_API_URL;
+  const { OPTIONS } = CONFIG;
+  const { FONT_LINK } = CONFIG;
+  const { STATS_API_URL } = CONFIG;
 
   /**
    * Fetches channel data from YouTube
@@ -1143,16 +2132,16 @@
 
   history.pushState = (function (f) {
     /** @this {any} */
-    return function () {
-      f.apply(this, arguments);
+    return function (...args) {
+      f.call(this, ...args);
       checkUrlChange();
     };
   })(history.pushState);
 
   history.replaceState = (function (f) {
     /** @this {any} */
-    return function () {
-      f.apply(this, arguments);
+    return function (...args) {
+      f.call(this, ...args);
       checkUrlChange();
     };
   })(history.replaceState);
@@ -1340,14 +2329,15 @@
     });
 
     fontSelect.addEventListener('change', e => {
-      const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
-      localStorage.setItem('youtubeEnhancerFontFamily', target.value);
+      const { target } = e;
+      const select = /** @type {EventTarget & HTMLSelectElement} */ (target);
+      localStorage.setItem('youtubeEnhancerFontFamily', select.value);
       if (state.overlay) {
         // Only update .subscribers-number, .views-number, .videos-number
         state.overlay
           .querySelectorAll('.subscribers-number,.views-number,.videos-number')
           .forEach(el => {
-            el.style.fontFamily = target.value;
+            el.style.fontFamily = select.value;
           });
       }
     });
@@ -1375,15 +2365,16 @@
     fontSizeValue.style.marginBottom = '15px';
 
     fontSizeSlider.addEventListener('input', e => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      fontSizeValue.textContent = `${target.value}px`;
-      localStorage.setItem('youtubeEnhancerFontSize', target.value);
+      const { target } = e;
+      const input = /** @type {EventTarget & HTMLInputElement} */ (target);
+      fontSizeValue.textContent = `${input.value}px`;
+      localStorage.setItem('youtubeEnhancerFontSize', input.value);
       if (state.overlay) {
         // Only update .subscribers-number, .views-number, .videos-number
         state.overlay
           .querySelectorAll('.subscribers-number,.views-number,.videos-number')
           .forEach(el => {
-            el.style.fontSize = `${target.value}px`;
+            el.style.fontSize = `${input.value}px`;
           });
       }
     });
@@ -1411,9 +2402,10 @@
     intervalValue.style.fontSize = '14px';
 
     intervalSlider.addEventListener('input', e => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      const newInterval = parseInt(target.value) * 1000;
-      intervalValue.textContent = `${target.value}s`;
+      const { target } = e;
+      const input = /** @type {EventTarget & HTMLInputElement} */ (target);
+      const newInterval = parseInt(input.value, 10) * 1000;
+      intervalValue.textContent = `${input.value}s`;
       state.updateInterval = newInterval;
       localStorage.setItem('youtubeEnhancerInterval', String(newInterval));
 
@@ -1449,9 +2441,10 @@
     opacityValue.style.fontSize = '14px';
 
     opacitySlider.addEventListener('input', e => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      const newOpacity = parseInt(target.value) / 100;
-      opacityValue.textContent = `${target.value}%`;
+      const { target } = e;
+      const input = /** @type {EventTarget & HTMLInputElement} */ (target);
+      const newOpacity = parseInt(input.value, 10) / 100;
+      opacityValue.textContent = `${input.value}%`;
       state.overlayOpacity = newOpacity;
       localStorage.setItem('youtubeEnhancerOpacity', String(newOpacity));
 
@@ -1563,7 +2556,7 @@
     const digitContainer = createNumberContainer();
     digitContainer.classList.add(`${className}-number`);
     Object.assign(digitContainer.style, {
-      fontSize: (localStorage.getItem('youtubeEnhancerFontSize') || '24') + 'px',
+      fontSize: `${localStorage.getItem('youtubeEnhancerFontSize') || '24'}px`,
       fontWeight: 'bold',
       lineHeight: '1',
       height: '4rem',
@@ -1601,11 +2594,11 @@
     return container;
   }
 
-  function createOverlay(bannerElement) {
-    clearExistingOverlay();
-
-    if (!bannerElement) return null;
-
+  /**
+   * Create base overlay element with styling
+   * @returns {HTMLElement} Overlay element
+   */
+  function createOverlayElement() {
     const overlay = document.createElement('div');
     overlay.classList.add('channel-banner-overlay');
     Object.assign(overlay.style, {
@@ -1622,42 +2615,68 @@
       alignItems: 'center',
       color: 'white',
       fontFamily: localStorage.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif',
-      fontSize: (localStorage.getItem('youtubeEnhancerFontSize') || '24') + 'px',
+      fontSize: `${localStorage.getItem('youtubeEnhancerFontSize') || '24'}px`,
       boxSizing: 'border-box',
       transition: 'background-color 0.3s ease',
     });
+    return overlay;
+  }
 
-    // Accessibility attributes
+  /**
+   * Apply accessibility attributes to overlay
+   * @param {HTMLElement} overlay - Overlay element
+   */
+  function applyOverlayAccessibility(overlay) {
     overlay.setAttribute('role', 'region');
     overlay.setAttribute('aria-label', t('overlayAriaLabel'));
     overlay.setAttribute('tabindex', '-1');
+  }
 
-    // Responsive design for mobile
+  /**
+   * Apply responsive mobile styling
+   * @param {HTMLElement} overlay - Overlay element
+   */
+  function applyMobileResponsiveness(overlay) {
     if (window.innerWidth <= 768) {
       overlay.style.flexDirection = 'column';
       overlay.style.padding = '10px';
       overlay.style.minHeight = '200px';
     }
+  }
 
-    const settingsButton = createSettingsButton();
-    settingsButton.setAttribute('tabindex', '0');
-    settingsButton.setAttribute('aria-label', t('settingsAriaLabel'));
-    settingsButton.setAttribute('role', 'button');
+  /**
+   * Setup settings button with accessibility
+   * @returns {HTMLElement} Settings button
+   */
+  function setupSettingsButton() {
+    const button = createSettingsButton();
+    button.setAttribute('tabindex', '0');
+    button.setAttribute('aria-label', t('settingsAriaLabel'));
+    button.setAttribute('role', 'button');
+    return button;
+  }
 
-    const settingsMenu = createSettingsMenu();
-    settingsMenu.setAttribute('aria-label', t('settingsMenuAriaLabel'));
-    settingsMenu.setAttribute('role', 'dialog');
+  /**
+   * Setup settings menu with accessibility
+   * @returns {HTMLElement} Settings menu
+   */
+  function setupSettingsMenu() {
+    const menu = createSettingsMenu();
+    menu.setAttribute('aria-label', t('settingsMenuAriaLabel'));
+    menu.setAttribute('role', 'dialog');
+    return menu;
+  }
 
-    overlay.appendChild(settingsButton);
-    overlay.appendChild(settingsMenu);
-
-    // Enhanced event handling with keyboard support
+  /**
+   * Attach menu toggle event handlers
+   * @param {HTMLElement} settingsButton - Settings button
+   * @param {HTMLElement} settingsMenu - Settings menu
+   */
+  function attachMenuEventHandlers(settingsButton, settingsMenu) {
     const toggleMenu = show => {
       settingsMenu.classList.toggle('show', show);
       settingsButton.setAttribute('aria-expanded', show);
-      if (show) {
-        settingsMenu.focus();
-      }
+      if (show) settingsMenu.focus();
     };
 
     settingsButton.addEventListener('click', e => {
@@ -1672,36 +2691,32 @@
       }
     });
 
-    // Close menu when clicking outside or pressing escape
-    const documentClickHandler = e => {
-      const target = /** @type {EventTarget & Node} */ (e.target);
-      if (!settingsMenu.contains(target) && !settingsButton.contains(target)) {
+    // Register document-level event handlers
+    const clickHandler = e => {
+      const node = /** @type {EventTarget & Node} */ (e.target);
+      if (!settingsMenu.contains(node) && !settingsButton.contains(node)) {
         toggleMenu(false);
       }
     };
-    const clickListenerKey = YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'click',
-      documentClickHandler
-    );
-    state.documentListenerKeys.add(clickListenerKey);
 
-    const documentKeydownHandler = e => {
+    const keyHandler = e => {
       if (e.key === 'Escape' && settingsMenu.classList.contains('show')) {
         toggleMenu(false);
         settingsButton.focus();
       }
     };
-    const keyListenerKey = YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'keydown',
-      documentKeydownHandler
-    );
-    state.documentListenerKeys.add(keyListenerKey);
 
-    const spinner = createSpinner();
-    overlay.appendChild(spinner);
+    const clickKey = YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler);
+    const keyKey = YouTubeUtils.cleanupManager.registerListener(document, 'keydown', keyHandler);
+    state.documentListenerKeys.add(clickKey);
+    state.documentListenerKeys.add(keyKey);
+  }
 
+  /**
+   * Add stat containers to overlay
+   * @param {HTMLElement} overlay - Overlay element
+   */
+  function addStatContainers(overlay) {
     const subscribersElement = createStatContainer(
       'subscribers',
       'M144 160c-44.2 0-80-35.8-80-80S99.8 0 144 0s80 35.8 80 80s-35.8 80-80 80zm368 0c-44.2 0-80-35.8-80-80s35.8-80 80-80s80 35.8 80 80s-35.8 80-80 80zM0 298.7C0 239.8 47.8 192 106.7 192h42.7c15.9 0 31 3.5 44.6 9.7c-1.3 7.2-1.9 14.7-1.9 22.3c0 38.2 16.8 72.5 43.3 96c-.2 0-.4 0-.7 0H21.3C9.6 320 0 310.4 0 298.7zM405.3 320c-.2 0-.4 0-.7 0c26.6-23.5 43.3-57.8 43.3-96c0-7.6-.7-15-1.9-22.3c13.6-6.3 28.7-9.7 44.6-9.7h42.7C592.2 192 640 239.8 640 298.7c0 11.8-9.6 21.3-21.3 21.3H405.3zM416 224c0 53-43 96-96 96s-96-43-96-96s43-96 96-96s96 43 96 96zM128 485.3C128 411.7 187.7 352 261.3 352H378.7C452.3 352 512 411.7 512 485.3c0 14.7-11.9 26.7-26.7 26.7H154.7c-14.7 0-26.7-11.9-26.7-26.7z'
@@ -1718,6 +2733,28 @@
     overlay.appendChild(subscribersElement);
     overlay.appendChild(viewsElement);
     overlay.appendChild(videosElement);
+  }
+
+  function createOverlay(bannerElement) {
+    clearExistingOverlay();
+    if (!bannerElement) return null;
+
+    const overlay = createOverlayElement();
+    applyOverlayAccessibility(overlay);
+    applyMobileResponsiveness(overlay);
+
+    const settingsButton = setupSettingsButton();
+    const settingsMenu = setupSettingsMenu();
+
+    overlay.appendChild(settingsButton);
+    overlay.appendChild(settingsMenu);
+
+    attachMenuEventHandlers(settingsButton, settingsMenu);
+
+    const spinner = createSpinner();
+    overlay.appendChild(spinner);
+
+    addStatContainers(overlay);
 
     bannerElement.appendChild(overlay);
     updateDisplayState();
@@ -1789,99 +2826,66 @@
     throw new Error('Could not determine channel ID');
   }
 
+  /**
+   * Fetch channel statistics with retry logic and fallback
+   * Refactored to use channel-stats-helpers module
+   * @param {string} channelId - Channel ID
+   * @returns {Promise<Object>} Channel stats
+   */
   async function fetchChannelStats(channelId) {
-    try {
-      let retries = CONFIG.MAX_RETRIES;
+    const helpers =
+      typeof window !== 'undefined' && window.YouTubePlusChannelStatsHelpers
+        ? window.YouTubePlusChannelStatsHelpers
+        : null;
 
-      while (retries > 0) {
-        try {
-          const stats = await fetchWithGM(`${STATS_API_URL}${channelId}`, {
-            origin: 'https://livecounts.io',
-            referer: 'https://livecounts.io/',
-          });
-
-          // Validate response structure
-          if (!stats || typeof stats.followerCount === 'undefined') {
-            throw new Error('Invalid stats response structure');
-          }
-
-          // Cache successful response
-          state.lastSuccessfulStats.set(channelId, {
-            ...stats,
-            timestamp: Date.now(),
-          });
-          return stats;
-        } catch (e) {
-          utils.warn('Fetch attempt failed:', e.message);
-          retries--;
-          if (retries > 0) {
-            // Exponential backoff for retries
-            await new Promise(resolve =>
-              setTimeout(resolve, 1000 * (CONFIG.MAX_RETRIES - retries + 1))
-            );
-          }
-        }
-      }
-
-      // Try to use cached data if available and recent (within 5 minutes)
-      if (state.lastSuccessfulStats.has(channelId)) {
-        const cached = state.lastSuccessfulStats.get(channelId);
-        const isRecent = Date.now() - cached.timestamp < CONFIG.CACHE_DURATION;
-        if (isRecent) {
-          utils.log('Using cached stats for channel:', channelId);
-          return cached;
-        }
-      }
-
-      // Fallback: try to extract subscriber count from page
-      const fallbackStats = {
-        followerCount: 0,
-        bottomOdos: [0, 0],
-        error: true,
-        timestamp: Date.now(),
-      };
-
-      // Try multiple selectors for subscriber count
-      const subCountSelectors = [
-        '#subscriber-count',
-        '.yt-subscription-button-subscriber-count-branded-horizontal',
-        '[id*="subscriber"]',
-        '.ytd-subscribe-button-renderer',
-      ];
-
-      for (const selector of subCountSelectors) {
-        const subCountElem = document.querySelector(selector);
-        if (subCountElem) {
-          const subText = subCountElem.textContent || subCountElem.innerText || '';
-          const subMatch = subText.match(/[\d,\.]+[KMB]?/);
-          if (subMatch) {
-            const raw = subMatch[0].replace(/,/g, '');
-            // parse into number safely
-            let numCount = Number(raw.replace(/[KMB]/, '')) || 0;
-            if (raw.includes('K')) {
-              numCount = numCount * 1000;
-            } else if (raw.includes('M')) {
-              numCount = numCount * 1000000;
-            } else if (raw.includes('B')) {
-              numCount = numCount * 1000000000;
-            }
-            // Ensure followerCount is a number
-            fallbackStats.followerCount = Math.floor(numCount);
-            utils.log('Extracted fallback subscriber count:', fallbackStats.followerCount);
-            break;
-          }
-        }
-      }
-
-      return fallbackStats;
-    } catch (error) {
-      utils.error('Failed to fetch channel stats:', error);
+    if (!helpers) {
+      utils.error('Channel stats helpers not loaded');
       return {
         followerCount: 0,
         bottomOdos: [0, 0],
         error: true,
         timestamp: Date.now(),
       };
+    }
+
+    try {
+      // Attempt to fetch with retry logic
+      const fetchFn = () =>
+        fetchWithGM(`${STATS_API_URL}${channelId}`, {
+          origin: 'https://livecounts.io',
+          referer: 'https://livecounts.io/',
+        });
+
+      const stats = await helpers.fetchWithRetry(fetchFn, CONFIG.MAX_RETRIES, utils);
+
+      // If fetch succeeded, cache and return
+      if (stats) {
+        helpers.cacheStats(state.lastSuccessfulStats, channelId, stats);
+        return stats;
+      }
+
+      // Try to use cached data if fetch failed
+      const cachedStats = helpers.getCachedStats(
+        state.lastSuccessfulStats,
+        channelId,
+        CONFIG.CACHE_DURATION,
+        utils
+      );
+
+      if (cachedStats) {
+        return cachedStats;
+      }
+
+      // Fallback: try to extract subscriber count from page
+      const fallbackCount = helpers.extractSubscriberCountFromPage();
+      if (fallbackCount > 0) {
+        utils.log('Extracted fallback subscriber count:', fallbackCount);
+      }
+
+      return helpers.createFallbackStats(fallbackCount);
+    } catch (error) {
+      utils.error('Failed to fetch channel stats:', error);
+      return helpers.createFallbackStats(0);
     }
   }
 
@@ -1955,48 +2959,81 @@
     return container;
   }
 
-  function updateDigits(container, newValue) {
-    const newValueStr = newValue.toString();
+  /**
+   * Split number into groups of 3 digits for formatting
+   * @param {string} valueStr - Number as string
+   * @returns {string[]} Array of digit groups
+   */
+  function splitIntoDigitGroups(valueStr) {
     const digits = [];
-
-    for (let i = newValueStr.length - 1; i >= 0; i -= 3) {
+    for (let i = valueStr.length - 1; i >= 0; i -= 3) {
       const start = Math.max(0, i - 2);
-      digits.unshift(newValueStr.slice(start, i + 1));
+      digits.unshift(valueStr.slice(start, i + 1));
     }
+    return digits;
+  }
 
+  /**
+   * Clear all children from container
+   * @param {HTMLElement} container - Container element
+   */
+  function clearContainer(container) {
     while (container.firstChild) {
       container.removeChild(container.firstChild);
     }
+  }
 
-    for (let i = 0; i < digits.length; i++) {
-      const group = digits[i];
+  /**
+   * Render digit groups in container
+   * @param {HTMLElement} container - Container element
+   * @param {string[]} digitGroups - Array of digit groups
+   */
+  function renderDigitGroups(container, digitGroups) {
+    for (let i = 0; i < digitGroups.length; i++) {
+      const group = digitGroups[i];
       for (let j = 0; j < group.length; j++) {
         const digitElement = createDigitElement();
         digitElement.textContent = group[j];
         container.appendChild(digitElement);
       }
-      if (i < digits.length - 1) {
+      if (i < digitGroups.length - 1) {
         container.appendChild(createCommaElement());
       }
     }
+  }
 
+  /**
+   * Animate digit changes in container
+   * @param {HTMLElement} container - Container element
+   * @param {string[]} digitGroups - Array of digit groups
+   */
+  function animateDigitChanges(container, digitGroups) {
     let elementIndex = 0;
-    for (let i = 0; i < digits.length; i++) {
-      const group = digits[i];
+    for (let i = 0; i < digitGroups.length; i++) {
+      const group = digitGroups[i];
       for (let j = 0; j < group.length; j++) {
         const digitElement = container.children[elementIndex];
-        const newDigit = parseInt(group[j]);
-        const currentDigit = parseInt(digitElement.textContent || '0');
+        const newDigit = parseInt(group[j], 10);
+        const currentDigit = parseInt(digitElement.textContent || '0', 10);
 
         if (currentDigit !== newDigit) {
           animateDigit(digitElement, currentDigit, newDigit);
         }
         elementIndex++;
       }
-      if (i < digits.length - 1) {
-        elementIndex++;
+      if (i < digitGroups.length - 1) {
+        elementIndex++; // Skip comma
       }
     }
+  }
+
+  function updateDigits(container, newValue) {
+    const newValueStr = newValue.toString();
+    const digitGroups = splitIntoDigitGroups(newValueStr);
+
+    clearContainer(container);
+    renderDigitGroups(container, digitGroups);
+    animateDigitChanges(container, digitGroups);
   }
 
   function animateDigit(element, start, end) {
@@ -2110,8 +3147,113 @@
     overlay.style.display = 'flex';
   }
 
+  /**
+   * Check if overlay update should proceed
+   * @param {string} channelName - Channel name to update
+   * @returns {boolean} True if should proceed
+   */
+  function shouldUpdateOverlay(channelName) {
+    return !state.isUpdating && channelName === state.currentChannelName;
+  }
+
+  /**
+   * Handle stats error by showing fallback values
+   * @param {HTMLElement} overlay - Overlay element
+   * @param {Object} stats - Stats object with error
+   * @returns {void}
+   */
+  function handleStatsError(overlay, stats) {
+    const containers = overlay.querySelectorAll('[class$="-number"]');
+    containers.forEach(container => {
+      if (container.classList.contains('subscribers-number') && stats.followerCount > 0) {
+        updateDigits(container, stats.followerCount);
+      } else {
+        container.textContent = '---';
+      }
+    });
+    utils.warn('Using fallback stats due to API error');
+  }
+
+  /**
+   * Get previous stat value for comparison
+   * @param {string} channelId - Channel ID
+   * @param {string} className - Stat type class name
+   * @returns {number|null} Previous value or null
+   */
+  function getPreviousStatValue(channelId, className) {
+    const prevStats = state.previousStats.get(channelId);
+    if (!prevStats) return null;
+
+    if (className === 'subscribers') {
+      return prevStats.followerCount;
+    }
+    const index = className === 'views' ? 0 : 1;
+    return prevStats.bottomOdos[index];
+  }
+
+  /**
+   * Update single stat element in overlay
+   * @param {HTMLElement} overlay - Overlay element
+   * @param {string} channelId - Channel ID
+   * @param {string} className - Stat class name
+   * @param {number} value - Stat value
+   * @param {string} label - Stat label
+   * @returns {void}
+   */
+  function updateStatElement(overlay, channelId, className, value, label) {
+    const numberContainer = overlay.querySelector(`.${className}-number`);
+    const differenceElement = overlay.querySelector(`.${className}-difference`);
+    const labelElement = overlay.querySelector(`.${className}-label`);
+
+    if (numberContainer) {
+      updateDigits(numberContainer, value);
+    }
+
+    if (differenceElement && state.previousStats.has(channelId)) {
+      const previousValue = getPreviousStatValue(channelId, className);
+      if (previousValue !== null) {
+        updateDifferenceElement(differenceElement, value, previousValue);
+      }
+    }
+
+    if (labelElement) {
+      labelElement.textContent = label;
+    }
+  }
+
+  /**
+   * Update all stat elements in overlay
+   * @param {HTMLElement} overlay - Overlay element
+   * @param {string} channelId - Channel ID
+   * @param {Object} stats - Stats object
+   * @returns {void}
+   */
+  function updateAllStatElements(overlay, channelId, stats) {
+    updateStatElement(overlay, channelId, 'subscribers', stats.followerCount, 'Subscribers');
+    updateStatElement(overlay, channelId, 'views', stats.bottomOdos[0], 'Views');
+    updateStatElement(overlay, channelId, 'videos', stats.bottomOdos[1], 'Videos');
+  }
+
+  /**
+   * Show error state in overlay
+   * @param {HTMLElement} overlay - Overlay element
+   * @returns {void}
+   */
+  function showOverlayError(overlay) {
+    const containers = overlay.querySelectorAll('[class$="-number"]');
+    containers.forEach(container => {
+      container.textContent = '---';
+    });
+  }
+
+  /**
+   * Update overlay content with channel stats
+   * @param {HTMLElement} overlay - Overlay element
+   * @param {string} channelName - Channel name
+   * @returns {Promise<void>}
+   */
   async function updateOverlayContent(overlay, channelName) {
-    if (state.isUpdating || channelName !== state.currentChannelName) return;
+    if (!shouldUpdateOverlay(channelName)) return;
     state.isUpdating = true;
 
     try {
@@ -2120,48 +3262,15 @@
 
       // Check if channel changed during async operations
       if (channelName !== state.currentChannelName) {
-        state.isUpdating = false;
         return;
       }
 
       if (stats.error) {
-        const containers = overlay.querySelectorAll('[class$="-number"]');
-        containers.forEach(container => {
-          if (container.classList.contains('subscribers-number') && stats.followerCount > 0) {
-            updateDigits(container, stats.followerCount);
-          } else {
-            container.textContent = '---';
-          }
-        });
-        utils.warn('Using fallback stats due to API error');
+        handleStatsError(overlay, stats);
         return;
       }
 
-      const updateElement = (className, value, label) => {
-        const numberContainer = overlay.querySelector(`.${className}-number`);
-        const differenceElement = overlay.querySelector(`.${className}-difference`);
-        const labelElement = overlay.querySelector(`.${className}-label`);
-
-        if (numberContainer) {
-          updateDigits(numberContainer, value);
-        }
-
-        if (differenceElement && state.previousStats.has(channelId)) {
-          const previousValue =
-            className === 'subscribers'
-              ? state.previousStats.get(channelId).followerCount
-              : state.previousStats.get(channelId).bottomOdos[className === 'views' ? 0 : 1];
-          updateDifferenceElement(differenceElement, value, previousValue);
-        }
-
-        if (labelElement) {
-          labelElement.textContent = label;
-        }
-      };
-
-      updateElement('subscribers', stats.followerCount, 'Subscribers');
-      updateElement('views', stats.bottomOdos[0], 'Views');
-      updateElement('videos', stats.bottomOdos[1], 'Videos');
+      updateAllStatElements(overlay, channelId, stats);
 
       if (!state.previousStats.has(channelId)) {
         showContent(overlay);
@@ -2171,10 +3280,7 @@
       state.previousStats.set(channelId, stats);
     } catch (error) {
       utils.error('Failed to update overlay content:', error);
-      const containers = overlay.querySelectorAll('[class$="-number"]');
-      containers.forEach(container => {
-        container.textContent = '---';
-      });
+      showOverlayError(overlay);
     } finally {
       state.isUpdating = false;
     }
@@ -2199,12 +3305,11 @@
     section.appendChild(item);
 
     item.querySelector('input').addEventListener('change', e => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      state.enabled = target.checked;
+      const { target } = e;
+      const input = /** @type {EventTarget & HTMLInputElement} */ (target);
+      state.enabled = input.checked;
       localStorage.setItem(CONFIG.STORAGE_KEY, state.enabled ? 'true' : 'false');
-      if (!state.enabled) {
-        clearExistingOverlay();
-      } else {
+      if (state.enabled) {
         observePageChanges();
         addNavigationListener();
         setTimeout(() => {
@@ -2213,6 +3318,8 @@
             addOverlay(bannerElement);
           }
         }, 100);
+      } else {
+        clearExistingOverlay();
       }
     });
   }
@@ -2243,10 +3350,11 @@
   }
 
   const experimentalNavClickHandler = e => {
-    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+    const { target } = e;
+    const el = /** @type {EventTarget & HTMLElement} */ (target);
     if (
-      target.classList?.contains('ytp-plus-settings-nav-item') &&
-      target.dataset?.section === 'experimental'
+      el.classList?.contains('ytp-plus-settings-nav-item') &&
+      el.dataset?.section === 'experimental'
     ) {
       setTimeout(addSettingsUI, 50);
     }
@@ -2260,58 +3368,103 @@
   );
   state.documentListenerKeys.add(listenerKey);
 
-  function addOverlay(bannerElement) {
-    // Improved channel name extraction with better URL parsing
-    let channelName = null;
-    const pathname = window.location.pathname;
-
+  /**
+   * Extract channel name from URL pathname
+   * @param {string} pathname - URL pathname
+   * @returns {string|null} Channel name or null
+   */
+  function extractChannelName(pathname) {
     if (pathname.startsWith('/@')) {
-      channelName = pathname.split('/')[1].replace('@', '');
-    } else if (pathname.startsWith('/channel/')) {
-      channelName = pathname.split('/')[2];
-    } else if (pathname.startsWith('/c/')) {
-      channelName = pathname.split('/')[2];
-    } else if (pathname.startsWith('/user/')) {
-      channelName = pathname.split('/')[2];
+      return pathname.split('/')[1].replace('@', '');
     }
-
-    // Skip if no valid channel name or already processing the same channel
-    if (!channelName || (channelName === state.currentChannelName && state.overlay)) {
-      return;
+    if (pathname.startsWith('/channel/')) {
+      return pathname.split('/')[2];
     }
+    if (pathname.startsWith('/c/')) {
+      return pathname.split('/')[2];
+    }
+    if (pathname.startsWith('/user/')) {
+      return pathname.split('/')[2];
+    }
+    return null;
+  }
 
-    // Ensure banner element is properly positioned
+  /**
+   * Check if overlay should be skipped
+   * @param {string|null} channelName - Channel name
+   * @returns {boolean} True if should skip
+   */
+  function shouldSkipOverlay(channelName) {
+    return !channelName || (channelName === state.currentChannelName && state.overlay);
+  }
+
+  /**
+   * Ensure banner element has proper positioning
+   * @param {HTMLElement} bannerElement - Banner element
+   */
+  function ensureBannerPosition(bannerElement) {
     if (bannerElement && !bannerElement.style.position) {
       bannerElement.style.position = 'relative';
     }
+  }
+
+  /**
+   * Clear existing update interval
+   */
+  function clearUpdateInterval() {
+    if (state.intervalId) {
+      clearInterval(state.intervalId);
+      state.intervalId = null;
+    }
+  }
+
+  /**
+   * Create debounced update function
+   * @param {HTMLElement} overlay - Overlay element
+   * @param {string} channelName - Channel name
+   * @returns {Function} Debounced update function
+   */
+  function createDebouncedUpdate(overlay, channelName) {
+    let lastUpdateTime = 0;
+    return () => {
+      const now = Date.now();
+      if (now - lastUpdateTime >= state.updateInterval - 100) {
+        updateOverlayContent(overlay, channelName);
+        lastUpdateTime = now;
+      }
+    };
+  }
+
+  /**
+   * Set up overlay update interval
+   * @param {HTMLElement} overlay - Overlay element
+   * @param {string} channelName - Channel name
+   */
+  function setupUpdateInterval(overlay, channelName) {
+    const debouncedUpdate = createDebouncedUpdate(overlay, channelName);
+    state.intervalId = setInterval(debouncedUpdate, state.updateInterval);
+    YouTubeUtils.cleanupManager.registerInterval(state.intervalId);
+  }
+
+  /**
+   * Add overlay to channel page banner
+   * @param {HTMLElement} bannerElement - Banner element
+   */
+  function addOverlay(bannerElement) {
+    const channelName = extractChannelName(window.location.pathname);
+
+    if (shouldSkipOverlay(channelName)) {
+      return;
+    }
+
+    ensureBannerPosition(bannerElement);
 
     state.currentChannelName = channelName;
     state.overlay = createOverlay(bannerElement);
 
     if (state.overlay) {
-      // Clear existing interval
-      if (state.intervalId) {
-        clearInterval(state.intervalId);
-        state.intervalId = null;
-      }
-
-      // Debounced update function for better performance
-      let lastUpdateTime = 0;
-      const debouncedUpdate = () => {
-        const now = Date.now();
-        if (now - lastUpdateTime >= state.updateInterval - 100) {
-          updateOverlayContent(state.overlay, channelName);
-          lastUpdateTime = now;
-        }
-      };
-
-      // Set up interval with debouncing
-      state.intervalId = setInterval(debouncedUpdate, state.updateInterval);
-
-      // ✅ Register interval in cleanupManager
-      YouTubeUtils.cleanupManager.registerInterval(state.intervalId);
-
-      // Initial update
+      clearUpdateInterval();
+      setupUpdateInterval(state.overlay, channelName);
       updateOverlayContent(state.overlay, channelName);
       utils.log('Added overlay for channel:', channelName);
     }
@@ -2325,67 +3478,106 @@
     );
   }
 
+  /**
+   * Find banner element with fallback selectors
+   * @returns {HTMLElement|null} Banner element
+   */
+  function findBannerElement() {
+    let bannerElement = document.getElementById('page-header-banner-sizer');
+
+    if (!bannerElement) {
+      const alternatives = [
+        '[id*="banner"]',
+        '.ytd-c4-tabbed-header-renderer',
+        '#channel-header',
+        '.channel-header',
+      ];
+
+      for (const selector of alternatives) {
+        bannerElement = document.querySelector(selector);
+        if (bannerElement) break;
+      }
+    }
+
+    return bannerElement;
+  }
+
+  /**
+   * Ensure banner has proper positioning
+   * @param {HTMLElement} bannerElement - Banner element
+   * @returns {void}
+   */
+  function ensureBannerPositioning(bannerElement) {
+    if (bannerElement.style.position !== 'relative') {
+      bannerElement.style.position = 'relative';
+    }
+  }
+
+  /**
+   * Handle page update for banner overlay
+   * @returns {void}
+   */
+  function handleBannerUpdate() {
+    const bannerElement = findBannerElement();
+
+    if (bannerElement && isChannelPage()) {
+      ensureBannerPositioning(bannerElement);
+      addOverlay(bannerElement);
+    } else if (!isChannelPage()) {
+      clearExistingOverlay();
+      state.currentChannelName = null;
+    }
+  }
+
+  /**
+   * Cleanup observer timeout
+   * @param {MutationObserver} observer - Observer instance
+   * @returns {void}
+   */
+  function clearObserverTimeout(observer) {
+    if (/** @type {any} */ (observer)._timeout) {
+      YouTubeUtils.cleanupManager.unregisterTimeout(/** @type {any} */ (observer)._timeout);
+      clearTimeout(/** @type {any} */ (observer)._timeout);
+    }
+  }
+
+  /**
+   * Setup observer for monitoring page changes
+   * @param {MutationObserver} observer - Observer instance
+   * @returns {void}
+   */
+  function setupObserver(observer) {
+    const observerConfig = {
+      childList: true,
+      subtree: true,
+      attributes: false,
+    };
+
+    if (document.body) {
+      observer.observe(document.body, observerConfig);
+    } else {
+      document.addEventListener('DOMContentLoaded', () => {
+        observer.observe(document.body, observerConfig);
+      });
+    }
+  }
+
+  /**
+   * Observe page changes and update banner overlay
+   * @returns {MutationObserver|undefined} Observer instance
+   */
   function observePageChanges() {
     if (!state.enabled) return undefined;
 
-    // More robust banner detection with multiple fallback selectors
     const observer = new MutationObserver(_mutations => {
-      // Throttle observations for better performance
-      if (/** @type {any} */ (observer)._timeout) {
-        YouTubeUtils.cleanupManager.unregisterTimeout(/** @type {any} */ (observer)._timeout);
-        clearTimeout(/** @type {any} */ (observer)._timeout);
-      }
+      clearObserverTimeout(observer);
 
       /** @type {any} */ (observer)._timeout = YouTubeUtils.cleanupManager.registerTimeout(
-        setTimeout(() => {
-          let bannerElement = document.getElementById('page-header-banner-sizer');
-
-          // Try alternative selectors if main one fails
-          if (!bannerElement) {
-            const alternatives = [
-              '[id*="banner"]',
-              '.ytd-c4-tabbed-header-renderer',
-              '#channel-header',
-              '.channel-header',
-            ];
-
-            for (const selector of alternatives) {
-              bannerElement = document.querySelector(selector);
-              if (bannerElement) break;
-            }
-          }
-
-          if (bannerElement && isChannelPage()) {
-            // Ensure banner has proper positioning
-            if (bannerElement.style.position !== 'relative') {
-              bannerElement.style.position = 'relative';
-            }
-            addOverlay(bannerElement);
-          } else if (!isChannelPage()) {
-            // Clean up when not on channel page
-            clearExistingOverlay();
-            state.currentChannelName = null;
-          }
-        }, 100)
-      ); // Small delay to batch rapid changes
+        setTimeout(handleBannerUpdate, 100)
+      );
     });
 
-    // ✅ Safe observe with document.body check
-    if (document.body) {
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-        attributes: false, // Reduce observation scope for performance
-      });
-    } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        observer.observe(document.body, {
-          childList: true,
-          subtree: true,
-          attributes: false,
-        });
-      });
-    }
+    setupObserver(observer);
 
     // Store timeout reference for cleanup
     /** @type {any} */ (observer)._timeout = null;
@@ -2403,16 +3595,16 @@
     if (!state.enabled) return;
 
     window.addEventListener('yt-navigate-finish', () => {
-      if (!isChannelPage()) {
-        clearExistingOverlay();
-        state.currentChannelName = null;
-        utils.log('Navigated away from channel page');
-      } else {
+      if (isChannelPage()) {
         const bannerElement = document.getElementById('page-header-banner-sizer');
         if (bannerElement) {
           addOverlay(bannerElement);
           utils.log('Navigated to channel page');
         }
+      } else {
+        clearExistingOverlay();
+        state.currentChannelName = null;
+        utils.log('Navigated away from channel page');
       }
     });
   }
@@ -2439,6 +3631,15 @@
 
   // Register cleanup on page unload
   window.addEventListener('beforeunload', cleanup);
+
+  // Export module to global scope for module loader
+  if (typeof window !== 'undefined') {
+    window.YouTubeStats = {
+      init,
+      cleanup,
+      version: '2.2',
+    };
+  }
 
   init();
 })();

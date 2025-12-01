@@ -3,9 +3,9 @@
  * @param {*} value - The value to return
  * @returns {*} The same value
  */
-// @ts-nocheck
+const identityFn = value => value;
 
-const identityFn = value => value; /**
+/**
  * Ensure TrustedTypes policy exists for secure HTML handling
  * @returns {{createHTML: Function, error: Error|null}} Policy object with createHTML function and error status
  */
@@ -99,12 +99,13 @@ if (
  * Main execution script for YouTube tab view
  * @param {string} _communicationKey - Unique key for cross-context communication (reserved for future use)
  */
+/* eslint-disable max-lines-per-function, complexity, max-depth */
 const executionScript = _communicationKey => {
   /** @const {boolean} Debug flag for attachment/detachment events */
   const DEBUG_5084 = false;
 
-  /** @const {boolean} Debug flag for tab operations */
-  const DEBUG_5085 = false;
+  /** @const {boolean} Debug flag for tab operations - set to true to debug tab issues */
+  const DEBUG_5085 = true; // Temporarily enabled for debugging TabView
 
   /** @const {boolean} Auto-switch to comments tab when available */
   const DEBUG_handleNavigateFactory = false;
@@ -126,32 +127,34 @@ const executionScript = _communicationKey => {
     console.error(
       '[YouTube+] Invalid configuration: MAX_ATTRIBUTE_VALUE and ATTRIBUTE_RESET_VALUE must be valid positive numbers'
     );
-  } // Reuse utility functions from parent scope
-  const identityFn = value => value;
+  }
+
+  // Reuse utility functions from parent scope (renamed to avoid conflicts)
+  const identityFnLocal = value => value;
   const ensureTrustedTypesPolicyLocal = () => {
     if (typeof trustedTypes === 'undefined') {
-      return { createHTML: identityFn, error: null };
+      return { createHTML: identityFnLocal, error: null };
     }
 
     try {
       if (trustedTypes.defaultPolicy === null) {
         trustedTypes.createPolicy('default', {
-          createHTML: identityFn,
-          createScriptURL: identityFn,
-          createScript: identityFn,
+          createHTML: identityFnLocal,
+          createScriptURL: identityFnLocal,
+          createScript: identityFnLocal,
         });
       }
 
       const policy = trustedTypes.defaultPolicy;
-      const createHTML = policy?.createHTML?.bind?.(policy) ?? identityFn;
+      const createHTMLLocal = policy?.createHTML?.bind?.(policy) ?? identityFnLocal;
 
       // Validate policy works
       const testDiv = document.createElement('div');
-      testDiv.innerHTML = createHTML('1');
-      return { createHTML, error: null };
+      testDiv.innerHTML = createHTMLLocal('1');
+      return { createHTML: createHTMLLocal, error: null };
     } catch (error) {
       console.error('[YouTube+] TrustedTypes local policy failed:', error);
-      return { createHTML: identityFn, error };
+      return { createHTML: identityFnLocal, error };
     }
   };
 
@@ -183,17 +186,18 @@ const executionScript = _communicationKey => {
     return scheduler;
   };
 
-  const { createHTML, error: trustHTMLErr } = ensureTrustedTypesPolicyLocal();
+  const { createHTML: _createHTMLInner, error: trustHTMLErrInner } =
+    ensureTrustedTypesPolicyLocal();
 
-  if (trustHTMLErr) {
+  if (trustHTMLErrInner) {
     console.error(
       '[YouTube+] TrustedHTML Error: Script cannot run due to CSP restrictions',
-      trustHTMLErr
+      trustHTMLErrInner
     );
     return; // Exit execution script gracefully
   }
 
-  const nextBrowserTick = createNextBrowserTickLocal(
+  const nextBrowserTickInner = createNextBrowserTickLocal(
     (typeof window !== 'undefined' && window.nextBrowserTick) || undefined
   );
 
@@ -201,7 +205,7 @@ const executionScript = _communicationKey => {
     typeof window !== 'undefined' &&
     (!window.nextBrowserTick || window.nextBrowserTick.version < 2)
   ) {
-    window.nextBrowserTick = nextBrowserTick;
+    window.nextBrowserTick = nextBrowserTickInner;
   }
 
   try {
@@ -216,27 +220,49 @@ const executionScript = _communicationKey => {
 
     /**
      * Simple cache for frequently used querySelector results
-     * Helps reduce DOM traversal overhead
+     * Helps reduce DOM traversal overhead with memory limits
      */
     const selectorCache = new Map();
 
-    const _CACHE_MAX_SIZE = 50; // Reserved for future cache implementation
+    const CACHE_MAX_SIZE = 50; // Maximum cache entries to prevent memory leaks
     const CACHE_TTL = 5000; // 5 seconds
 
     /**
-     * Clear expired cache entries
+     * Clear expired cache entries and enforce size limit
      */
     const clearExpiredCache = () => {
       const now = Date.now();
+
+      // Remove expired entries
       for (const [key, value] of selectorCache.entries()) {
         if (now - value.timestamp > CACHE_TTL) {
           selectorCache.delete(key);
         }
       }
+
+      // Enforce max size by removing oldest entries
+      if (selectorCache.size > CACHE_MAX_SIZE) {
+        const entriesToRemove = selectorCache.size - CACHE_MAX_SIZE;
+        const iterator = selectorCache.keys();
+        for (let i = 0; i < entriesToRemove; i++) {
+          const key = iterator.next().value;
+          if (key !== undefined) {
+            selectorCache.delete(key);
+          }
+        }
+      }
     };
 
     // Periodically clear expired cache
-    setInterval(clearExpiredCache, CACHE_TTL);
+    const cacheCleanupInterval = setInterval(clearExpiredCache, CACHE_TTL);
+
+    // Ensure cleanup on page unload
+    if (typeof window !== 'undefined') {
+      window.addEventListener('beforeunload', () => {
+        clearInterval(cacheCleanupInterval);
+        selectorCache.clear();
+      });
+    }
 
     /**
      * Query single element from a specific parent
@@ -259,46 +285,96 @@ const executionScript = _communicationKey => {
       return HTMLElement_.prototype.querySelectorAll.call(elm, selector);
     };
 
+    const defineProperties = (p, o) => {
+      if (!p) {
+        console.warn(`defineProperties ERROR: Prototype is undefined`);
+        return;
+      }
+      for (const k of Object.keys(o)) {
+        if (!o[k]) {
+          console.warn(`defineProperties ERROR: Property ${k} is undefined`);
+          delete o[k];
+        }
+      }
+      return Object.defineProperties(p, o);
+    };
+
+    const replaceChildrenPolyfill = function replaceChildren(...new_children) {
+      let el = this.firstChild;
+      while (el) {
+        const next = el.nextSibling;
+        el.remove();
+        el = next;
+      }
+      this.append(...new_children);
+    };
+
     const pdsBaseDF = Object.getOwnPropertyDescriptors(DocumentFragment.prototype);
 
-    Object.defineProperties(DocumentFragment.prototype, {
-      replaceChildren000: pdsBaseDF.replaceChildren,
-    });
+    if (pdsBaseDF.replaceChildren) {
+      defineProperties(DocumentFragment.prototype, {
+        replaceChildren000: pdsBaseDF.replaceChildren,
+      });
+    } else {
+      DocumentFragment.prototype.replaceChildren000 = replaceChildrenPolyfill;
+    }
 
     const pdsBaseNode = Object.getOwnPropertyDescriptors(Node.prototype);
 
-    Object.defineProperties(Node.prototype, {
-      appendChild000: pdsBaseNode.appendChild,
-      insertBefore000: pdsBaseNode.insertBefore,
-    });
+    if (!pdsBaseNode.appendChild000 && !pdsBaseNode.insertBefore000) {
+      defineProperties(Node.prototype, {
+        appendChild000: pdsBaseNode.appendChild,
+        insertBefore000: pdsBaseNode.insertBefore,
+      });
+    }
 
     const pdsBaseElement = Object.getOwnPropertyDescriptors(Element.prototype);
 
-    Object.defineProperties(Element.prototype, {
-      setAttribute000: pdsBaseElement.setAttribute,
-      getAttribute000: pdsBaseElement.getAttribute,
-      hasAttribute000: pdsBaseElement.hasAttribute,
-      removeAttribute000: pdsBaseElement.removeAttribute,
-      querySelector000: pdsBaseElement.querySelector,
-      replaceChildren000: pdsBaseElement.replaceChildren,
-    });
+    if (!pdsBaseElement.setAttribute000 && !pdsBaseElement.querySelector000) {
+      const nPdsElement = {
+        setAttribute000: pdsBaseElement.setAttribute,
+        getAttribute000: pdsBaseElement.getAttribute,
+        hasAttribute000: pdsBaseElement.hasAttribute,
+        removeAttribute000: pdsBaseElement.removeAttribute,
+        querySelector000: pdsBaseElement.querySelector,
+      };
+
+      if (pdsBaseElement.replaceChildren) {
+        nPdsElement.replaceChildren000 = pdsBaseElement.replaceChildren;
+      } else {
+        Element.prototype.replaceChildren000 = replaceChildrenPolyfill;
+      }
+
+      defineProperties(Element.prototype, nPdsElement);
+    }
 
     /**
      * Set attribute only if value has changed (optimization to reduce DOM operations)
      * @param {string} p - Attribute name
      * @param {*} v - Attribute value
+     * @returns {boolean} Success status
      */
     Element.prototype.setAttribute111 = function (p, v) {
       if (!p || typeof p !== 'string') {
         console.warn('[YouTube+] setAttribute111: invalid attribute name', p);
-        return;
+        return false;
       }
       try {
-        v = `${v}`;
-        if (this.getAttribute000(p) === v) return;
-        this.setAttribute000(p, v);
+        const valueStr = v === null || v === undefined ? '' : `${v}`;
+        const currentValue = this.getAttribute000(p);
+        if (currentValue === valueStr) return true;
+        this.setAttribute000(p, valueStr);
+        return true;
       } catch (error) {
-        console.warn('[YouTube+] setAttribute111 failed:', error, p, v);
+        console.warn('[YouTube+] setAttribute111 failed:', error, 'attr:', p, 'value:', v);
+        // Fallback: try direct setAttribute
+        try {
+          this.setAttribute(p, v === null || v === undefined ? '' : `${v}`);
+          return true;
+        } catch (fallbackError) {
+          console.error('[YouTube+] setAttribute111 fallback also failed:', fallbackError);
+          return false;
+        }
       }
     };
 
@@ -402,82 +478,138 @@ const executionScript = _communicationKey => {
      */
     /* eslint-disable no-unused-expressions */
     (() => {
-      const e =
-        'undefined' != typeof unsafeWindow ? unsafeWindow : this instanceof Window ? this : window;
+      let e;
+      if (typeof unsafeWindow === 'undefined') {
+        e = this instanceof Window ? this : window;
+      } else {
+        e = unsafeWindow;
+      }
       if (!e._ytConfigHacks) {
         let t = 4;
         class n extends Set {
-          add(e) {
+          add(handler) {
             if (t <= 0) return console.warn('yt.config_ is already applied on the page.');
-            'function' == typeof e && super.add(e);
+            typeof handler == 'function' && super.add(handler);
           }
         }
-        const a = (async () => {})().constructor,
-          i = (e._ytConfigHacks = new n());
+        const a = (async () => {})().constructor;
+        const i = new n();
+        e._ytConfigHacks = i;
         let l = () => {
-          const t = e.ytcsi.originalYtcsi;
-          t && ((e.ytcsi = t), (l = null));
-        };
-        let c = null;
-        const o = () => {
-          if (t >= 1) {
-            const n = (e.yt || 0).config_ || (e.ytcfg || 0).data_ || 0;
-            if ('string' == typeof n.INNERTUBE_API_KEY && 'object' == typeof n.EXPERIMENT_FLAGS) {
-              for (const a of (--t <= 0 && l && l(), (c = !0), i)) a(n);
-            }
+          const ytcsiOriginal = e.ytcsi.originalYtcsi;
+          if (ytcsiOriginal) {
+            e.ytcsi = ytcsiOriginal;
+            l = null;
           }
         };
+        let c = null;
+
+        /**
+         * Get YouTube config data from window
+         * @returns {Object|null} Config data or null
+         */
+        const getConfigData = () => {
+          return (e.yt || 0).config_ || (e.ytcfg || 0).data_ || 0;
+        };
+
+        /**
+         * Validate config data has required properties
+         * @param {Object} configData - Config data to validate
+         * @returns {boolean} True if valid
+         */
+        const isValidConfig = configData => {
+          return (
+            typeof configData.INNERTUBE_API_KEY === 'string' &&
+            typeof configData.EXPERIMENT_FLAGS === 'object'
+          );
+        };
+
+        /**
+         * Execute config handlers with validated data
+         * @param {Object} configData - Validated config data
+         */
+        const executeHandlers = configData => {
+          for (const handler of i) handler(configData);
+        };
+
+        /**
+         * Process YouTube config when available
+         */
+        const o = () => {
+          if (t < 1) return;
+
+          const configData = getConfigData();
+          if (!isValidConfig(configData)) return;
+
+          --t;
+          if (t <= 0 && l) l();
+          c = !0;
+          executeHandlers(configData);
+        };
         let f = 1;
-        const d = t => {
-          if ((t = t || e.ytcsi)) {
+        const d = tParam => {
+          const ytcsiValue = tParam || e.ytcsi;
+          if (ytcsiValue) {
+            /* eslint-disable no-return-assign */
             return (
-              (e.ytcsi = new Proxy(t, {
-                get: (e, t) => ('originalYtcsi' === t ? e : (o(), c && --f <= 0 && l && l(), e[t])),
+              (e.ytcsi = new Proxy(ytcsiValue, {
+                get: (proxy, prop) =>
+                  prop === 'originalYtcsi' ? proxy : (o(), c && --f <= 0 && l && l(), proxy[prop]),
               })),
               !0
             );
+            /* eslint-enable no-return-assign */
           }
         };
         d() ||
           Object.defineProperty(e, 'ytcsi', {
             get() {},
-            set: t => (t && (delete e.ytcsi, d(t)), !0),
+            /* eslint-disable-next-line no-sequences */
+            set: value => (value && (delete e.ytcsi, d(value)), !0),
             enumerable: !1,
             configurable: !0,
           });
         const { addEventListener: s, removeEventListener: y } = Document.prototype;
-        function r(t) {
-          (o(), t && e.removeEventListener('DOMContentLoaded', r, !1));
+        function r(removeListener) {
+          o();
+          if (removeListener) {
+            e.removeEventListener('DOMContentLoaded', r, !1);
+          }
         }
-        (new a(e => {
-          if ('undefined' != typeof AbortSignal) {
-            (s.call(document, 'yt-page-data-fetched', e, { once: !0 }),
-              s.call(document, 'yt-navigate-finish', e, { once: !0 }),
-              s.call(document, 'spfdone', e, { once: !0 }));
-          } else {
-            const t = () => {
-              (e(),
-                y.call(document, 'yt-page-data-fetched', t, !1),
-                y.call(document, 'yt-navigate-finish', t, !1),
-                y.call(document, 'spfdone', t, !1));
+        (new a(resolveCallback => {
+          if (typeof AbortSignal === 'undefined') {
+            const cleanupHandler = () => {
+              resolveCallback();
+              y.call(document, 'yt-page-data-fetched', cleanupHandler, !1);
+              y.call(document, 'yt-navigate-finish', cleanupHandler, !1);
+              y.call(document, 'spfdone', cleanupHandler, !1);
             };
-            (s.call(document, 'yt-page-data-fetched', t, !1),
-              s.call(document, 'yt-navigate-finish', t, !1),
-              s.call(document, 'spfdone', t, !1));
+            s.call(document, 'yt-page-data-fetched', cleanupHandler, !1);
+            s.call(document, 'yt-navigate-finish', cleanupHandler, !1);
+            s.call(document, 'spfdone', cleanupHandler, !1);
+          } else {
+            s.call(document, 'yt-page-data-fetched', resolveCallback, { once: !0 });
+            s.call(document, 'yt-navigate-finish', resolveCallback, { once: !0 });
+            s.call(document, 'spfdone', resolveCallback, { once: !0 });
           }
         }).then(o),
-          new a(e => {
-            if ('undefined' != typeof AbortSignal) {
-              s.call(document, 'yt-action', e, { once: !0, capture: !0 });
-            } else {
-              const t = () => {
-                (e(), y.call(document, 'yt-action', t, !0));
+          new a(actionCallback => {
+            if (typeof AbortSignal === 'undefined') {
+              const actionHandler = () => {
+                actionCallback();
+                y.call(document, 'yt-action', actionHandler, !0);
               };
-              s.call(document, 'yt-action', t, !0);
+              s.call(document, 'yt-action', actionHandler, !0);
+            } else {
+              s.call(document, 'yt-action', actionCallback, { once: !0, capture: !0 });
             }
           }).then(o),
           a.resolve().then(() => {
-            'loading' !== document.readyState ? r() : e.addEventListener('DOMContentLoaded', r, !1);
+            if (document.readyState === 'loading') {
+              e.addEventListener('DOMContentLoaded', r, !1);
+            } else {
+              r();
+            }
           }));
       }
     })();
@@ -557,19 +689,21 @@ const executionScript = _communicationKey => {
      * Promise class with external resolve/reject methods
      * Useful for creating deferred promises that can be resolved externally
      */
-    const PromiseExternal = ((resolve_, reject_) => {
+    const PromiseExternal = (() => {
+      let capturedResolve;
+      let capturedReject;
       const h = (resolve, reject) => {
-        resolve_ = resolve;
-        reject_ = reject;
+        capturedResolve = resolve;
+        capturedReject = reject;
       };
-      return class PromiseExternal extends Promise {
+      return class PromiseExternalImpl extends Promise {
         constructor(cb = h) {
           super(cb);
           if (cb === h) {
             /** @type {(value: any) => void} */
-            this.resolve = resolve_;
+            this.resolve = capturedResolve;
             /** @type {(reason?: any) => void} */
-            this.reject = reject_;
+            this.reject = capturedReject;
           }
         }
       };
@@ -660,7 +794,7 @@ const executionScript = _communicationKey => {
      * @returns {Element|null} The main info element or null
      */
     const getMainInfo = () => {
-      const infoExpander = elements.infoExpander;
+      const { infoExpander } = elements;
       if (!infoExpander) return null;
       const mainInfo = infoExpander.matches('[tyt-main-info]')
         ? infoExpander
@@ -726,6 +860,11 @@ const executionScript = _communicationKey => {
         info: 'Описание',
         videos: 'Видео',
         playlist: 'Плейлист',
+      },
+      tr: {
+        info: 'Bilgi',
+        videos: 'Videolar',
+        playlist: 'Oynatma Listesi',
       },
     };
 
@@ -897,6 +1036,7 @@ const executionScript = _communicationKey => {
     const lockSet = new Proxy(_locks, {
       get(target, prop) {
         if (target[prop] > MAX_ATTRIBUTE_VALUE) target[prop] = ATTRIBUTE_RESET_VALUE;
+        /* eslint-disable-next-line no-return-assign */
         return (target[prop] = (target[prop] || 0) + 1);
       },
       set(_target, _prop, _val) {
@@ -944,7 +1084,28 @@ const executionScript = _communicationKey => {
       }
       if (changeOnRoot) {
         // prevent change of document.body
-        pluginDetectObserver.observe(document.body, { attributes: true });
+        try {
+          if (document.body) {
+            pluginDetectObserver.observe(document.body, { attributes: true });
+          } else {
+            document.addEventListener(
+              'DOMContentLoaded',
+              () => {
+                try {
+                  pluginDetectObserver.observe(document.body, { attributes: true });
+                } catch (observeError) {
+                  console.error(
+                    '[YouTube+] pluginDetectObserver.observe failed after DOMContentLoaded:',
+                    observeError
+                  );
+                }
+              },
+              { once: true }
+            );
+          }
+        } catch (observeError) {
+          console.error('[YouTube+] pluginDetectObserver.observe failed:', observeError);
+        }
       }
       for (const detected of newPlugins) {
         const pluginItem = plugin[`${detected}`];
@@ -968,9 +1129,7 @@ const executionScript = _communicationKey => {
      * @param {*} _s - Parameter (unused but kept for compatibility)
      */
     const funcCanCollapse = function (_s) {
-      const playlistElm = elements.playlist;
-      const ytdFlexyElm = elements.flexy;
-      // console.log(1882, chatElm, ytdFlexyElm)
+      const { playlist: playlistElm, flexy: ytdFlexyElm } = elements;
       let doAttributeChange = 0;
       if (playlistElm && ytdFlexyElm) {
         if (playlistElm.closest('[hidden]')) {
@@ -984,12 +1143,12 @@ const executionScript = _communicationKey => {
         doAttributeChange = 2;
       }
       if (doAttributeChange === 1) {
-        if (ytdFlexyElm.getAttribute000('tyt-playlist-expanded') !== '') {
-          ytdFlexyElm.setAttribute111('tyt-playlist-expanded', '');
+        if (getAttributeSafe(ytdFlexyElm, 'tyt-playlist-expanded') !== '') {
+          setAttributeSafe(ytdFlexyElm, 'tyt-playlist-expanded', '');
         }
       } else if (doAttributeChange === 2) {
         if (ytdFlexyElm.hasAttribute000('tyt-playlist-expanded')) {
-          ytdFlexyElm.removeAttribute000('tyt-playlist-expanded');
+          removeAttributeSafe(ytdFlexyElm, 'tyt-playlist-expanded');
         }
       }
     };
@@ -997,33 +1156,31 @@ const executionScript = _communicationKey => {
     const aoChatAttrChangeFn = async lockId => {
       if (lockGet['aoChatAttrAsyncLock'] !== lockId) return;
 
-      const chatElm = elements.chat;
-      const ytdFlexyElm = elements.flexy;
+      const { chat: chatElm, flexy: ytdFlexyElm } = elements;
       if (chatElm && ytdFlexyElm) {
         const isChatCollapsed = chatElm.hasAttribute000('collapsed');
         if (isChatCollapsed) {
-          ytdFlexyElm.setAttribute111('tyt-chat-collapsed', '');
+          setAttributeSafe(ytdFlexyElm, 'tyt-chat-collapsed', '');
         } else {
-          ytdFlexyElm.removeAttribute000('tyt-chat-collapsed');
+          removeAttributeSafe(ytdFlexyElm, 'tyt-chat-collapsed');
         }
 
-        ytdFlexyElm.setAttribute111('tyt-chat', isChatCollapsed ? '-' : '+');
+        setAttributeSafe(ytdFlexyElm, 'tyt-chat', isChatCollapsed ? '-' : '+');
       }
     };
 
     const aoPlayListAttrChangeFn = async lockId => {
       if (lockGet['aoPlayListAttrAsyncLock'] !== lockId) return;
 
-      const playlistElm = elements.playlist;
-      const ytdFlexyElm = elements.flexy;
+      const { playlist: playlistElm, flexy: ytdFlexyElm } = elements;
       if (playlistElm && ytdFlexyElm) {
         if (playlistElm.hasAttribute000('collapsed')) {
-          ytdFlexyElm.removeAttribute000('tyt-playlist-expanded');
+          removeAttributeSafe(ytdFlexyElm, 'tyt-playlist-expanded');
         } else {
-          ytdFlexyElm.setAttribute111('tyt-playlist-expanded', '');
+          setAttributeSafe(ytdFlexyElm, 'tyt-playlist-expanded', '');
         }
       } else if (ytdFlexyElm) {
-        ytdFlexyElm.removeAttribute000('tyt-playlist-expanded');
+        removeAttributeSafe(ytdFlexyElm, 'tyt-playlist-expanded');
       }
     };
 
@@ -1077,11 +1234,13 @@ const executionScript = _communicationKey => {
       }
 
       if ((bfHidden || bfCommentsVideoId || bfCommentDisabled) && ytdFlexyElm) {
-        const commentsDataStatus = +commentsArea.getAttribute000('tyt-comments-data-status');
+        const commentsDataStatus = +(
+          getAttributeSafe(commentsArea, 'tyt-comments-data-status') || '0'
+        );
         if (commentsDataStatus === 2) {
-          ytdFlexyElm.setAttribute111('tyt-comment-disabled', '');
+          setAttributeSafe(ytdFlexyElm, 'tyt-comment-disabled', '');
         } else if (commentsDataStatus === 1) {
-          ytdFlexyElm.removeAttribute000('tyt-comment-disabled');
+          removeAttributeSafe(ytdFlexyElm, 'tyt-comment-disabled');
         }
 
         Promise.resolve(lockSet['checkCommentsShouldBeHiddenLock'])
@@ -1108,7 +1267,7 @@ const executionScript = _communicationKey => {
     const ioComment = new IntersectionObserver(
       entries => {
         for (const entry of entries) {
-          const target = entry.target;
+          const { target } = entry;
           const cnt = insp(target);
           if (
             entry.isIntersecting &&
@@ -1117,13 +1276,13 @@ const executionScript = _communicationKey => {
           ) {
             // lockSet['removeKeepCommentsScrollerLock']; // Commented out - no-op expression
             cnt.calculateCanCollapse(true);
-            target.setAttribute111('io-intersected', '');
+            setAttributeSafe(target, 'io-intersected', '');
             const ytdFlexyElm = elements.flexy;
             if (ytdFlexyElm && !ytdFlexyElm.hasAttribute000('keep-comments-scroller')) {
-              ytdFlexyElm.setAttribute111('keep-comments-scroller', '');
+              setAttributeSafe(ytdFlexyElm, 'keep-comments-scroller', '');
             }
           } else if (target.hasAttribute000('io-intersected')) {
-            target.removeAttribute000('io-intersected');
+            removeAttributeSafe(target, 'io-intersected');
           }
         }
       },
@@ -1152,98 +1311,248 @@ const executionScript = _communicationKey => {
     });
 
     /**
-     * Switch to specified tab
-     * @param {string|Element} activeLink - Tab link selector or element
+     * Get attribute value with safe fallback
+     * @param {Element} element - Element to get attribute from
+     * @param {string} attrName - Attribute name
+     * @returns {string|null} Attribute value
      */
-    const switchToTab = activeLink => {
-      if (typeof activeLink === 'string') {
-        activeLink = document.querySelector(`a[tyt-tab-content="${activeLink}"]`) || null;
+    const getAttributeSafe = (element, attrName) => {
+      if (!element || !attrName) return null;
+      try {
+        if (typeof element.getAttribute000 === 'function') {
+          return element.getAttribute000(attrName);
+        }
+        return element.getAttribute(attrName);
+      } catch {
+        return element.getAttribute(attrName);
       }
+    };
 
-      const ytdFlexyElm = elements.flexy;
-      const links = document.querySelectorAll('#material-tabs a[tyt-tab-content]');
+    /**
+     * Set attribute value with safe fallback
+     * @param {Element} element - Element to set attribute on
+     * @param {string} attrName - Attribute name
+     * @param {string} value - Attribute value
+     */
+    const setAttributeSafe = (element, attrName, value) => {
+      if (!element || !attrName) return;
+      try {
+        if (typeof element.setAttribute111 === 'function') {
+          element.setAttribute111(attrName, value);
+        } else {
+          element.setAttribute(attrName, value);
+        }
+      } catch {
+        element.setAttribute(attrName, value);
+      }
+    };
 
-      for (const link of links) {
-        const content = document.querySelector(link.getAttribute000('tyt-tab-content'));
-        if (!link || !content) continue;
+    /**
+     * Remove attribute with safe fallback
+     * @param {Element} element - Element to remove attribute from
+     * @param {string} attrName - Attribute name
+     */
+    const removeAttributeSafe = (element, attrName) => {
+      if (!element || !attrName) return;
+      try {
+        if (typeof element.removeAttribute000 === 'function') {
+          element.removeAttribute000(attrName);
+        } else {
+          element.removeAttribute(attrName);
+        }
+      } catch {
+        element.removeAttribute(attrName);
+      }
+    };
 
-        const isActive = link === activeLink;
+    /**
+     * Find tab links with fallback selectors
+     * @returns {NodeListOf<Element>} Tab link elements
+     */
+    const findTabLinks = () => {
+      let links = document.querySelectorAll('#material-tabs a[tyt-tab-content]');
+      if (links.length === 0) {
+        links = document.querySelectorAll('#right-tabs a[tyt-tab-content]');
+      }
+      return links;
+    };
 
-        link.classList.toggle('active', isActive);
-        content.classList.toggle('tab-content-hidden', !isActive);
+    /**
+     * Update tab link active state
+     * @param {Element} link - Tab link element
+     * @param {boolean} isActive - Whether tab should be active
+     */
+    const updateTabLinkState = (link, isActive) => {
+      if (isActive) {
+        link.classList.add('active');
+      } else {
+        link.classList.remove('active');
+      }
+    };
 
-        if (isActive) {
-          content.removeAttribute000('tyt-hidden');
-        } else if (!content.hasAttribute000('tyt-hidden')) {
-          content.setAttribute111('tyt-hidden', '');
+    /**
+     * Update tab content visibility
+     * @param {Element} content - Tab content element
+     * @param {boolean} isActive - Whether content should be visible
+     */
+    const updateTabContentVisibility = (content, isActive) => {
+      if (isActive) {
+        content.classList.remove('tab-content-hidden');
+        removeAttributeSafe(content, 'tyt-hidden');
+      } else {
+        content.classList.add('tab-content-hidden');
+        if (!content.hasAttribute('tyt-hidden')) {
+          setAttributeSafe(content, 'tyt-hidden', '');
         }
       }
+    };
 
-      const switchingTo = activeLink ? activeLink.getAttribute000('tyt-tab-content') : '';
-      if (switchingTo) {
-        lastTab = lastPanel = switchingTo;
-      }
+    /**
+     * Switch to specified tab
+     * @param {string|Element|null} activeLinkParam - Tab link selector or element
+     */
+    const switchToTab = activeLinkParam => {
+      try {
+        let activeLink = activeLinkParam;
 
-      if (ytdFlexyElm?.getAttribute000('tyt-chat') === '') {
-        ytdFlexyElm.removeAttribute000('tyt-chat');
-      }
-      ytdFlexyElm?.setAttribute111('tyt-tab', switchingTo);
+        // Convert string selector to element
+        if (typeof activeLink === 'string') {
+          const selector = `a[tyt-tab-content="${activeLink}"]`;
+          activeLink = document.querySelector(selector) || null;
+          if (!activeLink) {
+            console.warn(`[YouTube+] switchToTab: could not find tab with selector "${selector}"`);
+          }
+        }
 
-      if (switchingTo) {
-        bFixForResizedTabLater = false;
-        Promise.resolve(0).then(eventMap['fixForTabDisplay']);
+        const ytdFlexyElm = elements.flexy;
+        if (!ytdFlexyElm) {
+          console.warn('[YouTube+] switchToTab: flexy element not found');
+          return;
+        }
+
+        const links = findTabLinks();
+        if (links.length === 0) {
+          console.error('[YouTube+] switchToTab: CRITICAL - no tabs found at all!');
+          return;
+        }
+
+        let activatedCount = 0;
+        let deactivatedCount = 0;
+
+        for (const link of links) {
+          try {
+            const contentSelector = getAttributeSafe(link, 'tyt-tab-content');
+            if (!contentSelector) {
+              console.warn('[YouTube+] switchToTab: link missing tyt-tab-content attribute');
+              continue;
+            }
+
+            const content = document.querySelector(contentSelector);
+            if (!content) {
+              console.warn(
+                `[YouTube+] switchToTab: content not found for selector "${contentSelector}"`
+              );
+              continue;
+            }
+
+            const isActive = link === activeLink;
+            updateTabLinkState(link, isActive);
+            updateTabContentVisibility(content, isActive);
+
+            if (isActive) {
+              activatedCount++;
+            } else {
+              deactivatedCount++;
+            }
+          } catch (linkError) {
+            console.warn('[YouTube+] switchToTab: error processing link', linkError);
+          }
+        }
+
+        const switchingTo = activeLink ? getAttributeSafe(activeLink, 'tyt-tab-content') || '' : '';
+
+        if (DEBUG_5085) {
+          console.log(
+            `[YouTube+] switchToTab: switching to "${switchingTo}", activated ${activatedCount}, deactivated ${deactivatedCount}`
+          );
+        }
+
+        if (switchingTo) {
+          lastTab = switchingTo;
+          lastPanel = switchingTo;
+        }
+
+        // Clean up tyt-chat attribute if empty
+        const currentChat = getAttributeSafe(ytdFlexyElm, 'tyt-chat');
+        if (currentChat === '') {
+          removeAttributeSafe(ytdFlexyElm, 'tyt-chat');
+        }
+
+        // Set the active tab attribute
+        setAttributeSafe(ytdFlexyElm, 'tyt-tab', switchingTo);
+
+        if (switchingTo) {
+          bFixForResizedTabLater = false;
+          Promise.resolve(0).then(eventMap['fixForTabDisplay']).catch(console.warn);
+        }
+      } catch (error) {
+        console.error('[YouTube+] switchToTab: critical error', error);
+        console.error(error.stack);
       }
     };
 
     let tabAStatus = 0;
 
     /**
+     * Flag checkers - Each checker validates a specific condition
+     */
+    const flagCheckers = {
+      1: elem => elem.hasAttribute000('theater'),
+      2: elem => getAttributeSafe(elem, 'tyt-tab'),
+      4: elem => getAttributeSafe(elem, 'tyt-chat') === '-',
+      8: elem => getAttributeSafe(elem, 'tyt-chat') === '+',
+      16: elem => elem.hasAttribute000('is-two-columns_'),
+      32: elem => elem.hasAttribute000('tyt-egm-panel_'),
+      64: () => !!document.fullscreenElement,
+      128: elem => elem.hasAttribute000('tyt-playlist-expanded'),
+      4096: elem => elem.getAttribute('tyt-external-ytlstm') === '1',
+    };
+
+    /**
+     * Check if a specific flag condition is met
+     * @param {HTMLElement} element - Element to check
+     * @param {number} flagBit - Flag bit to check
+     * @returns {boolean} True if condition is met
+     */
+    const checkFlagCondition = (element, flagBit) => {
+      const checker = flagCheckers[flagBit];
+      return checker ? checker(element) : false;
+    };
+
+    /**
      * Calculate status flags based on element attributes
-     * @param {number} r - Initial result value
+     * @param {number} initialResult - Initial result value
      * @param {number} flag - Flags to check (bitwise)
      * @returns {number} Calculated status flags
      */
-    const calculationFn = (r = 0, flag) => {
+    const calculationFn = (initialResult = 0, flag) => {
       const ytdFlexyElm = elements.flexy;
-      if (!ytdFlexyElm) return r;
-      if (flag & 1) {
-        r |= 1;
-        if (!ytdFlexyElm.hasAttribute000('theater')) r -= 1;
-      }
-      if (flag & 2) {
-        r |= 2;
-        if (!ytdFlexyElm.getAttribute000('tyt-tab')) r -= 2;
-      }
-      if (flag & 4) {
-        r |= 4;
-        if (ytdFlexyElm.getAttribute000('tyt-chat') !== '-') r -= 4;
-      }
-      if (flag & 8) {
-        r |= 8;
-        if (ytdFlexyElm.getAttribute000('tyt-chat') !== '+') r -= 8;
-      }
-      if (flag & 16) {
-        r |= 16;
-        if (!ytdFlexyElm.hasAttribute000('is-two-columns_')) r -= 16;
-      }
-      if (flag & 32) {
-        r |= 32;
-        if (!ytdFlexyElm.hasAttribute000('tyt-egm-panel_')) r -= 32;
-      }
-      if (flag & 64) {
-        r |= 64;
-        if (!document.fullscreenElement) r -= 64;
+      if (!ytdFlexyElm) return initialResult;
+
+      let result = initialResult;
+
+      // Check each flag bit
+      for (const flagBit of Object.keys(flagCheckers)) {
+        const bit = Number(flagBit);
+        if (flag & bit) {
+          result |= bit;
+          if (!checkFlagCondition(ytdFlexyElm, bit)) {
+            result -= bit;
+          }
+        }
       }
 
-      if (flag & 128) {
-        r |= 128;
-        if (!ytdFlexyElm.hasAttribute000('tyt-playlist-expanded')) r -= 128;
-      }
-      if (flag & 4096) {
-        r |= 4096;
-        if (ytdFlexyElm.getAttribute('tyt-external-ytlstm') !== '1') r -= 4096;
-      }
-      return r;
+      return result;
     };
 
     /**
@@ -1288,45 +1597,57 @@ const executionScript = _communicationKey => {
      * @returns {Element|null} Element with most children or null
      */
     function getSuitableElement(selector) {
-      const elements = document.querySelectorAll(selector);
+      const matchedElements = document.querySelectorAll(selector);
       let bestIndex = -1;
       let maxDepth = -1;
 
-      for (let i = 0; i < elements.length; i++) {
-        const depth = elements[i].getElementsByTagName('*').length;
+      for (let i = 0; i < matchedElements.length; i++) {
+        const depth = matchedElements[i].getElementsByTagName('*').length;
         if (depth > maxDepth) {
           maxDepth = depth;
           bestIndex = i;
         }
       }
 
-      return bestIndex >= 0 ? elements[bestIndex] : null;
+      return bestIndex >= 0 ? matchedElements[bestIndex] : null;
     }
 
     /**
      * Expand YouTube live chat
      */
-    function ytBtnExpandChat() {
-      const dom = getSuitableElement('ytd-live-chat-frame#chat');
-      const cnt = insp(dom);
+    /**
+     * Try to expand chat using collapsed state function
+     * @param {Object} cnt - Chat content object
+     * @returns {boolean} True if succeeded
+     */
+    function tryExpandUsingCollapsedState(cnt) {
+      if (!cnt || typeof cnt.collapsed !== 'boolean') return false;
 
-      if (cnt && typeof cnt.collapsed === 'boolean') {
-        if (typeof cnt.setCollapsedState === 'function') {
-          cnt.setCollapsedState({
-            setLiveChatCollapsedStateAction: {
-              collapsed: false,
-            },
-          });
-          if (cnt.collapsed === false) return;
-        }
-        cnt.collapsed = false;
-        if (cnt.collapsed === false) return;
-        if (cnt.isHiddenByUser === true && cnt.collapsed === true) {
-          cnt.isHiddenByUser = false;
-          cnt.collapsed = false;
-        }
+      if (typeof cnt.setCollapsedState === 'function') {
+        cnt.setCollapsedState({
+          setLiveChatCollapsedStateAction: {
+            collapsed: false,
+          },
+        });
+        if (cnt.collapsed === false) return true;
       }
 
+      cnt.collapsed = false;
+      if (cnt.collapsed === false) return true;
+
+      if (cnt.isHiddenByUser === true && cnt.collapsed === true) {
+        cnt.isHiddenByUser = false;
+        cnt.collapsed = false;
+        return cnt.collapsed === false;
+      }
+
+      return false;
+    }
+
+    /**
+     * Try to expand chat by clicking button
+     */
+    function tryExpandUsingButton() {
       let button = document.querySelector(
         'ytd-live-chat-frame#chat[collapsed] > .ytd-live-chat-frame#show-hide-button'
       );
@@ -1339,32 +1660,52 @@ const executionScript = _communicationKey => {
     }
 
     /**
-     * Collapse YouTube live chat
+     * Expand YouTube live chat
      */
-    /**
-     * Collapse YouTube live chat panel
-     */
-    function ytBtnCollapseChat() {
+    function ytBtnExpandChat() {
       const dom = getSuitableElement('ytd-live-chat-frame#chat');
       const cnt = insp(dom);
 
-      if (cnt && typeof cnt.collapsed === 'boolean') {
-        if (typeof cnt.setCollapsedState === 'function') {
-          cnt.setCollapsedState({
-            setLiveChatCollapsedStateAction: {
-              collapsed: true,
-            },
-          });
-          if (cnt.collapsed === true) return;
-        }
-        cnt.collapsed = true;
-        if (cnt.collapsed === true) return;
-        if (cnt.isHiddenByUser === false && cnt.collapsed === false) {
-          cnt.isHiddenByUser = true;
-          cnt.collapsed = true;
-        }
+      if (tryExpandUsingCollapsedState(cnt)) return;
+      tryExpandUsingButton();
+    }
+
+    /**
+     * Collapse YouTube live chat
+     */
+    /**
+     * Try to collapse chat using collapsed state function
+     * @param {Object} cnt - Chat content object
+     * @returns {boolean} True if succeeded
+     */
+    function tryCollapseUsingCollapsedState(cnt) {
+      if (!cnt || typeof cnt.collapsed !== 'boolean') return false;
+
+      if (typeof cnt.setCollapsedState === 'function') {
+        cnt.setCollapsedState({
+          setLiveChatCollapsedStateAction: {
+            collapsed: true,
+          },
+        });
+        if (cnt.collapsed === true) return true;
       }
 
+      cnt.collapsed = true;
+      if (cnt.collapsed === true) return true;
+
+      if (cnt.isHiddenByUser === false && cnt.collapsed === false) {
+        cnt.isHiddenByUser = true;
+        cnt.collapsed = true;
+        return cnt.collapsed === true;
+      }
+
+      return false;
+    }
+
+    /**
+     * Try to collapse chat by clicking button
+     */
+    function tryCollapseUsingButton() {
       let button = document.querySelector(
         'ytd-live-chat-frame#chat:not([collapsed]) > .ytd-live-chat-frame#show-hide-button'
       );
@@ -1377,52 +1718,106 @@ const executionScript = _communicationKey => {
     }
 
     /**
+     * Collapse YouTube live chat panel
+     */
+    function ytBtnCollapseChat() {
+      const dom = getSuitableElement('ytd-live-chat-frame#chat');
+      const cnt = insp(dom);
+
+      if (tryCollapseUsingCollapsedState(cnt)) return;
+      tryCollapseUsingButton();
+    }
+
+    /**
+     * Control YouTube engagement panels (show/hide)
+     * @param {Array|Object} arr - Array of panel actions or single action object
+     */
+    /**
+     * Normalize input to array
+     * @param {*} arr - Input parameter
+     * @returns {Array} Normalized array
+     */
+    function normalizeToArray(arr) {
+      if (!arr) return [];
+      return 'length' in arr ? arr : [arr];
+    }
+
+    /**
+     * Create hide panel action
+     * @param {string} panelId - Panel identifier
+     * @returns {Object} Action object
+     */
+    function createHideAction(panelId) {
+      return {
+        changeEngagementPanelVisibilityAction: {
+          targetId: panelId,
+          visibility: 'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN',
+        },
+      };
+    }
+
+    /**
+     * Create show panel action
+     * @param {string} panelId - Panel identifier
+     * @returns {Object} Action object
+     */
+    function createShowAction(panelId) {
+      return {
+        showEngagementPanelEndpoint: {
+          panelIdentifier: panelId,
+        },
+      };
+    }
+
+    /**
+     * Build panel actions from entry
+     * @param {Object} entry - Panel entry configuration
+     * @returns {Object|null} Action object or null
+     */
+    function buildPanelAction(entry) {
+      if (!entry) return null;
+      const { panelId, toHide, toShow } = entry;
+
+      if (toHide === true && !toShow) {
+        return createHideAction(panelId);
+      }
+      if (toShow === true && !toHide) {
+        return createShowAction(panelId);
+      }
+      return null;
+    }
+
+    /**
+     * Execute engagement panel commands
+     * @param {HTMLElement} ytdFlexyElm - Flexy element
+     * @param {Array} actions - Actions to execute
+     */
+    function executeEngagementPanelCommands(ytdFlexyElm, actions) {
+      if (actions.length === 0) return;
+      const cnt = insp(ytdFlexyElm);
+      cnt.resolveCommand(
+        {
+          signalServiceEndpoint: {
+            signal: 'CLIENT_SIGNAL',
+            actions,
+          },
+        },
+        {},
+        false
+      );
+    }
+
+    /**
      * Control YouTube engagement panels (show/hide)
      * @param {Array|Object} arr - Array of panel actions or single action object
      */
     function ytBtnEgmPanelCore(arr) {
-      if (!arr) return;
-      if (!('length' in arr)) arr = [arr];
-
+      const arrayParam = normalizeToArray(arr);
       const ytdFlexyElm = elements.flexy;
-      if (!ytdFlexyElm) return;
+      if (!ytdFlexyElm || arrayParam.length === 0) return;
 
-      const actions = [];
-
-      for (const entry of arr) {
-        if (!entry) continue;
-
-        const { panelId, toHide, toShow } = entry;
-
-        if (toHide === true && !toShow) {
-          actions.push({
-            changeEngagementPanelVisibilityAction: {
-              targetId: panelId,
-              visibility: 'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN',
-            },
-          });
-        } else if (toShow === true && !toHide) {
-          actions.push({
-            showEngagementPanelEndpoint: {
-              panelIdentifier: panelId,
-            },
-          });
-        }
-      }
-
-      if (actions.length > 0) {
-        const cnt = insp(ytdFlexyElm);
-        cnt.resolveCommand(
-          {
-            signalServiceEndpoint: {
-              signal: 'CLIENT_SIGNAL',
-              actions: actions,
-            },
-          },
-          {},
-          false
-        );
-      }
+      const actions = arrayParam.map(buildPanelAction).filter(Boolean);
+      executeEngagementPanelCommands(ytdFlexyElm, actions);
     }
 
     /*
@@ -1542,7 +1937,7 @@ const executionScript = _communicationKey => {
         }
         if (bfDataChangeCounter && oriCnt.data) {
           node.replaceWith(dummyNode);
-          cnt.data = Object.assign({}, oriCnt.data);
+          cnt.data = { ...oriCnt.data };
           dummyNode.replaceWith(node);
         }
       }
@@ -1578,7 +1973,7 @@ const executionScript = _communicationKey => {
      */
     const infoFix = lockId => {
       if (lockId !== null && lockGet['infoFixLock'] !== lockId) return;
-      const infoExpander = elements.infoExpander;
+      const { infoExpander } = elements;
       const infoContainer =
         (infoExpander ? infoExpander.parentNode : null) || document.querySelector('#tab-info');
       const ytdFlexyElm = elements.flexy;
@@ -1598,8 +1993,9 @@ const executionScript = _communicationKey => {
         .filter(elm => {
           return typeof elm.is == 'string';
         })
-        .map(elm => {
-          const is = elm.is;
+        .map(elmParam => {
+          const { is } = elmParam;
+          let elm = elmParam;
           while (elm instanceof HTMLElement_) {
             const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
             if (q.length >= 1) return q[0];
@@ -1645,10 +2041,20 @@ const executionScript = _communicationKey => {
 
           const nodeWR = mWeakRef(mirrorNode);
 
-          new MutationObserver(moChangeReflection.bind(nodeWR)).observe(s, {
-            attributes: true,
-            attributeFilter: ['tyt-clone-refresh-count', 'tyt-data-change-counter'],
-          });
+          if (s && s instanceof Node) {
+            try {
+              new MutationObserver(moChangeReflection.bind(nodeWR)).observe(s, {
+                attributes: true,
+                attributeFilter: ['tyt-clone-refresh-count', 'tyt-data-change-counter'],
+              });
+            } catch (observeError) {
+              console.error(
+                '[YouTube+] Failed to observe source element for mirror reflection:',
+                observeError,
+                s
+              );
+            }
+          }
 
           s.jy8432 = 1;
           if (
@@ -1657,8 +2063,8 @@ const executionScript = _communicationKey => {
             typeof cProto._createPropertyObserver === 'function'
           ) {
             cProto._dataChanged496 = function () {
-              const cnt = this;
-              const node = cnt.hostElement || cnt;
+              const cntInner = this;
+              const node = cntInner.hostElement || cntInner;
               if (node.jy8432) {
                 attributeInc(node, 'tyt-data-change-counter');
               }
@@ -1679,38 +2085,46 @@ const executionScript = _communicationKey => {
             ) {
               dataSignal.controller573 = mWeakRef(cnt);
               dataSignal.setWithPath573 = dataSignal.setWithPath;
-              dataSignal.setWithPath = function () {
-                const cnt = kRef(this.controller573 || null) || null;
-                cnt &&
-                  typeof cnt._dataChanged496k === 'function' &&
-                  Promise.resolve(cnt)
-                    .then(cnt._dataChanged496k)
+              dataSignal.setWithPath = function (...args) {
+                const controller = kRef(this.controller573 || null) || null;
+                controller &&
+                  typeof controller._dataChanged496k === 'function' &&
+                  Promise.resolve(controller)
+                    .then(controller._dataChanged496k)
                     .catch(err => handlePromiseError(err, 'setWithPath_dataChanged496k'));
-                return this.setWithPath573(...arguments);
+                return this.setWithPath573(...args);
               };
               cProto._dataChanged496 = function () {
-                const cnt = this;
-                const node = cnt.hostElement || cnt;
+                const controller = this;
+                const node = controller.hostElement || controller;
                 if (node.jy8432) {
                   attributeInc(node, 'tyt-data-change-counter');
                 }
               };
-              cProto._dataChanged496k = cnt => cnt._dataChanged496();
+              cProto._dataChanged496k = controller => controller._dataChanged496();
             }
           }
 
           if (!cProto._dataChanged496) {
-            new MutationObserver(
-              monitorDataChangedByDOMMutation.bind(mirrorNode[__j5744__])
-            ).observe(s, { attributes: true, childList: true, subtree: true });
+            if (s && s instanceof Node) {
+              try {
+                new MutationObserver(
+                  monitorDataChangedByDOMMutation.bind(mirrorNode[__j5744__])
+                ).observe(s, { attributes: true, childList: true, subtree: true });
+              } catch (observeError) {
+                console.error(
+                  '[YouTube+] Failed to observe source element for data-change monitoring:',
+                  observeError,
+                  s
+                );
+              }
+            }
           }
 
           mirrorNodeWS.set(s, nodeWR);
           requiredUpdate = true;
-        } else {
-          if (mirrorNode.parentNode !== targetParent) {
-            requiredUpdate = true;
-          }
+        } else if (mirrorNode.parentNode !== targetParent) {
+          requiredUpdate = true;
         }
         if (!requiredUpdate) {
           const cloneNodeCnt = insp(mirrorNode);
@@ -1773,12 +2187,10 @@ const executionScript = _communicationKey => {
      */
     const layoutFix = lockId => {
       if (lockGet['layoutFixLock'] !== lockId) return;
-      // console.log('((layoutFix))')
 
       const secondaryWrapper = document.querySelector(
         '#secondary-inner.style-scope.ytd-watch-flexy > secondary-wrapper'
       );
-      // console.log(3838, !!chatContainer, !!(secondaryWrapper && secondaryInner), secondaryInner?.firstChild, secondaryInner?.lastChild , secondaryWrapper?.parentNode === secondaryInner)
       if (secondaryWrapper) {
         const secondaryInner = secondaryWrapper.parentNode;
 
@@ -1789,7 +2201,6 @@ const executionScript = _communicationKey => {
           secondaryInner.firstChild !== secondaryInner.lastChild ||
           (chatContainer && !chatContainer.closest('secondary-wrapper'))
         ) {
-          // console.log(38381)
           const w = [];
           const w2 = [];
           for (
@@ -1816,7 +2227,6 @@ const executionScript = _communicationKey => {
               w.push(node);
             }
           }
-          // console.log('qww', w, w2)
 
           inPageRearrange = true;
           secondaryWrapper.replaceChildren000(...w, ...w2);
@@ -1933,112 +2343,173 @@ const executionScript = _communicationKey => {
     const { handleNavigateFactory } = (() => {
       let isLoadStartListened = false;
 
+      /**
+       * Extract comment ID from anchor href
+       * @param {HTMLElement} anchor - Anchor element
+       * @returns {string|null} Comment ID or null
+       */
+      function extractCommentId(anchor) {
+        const href = anchor.getAttribute('href') || '';
+        const match = /[&?]lc=([\w_.-]+)/.exec(href);
+        return match ? match[1] : null;
+      }
+
+      /**
+       * Find comment renderer from header anchor
+       * @param {HTMLElement} header - Header element
+       * @returns {string|null} Comment ID or null
+       */
+      function findCommentIdFromHeader(header) {
+        const anchor = _querySelector.call(header, 'a[href*="lc="]');
+        return anchor ? extractCommentId(anchor) : null;
+      }
+
+      /**
+       * Search for linked comment by badge element
+       * @returns {{lc: string, commentRendererElm: HTMLElement}|null} Comment data or null
+       */
+      function findLinkedCommentByBadge() {
+        const badgeElement = document.querySelector(
+          `#tab-comments ytd-comments ytd-comment-renderer > #linked-comment-badge span:not(:empty)`
+        );
+        if (!badgeElement) return null;
+
+        const commentRendererElm = closestFromAnchor.call(badgeElement, 'ytd-comment-renderer');
+        if (!commentRendererElm) return null;
+
+        const header = _querySelector.call(commentRendererElm, '#header-author');
+        if (!header) return null;
+
+        const commentId = findCommentIdFromHeader(header);
+        if (!commentId) return null;
+
+        return { lc: commentId, commentRendererElm };
+      }
+
+      /**
+       * Search for comment by known comment ID
+       * @param {string} commentId - Comment ID to search for
+       * @returns {{lc: string, commentRendererElm: HTMLElement}|null} Comment data or null
+       */
+      function findCommentById(commentId) {
+        const anchor = document.querySelector(
+          `#tab-comments ytd-comments ytd-comment-renderer #header-author a[href*="lc=${commentId}"]`
+        );
+        if (!anchor) return null;
+
+        const commentRendererElm = closestFromAnchor.call(anchor, 'ytd-comment-renderer');
+        if (!commentRendererElm) return null;
+
+        return { lc: commentId, commentRendererElm };
+      }
+
+      /**
+       * Find linked comment by ID or badge
+       * @param {string} [lc] - Optional comment ID
+       * @returns {{lc: string, commentRendererElm: HTMLElement}|null} Comment data or null
+       */
       function findLcComment(lc) {
-        if (arguments.length === 1) {
-          const element = document.querySelector(
-            `#tab-comments ytd-comments ytd-comment-renderer #header-author a[href*="lc=${lc}"]`
-          );
-          if (element) {
-            const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
-            if (commentRendererElm && lc) {
-              return {
-                lc,
-                commentRendererElm,
-              };
-            }
-          }
-        } else if (arguments.length === 0) {
-          const element = document.querySelector(
-            `#tab-comments ytd-comments ytd-comment-renderer > #linked-comment-badge span:not(:empty)`
-          );
-          if (element) {
-            const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
-            if (commentRendererElm) {
-              const header = _querySelector.call(commentRendererElm, '#header-author');
-              if (header) {
-                const anchor = _querySelector.call(header, 'a[href*="lc="]');
-                if (anchor) {
-                  const href = anchor.getAttribute('href') || '';
-                  const m = /[&?]lc=([\w_.-]+)/.exec(href); // dot = sub-comment
-                  if (m) {
-                    lc = m[1];
-                  }
-                }
-              }
-            }
-            if (commentRendererElm && lc) {
-              return {
-                lc,
-                commentRendererElm,
-              };
-            }
-          }
+        return typeof lc === 'undefined' ? findLinkedCommentByBadge() : findCommentById(lc);
+      }
+
+      /**
+       * Validate comment badge swap conditions
+       * @param {Object} r1Data - Source comment data
+       * @param {Object} r2Data - Target comment data
+       * @returns {boolean} True if swap is valid
+       */
+      function validateBadgeSwapConditions(r1Data, r2Data) {
+        return (
+          typeof r1Data.linkedCommentBadge === 'object' &&
+          typeof r2Data.linkedCommentBadge === 'undefined'
+        );
+      }
+
+      /**
+       * Clean badge tracking parameters
+       * @param {Object} badge - Badge object to clean
+       * @returns {Object} Cleaned badge
+       */
+      function cleanBadgeTrackingParams(badge) {
+        const cleaned = { ...badge };
+        if (cleaned?.metadataBadgeRenderer?.trackingParams) {
+          delete cleaned.metadataBadgeRenderer.trackingParams;
+        }
+        return cleaned;
+      }
+
+      /**
+       * Validate parent compatibility for swap
+       * @param {Object} v1 - First content renderer
+       * @param {Object} v2 - Second content renderer
+       * @returns {boolean} True if parents are compatible
+       */
+      function validateParentCompatibility(v1, v2) {
+        if (v1.parent !== v2.parent) {
+          return false;
+        }
+        const { nodeName } = v2.parent;
+        return nodeName === 'YTD-COMMENTS' || nodeName === 'YTD-ITEM-SECTION-RENDERER';
+      }
+
+      /**
+       * Reorder contents to move target to front
+       * @param {Object} parentCnt - Parent container
+       * @param {number} targetIndex - Target index
+       */
+      function reorderContentsToFront(parentCnt, targetIndex) {
+        const contents = parentCnt.data?.contents;
+        if (!contents) {
+          console.warn('Contents not found in parent');
+          return;
         }
 
-        return null;
+        parentCnt.data = {
+          ...parentCnt.data,
+          contents: [
+            contents[targetIndex],
+            ...contents.slice(0, targetIndex),
+            ...contents.slice(targetIndex + 1),
+          ],
+        };
       }
 
       function lcSwapFuncA(targetLcId, currentLcId) {
-        let done = 0;
         try {
-          // console.log(currentLcId, targetLcId)
-
           const r1 = findLcComment(currentLcId).commentRendererElm;
           const r2 = findLcComment(targetLcId).commentRendererElm;
 
-          if (
-            typeof insp(r1).data.linkedCommentBadge === 'object' &&
-            typeof insp(r2).data.linkedCommentBadge === 'undefined'
-          ) {
-            const p = Object.assign({}, insp(r1).data.linkedCommentBadge);
+          const r1Data = insp(r1).data;
+          const r2Data = insp(r2).data;
 
-            if (((p || 0).metadataBadgeRenderer || 0).trackingParams) {
-              delete p.metadataBadgeRenderer.trackingParams;
-            }
-
-            const v1 = findContentsRenderer(r1);
-            const v2 = findContentsRenderer(r2);
-
-            if (
-              v1.parent === v2.parent &&
-              (v2.parent.nodeName === 'YTD-COMMENTS' ||
-                v2.parent.nodeName === 'YTD-ITEM-SECTION-RENDERER')
-            ) {
-            } else {
-              // currently not supported
-              return false;
-            }
-
-            if (v2.index >= 0) {
-              if (v2.parent.nodeName === 'YTD-COMMENT-REPLIES-RENDERER') {
-                if (lcSwapFuncB(targetLcId, currentLcId, p)) {
-                  done = 1;
-                }
-
-                done = 1;
-              } else {
-                const v2pCnt = insp(v2.parent);
-                const v2Conents = (v2pCnt.data || 0).contents || 0;
-                if (!v2Conents) console.warn('v2Conents is not found');
-
-                v2pCnt.data = Object.assign({}, v2pCnt.data, {
-                  contents: [].concat(
-                    [v2Conents[v2.index]],
-                    v2Conents.slice(0, v2.index),
-                    v2Conents.slice(v2.index + 1)
-                  ),
-                });
-
-                if (lcSwapFuncB(targetLcId, currentLcId, p)) {
-                  done = 1;
-                }
-              }
-            }
+          if (!validateBadgeSwapConditions(r1Data, r2Data)) {
+            return false;
           }
+
+          const badge = cleanBadgeTrackingParams(r1Data.linkedCommentBadge);
+          const v1 = findContentsRenderer(r1);
+          const v2 = findContentsRenderer(r2);
+
+          if (!validateParentCompatibility(v1, v2)) {
+            return false;
+          }
+
+          if (v2.index < 0) {
+            return false;
+          }
+
+          // Handle comment replies renderer
+          if (v2.parent.nodeName === 'YTD-COMMENT-REPLIES-RENDERER') {
+            return lcSwapFuncB(targetLcId, currentLcId, badge);
+          }
+
+          // Handle regular comments
+          reorderContentsToFront(insp(v2.parent), v2.index);
+          return lcSwapFuncB(targetLcId, currentLcId, badge);
         } catch (e) {
-          console.warn(e);
+          console.warn('lcSwapFuncA error:', e);
+          return false;
         }
-        return done === 1;
       }
 
       function lcSwapFuncB(targetLcId, currentLcId, _p) {
@@ -2050,16 +2521,16 @@ const executionScript = _communicationKey => {
           const r2cnt = insp(r2);
 
           const r1d = r1cnt.data;
-          const p = Object.assign({}, _p);
+          const p = { ..._p };
           r1d.linkedCommentBadge = null;
           delete r1d.linkedCommentBadge;
 
-          const q = Object.assign({}, r1d);
+          const q = { ...r1d };
           q.linkedCommentBadge = null;
           delete q.linkedCommentBadge;
 
-          r1cnt.data = Object.assign({}, q);
-          r2cnt.data = Object.assign({}, r2cnt.data, { linkedCommentBadge: p });
+          r1cnt.data = { ...q };
+          r2cnt.data = { ...r2cnt.data, linkedCommentBadge: p };
 
           done = 1;
         } catch (e) {
@@ -2089,7 +2560,7 @@ const executionScript = _communicationKey => {
             for (const s of media2) {
               if (s.paused === false) {
                 Promise.resolve(s)
-                  .then(s => s.paused === false && s.pause())
+                  .then(secondaryMedia => secondaryMedia.paused === false && secondaryMedia.pause())
                   .catch(console.warn);
                 break;
               }
@@ -2110,8 +2581,8 @@ const executionScript = _communicationKey => {
           (endpoint.commandMetadata || 0).webCommandMetadata &&
           endpoint.watchEndpoint
         ) {
-          const videoId = endpoint.watchEndpoint.videoId;
-          const url = endpoint.commandMetadata.webCommandMetadata.url;
+          const { videoId } = endpoint.watchEndpoint;
+          const { url } = endpoint.commandMetadata.webCommandMetadata;
 
           if (typeof videoId === 'string' && typeof url === 'string' && url.indexOf('lc=') > 0) {
             const m = /^\/watch\?v=([\w_-]+)&lc=([\w_.-]+)$/.exec(url); // dot = sub-comment
@@ -2128,8 +2599,12 @@ const executionScript = _communicationKey => {
               const currentLc = targetLc ? findLcComment() : null;
 
               if (targetLc && currentLc) {
-                const done =
-                  targetLc.lc === currentLc.lc ? 1 : lcSwapFuncA(targetLc.lc, currentLc.lc) ? 1 : 0;
+                let done = 0;
+                if (targetLc.lc === currentLc.lc) {
+                  done = 1;
+                } else if (lcSwapFuncA(targetLc.lc, currentLc.lc)) {
+                  done = 1;
+                }
 
                 if (done === 1) {
                   common.xReplaceState(history.state, url);
@@ -2275,8 +2750,7 @@ const executionScript = _communicationKey => {
             e => !e.closest('[hidden]')
           )[0];
           let okay = false;
-          if (!currentAbout) okay = true;
-          else {
+          if (currentAbout) {
             const popupContainer = currentAbout.closest('ytd-popup-container');
             if (popupContainer) {
               const cnt = insp(popupContainer);
@@ -2286,8 +2760,10 @@ const executionScript = _communicationKey => {
               } catch {}
               if (arr && arr.length === 0) okay = true;
             } else {
-              okay = false;
+              okay = true;
             }
+          } else {
+            okay = true;
           }
           if (okay) {
             const descriptionModel = [
@@ -2304,13 +2780,14 @@ const executionScript = _communicationKey => {
           }
         }, 80);
       };
-      const handleNavigateFactory = handleNavigate => {
-        return function (req) {
+      const createHandleNavigate = handleNavigate => {
+        return function (...args) {
+          const req = args[0];
           if (u38 > MAX_ATTRIBUTE_VALUE) u38 = ATTRIBUTE_RESET_VALUE;
           const t38 = ++u38;
 
           const $this = this;
-          const $arguments = arguments;
+          const $arguments = args;
 
           let endpoint = null;
 
@@ -2318,26 +2795,26 @@ const executionScript = _communicationKey => {
             endpoint = getBrowsableEndPoint(req);
           }
 
-          if (!endpoint || !shouldUseMiniPlayer()) return handleNavigate.apply($this, $arguments);
+          if (!endpoint || !shouldUseMiniPlayer()) return handleNavigate.call($this, ...$arguments);
 
           // console.log('tabview-script-handleNavigate')
 
           const ytdAppElm = document.querySelector('ytd-app');
           const ytdAppCnt = insp(ytdAppElm);
 
-          let object = null;
+          let watchEndpoint = null;
           try {
-            object = ytdAppCnt.data.response.currentVideoEndpoint.watchEndpoint || null;
+            watchEndpoint = ytdAppCnt.data.response.currentVideoEndpoint.watchEndpoint || null;
           } catch {
-            object = null;
+            watchEndpoint = null;
           }
 
-          if (typeof object !== 'object') object = null;
+          if (typeof watchEndpoint !== 'object') watchEndpoint = null;
 
           const once = { once: true }; // browsers supporting async function can also use once option.
 
-          if (object !== null && !('playlistId' in object)) {
-            let wObject = mWeakRef(object);
+          if (watchEndpoint !== null && !('playlistId' in watchEndpoint)) {
+            let wObject = mWeakRef(watchEndpoint);
 
             const N = 3;
 
@@ -2399,9 +2876,9 @@ const executionScript = _communicationKey => {
                 }
                 playlistClearout = null;
                 count = N - 1;
-                const object = kRef(wObject);
+                const endpointObj = kRef(wObject);
                 wObject = null;
-                return object ? object.playlistId : null;
+                return endpointObj ? endpointObj.playlistId : null;
               })
               .catch(console.warn);
           }
@@ -2421,75 +2898,201 @@ const executionScript = _communicationKey => {
             fixChannelAboutPopup(t38);
           }
 
-          handleNavigate.apply($this, $arguments);
+          handleNavigate.call($this, ...$arguments);
         };
       };
 
-      return { handleNavigateFactory };
+      return { handleNavigateFactory: createHandleNavigate };
     })();
 
+    /**
+     * Common helpers used by other modules in the main execution script.
+     * This small module centralizes media element detection, history helpers
+     * and ytd-app bridge logic.
+     *
+     * Types:
+     * @typedef {{UNKNOWN:number, VIDEO:number, AUDIO:number}} MediaTypeConst
+     * @typedef {{element:HTMLElement|null, controller:Object|null}} YtdAppInfo
+     */
     const common = (() => {
+      /** Lock indicating detected media type (MediaTypeConst values) */
       let mediaModeLock = 0;
-      const _getMediaElement = i => {
-        if (mediaModeLock === 0) {
-          const e =
-            document.querySelector('.video-stream.html5-main-video') ||
-            document.querySelector('#movie_player video, #movie_player audio') ||
-            document.querySelector('body video[src], body audio[src]');
-          if (e) {
-            if (e.nodeName === 'VIDEO') mediaModeLock = 1;
-            else if (e.nodeName === 'AUDIO') mediaModeLock = 2;
-          }
-        }
+
+      /** @const {MediaTypeConst} Media type constants */
+      const MEDIA_TYPE = {
+        UNKNOWN: 0,
+        VIDEO: 1,
+        AUDIO: 2,
+      };
+
+      /** @const {string[]} Video element selectors in priority order */
+      const VIDEO_SELECTORS = [
+        '#movie_player video[src]',
+        'ytd-player#ytd-player video[src]',
+        'ytd-browse[role="main"] video[src]',
+      ];
+
+      /** @const {string} Base audio selector */
+      const AUDIO_BASE = 'audio.video-stream.html5-main-video[src]';
+
+      /** @const {string[]} Audio element selector templates */
+      const AUDIO_SELECTOR_TEMPLATES = [
+        '#movie_player',
+        'ytd-player#ytd-player',
+        'ytd-browse[role="main"]',
+      ];
+
+      /**
+       * Find first matching media element in DOM
+       * @returns {HTMLElement|null} Found media element
+       */
+      const findMediaElement = () => {
+        return (
+          document.querySelector('.video-stream.html5-main-video') ||
+          document.querySelector('#movie_player video, #movie_player audio') ||
+          document.querySelector('body video[src], body audio[src]')
+        );
+      };
+
+      /**
+       * Get media type from element node name
+       * @param {HTMLElement} element - Media element
+       * @returns {MediaTypeConst[keyof MediaTypeConst]} Media type constant
+       */
+      const getMediaTypeFromElement = element => {
+        if (element.nodeName === 'VIDEO') return MEDIA_TYPE.VIDEO;
+        if (element.nodeName === 'AUDIO') return MEDIA_TYPE.AUDIO;
+        return MEDIA_TYPE.UNKNOWN;
+      };
+
+      /**
+       * Detect and cache media type from DOM (reads the DOM once and stores in mediaModeLock)
+       * @returns {void}
+       */
+      const detectMediaType = () => {
+        const element = findMediaElement();
+        if (!element) return;
+        mediaModeLock = getMediaTypeFromElement(element);
+      };
+
+      /**
+       * Get video selector by index with fallback
+       * @param {number} i - Selector index
+       * @returns {string} CSS selector
+       */
+      const getVideoSelector = i => VIDEO_SELECTORS[i] || VIDEO_SELECTORS[0];
+
+      /**
+       * Get audio selector by index with fallback
+       * @param {number} i - Selector index
+       * @returns {string} CSS selector
+       */
+      const getAudioSelector = i => {
+        const template = AUDIO_SELECTOR_TEMPLATES[i] || AUDIO_SELECTOR_TEMPLATES[0];
+        return `${template} ${AUDIO_BASE}`;
+      };
+
+      /**
+       * Get media element selector based on detected type
+       * @param {number} i - Selector index
+       * @returns {string|null} CSS selector or null
+       */
+      const getMediaElementSelector = i => {
+        if (mediaModeLock === MEDIA_TYPE.UNKNOWN) detectMediaType();
         if (!mediaModeLock) return null;
-        if (mediaModeLock === 1) {
-          switch (i) {
-            case 1:
-              return 'ytd-player#ytd-player video[src]';
-            case 2:
-              return 'ytd-browse[role="main"] video[src]';
-            case 0:
-            default:
-              return '#movie_player video[src]';
-          }
-        } else if (mediaModeLock === 2) {
-          switch (i) {
-            case 1:
-              return 'ytd-player#ytd-player audio.video-stream.html5-main-video[src]';
-            case 2:
-              return 'ytd-browse[role="main"] audio.video-stream.html5-main-video[src]';
-            case 0:
-            default:
-              return '#movie_player audio.video-stream.html5-main-video[src]';
-          }
+
+        return mediaModeLock === MEDIA_TYPE.VIDEO ? getVideoSelector(i) : getAudioSelector(i);
+      };
+
+      /**
+       * Safely replace history state
+       * @param {Object} state - History state
+       * @param {string} url - URL
+       * @returns {void}
+       */
+      const replaceHistoryState = (state, url) => {
+        try {
+          history.replaceState(state, '', url);
+        } catch {
+          // Ignore errors if replaceState is replaced by external script/extension
         }
-        return null;
+      };
+
+      /**
+       * Get ytd-app element and its controller
+       * @returns {YtdAppInfo} ytd-app data
+       */
+      const getYtdApp = () => {
+        const element = document.querySelector('ytd-app');
+        const controller = insp(element);
+        return { element, controller };
+      };
+
+      /**
+       * Update ytd-app state if endpoint exists
+       * @param {Object} state - State with endpoint
+       * @param {string} url - URL
+       * @returns {void}
+       */
+      const updateYtdAppState = (state, url) => {
+        if (!state.endpoint) return;
+
+        try {
+          const { controller } = getYtdApp();
+          controller?.replaceState(state.endpoint, '', url);
+        } catch {
+          // Silently fail if ytd-app not available
+        }
+      };
+
+      /**
+       * Query single media element by selector
+       * @param {string} selector - CSS selector
+       * @returns {HTMLElement|null} Found element
+       */
+      const queryMediaElement = selector => {
+        return selector ? document.querySelector(selector) : null;
+      };
+
+      /**
+       * Query all media elements by selector
+       * @param {string} selector - CSS selector
+       * @returns {NodeList|Array} Found elements
+       */
+      const queryMediaElements = selector => {
+        return selector ? document.querySelectorAll(selector) : [];
       };
 
       return {
+        /**
+         * Replace history state and update ytd-app
+         * @param {Object} s - State object
+         * @param {string} u - URL string
+         * @returns {void}
+         */
         xReplaceState(s, u) {
-          try {
-            history.replaceState(s, '', u);
-          } catch {
-            // in case error occurs if replaceState is replaced by any external script / extension
-          }
-          if (s.endpoint) {
-            try {
-              const ytdAppElm = document.querySelector('ytd-app');
-              const ytdAppCnt = insp(ytdAppElm);
-              ytdAppCnt.replaceState(s.endpoint, '', u);
-            } catch {}
-          }
+          replaceHistoryState(s, u);
+          updateYtdAppState(s, u);
         },
+
+        /**
+         * Get single media element
+         * @param {number} i - Selector index
+         * @returns {HTMLElement|null} Media element
+         */
         getMediaElement(i) {
-          const s = _getMediaElement(i) || '';
-          if (s) return document.querySelector(s);
-          return null;
+          const selector = getMediaElementSelector(i);
+          return queryMediaElement(selector);
         },
+
+        /**
+         * Get all media elements
+         * @param {number} i - Selector index
+         * @returns {NodeList|Array} Media elements
+         */
         getMediaElements(i) {
-          const s = _getMediaElement(i) || '';
-          if (s) return document.querySelectorAll(s);
-          return [];
+          const selector = getMediaElementSelector(i);
+          return queryMediaElements(selector);
         },
       };
     })();
@@ -2666,15 +3269,33 @@ const executionScript = _communicationKey => {
         },
         async onMainInfoSet(mainInfo) {
           await this.promiseReady.then();
-          if (mainInfo.nodeName.toLowerCase() === 'ytd-expander') {
-            this.mo.observe(mainInfo, {
-              attributes: true,
-              attributeFilter: ['collapsed', 'attr-8ifv7'],
-            });
-          } else {
-            this.mo.observe(mainInfo, { attributes: true, attributeFilter: ['attr-8ifv7'] });
+          if (mainInfo && mainInfo instanceof Element && mainInfo.isConnected) {
+            if (mainInfo.nodeName.toLowerCase() === 'ytd-expander') {
+              try {
+                this.mo.observe(mainInfo, {
+                  attributes: true,
+                  attributeFilter: ['collapsed', 'attr-8ifv7'],
+                });
+              } catch (observeError) {
+                console.error(
+                  '[YouTube+] Failed to observe mainInfo (expander):',
+                  observeError,
+                  mainInfo
+                );
+              }
+            } else {
+              try {
+                this.mo.observe(mainInfo, { attributes: true, attributeFilter: ['attr-8ifv7'] });
+              } catch (observeError) {
+                console.error('[YouTube+] Failed to observe mainInfo:', observeError, mainInfo);
+              }
+            }
+            try {
+              mainInfo.incAttribute111('attr-8ifv7');
+            } catch (e) {
+              console.warn('[YouTube+] mainInfo.incAttribute111 failed', e);
+            }
           }
-          mainInfo.incAttribute111('attr-8ifv7');
         },
       },
       fullChannelNameOnHover: {
@@ -2724,12 +3345,30 @@ const executionScript = _communicationKey => {
             '#primary.ytd-watch-flexy ytd-watch-metadata #upload-info'
           );
           if (!uploadInfo) return;
-          this.mo.observe(uploadInfo, {
-            attributes: true,
-            attributeFilter: ['hidden', 'attr-3wb0k'],
-          });
-          uploadInfo.incAttribute111('attr-3wb0k');
-          this.ro.observe(uploadInfo);
+          if (uploadInfo && uploadInfo instanceof Element && uploadInfo.isConnected) {
+            try {
+              this.mo.observe(uploadInfo, {
+                attributes: true,
+                attributeFilter: ['hidden', 'attr-3wb0k'],
+              });
+            } catch (observeError) {
+              console.error('[YouTube+] Failed to observe uploadInfo:', observeError, uploadInfo);
+            }
+            try {
+              uploadInfo.incAttribute111('attr-3wb0k');
+            } catch (e) {
+              console.warn('[YouTube+] uploadInfo.incAttribute111 failed', e);
+            }
+            try {
+              if (this.ro && typeof this.ro.observe === 'function') this.ro.observe(uploadInfo);
+            } catch (observeError) {
+              console.error(
+                '[YouTube+] Failed to observe uploadInfo with ResizeObserver:',
+                observeError,
+                uploadInfo
+              );
+            }
+          }
         },
         activate() {
           if (this.activated) return;
@@ -3054,7 +3693,7 @@ const executionScript = _communicationKey => {
           return;
         }
         const cnt = insp(hostElement);
-        const commentsArea = elements.comments;
+        const { comments: commentsArea } = elements;
         if (
           commentsArea !== hostElement ||
           hostElement.isConnected !== true ||
@@ -3064,7 +3703,7 @@ const executionScript = _communicationKey => {
         ) {
           return;
         }
-        const ytdFlexyElm = elements.flexy;
+        const { flexy: ytdFlexyElm } = elements;
         const ytdFlexyCnt = ytdFlexyElm ? insp(ytdFlexyElm) : null;
         if (ytdFlexyCnt && ytdFlexyCnt.videoId) {
           hostElement.setAttribute111('tyt-comments-video-id', ytdFlexyCnt.videoId);
@@ -3078,8 +3717,7 @@ const executionScript = _communicationKey => {
         // commentsArea's attribute: tyt-comments-video-id
         // ytdFlexyElm's attribute: video-id
 
-        const commentsArea = elements.comments;
-        const ytdFlexyElm = elements.flexy;
+        const { comments: commentsArea, flexy: ytdFlexyElm } = elements;
         if (commentsArea && ytdFlexyElm && !commentsArea.hasAttribute000('hidden')) {
           const ytdFlexyCnt = insp(ytdFlexyElm);
           if (typeof ytdFlexyCnt.videoId === 'string') {
@@ -3183,7 +3821,13 @@ const executionScript = _communicationKey => {
         console.log('ytd-comments::attached');
         Promise.resolve(hostElement).then(eventMap['settingCommentsVideoId']).catch(console.warn);
 
-        aoComment.observe(hostElement, { attributes: true });
+        if (hostElement && hostElement instanceof Element && hostElement.isConnected) {
+          try {
+            aoComment.observe(hostElement, { attributes: true });
+          } catch (observeError) {
+            console.error('[YouTube+] Failed to observe comments element:', observeError);
+          }
+        }
         hostElement.setAttribute111('tyt-comments-area', '');
 
         const lockId = lockSet['rightTabReadyLock02'];
@@ -3311,7 +3955,7 @@ const executionScript = _communicationKey => {
         if (hostElement === targetElement) {
           hostElement.setAttribute111('tyt-comments-header-field', '');
         } else {
-          const parentNode = hostElement.parentNode;
+          const { parentNode } = hostElement;
           if (
             parentNode instanceof HTMLElement_ &&
             parentNode.querySelector('[tyt-comments-header-field]')
@@ -3386,10 +4030,25 @@ const executionScript = _communicationKey => {
               eventMap['ytd-comments-header-renderer::deferredCounterUpdate']
             );
           }
-          headerMutationObserver.observe(hostElement.parentNode, {
-            subtree: false,
-            childList: true,
-          });
+          try {
+            const hdrTarget = hostElement && hostElement.parentNode;
+            if (
+              headerMutationObserver &&
+              hdrTarget &&
+              (hdrTarget instanceof Element || hdrTarget instanceof Node)
+            ) {
+              headerMutationObserver.observe(hdrTarget, {
+                subtree: false,
+                childList: true,
+              });
+            }
+          } catch (observeError) {
+            console.error(
+              '[YouTube+] Failed to observe header parent node:',
+              observeError,
+              hostElement && hostElement.parentNode
+            );
+          }
           if (!headerMutationTmpNode) {
             headerMutationTmpNode = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
           }
@@ -3406,7 +4065,7 @@ const executionScript = _communicationKey => {
         if (nodes.length === 1) {
           const hostElement = nodes[0];
           const cnt = insp(hostElement);
-          const data = cnt.data;
+          const { data } = cnt;
           if (!data) return;
           let ez = '';
           if (
@@ -3567,7 +4226,7 @@ const executionScript = _communicationKey => {
 
           elements.infoExpander.classList.add('tyt-main-info'); // add a classname for it
 
-          const infoExpander = elements.infoExpander;
+          const { infoExpander } = elements;
           // const infoExpanderBack = elements.infoExpanderBack;
 
           // console.log(5438,infoExpander, qt);
@@ -3603,14 +4262,12 @@ const executionScript = _communicationKey => {
 
           if (infoExpander && !infoExpander.closest('#right-tabs')) {
             document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
-          } else {
-            if (document.querySelector('[tyt-tab-content="#tab-info"]')) {
-              const shouldTabVisible =
-                elements.infoExpander && elements.infoExpander.closest('#tab-info');
-              document
-                .querySelector('[tyt-tab-content="#tab-info"]')
-                .classList.toggle('tab-btn-hidden', !shouldTabVisible);
-            }
+          } else if (document.querySelector('[tyt-tab-content="#tab-info"]')) {
+            const shouldTabVisible =
+              elements.infoExpander && elements.infoExpander.closest('#tab-info');
+            document
+              .querySelector('[tyt-tab-content="#tab-info"]')
+              .classList.toggle('tab-btn-hidden', !shouldTabVisible);
           }
 
           Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn); // required when the page is switched from channel to watch
@@ -3653,7 +4310,7 @@ const executionScript = _communicationKey => {
           // document.querySelector('#tab-info').assignChildren111(null, bodyRendererNew, null);
 
           const cnt = insp(bodyRendererNew);
-          cnt.data = Object.assign({}, insp(bodyRenderer).data);
+          cnt.data = { ...insp(bodyRenderer).data };
 
           const inlineExpanderElm = bodyRendererNew.querySelector('ytd-text-inline-expander');
           const inlineExpanderCnt = insp(inlineExpanderElm);
@@ -3712,7 +4369,21 @@ const executionScript = _communicationKey => {
           !hostElement.matches('[hidden] ytd-expander#expander')
         ) {
           hostElement.setAttribute111('tyt-content-comment-entry', '');
-          ioComment.observe(hostElement);
+          try {
+            if (
+              ioComment &&
+              hostElement &&
+              (hostElement instanceof Element || hostElement instanceof Node)
+            ) {
+              ioComment.observe(hostElement);
+            }
+          } catch (observeError) {
+            console.error(
+              '[YouTube+] Failed to observe expander (ioComment):',
+              observeError,
+              hostElement
+            );
+          }
         }
 
         // --------------
@@ -3809,7 +4480,8 @@ const executionScript = _communicationKey => {
           let ath = 0;
           cProto.urlChangedAsync12 = async function () {
             await this.__urlChangedAsyncT689__;
-            const t = (ath = (ath & 1073741823) + 1);
+            ath = (ath & 1073741823) + 1;
+            const t = ath;
             const chatframe = this.chatframe || (this.$ || 0).chatframe || 0;
             if (chatframe instanceof HTMLIFrameElement) {
               if (chatframe.contentDocument === null) {
@@ -3830,7 +4502,39 @@ const executionScript = _communicationKey => {
                       break;
                     }
                   }
-                }).observe(chatframe);
+                }).observe &&
+                  (function () {
+                    try {
+                      if (
+                        chatframe &&
+                        (chatframe instanceof Element || chatframe instanceof Node)
+                      ) {
+                        // some older/embedded frames might not be valid targets; protect observe
+                        new IntersectionObserver((entries, observer) => {
+                          for (const entry of entries) {
+                            const rect = entry.boundingClientRect || 0;
+                            if (isBlankPage || (rect.width > 0 && rect.height > 0)) {
+                              observer.disconnect();
+                              resolve('#');
+                              break;
+                            }
+                          }
+                        }).observe(chatframe);
+                      } else {
+                        // fallback: resolve to avoid hanging
+                        resolve('#');
+                      }
+                    } catch (observeError) {
+                      console.error(
+                        '[YouTube+] Failed to observe chatframe with IntersectionObserver:',
+                        observeError,
+                        chatframe
+                      );
+                      try {
+                        resolve('#');
+                      } catch {}
+                    }
+                  })();
               }).catch(console.warn);
               await Promise.race([p1, p2]);
               if (t !== ath) return;
@@ -3838,8 +4542,8 @@ const executionScript = _communicationKey => {
             this.urlChanged66();
           };
           cProto.urlChanged = function () {
-            const t = (this.__urlChangedAsyncT688__ =
-              (this.__urlChangedAsyncT688__ & 1073741823) + 1);
+            this.__urlChangedAsyncT688__ = (this.__urlChangedAsyncT688__ & 1073741823) + 1;
+            const t = this.__urlChangedAsyncT688__;
             nextBrowserTick(() => {
               if (t !== this.__urlChangedAsyncT688__) return;
               this.urlChangedAsync12();
@@ -3875,7 +4579,13 @@ const executionScript = _communicationKey => {
 
         if (chatElem === hostElement) {
           elements.chat = chatElem;
-          aoChat.observe(chatElem, { attributes: true });
+          if (chatElem && chatElem instanceof Element && chatElem.isConnected) {
+            try {
+              aoChat.observe(chatElem, { attributes: true });
+            } catch (observeError) {
+              console.error('[YouTube+] Failed to observe chat element:', observeError);
+            }
+          }
           const isFlexyReady = elements.flexy instanceof Element;
           chatElem.setAttribute111('tyt-active-chat-frame', isFlexyReady ? 'CF' : 'C');
 
@@ -3888,7 +4598,8 @@ const executionScript = _communicationKey => {
           }
           const cnt = insp(hostElement);
           const q = cnt.__urlChangedAsyncT688__;
-          const p = (cnt.__urlChangedAsyncT689__ = new PromiseExternal());
+          cnt.__urlChangedAsyncT689__ = new PromiseExternal();
+          const p = cnt.__urlChangedAsyncT689__;
           setTimeout_(() => {
             if (p !== cnt.__urlChangedAsyncT689__) return;
             if (cnt.isAttached === true && hostElement.isConnected === true) {
@@ -3961,10 +4672,16 @@ const executionScript = _communicationKey => {
         ) {
           hostElement.setAttribute111('tyt-egm-panel', '');
           Promise.resolve(lockSet['updateEgmPanelsLock']).then(updateEgmPanels).catch(console.warn);
-          aoEgmPanels.observe(hostElement, {
-            attributes: true,
-            attributeFilter: ['visibility', 'hidden'],
-          });
+          if (hostElement && hostElement instanceof Element && hostElement.isConnected) {
+            try {
+              aoEgmPanels.observe(hostElement, {
+                attributes: true,
+                attributeFilter: ['visibility', 'hidden'],
+              });
+            } catch (observeError) {
+              console.error('[YouTube+] Failed to observe engagement panel:', observeError);
+            }
+          }
 
           // console.log(5094, 2, 'ytd-engagement-panel-section-list-renderer::attached', hostElement);
         }
@@ -4083,9 +4800,10 @@ const executionScript = _communicationKey => {
 
         DEBUG_5084 && console.log(5084, 'ytd-watch-metadata::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
-        // if (hostElement.__connectedFlg__ !== 8) return;
-        // hostElement.__connectedFlg__ = 9;
+        if (hostElement.isConnected === false) {
+          // if (hostElement.__connectedFlg__ !== 8) return;
+          // hostElement.__connectedFlg__ = 9;
+        }
       },
 
       'ytd-playlist-panel-renderer::defined': cProto => {
@@ -4135,10 +4853,16 @@ const executionScript = _communicationKey => {
 
         elements.playlist = hostElement;
 
-        aoPlayList.observe(hostElement, {
-          attributes: true,
-          attributeFilter: ['hidden', 'collapsed', 'attr-1y6nu'],
-        });
+        if (hostElement && hostElement instanceof Element && hostElement.isConnected) {
+          try {
+            aoPlayList.observe(hostElement, {
+              attributes: true,
+              attributeFilter: ['hidden', 'collapsed', 'attr-1y6nu'],
+            });
+          } catch (observeError) {
+            console.error('[YouTube+] Failed to observe playlist element:', observeError);
+          }
+        }
         hostElement.incAttribute111('attr-1y6nu');
       },
 
@@ -4147,9 +4871,10 @@ const executionScript = _communicationKey => {
 
         DEBUG_5084 && console.log(5084, 'ytd-playlist-panel-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
-        // if (hostElement.__connectedFlg__ !== 8) return;
-        // hostElement.__connectedFlg__ = 9;
+        if (hostElement.isConnected === false) {
+          // if (hostElement.__connectedFlg__ !== 8) return;
+          // hostElement.__connectedFlg__ = 9;
+        }
       },
 
       _yt_playerProvided: () => {
@@ -4199,11 +4924,11 @@ const executionScript = _communicationKey => {
           ytdFlexyElm.setAttribute111('full-bleed-no-max-width-columns', '');
         }
 
-        const related = elements.related;
+        const { related } = elements;
         if (related && related.isConnected && !related.closest('#right-tabs #tab-videos')) {
           document.querySelector('#tab-videos').assignChildren111(null, related, null);
         }
-        const infoExpander = elements.infoExpander;
+        const { infoExpander } = elements;
         if (
           infoExpander &&
           infoExpander.isConnected &&
@@ -4219,7 +4944,7 @@ const executionScript = _communicationKey => {
 
         const commentsArea = elements.comments;
         if (commentsArea) {
-          const isConnected = commentsArea.isConnected;
+          const { isConnected } = commentsArea;
           if (isConnected && !commentsArea.closest('#right-tabs #tab-comments')) {
             const tab = document.querySelector('#tab-comments');
             tab.assignChildren111(null, commentsArea, null);
@@ -4258,11 +4983,11 @@ const executionScript = _communicationKey => {
             if (plugin.autoExpandInfoDesc.toUse) plugin.autoExpandInfoDesc.activate();
             if (plugin.fullChannelNameOnHover.toUse) plugin.fullChannelNameOnHover.activate();
           }
-          const chat = elements.chat;
+          const { chat } = elements;
           if (chat instanceof Element) {
             chat.setAttribute111('tyt-active-chat-frame', 'CF'); // chat and flexy ready
           }
-          const infoExpander = elements.infoExpander;
+          const { infoExpander } = elements;
           if (infoExpander && infoExpander.closest('#right-tabs')) {
             Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn);
           }
@@ -4274,81 +4999,185 @@ const executionScript = _communicationKey => {
       },
 
       onceInsertRightTabs: () => {
-        // if(lockId !== lockGet['yt-navigate-finish-videos']) return;
-        const related = elements.related;
-        let rightTabs = document.querySelector('#right-tabs');
-        if (!document.querySelector('#right-tabs') && related) {
-          getLangForPage();
-          const docTmp = document.createElement('template');
-          docTmp.innerHTML = createHTML(getTabsHTML());
-          const newElm = docTmp.content.firstElementChild;
-          if (newElm !== null) {
+        try {
+          // if(lockId !== lockGet['yt-navigate-finish-videos']) return;
+          const { related } = elements;
+          if (!related) {
+            console.warn('[YouTube+] onceInsertRightTabs: related element not found');
+            return;
+          }
+
+          let rightTabs = document.querySelector('#right-tabs');
+          if (!rightTabs && related) {
+            getLangForPage();
+            const docTmp = document.createElement('template');
+            const tabsHTML = getTabsHTML();
+
+            if (!tabsHTML) {
+              console.error('[YouTube+] onceInsertRightTabs: getTabsHTML returned empty');
+              return;
+            }
+
+            docTmp.innerHTML = _createHTMLInner(tabsHTML);
+            const newElm = docTmp.content.firstElementChild;
+
+            if (!newElm) {
+              console.error('[YouTube+] onceInsertRightTabs: failed to create tabs element');
+              return;
+            }
+
             inPageRearrange = true;
-            related.parentNode.insertBefore000(newElm, related);
+            if (related.parentNode) {
+              related.parentNode.insertBefore000(newElm, related);
+            } else {
+              console.error('[YouTube+] onceInsertRightTabs: related element has no parent');
+              inPageRearrange = false;
+              return;
+            }
             inPageRearrange = false;
+
+            rightTabs = newElm;
+
+            // Hide comments tab initially
+            const commentsTab = rightTabs.querySelector('[tyt-tab-content="#tab-comments"]');
+            if (commentsTab) {
+              commentsTab.classList.add('tab-btn-hidden');
+            }
+
+            // Create secondary wrapper
+            const secondaryWrapper = document.createElement('secondary-wrapper');
+            secondaryWrapper.classList.add('tabview-secondary-wrapper');
+            const secondaryInner = document.querySelector(
+              '#secondary-inner.style-scope.ytd-watch-flexy'
+            );
+
+            if (secondaryInner) {
+              inPageRearrange = true;
+              secondaryWrapper.replaceChildren000(...secondaryInner.childNodes);
+              secondaryInner.insertBefore000(secondaryWrapper, secondaryInner.firstChild);
+              inPageRearrange = false;
+            }
+
+            // Attach click handler to material tabs
+            const materialTabs = rightTabs.querySelector('#material-tabs');
+            if (materialTabs) {
+              // Remove any existing handler first
+              materialTabs.removeEventListener('click', eventMap['tabs-btn-click'], true);
+              // Add new handler
+              materialTabs.addEventListener('click', eventMap['tabs-btn-click'], true);
+              console.log('[YouTube+] Tab click handler attached successfully to #material-tabs');
+
+              // Also attach to individual buttons as fallback
+              const tabButtons = materialTabs.querySelectorAll('.tab-btn[tyt-tab-content]');
+              console.log(`[YouTube+] Found ${tabButtons.length} tab buttons`);
+
+              tabButtons.forEach(btn => {
+                btn.style.cursor = 'pointer';
+                // Ensure buttons are clickable
+                btn.setAttribute('role', 'tab');
+                btn.setAttribute('tabindex', '0');
+              });
+            } else {
+              console.error('[YouTube+] CRITICAL: #material-tabs not found after creation!');
+              console.log('[YouTube+] rightTabs HTML:', rightTabs.outerHTML?.substring(0, 500));
+            }
+
+            inPageRearrange = true;
+            if (rightTabs && !rightTabs.closest('secondary-wrapper')) {
+              secondaryWrapper.appendChild000(rightTabs);
+            }
+            inPageRearrange = false;
+          } else if (rightTabs) {
+            console.log('[YouTube+] rightTabs already exists, checking handlers');
+
+            // Ensure handler is attached even if tabs already exist
+            const materialTabs = rightTabs.querySelector('#material-tabs');
+            if (materialTabs) {
+              materialTabs.removeEventListener('click', eventMap['tabs-btn-click'], true);
+              materialTabs.addEventListener('click', eventMap['tabs-btn-click'], true);
+              console.log('[YouTube+] Re-attached tab click handler');
+            }
           }
-          rightTabs = newElm;
-          rightTabs
-            .querySelector('[tyt-tab-content="#tab-comments"]')
-            .classList.add('tab-btn-hidden');
 
-          const secondaryWrapper = document.createElement('secondary-wrapper');
-          secondaryWrapper.classList.add('tabview-secondary-wrapper');
-          const secondaryInner = document.querySelector(
-            '#secondary-inner.style-scope.ytd-watch-flexy'
-          );
+          if (rightTabs) {
+            isRightTabsInserted = true;
+            const ioTabBtns = new IntersectionObserver(
+              entries => {
+                for (const entry of entries) {
+                  const rect = entry.boundingClientRect;
+                  entry.target.classList.toggle('tab-btn-visible', rect.width && rect.height);
+                }
+              },
+              { rootMargin: '0px' }
+            );
 
-          inPageRearrange = true;
-          secondaryWrapper.replaceChildren000(...secondaryInner.childNodes);
-          secondaryInner.insertBefore000(secondaryWrapper, secondaryInner.firstChild);
-          inPageRearrange = false;
-
-          rightTabs
-            .querySelector('#material-tabs')
-            .addEventListener('click', eventMap['tabs-btn-click'], true);
-
-          inPageRearrange = true;
-          if (!rightTabs.closest('secondary-wrapper')) secondaryWrapper.appendChild000(rightTabs);
-          inPageRearrange = false;
-        }
-        if (rightTabs) {
-          isRightTabsInserted = true;
-          const ioTabBtns = new IntersectionObserver(
-            entries => {
-              for (const entry of entries) {
-                const rect = entry.boundingClientRect;
-                entry.target.classList.toggle('tab-btn-visible', rect.width && rect.height);
+            const tabButtons = document.querySelectorAll('.tab-btn[tyt-tab-content]');
+            console.log(`[YouTube+] Observing ${tabButtons.length} tab buttons`);
+            for (const btn of tabButtons) {
+              if (btn && btn instanceof Element && btn.isConnected) {
+                try {
+                  ioTabBtns.observe(btn);
+                } catch (observeError) {
+                  console.warn('[YouTube+] Failed to observe tab button:', btn, observeError);
+                }
               }
-            },
-            { rootMargin: '0px' }
-          );
-          for (const btn of document.querySelectorAll('.tab-btn[tyt-tab-content]')) {
-            ioTabBtns.observe(btn);
-          }
-          if (!related.closest('#right-tabs')) {
-            document.querySelector('#tab-videos').assignChildren111(null, related, null);
-          }
-          const infoExpander = elements.infoExpander;
-          if (infoExpander && !infoExpander.closest('#right-tabs')) {
-            document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
-          }
-          const commentsArea = elements.comments;
-          if (commentsArea && !commentsArea.closest('#right-tabs')) {
-            document.querySelector('#tab-comments').assignChildren111(null, commentsArea, null);
-          }
-          rightTabsProvidedPromise.resolve();
-          roRightTabs.disconnect();
-          roRightTabs.observe(rightTabs);
-          const ytdFlexyElm = elements.flexy;
-          const aoFlexy = new MutationObserver(eventMap['aoFlexyFn']);
-          aoFlexy.observe(ytdFlexyElm, { attributes: true });
-          // Promise.resolve(lockSet['tabsStatusCorrectionLock']).then(eventMap['tabsStatusCorrection']).catch(console.warn);
+            }
 
-          Promise.resolve(lockSet['fixInitialTabStateLock'])
-            .then(eventMap['fixInitialTabStateFn'])
-            .catch(console.warn);
+            if (!related.closest('#right-tabs')) {
+              const tabVideos = document.querySelector('#tab-videos');
+              if (tabVideos) {
+                tabVideos.assignChildren111(null, related, null);
+              }
+            }
 
-          ytdFlexyElm.incAttribute111('attr-7qlsy'); // tabsStatusCorrectionLock and video-id
+            const { infoExpander } = elements;
+            if (infoExpander && !infoExpander.closest('#right-tabs')) {
+              const tabInfo = document.querySelector('#tab-info');
+              if (tabInfo) {
+                tabInfo.assignChildren111(null, infoExpander, null);
+              }
+            }
+
+            const commentsArea = elements.comments;
+            if (commentsArea && !commentsArea.closest('#right-tabs')) {
+              const tabComments = document.querySelector('#tab-comments');
+              if (tabComments) {
+                tabComments.assignChildren111(null, commentsArea, null);
+              }
+            }
+
+            rightTabsProvidedPromise.resolve();
+            roRightTabs.disconnect();
+            if (rightTabs && rightTabs instanceof Element && rightTabs.isConnected) {
+              try {
+                roRightTabs.observe(rightTabs);
+              } catch (observeError) {
+                console.error(
+                  '[YouTube+] Failed to observe rightTabs with ResizeObserver:',
+                  observeError
+                );
+              }
+            }
+
+            const ytdFlexyElm = elements.flexy;
+            if (ytdFlexyElm && ytdFlexyElm instanceof Element && ytdFlexyElm.isConnected) {
+              const aoFlexy = new MutationObserver(eventMap['aoFlexyFn']);
+              try {
+                aoFlexy.observe(ytdFlexyElm, { attributes: true });
+              } catch (observeError) {
+                console.error('[YouTube+] Failed to observe ytdFlexyElm:', observeError);
+              }
+
+              Promise.resolve(lockSet['fixInitialTabStateLock'])
+                .then(eventMap['fixInitialTabStateFn'])
+                .catch(console.warn);
+
+              ytdFlexyElm.incAttribute111('attr-7qlsy'); // tabsStatusCorrectionLock and video-id
+            }
+          }
+        } catch (error) {
+          console.error('[YouTube+] onceInsertRightTabs: critical error', error);
+          console.error(error.stack);
         }
       },
 
@@ -4745,17 +5574,19 @@ const executionScript = _communicationKey => {
           }
         } else if (qTab) {
           const hasTheater = qTab.hasAttribute('theater');
-          if (!hasTheater) {
-            DEBUG_5085 && console.log('fixInitialTabStateFn 1b');
+          if (hasTheater) {
+            DEBUG_5085 && console.log('fixInitialTabStateFn 1c');
+            switchToTab(null);
+          } else {
+            if (DEBUG_5085) {
+              console.log('fixInitialTabStateFn 1b');
+            }
             const btn0 = document.querySelector('.tab-btn-visible'); // or default button
             if (btn0) {
               switchToTab(btn0);
             } else {
               switchToTab(null);
             }
-          } else {
-            DEBUG_5085 && console.log('fixInitialTabStateFn 1c');
-            switchToTab(null);
           }
         } else {
           DEBUG_5085 && console.log('fixInitialTabStateFn 1z');
@@ -4765,19 +5596,63 @@ const executionScript = _communicationKey => {
       },
 
       'tabs-btn-click': evt => {
-        const target = evt.target;
-        if (
-          target instanceof HTMLElement_ &&
-          target.classList.contains('tab-btn') &&
-          target.hasAttribute000('tyt-tab-content')
-        ) {
+        try {
+          const { target } = evt;
+          if (!target) {
+            console.warn('[YouTube+] tabs-btn-click: no target element');
+            return;
+          }
+
+          // Find the tab button (handle clicks on child elements)
+          let tabBtn = target;
+
+          // Check if target is already a tab button
+          const hasTabBtnClass =
+            tabBtn &&
+            ((tabBtn.classList && tabBtn.classList.contains('tab-btn')) ||
+              (tabBtn.className &&
+                typeof tabBtn.className === 'string' &&
+                tabBtn.className.includes('tab-btn')));
+
+          // If not, try to find parent tab button
+          if (!hasTabBtnClass && tabBtn && typeof tabBtn.closest === 'function') {
+            tabBtn = tabBtn.closest('.tab-btn');
+          }
+
+          if (!tabBtn) {
+            if (DEBUG_5085) {
+              console.warn('[YouTube+] tabs-btn-click: could not find tab button');
+            }
+            return;
+          }
+
+          // Validate this is a proper tab button
+          const hasTabContent = tabBtn.hasAttribute('tyt-tab-content');
+          if (!hasTabContent) {
+            console.warn('[YouTube+] tabs-btn-click: button missing tyt-tab-content attribute');
+            return;
+          }
+
+          // Stop event propagation
           evt.preventDefault();
           evt.stopPropagation();
           evt.stopImmediatePropagation();
 
-          const activeLink = target;
+          // Get tab content selector
+          const tabContent = getAttributeSafe(tabBtn, 'tyt-tab-content');
 
-          switchToTab(activeLink);
+          if (DEBUG_5085) {
+            console.log('[YouTube+] Tab clicked:', tabContent, tabBtn);
+          }
+
+          if (tabContent) {
+            switchToTab(tabBtn);
+          } else {
+            console.warn('[YouTube+] tabs-btn-click: no tab content value found');
+          }
+        } catch (error) {
+          console.error('[YouTube+] tabs-btn-click: error handling click', error);
+          console.error(error.stack);
         }
       },
     };
@@ -4818,10 +5693,9 @@ const executionScript = _communicationKey => {
             }
             let eventHandler = _evt => {
               document.removeEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
-              const f = callback;
-              callback = null;
+              const callbackFn = callback;
               eventHandler = null;
-              f();
+              callbackFn();
             };
             document.addEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
           } else {
@@ -4874,7 +5748,7 @@ const executionScript = _communicationKey => {
 
     const moEgmPanelReady = new MutationObserver(mutations => {
       for (const mutation of mutations) {
-        const target = mutation.target;
+        const { target } = mutation;
         if (!target.hasAttribute000('tyt-egm-panel-jclmd')) continue;
         if (target.hasAttribute000('target-id') && target.hasAttribute000('visibility')) {
           target.removeAttribute000('tyt-egm-panel-jclmd');
@@ -4918,6 +5792,7 @@ const executionScript = _communicationKey => {
     console.error(e);
   }
 };
+/* eslint-enable max-lines-per-function, complexity, max-depth */
 const styles = {
   main: `
 @keyframes relatedElementProvided{0%{background-position-x:3px;}100%{background-position-x:4px;}}
@@ -4993,7 +5868,7 @@ body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy secondary
 [tyt-chat="+"] secondary-wrapper>[tyt-chat-container]{flex-grow:var(--tyt-chat-grow);flex-shrink:0;display:flex;flex-direction:column;}
 [tyt-chat="+"] secondary-wrapper>[tyt-chat-container]>#chat{flex-grow:var(--tyt-chat-grow);}
 ytd-watch-flexy[is-two-columns_]:not([theater]) #columns.style-scope.ytd-watch-flexy{min-height:calc(100vh - var(--ytd-toolbar-height,56px));}
-ytd-watch-flexy[is-two-columns_] ytd-live-chat-frame#chat{min-height:initial!important;height:initial!important;}
+ytd-watch-flexy[is-two-columns_]:not([full-bleed-player]) ytd-live-chat-frame#chat{min-height:initial!important;height:initial!important;}
 ytd-watch-flexy[tyt-tab^="#"]:not([is-two-columns_]):not([tyt-chat="+"]) #right-tabs{min-height:var(--ytd-watch-flexy-chat-max-height);}
 body ytd-watch-flexy:not([is-two-columns_]) #chat.ytd-watch-flexy{margin-top:0;}
 body ytd-watch-flexy:not([is-two-columns_]) ytd-watch-metadata.ytd-watch-flexy{margin-bottom:0;}
@@ -5074,6 +5949,10 @@ ytd-watch-flexy[is-two-columns_]{contain:layout style;}
   body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] [tyt-chat-container].style-scope {pointer-events: none;}
   body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] #chat[class] {pointer-events: auto;}
   .playlist-items.ytd-playlist-panel-renderer {background-color: transparent !important;}
+  @supports (color: var(--tyt-fix-20251124)) { #below ytd-watch-metadata .ytTextCarouselItemViewModelImageType { height: 16px; width: 16px;}
+    #below ytd-watch-metadata yt-text-carousel-item-view-model { column-gap: 6px;}
+    #below ytd-watch-metadata ytd-watch-info-text#ytd-watch-info-text { font-size: inherit; line-height: inherit;}
+  }
   `,
 };
 (async () => {

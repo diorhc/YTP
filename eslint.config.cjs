@@ -67,6 +67,8 @@ module.exports = [
         clearTimeout: 'readonly',
         setInterval: 'readonly',
         clearInterval: 'readonly',
+        crypto: 'readonly',
+        Uint8Array: 'readonly',
       },
     },
     rules: {
@@ -80,6 +82,36 @@ module.exports = [
       'no-prototype-builtins': 'warn',
       // Allow debug flag patterns like: DEBUG && console.log()
       'no-unused-expressions': ['warn', { allowShortCircuit: true, allowTernary: true }],
+      // Code quality improvements
+      'no-duplicate-imports': 'error',
+      'no-useless-return': 'warn',
+      'no-useless-concat': 'warn',
+      'prefer-template': 'warn',
+      'prefer-arrow-callback': ['warn', { allowNamedFunctions: true }],
+      'no-throw-literal': 'error',
+      'no-param-reassign': ['warn', { props: false }],
+      complexity: ['warn', { max: 20 }], // Warn on complex functions
+      'max-depth': ['warn', { max: 4 }], // Warn on deep nesting
+      'max-lines-per-function': ['warn', { max: 150, skipBlankLines: true, skipComments: true }],
+      // Additional code quality rules
+      'no-else-return': ['warn', { allowElseIf: false }],
+      'no-lonely-if': 'warn',
+      'no-negated-condition': 'warn',
+      'no-nested-ternary': 'warn',
+      'no-unneeded-ternary': 'warn',
+      'prefer-object-spread': 'warn',
+      'prefer-rest-params': 'warn',
+      'prefer-spread': 'warn',
+      'prefer-destructuring': ['warn', { object: true, array: false }],
+      'object-shorthand': ['warn', 'always'],
+      'quote-props': ['warn', 'as-needed'],
+      'no-multi-assign': 'warn',
+      'no-return-assign': ['error', 'always'],
+      'no-sequences': 'error',
+      'no-shadow': 'warn',
+      'no-void': 'error',
+      radix: 'warn',
+      yoda: 'warn',
     },
   },
 ];

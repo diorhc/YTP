@@ -76,7 +76,7 @@ function addSourceMapToFile(outputPath, modules) {
 function generateExternalSourceMap(outputPath, modules) {
   try {
     const sourceMap = generateSourceMap(modules);
-    const mapPath = outputPath + '.map';
+    const mapPath = `${outputPath}.map`;
 
     fs.writeFileSync(mapPath, JSON.stringify(sourceMap, null, 2), 'utf8');
     console.log(`✓ Source map written to ${path.basename(mapPath)}`);

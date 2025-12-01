@@ -1,0 +1,42 @@
+name: Auto Comment on Issue
+
+on:
+  issues:
+    types: [opened]
+
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Add welcome comment
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const creator = issue.user.login;
+            
+            let message = `👋 Hello @${creator}! Thanks for opening this issue.\n\n`;
+            
+            if (issue.labels.some(label => label.name === 'bug')) {
+              message += `We'll review this bug report and get back to you as soon as possible.\n\n`;
+              message += `**In the meantime:**\n`;
+              message += `- Please ensure you've provided all the requested information\n`;
+              message += `- Check if this issue has already been reported\n`;
+              message += `- Try clearing your browser cache and testing again\n`;
+            } else if (issue.labels.some(label => label.name === 'enhancement')) {
+              message += `Thank you for suggesting this feature! We'll evaluate it and discuss the implementation.\n\n`;
+              message += `**Community feedback welcome:**\n`;
+              message += `- 👍 React with thumbs up if you'd like this feature\n`;
+              message += `- Feel free to add more context or use cases\n`;
+            } else {
+              message += `We'll review this issue and respond soon.\n`;
+            }
+            
+            github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: message
+            });

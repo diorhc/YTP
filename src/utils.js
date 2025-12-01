@@ -22,8 +22,8 @@
               }
             : error,
         timestamp: new Date().toISOString(),
-        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-        url: typeof window !== 'undefined' ? window.location.href : 'unknown',
+        userAgent: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent,
+        url: typeof window === 'undefined' ? 'unknown' : window.location.href,
       };
 
       console.error(`[YouTube+][${module}] ${message}:`, error);
@@ -52,10 +52,10 @@
       lastThis = this;
       clearTimeout(timeout);
       if (options.leading && !timeout) {
-        /** @type {Function} */ (fn).apply(this, args);
+        /** @type {Function} */ (fn).call(this, ...args);
       }
       timeout = setTimeout(() => {
-        if (!options.leading) /** @type {Function} */ (fn).apply(lastThis, lastArgs);
+        if (!options.leading) /** @type {Function} */ (fn).call(lastThis, ...lastArgs);
         timeout = null;
         lastArgs = null;
         lastThis = null;
@@ -83,9 +83,11 @@
     /** @this {any} */
     const throttled = function (...args) {
       if (!inThrottle) {
-        lastResult = /** @type {Function} */ (fn).apply(this, args);
+        lastResult = /** @type {Function} */ (fn).call(this, ...args);
         inThrottle = true;
-        setTimeout(() => (inThrottle = false), limit);
+        setTimeout(() => {
+          inThrottle = false;
+        }, limit);
       }
       return lastResult;
     };
@@ -194,6 +196,53 @@
     };
   })();
 
+  /**
+   * Event delegation helper - attach single listener to parent for multiple children
+   * @param {HTMLElement} parent - Parent element to attach listener to
+   * @param {string} selector - CSS selector for child elements
+   * @param {string} eventType - Event type (click, mouseenter, etc)
+   * @param {Function} handler - Event handler function
+   * @param {Object} options - Event listener options
+   * @returns {Function} Cleanup function to remove listener
+   */
+  const delegateEvent = (parent, selector, eventType, handler, options = {}) => {
+    const delegatedHandler = event => {
+      const target = event.target.closest(selector);
+      if (target && parent.contains(target)) {
+        handler.call(target, event);
+      }
+    };
+
+    parent.addEventListener(eventType, delegatedHandler, options);
+
+    // Return cleanup function
+    return () => parent.removeEventListener(eventType, delegatedHandler, options);
+  };
+
+  /**
+   * Batch event delegation - setup multiple delegated events at once
+   * @param {HTMLElement} parent - Parent element
+   * @param {Object} config - Config object with selector as key, events as value
+   * @returns {Function} Cleanup function for all listeners
+   * @example
+   * batchDelegateEvents(container, {
+   *   '.button': { click: handleClick, mouseenter: handleHover },
+   *   '.item': { click: handleItemClick }
+   * })
+   */
+  const batchDelegateEvents = (parent, config) => {
+    const cleanupFns = [];
+
+    for (const [selector, events] of Object.entries(config)) {
+      for (const [eventType, handler] of Object.entries(events)) {
+        cleanupFns.push(delegateEvent(parent, selector, eventType, handler));
+      }
+    }
+
+    // Return single cleanup function for all
+    return () => cleanupFns.forEach(fn => fn());
+  };
+
   const createElement = (tag, props = {}, children = []) => {
     try {
       const element = document.createElement(tag);
@@ -216,32 +265,119 @@
     }
   };
 
-  const waitForElement = (selector, timeout = 5000, parent = document.body) =>
-    new Promise((resolve, reject) => {
-      if (!selector || typeof selector !== 'string') return reject(new Error('Invalid selector'));
-      try {
-        const el = parent.querySelector(selector);
-        if (el) return resolve(el);
-      } catch (e) {
-        return reject(e);
-      }
-      const obs = new MutationObserver(() => {
-        const el = parent.querySelector(selector);
-        if (el) {
-          try {
-            obs.disconnect();
-          } catch {}
-          resolve(el);
-        }
-      });
-      obs.observe(parent, { childList: true, subtree: true });
-      const id = setTimeout(() => {
+  /**
+   * Validate waitForElement parameters
+   * @param {string} selector - CSS selector
+   * @returns {Error|null} Validation error or null
+   */
+  const validateWaitForElementParams = selector => {
+    if (!selector || typeof selector !== 'string') {
+      return new Error('Invalid selector');
+    }
+    return null;
+  };
+
+  /**
+   * Try to find element immediately
+   * @param {HTMLElement} parent - Parent element
+   * @param {string} selector - CSS selector
+   * @returns {{element: HTMLElement|null, error: Error|null}} Result object
+   */
+  const tryFindElement = (parent, selector) => {
+    try {
+      const el = parent.querySelector(selector);
+      return { element: el, error: null };
+    } catch (e) {
+      return { element: null, error: e };
+    }
+  };
+
+  /**
+   * Setup mutation observer for element watching
+   * @param {HTMLElement} parent - Parent element
+   * @param {string} selector - CSS selector
+   * @param {Function} resolve - Promise resolve function
+   * @returns {MutationObserver} Mutation observer instance
+   */
+  const setupElementObserver = (parent, selector, resolve) => {
+    const obs = new MutationObserver(() => {
+      const el = parent.querySelector(selector);
+      if (el) {
         try {
           obs.disconnect();
         } catch {}
-        reject(new Error('timeout'));
-      }, timeout);
-      cleanupManager.registerTimeout(id);
+        resolve(el);
+      }
+    });
+    return obs;
+  };
+
+  /**
+   * Start observing parent element for changes
+   * @param {MutationObserver} obs - Observer instance
+   * @param {HTMLElement} parent - Parent element to observe
+   */
+  const startObserving = (obs, parent) => {
+    try {
+      if (
+        parent &&
+        (parent instanceof Node || parent instanceof Document || parent instanceof DocumentFragment)
+      ) {
+        obs.observe(parent, { childList: true, subtree: true });
+      } else if (document.body) {
+        obs.observe(document.body, { childList: true, subtree: true });
+      } else {
+        document.addEventListener(
+          'DOMContentLoaded',
+          () => {
+            try {
+              obs.observe(document.body, { childList: true, subtree: true });
+            } catch (observeError) {
+              logError(
+                'waitForElement',
+                'Failed to observe document.body after DOMContentLoaded',
+                observeError
+              );
+            }
+          },
+          { once: true }
+        );
+      }
+    } catch (observeError) {
+      logError('waitForElement', 'observer.observe failed', observeError);
+    }
+  };
+
+  /**
+   * Setup timeout for element search
+   * @param {MutationObserver} obs - Observer instance
+   * @param {Function} reject - Promise reject function
+   * @param {number} timeout - Timeout in milliseconds
+   * @returns {number} Timeout ID
+   */
+  const setupElementTimeout = (obs, reject, timeout) => {
+    const id = setTimeout(() => {
+      try {
+        obs.disconnect();
+      } catch {}
+      reject(new Error('timeout'));
+    }, timeout);
+    cleanupManager.registerTimeout(id);
+    return id;
+  };
+
+  const waitForElement = (selector, timeout = 5000, parent = document.body) =>
+    new Promise((resolve, reject) => {
+      const validationError = validateWaitForElementParams(selector);
+      if (validationError) return reject(validationError);
+
+      const { element, error } = tryFindElement(parent, selector);
+      if (error) return reject(error);
+      if (element) return resolve(element);
+
+      const obs = setupElementObserver(parent, selector, resolve);
+      startObserving(obs, parent);
+      setupElementTimeout(obs, reject, timeout);
     });
 
   /**
@@ -253,9 +389,10 @@
     if (typeof html !== 'string') return '';
 
     // Check for extremely long strings (potential DoS)
-    if (html.length > 1000000) {
+    let sanitizedHtml = html;
+    if (sanitizedHtml.length > 1000000) {
       console.warn('[YouTube+] HTML content too large, truncating');
-      html = html.substring(0, 1000000);
+      sanitizedHtml = sanitizedHtml.substring(0, 1000000);
     }
 
     /** @type {Record<string, string>} */
@@ -270,7 +407,7 @@
       '=': '&#x3D;',
     };
 
-    return html.replace(/[<>&"'\/`=]/g, char => map[char] || char);
+    return sanitizedHtml.replace(/[<>&"'\/`=]/g, char => map[char] || char);
   };
 
   /**
@@ -424,6 +561,8 @@
     U.logError = U.logError || logError;
     U.debounce = U.debounce || debounce;
     U.throttle = U.throttle || throttle;
+    U.delegateEvent = U.delegateEvent || delegateEvent;
+    U.batchDelegateEvents = U.batchDelegateEvents || batchDelegateEvents;
     U.StyleManager = U.StyleManager || StyleManager;
     U.cleanupManager = U.cleanupManager || cleanupManager;
     U.createElement = U.createElement || createElement;

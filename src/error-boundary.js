@@ -3,13 +3,24 @@
   'use strict';
 
   /**
-   * Error boundary configuration object
+   * Circuit breaker states
+   * @enum {string}
+   */
+  const CircuitState = {
+    CLOSED: 'closed', // Normal operation
+    OPEN: 'open', // Too many failures, block operations
+    HALF_OPEN: 'half_open', // Testing if system recovered
+  };
+
+  /**
+   * Error boundary configuration object with circuit breaker support
    * @typedef {Object} ErrorBoundaryConfig
    * @property {number} maxErrors - Maximum number of errors allowed within the error window
    * @property {number} errorWindow - Time window in milliseconds for tracking errors (default: 60000ms = 1 minute)
    * @property {boolean} enableLogging - Whether to log errors to console
    * @property {boolean} enableRecovery - Whether to attempt automatic recovery from errors
    * @property {string} storageKey - LocalStorage key for persisting error data
+   * @property {Object} circuitBreaker - Circuit breaker configuration
    */
   const ErrorBoundaryConfig = {
     maxErrors: 10,
@@ -17,16 +28,28 @@
     enableLogging: true,
     enableRecovery: true,
     storageKey: 'youtube_plus_errors',
+    // Circuit breaker to prevent cascading failures
+    circuitBreaker: {
+      enabled: true,
+      failureThreshold: 5, // Number of failures before opening circuit
+      resetTimeout: 30000, // Time before attempting to close circuit (30s)
+      halfOpenAttempts: 3, // Successful attempts needed to close circuit
+    },
   };
 
   /**
-   * Error tracking state (used inline for internal tracking)
+   * Error tracking state with circuit breaker
    */
   const errorState = {
     errors: [],
     errorCount: 0,
     lastErrorTime: 0,
     isRecovering: false,
+    // Circuit breaker state
+    circuitState: CircuitState.CLOSED,
+    circuitFailureCount: 0,
+    circuitLastFailureTime: 0,
+    circuitSuccessCount: 0,
   };
 
   /**
@@ -72,6 +95,64 @@
   };
 
   /**
+   * Check circuit breaker state and update accordingly
+   * @param {boolean} success - Whether the operation was successful
+   * @returns {boolean} Whether the operation should proceed
+   */
+  const checkCircuitBreaker = success => {
+    if (!ErrorBoundaryConfig.circuitBreaker.enabled) return true;
+
+    const now = Date.now();
+    const { circuitBreaker } = ErrorBoundaryConfig;
+
+    // Check if circuit should be reset to half-open
+    if (
+      errorState.circuitState === CircuitState.OPEN &&
+      now - errorState.circuitLastFailureTime >= circuitBreaker.resetTimeout
+    ) {
+      console.log('[YouTube+] Circuit breaker transitioning to HALF_OPEN');
+      errorState.circuitState = CircuitState.HALF_OPEN;
+      errorState.circuitSuccessCount = 0;
+    }
+
+    // Handle successful operation
+    if (success) {
+      if (errorState.circuitState === CircuitState.HALF_OPEN) {
+        errorState.circuitSuccessCount++;
+        if (errorState.circuitSuccessCount >= circuitBreaker.halfOpenAttempts) {
+          console.log('[YouTube+] Circuit breaker CLOSED - system recovered');
+          errorState.circuitState = CircuitState.CLOSED;
+          errorState.circuitFailureCount = 0;
+          errorState.circuitSuccessCount = 0;
+        }
+      } else if (errorState.circuitState === CircuitState.CLOSED) {
+        // Gradually decrease failure count on success
+        errorState.circuitFailureCount = Math.max(0, errorState.circuitFailureCount - 1);
+      }
+      return true;
+    }
+
+    // Handle failed operation
+    errorState.circuitFailureCount++;
+    errorState.circuitLastFailureTime = now;
+
+    if (errorState.circuitState === CircuitState.CLOSED) {
+      if (errorState.circuitFailureCount >= circuitBreaker.failureThreshold) {
+        console.error('[YouTube+] Circuit breaker OPEN - too many failures');
+        errorState.circuitState = CircuitState.OPEN;
+        return false;
+      }
+    } else if (errorState.circuitState === CircuitState.HALF_OPEN) {
+      console.error('[YouTube+] Circuit breaker reopened - recovery failed');
+      errorState.circuitState = CircuitState.OPEN;
+      errorState.circuitSuccessCount = 0;
+      return false;
+    }
+
+    return errorState.circuitState !== CircuitState.OPEN;
+  };
+
+  /**
    * Log error with context
    * @param {Error} error - The error object
    * @param {Object} context - Additional context information
@@ -79,11 +160,26 @@
   const logError = (error, context = {}) => {
     if (!ErrorBoundaryConfig.enableLogging) return;
 
-    const fallbackMessage = error.message?.trim() || '(no message)';
+    // Update circuit breaker
+    checkCircuitBreaker(false);
+
+    const fallbackMessage = error.message?.trim() || '';
+
+    // Skip if no meaningful message
+    if (!fallbackMessage || fallbackMessage === '(no message)') {
+      // Only log if we have stack trace or filename information
+      if (!error.stack && !context.filename) {
+        return;
+      }
+    }
+
+    const displayMessage =
+      fallbackMessage ||
+      (context.filename ? `Error in ${context.filename}:${context.lineno}` : 'Unknown error');
 
     const errorInfo = {
       timestamp: new Date().toISOString(),
-      message: fallbackMessage,
+      message: displayMessage,
       stack: error.stack,
       severity: categorizeSeverity(error),
       context: {
@@ -93,7 +189,7 @@
       },
     };
 
-    console.error(`[YouTube+ Error Boundary] ${errorInfo.message}`, errorInfo);
+    console.error('[YouTube+][Error Boundary]', `${errorInfo.message}`, errorInfo);
 
     // Store error for analysis
     errorState.errors.push(errorInfo);
@@ -230,36 +326,15 @@
         showErrorNotification(error, context);
       }
 
-      // Attempt module-specific recovery
-      if (context.module) {
-        console.log(`[YouTube+] Attempting recovery for module: ${context.module}`);
+      // Use recovery utilities if available
+      const RecoveryUtils = window.YouTubePlusErrorRecovery;
 
-        // Try to reinitialize the module if possible
-        const Y = window.YouTubeUtils;
-        if (Y && Y.cleanupManager) {
-          // Could cleanup and reinitialize module-specific resources
-          switch (context.module) {
-            case 'StyleManager':
-              // Clear and re-add styles if needed
-              break;
-            case 'NotificationManager':
-              // Reset notification queue
-              break;
-            default:
-              // Generic cleanup
-              break;
-          }
-        }
-
-        // Check if it's a DOM-related error and the element is missing
-        if (
-          error.message &&
-          (error.message.includes('null') || error.message.includes('undefined')) &&
-          context.element
-        ) {
-          console.log('[YouTube+] Attempting to re-query DOM element');
-          // Could trigger element re-query here
-        }
+      if (RecoveryUtils && RecoveryUtils.attemptRecovery) {
+        // Delegate to recovery utility module
+        RecoveryUtils.attemptRecovery(error, context);
+      } else {
+        // Fallback to legacy recovery
+        performLegacyRecovery(error, context);
       }
 
       setTimeout(() => {
@@ -268,6 +343,45 @@
     } catch (recoveryError) {
       console.error('[YouTube+] Recovery attempt failed:', recoveryError);
       errorState.isRecovering = false;
+    }
+  };
+
+  /**
+   * Perform legacy recovery (fallback)
+   * @param {Error} error - Error object
+   * @param {Object} context - Error context
+   */
+  const performLegacyRecovery = (error, context) => {
+    // Attempt module-specific recovery
+    if (context.module) {
+      console.log(`[YouTube+] Attempting recovery for module: ${context.module}`);
+
+      // Try to reinitialize the module if possible
+      const Y = window.YouTubeUtils;
+      if (Y && Y.cleanupManager) {
+        // Could cleanup and reinitialize module-specific resources
+        switch (context.module) {
+          case 'StyleManager':
+            // Clear and re-add styles if needed
+            break;
+          case 'NotificationManager':
+            // Reset notification queue
+            break;
+          default:
+            // Generic cleanup
+            break;
+        }
+      }
+
+      // Check if it's a DOM-related error and the element is missing
+      if (
+        error.message &&
+        (error.message.includes('null') || error.message.includes('undefined')) &&
+        context.element
+      ) {
+        console.log('[YouTube+] Attempting to re-query DOM element');
+        // Could trigger element re-query here
+      }
     }
   };
 
@@ -283,8 +397,13 @@
     const isCrossOriginSource =
       source && !source.startsWith(window.location.origin) && !/YouTube\+/.test(source);
 
+    // Ignore opaque cross-origin errors we can't introspect
     if (!message && isCrossOriginSource) {
-      // Ignore opaque cross-origin errors we can't introspect
+      return false;
+    }
+
+    // Skip logging if message is empty or just "(no message)" and from cross-origin
+    if (!message || (message === '(no message)' && isCrossOriginSource)) {
       return false;
     }
 
@@ -348,7 +467,7 @@
     return function (...args) {
       try {
         const fnAny = /** @type {any} */ (fn);
-        return /** @this {any} */ fnAny.apply(this, args);
+        return /** @this {any} */ fnAny.call(this, ...args);
       } catch (error) {
         logError(error, { module: context, args });
         attemptRecovery(error, { module: context });
@@ -368,7 +487,7 @@
     return async function (...args) {
       try {
         const fnAny = /** @type {any} */ (fn);
-        return /** @this {any} */ await fnAny.apply(this, args);
+        return /** @this {any} */ await fnAny.call(this, ...args);
       } catch (error) {
         logError(error, { module: context, args });
         attemptRecovery(error, { module: context });
@@ -420,6 +539,6 @@
       config: ErrorBoundaryConfig,
     };
 
-    console.log('[YouTube+] Error boundary initialized');
+    console.log('[YouTube+][Error Boundary]', 'Error boundary initialized');
   }
 })();

@@ -2,86 +2,82 @@
 (function () {
   'use strict';
 
-  // Internationalization (i18n) system
-  const i18n = {
-    en: {
-      seekBackward: 'Seek backward',
-      seekForward: 'Seek forward',
-      volumeUp: 'Volume up',
-      volumeDown: 'Volume down',
-      muteUnmute: 'Mute/Unmute',
-      showHideHelp: 'Show/Hide help',
-      keyboardShortcuts: 'Keyboard Shortcuts',
-      closeButton: 'Close',
-      resetAll: 'Reset All',
-      resetAllConfirm: 'Reset all shortcuts?',
-      shortcutsReset: 'Shortcuts reset',
-      editShortcut: 'Edit',
-      pressAnyKey: 'Press any key to set as new shortcut',
-      current: 'Current',
-      cancel: 'Cancel',
-      keyAlreadyUsed: 'Key "{key}" already used',
-      shortcutUpdated: 'Shortcut updated',
-      toggleCaptions: 'Toggle subtitles',
-      captionsOn: 'Subtitles: On',
-      captionsOff: 'Subtitles: Off',
-      captionsUnavailable: 'Subtitles unavailable',
-    },
-    ru: {
-      seekBackward: 'Перемотка назад',
-      seekForward: 'Перемотка вперёд',
-      volumeUp: 'Громче',
-      volumeDown: 'Тише',
-      muteUnmute: 'Вкл/Выкл звук',
-      showHideHelp: 'Показать/Скрыть помощь',
-      keyboardShortcuts: 'Клавиатурные сочетания',
-      closeButton: 'Закрыть',
-      resetAll: 'Сбросить всё',
-      resetAllConfirm: 'Сбросить все сочетания клавиш?',
-      shortcutsReset: 'Сочетания клавиш сброшены',
-      editShortcut: 'Изменить',
-      pressAnyKey: 'Нажмите любую клавишу для установки нового сочетания',
-      current: 'Текущее',
-      cancel: 'Отмена',
-      keyAlreadyUsed: 'Клавиша "{key}" уже используется',
-      shortcutUpdated: 'Сочетание клавиш обновлено',
-      toggleCaptions: 'Переключить субтитры',
-      captionsOn: 'Субтитры: Вкл',
-      captionsOff: 'Субтитры: Выкл',
-      captionsUnavailable: 'Субтитры недоступны',
-    },
+  // Use centralized i18n for shorts module
+  const _globalI18n_shorts =
+    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  const t = (key, params = {}) => {
+    try {
+      if (_globalI18n_shorts && typeof _globalI18n_shorts.t === 'function') {
+        return _globalI18n_shorts.t(key, params);
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.t === 'function'
+      ) {
+        return window.YouTubeUtils.t(key, params);
+      }
+    } catch {
+      // fallback
+    }
+    if (!key || typeof key !== 'string') return '';
+    let text = key;
+    if (Object.keys(params).length === 0) return key;
+    for (const [paramKey, val] of Object.entries(params)) {
+      text = text.split(`{${paramKey}}`).join(String(val));
+    }
+    return text;
   };
 
-  // Get browser language
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  // Translation function
-  function t(key, params = {}) {
-    const lang = getLanguage();
-    let text = i18n[lang][key] || i18n.en[key] || key;
-
-    // Replace parameters in template
-    Object.keys(params).forEach(paramKey => {
-      text = text.replace(`{${paramKey}}`, params[paramKey]);
-    });
-
-    return text;
-  }
-
-  // Configuration
+  // Configuration - Using lazy getters for translations to avoid early loading
   const config = {
     enabled: true,
-    shortcuts: {
-      seekBackward: { key: 'ArrowLeft', description: t('seekBackward') },
-      seekForward: { key: 'ArrowRight', description: t('seekForward') },
-      volumeUp: { key: '+', description: t('volumeUp') },
-      volumeDown: { key: '-', description: t('volumeDown') },
-      mute: { key: 'm', description: t('muteUnmute') },
-      toggleCaptions: { key: 'c', description: t('toggleCaptions') },
-      showHelp: { key: '?', description: t('showHideHelp'), editable: false },
+    get shortcuts() {
+      return {
+        seekBackward: {
+          key: 'ArrowLeft',
+          get description() {
+            return t('seekBackward');
+          },
+        },
+        seekForward: {
+          key: 'ArrowRight',
+          get description() {
+            return t('seekForward');
+          },
+        },
+        volumeUp: {
+          key: '+',
+          get description() {
+            return t('volumeUp');
+          },
+        },
+        volumeDown: {
+          key: '-',
+          get description() {
+            return t('volumeDown');
+          },
+        },
+        mute: {
+          key: 'm',
+          get description() {
+            return t('muteUnmute');
+          },
+        },
+        toggleCaptions: {
+          key: 'c',
+          get description() {
+            return t('toggleCaptions');
+          },
+        },
+        showHelp: {
+          key: '?',
+          get description() {
+            return t('showHideHelp');
+          },
+          editable: false,
+        },
+      };
     },
     storageKey: 'youtube_shorts_keyboard_settings',
   };
@@ -141,7 +137,7 @@
 
         const parsed = JSON.parse(saved);
         if (typeof parsed !== 'object' || parsed === null) {
-          console.warn('[Shorts] Invalid settings format');
+          console.warn('[YouTube+][Shorts]', 'Invalid settings format');
           return;
         }
 
@@ -156,26 +152,22 @@
 
           for (const [action, shortcut] of Object.entries(parsed.shortcuts)) {
             // Only restore valid shortcut actions
-            if (defaultShortcuts[action]) {
-              if (shortcut && typeof shortcut === 'object') {
-                // Validate key is a non-empty string
-                if (
-                  typeof shortcut.key === 'string' &&
-                  shortcut.key.length > 0 &&
-                  shortcut.key.length <= 20
-                ) {
-                  config.shortcuts[action] = {
-                    key: shortcut.key,
-                    description: defaultShortcuts[action].description,
-                    editable: shortcut.editable !== false,
-                  };
-                }
-              }
+            if (!defaultShortcuts[action]) continue;
+            if (!shortcut || typeof shortcut !== 'object') continue;
+
+            const { key: sKey, editable: sEditable } =
+              /** @type {{ key?: string, editable?: boolean }} */ (shortcut);
+            if (typeof sKey === 'string' && sKey.length > 0 && sKey.length <= 20) {
+              config.shortcuts[action] = {
+                key: sKey,
+                description: defaultShortcuts[action].description,
+                editable: sEditable !== false,
+              };
             }
           }
         }
       } catch (error) {
-        console.error('[Shorts] Error loading settings:', error);
+        console.error('[YouTube+][Shorts]', 'Error loading settings:', error);
       }
     },
 
@@ -191,18 +183,54 @@
         };
         localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
       } catch (error) {
-        console.error('[Shorts] Error saving settings:', error);
+        console.error('[YouTube+][Shorts]', 'Error saving settings:', error);
       }
     },
 
     getDefaultShortcuts: () => ({
-      seekBackward: { key: 'ArrowLeft', description: t('seekBackward') },
-      seekForward: { key: 'ArrowRight', description: t('seekForward') },
-      volumeUp: { key: '+', description: t('volumeUp') },
-      volumeDown: { key: '-', description: t('volumeDown') },
-      mute: { key: 'm', description: t('muteUnmute') },
-      toggleCaptions: { key: 'c', description: t('toggleCaptions') },
-      showHelp: { key: '?', description: t('showHideHelp'), editable: false },
+      seekBackward: {
+        key: 'ArrowLeft',
+        get description() {
+          return t('seekBackward');
+        },
+      },
+      seekForward: {
+        key: 'ArrowRight',
+        get description() {
+          return t('seekForward');
+        },
+      },
+      volumeUp: {
+        key: '+',
+        get description() {
+          return t('volumeUp');
+        },
+      },
+      volumeDown: {
+        key: '-',
+        get description() {
+          return t('volumeDown');
+        },
+      },
+      mute: {
+        key: 'm',
+        get description() {
+          return t('muteUnmute');
+        },
+      },
+      toggleCaptions: {
+        key: 'c',
+        get description() {
+          return t('toggleCaptions');
+        },
+      },
+      showHelp: {
+        key: '?',
+        get description() {
+          return t('showHideHelp');
+        },
+        editable: false,
+      },
     }),
   };
 
@@ -304,11 +332,13 @@
       const video = getCurrentVideo();
       if (video && video.textTracks && video.textTracks.length) {
         const tracks = Array.from(video.textTracks).filter(
-          t => t.kind === 'subtitles' || t.kind === 'captions' || !t.kind
+          tr => tr.kind === 'subtitles' || tr.kind === 'captions' || !tr.kind
         );
         if (tracks.length) {
           const anyShowing = tracks.some(tr => tr.mode === 'showing');
-          tracks.forEach(tr => (tr.mode = anyShowing ? 'hidden' : 'showing'));
+          tracks.forEach(tr => {
+            tr.mode = anyShowing ? 'hidden' : 'showing';
+          });
           feedback.show(anyShowing ? t('captionsOff') : t('captionsOn'));
           return;
         }
@@ -507,8 +537,9 @@
     };
 
     dialog.querySelector('.shortcut-cancel').onclick = cleanup;
-    dialog.onclick = e => {
-      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+    // Use parameter destructuring to satisfy prefer-destructuring rule
+    dialog.onclick = ({ target }) => {
+      // target is expected to be an Element here
       if (target === dialog) cleanup();
     };
     document.addEventListener('keydown', handleKey, true);
@@ -572,7 +603,7 @@
       return;
     }
 
-    let key = e.key;
+    let { key } = e;
     if (e.code === 'NumpadAdd') key = '+';
     else if (e.code === 'NumpadSubtract') key = '-';
 
@@ -592,9 +623,9 @@
     // ✅ Register listeners in cleanupManager
     YouTubeUtils.cleanupManager.registerListener(document, 'keydown', handleKeydown, true);
 
-    const clickHandler = e => {
-      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      if (state.helpVisible && target.closest && !target.closest('#shorts-keyboard-help')) {
+    // Prefer destructuring the event parameter
+    const clickHandler = ({ target }) => {
+      if (state.helpVisible && target?.closest && !target.closest('#shorts-keyboard-help')) {
         helpPanel.hide();
       }
     };

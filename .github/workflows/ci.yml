@@ -13,6 +13,7 @@ jobs:
     runs-on: ubuntu-latest
 
     strategy:
+      fail-fast: false
       matrix:
         node-version: [18.x, 20.x]
 
@@ -26,38 +27,95 @@ jobs:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
 
+      - name: Clean install
+        run: |
+          echo "🧹 Cleaning npm cache..."
+          npm cache clean --force || true
+          
       - name: Install dependencies
-        run: npm ci
+        run: |
+          echo "📦 Installing dependencies..."
+          if [ -f package-lock.json ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
+          echo "✅ Dependencies installed successfully"
+
+      - name: Verify installation
+        run: |
+          echo "🔍 Verifying installation..."
+          node --version
+          npm --version
+          echo "📦 Checking installed packages..."
+          npm list --depth=0 || true
+          echo "📁 Checking project structure..."
+          ls -la
+          echo "📝 Checking key files..."
+          ls -la src/ | head -20
+          ls -la test/ | head -20
+          echo "✅ Environment ready"
 
       - name: Run linting
-        run: npm run lint
+        run: |
+          echo "🔍 Running ESLint..."
+          npm run lint || { echo "❌ Linting failed"; exit 1; }
+          echo "✅ Linting passed"
 
       - name: Run type checking
-        run: npm run typecheck
+        run: |
+          echo "🔍 Running TypeScript type checking..."
+          npm run typecheck || { echo "❌ Type checking failed"; exit 1; }
+          echo "✅ Type checking passed"
 
       - name: Run format check
-        run: npm run format:check
+        run: |
+          echo "🔍 Checking code formatting..."
+          npm run format:check || { echo "❌ Format check failed"; exit 1; }
+          echo "✅ Format check passed"
 
       - name: Run security audit
-        run: npm audit --audit-level=moderate
+        run: |
+          echo "🔒 Running security audit..."
+          npm audit --audit-level=moderate || echo "⚠️ Security audit found issues (non-blocking)"
         continue-on-error: true
 
       - name: Run unit tests
-        run: npm run test:unit
-
-      - name: Run unit tests with coverage
-        run: npm run test:unit:coverage
+        run: |
+          echo "🧪 Running unit tests..."
+          npm run test:ci || { echo "❌ Unit tests failed"; exit 1; }
+          echo "✅ Unit tests passed"
+        env:
+          CI: true
+          NODE_ENV: test
+          NODE_OPTIONS: --max-old-space-size=4096
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
         if: matrix.node-version == '20.x'
+        continue-on-error: true
         with:
           file: ./coverage/lcov.info
           flags: unittests
           name: codecov-umbrella
+          fail_ci_if_error: false
 
       - name: Build userscript
-        run: npm run build
+        run: |
+          echo "🔨 Building userscript..."
+          npm run build || { echo "❌ Build failed"; exit 1; }
+          echo "✅ Build completed successfully"
+
+      - name: Verify build output
+        run: |
+          echo "🔍 Verifying build output..."
+          if [ ! -f youtube.user.js ]; then
+            echo "❌ Build output not found!"
+            ls -la
+            exit 1
+          fi
+          echo "📊 Build output size: $(wc -c < youtube.user.js) bytes"
+          echo "✅ Build output verified"
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
@@ -72,10 +130,14 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -84,43 +146,59 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
 
-      - name: Build userscript
-        run: npm run build
-
+      - name: Build userscript (optimized)
+        run: npm run build:optimized || { echo "❌ Optimized build failed"; exit 1; }
+      - name: Add embedded translations
+        run: node embed-translations.js || { echo "❌ Release build failed"; exit 1; }
       - name: Get version from package.json
         id: package-version
-        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          echo "VERSION=$VERSION" >> $GITHUB_OUTPUT
+          echo "📦 Version: $VERSION"
 
       - name: Check if tag exists
         id: check-tag
         run: |
+          git fetch --tags
           if git rev-parse "v${{ steps.package-version.outputs.VERSION }}" >/dev/null 2>&1; then
             echo "TAG_EXISTS=true" >> $GITHUB_OUTPUT
+            echo "⚠️ Tag v${{ steps.package-version.outputs.VERSION }} already exists"
           else
             echo "TAG_EXISTS=false" >> $GITHUB_OUTPUT
+            echo "✅ Tag v${{ steps.package-version.outputs.VERSION }} does not exist"
           fi
+
+      - name: Skip Release (Tag Exists)
+        if: steps.check-tag.outputs.TAG_EXISTS == 'true'
+        run: |
+          echo "::notice::Release skipped - Tag v${{ steps.package-version.outputs.VERSION }} already exists"
+          echo "To create a new release, update the version in package.json"
 
       - name: Create Release
         if: steps.check-tag.outputs.TAG_EXISTS == 'false'
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: v${{ steps.package-version.outputs.VERSION }}
           name: Release v${{ steps.package-version.outputs.VERSION }}
           body: |
-            ## YouTube+ Enhanced v${{ steps.package-version.outputs.VERSION }}
+            ## YouTube+ v${{ steps.package-version.outputs.VERSION }}
 
-            ### Installation
-            Click on the userscript file below to install.
-
-            ### Changes
-            See commit history for detailed changes.
+            add support for 🇬🇧, 🇷🇺, 🇰🇷, 🇫🇷, 🇳🇱, 🇨🇳, 🇹🇼, 🇯🇵, 🇹🇷 languages
+            Direct download available.
           files: |
             youtube.user.js
-            userscript.js
           draft: false
           prerelease: false
+          fail_on_unmatched_files: false
+          generate_release_notes: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -145,10 +223,15 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
+        run: |
+          if [ -f package-lock.json ]; then
+            npm ci --legacy-peer-deps
+          else
+            npm install --legacy-peer-deps
+          fi
 
       - name: Install SARIF formatter
-        run: npm ci
+        run: echo "SARIF formatter included in dependencies"
 
       - name: Run ESLint with SARIF output
         run: |
@@ -162,7 +245,7 @@ jobs:
 
       - name: Upload SARIF file (if generated)
         if: steps.check_sarif.outputs.exists == 'true'
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: eslint-results.sarif
           category: eslint

@@ -2,24 +2,49 @@
 (function () {
   'use strict';
 
-  // Localization
-  const i18n = {
-    en: {
-      scrollToTop: 'Scroll to top',
-    },
-    ru: {
-      scrollToTop: 'Прокрутить вверх',
-    },
-  };
-
-  const getLanguage = () => {
+  // Use centralized i18n when available
+  const _globalI18n =
+    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  const _getLanguage = () => {
+    try {
+      if (_globalI18n && typeof _globalI18n.getLanguage === 'function') {
+        return _globalI18n.getLanguage();
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.getLanguage === 'function'
+      ) {
+        return window.YouTubeUtils.getLanguage();
+      }
+    } catch {
+      // fallback
+    }
     const htmlLang = document.documentElement.lang || 'en';
-    if (htmlLang.startsWith('ru')) return 'ru';
-    return 'en';
+    return htmlLang.startsWith('ru') ? 'ru' : 'en';
   };
-
-  const lang = getLanguage();
-  const t = key => i18n[lang][key] || i18n.en[key] || key;
+  const t = (key, params = {}) => {
+    try {
+      if (_globalI18n && typeof _globalI18n.t === 'function') {
+        return _globalI18n.t(key, params);
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.t === 'function'
+      ) {
+        return window.YouTubeUtils.t(key, params);
+      }
+    } catch {
+      // fall through
+    }
+    if (!key || typeof key !== 'string') return '';
+    if (Object.keys(params).length === 0) return key;
+    let result = key;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
+  };
+  // No local alias needed here; modules may use global YouTubeUtils.getLanguage when required
 
   /**
    * Configuration object for scroll-to-top button
@@ -51,32 +76,19 @@
       ::-webkit-scrollbar-corner{background:transparent!important;}
       *{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track);}
       html[dark]{--scrollbar-thumb:rgba(144,144,144,.4);--scrollbar-thumb-hover:rgba(170,170,170,.6);--scrollbar-thumb-active:rgba(190,190,190,.8);}
-      .top-button{position:absolute;bottom:16px;right:16px;width:40px;height:40px;background:var(--yt-top-btn-bg,rgba(0,0,0,.7));color:var(--yt-top-btn-color,#fff);border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:1000;opacity:0;visibility:hidden;transition:all .3s;backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid var(--yt-top-btn-border,rgba(255,255,255,.1));background:rgba(255,255,255,.12);box-shadow:0 8px 32px 0 rgba(31,38,135,.18);}
+      .top-button{position:fixed;bottom:16px;right:16px;width:40px;height:40px;background:var(--yt-top-btn-bg,rgba(0,0,0,.7));color:var(--yt-top-btn-color,#fff);border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2100;opacity:0;visibility:hidden;transition:all .3s;backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid var(--yt-top-btn-border,rgba(255,255,255,.1));background:rgba(255,255,255,.12);box-shadow:0 8px 32px 0 rgba(31,38,135,.18);}
       .top-button:hover{background:var(--yt-top-btn-hover,rgba(0,0,0,.15));transform:translateY(-2px) scale(1.07);box-shadow:0 8px 32px rgba(0,0,0,.25);}
       .top-button.visible{opacity:1;visibility:visible;}
       .top-button svg{transition:transform .2s;}
       .top-button:hover svg{transform:translateY(-1px) scale(1.1);}
       html[dark]{--yt-top-btn-bg:rgba(255,255,255,.10);--yt-top-btn-color:#fff;--yt-top-btn-border:rgba(255,255,255,.18);--yt-top-btn-hover:rgba(255,255,255,.18);}
       html:not([dark]){--yt-top-btn-bg:rgba(255,255,255,.12);--yt-top-btn-color:#222;--yt-top-btn-border:rgba(0,0,0,.08);--yt-top-btn-hover:rgba(255,255,255,.18);}
-      ytd-watch-flexy:not([tyt-tab^="#"]) .top-button{display:none;}
-      ytd-watch-flexy[flexy] #movie_player,
-      ytd-watch-flexy[flexy] #movie_player .html5-video-container,
-      ytd-watch-flexy[flexy] .html5-main-video{
-        width:100%!important;
-        max-width:100%!important;
-      }
-      ytd-watch-flexy[flexy] .html5-main-video{
-        height:auto!important;
-        max-height:100%!important;
-        object-fit:contain!important;
-        transform:none!important;
-      }
-      ytd-watch-flexy[flexy] #player-container-outer,
-      ytd-watch-flexy[flexy] #movie_player{
-        display:flex!important;
-        align-items:center!important;
-        justify-content:center!important;
-      }
+      #right-tabs .top-button{position:absolute;z-index:1000;}
+      ytd-watch-flexy:not([tyt-tab^="#"]) #right-tabs .top-button{display:none;}
+      ytd-playlist-panel-renderer .top-button{position:absolute;z-index:1000;}
+      ytd-watch-flexy[flexy] #movie_player, ytd-watch-flexy[flexy] #movie_player .html5-video-container, ytd-watch-flexy[flexy] .html5-main-video{width:100%!important; max-width:100%!important;}
+      ytd-watch-flexy[flexy] .html5-main-video{height:auto!important; max-height:100%!important; object-fit:contain!important; transform:none!important;}
+      ytd-watch-flexy[flexy] #player-container-outer, ytd-watch-flexy[flexy] #movie_player{display:flex!important; align-items:center!important; justify-content:center!important;}
         `;
     (document.head || document.documentElement).appendChild(style);
   };
@@ -84,11 +96,11 @@
   /**
    * Updates button visibility based on scroll position
    * @param {HTMLElement} scrollContainer - The container being scrolled
+   * @param {HTMLElement} button - The button element
    * @returns {void}
    */
-  const handleScroll = scrollContainer => {
+  const handleScroll = (scrollContainer, button) => {
     try {
-      const button = document.getElementById('right-tabs-top-button');
       if (!button || !scrollContainer) return;
       button.classList.toggle('visible', scrollContainer.scrollTop > 100);
     } catch (error) {
@@ -109,7 +121,9 @@
       const activeTab = document.querySelector(
         '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
       );
-      if (activeTab) {
+      const button = document.getElementById('right-tabs-top-button');
+
+      if (activeTab && button) {
         // Use debounce for better performance (check if YouTubeUtils.debounce is available)
         const debounceFunc =
           typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
@@ -121,10 +135,10 @@
                   timeoutId = setTimeout(() => fn(...args), delay);
                 };
               };
-        const scrollHandler = debounceFunc(() => handleScroll(activeTab), 100);
+        const scrollHandler = debounceFunc(() => handleScroll(activeTab, button), 100);
         activeTab._topButtonScrollHandler = scrollHandler;
         activeTab.addEventListener('scroll', scrollHandler, { passive: true });
-        handleScroll(activeTab);
+        handleScroll(activeTab, button);
       }
     } catch (error) {
       console.error('[YouTube+][Enhanced] Error in setupScrollListener:', error);
@@ -169,6 +183,368 @@
   };
 
   /**
+   * Creates universal scroll-to-top button for pages
+   * @returns {void}
+   */
+  const createUniversalButton = () => {
+    try {
+      if (document.getElementById('universal-top-button')) return;
+      if (!config.enabled) return;
+
+      const button = document.createElement('button');
+      button.id = 'universal-top-button';
+      button.className = 'top-button';
+      button.title = t('scrollToTop');
+      button.setAttribute('aria-label', t('scrollToTop'));
+      button.innerHTML =
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+
+      button.addEventListener('click', () => {
+        try {
+          window.scrollTo({ top: 0, behavior: 'smooth' });
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error scrolling to top:', error);
+        }
+      });
+
+      document.body.appendChild(button);
+
+      // Setup scroll listener for window
+      const debounceFunc =
+        typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
+          ? YouTubeUtils.debounce
+          : (fn, delay) => {
+              let timeoutId;
+              return (...args) => {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => fn(...args), delay);
+              };
+            };
+
+      const scrollHandler = debounceFunc(() => {
+        button.classList.toggle('visible', window.scrollY > 100);
+      }, 100);
+
+      window.addEventListener('scroll', scrollHandler, { passive: true });
+      button.classList.toggle('visible', window.scrollY > 100);
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error creating universal button:', error);
+    }
+  };
+
+  /**
+   * Creates scroll-to-top button for playlist panel
+   * @returns {void}
+   */
+  const createPlaylistPanelButton = () => {
+    try {
+      const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
+      if (!playlistPanel || document.getElementById('playlist-panel-top-button')) return;
+      if (!config.enabled) return;
+
+      const button = document.createElement('button');
+      button.id = 'playlist-panel-top-button';
+      button.className = 'top-button';
+      button.title = t('scrollToTop');
+      button.setAttribute('aria-label', t('scrollToTop'));
+      button.innerHTML =
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+
+      const scrollContainer = playlistPanel.querySelector('#items');
+      if (!scrollContainer) return;
+
+      button.addEventListener('click', () => {
+        try {
+          scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error scrolling to top:', error);
+        }
+      });
+
+      // Ensure the playlist panel is positioned so absolute children are anchored inside it
+      playlistPanel.style.position = playlistPanel.style.position || 'relative';
+
+      // Force the button to be positioned inside the playlist panel (override global fixed)
+      button.style.position = 'absolute';
+      button.style.bottom = '16px';
+      button.style.right = '16px';
+      button.style.zIndex = '1000';
+
+      playlistPanel.appendChild(button);
+
+      // Setup scroll listener
+      const debounceFunc =
+        typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
+          ? YouTubeUtils.debounce
+          : (fn, delay) => {
+              let timeoutId;
+              return (...args) => {
+                clearTimeout(timeoutId);
+                timeoutId = setTimeout(() => fn(...args), delay);
+              };
+            };
+
+      const scrollHandler = debounceFunc(() => handleScroll(scrollContainer, button), 100);
+      scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
+      handleScroll(scrollContainer, button);
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error creating playlist panel button:', error);
+    }
+  };
+
+  // --- Return YouTube Dislike integration ---
+  const RETURN_DISLIKE_API = 'https://returnyoutubedislikeapi.com/votes';
+  const DISLIKE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
+  const dislikeCache = new Map(); // videoId -> { value, expiresAt }
+  let dislikeObserver = null;
+  let dislikePollTimer = null;
+
+  const formatCompactNumber = number => {
+    try {
+      return new Intl.NumberFormat(_getLanguage() || 'en', {
+        notation: 'compact',
+        compactDisplay: 'short',
+      }).format(Number(number) || 0);
+    } catch {
+      return String(number || 0);
+    }
+  };
+
+  const fetchDislikes = async videoId => {
+    if (!videoId) return 0;
+    const cached = dislikeCache.get(videoId);
+    if (cached && Date.now() < cached.expiresAt) return cached.value;
+
+    // Try GM_xmlhttpRequest first (userscript env). Fallback to fetch with timeout.
+    try {
+      if (typeof GM_xmlhttpRequest !== 'undefined') {
+        const text = await new Promise((resolve, reject) => {
+          const timeoutId = setTimeout(() => reject(new Error('timeout')), 8000);
+          GM_xmlhttpRequest({
+            method: 'GET',
+            url: `${RETURN_DISLIKE_API}?videoId=${encodeURIComponent(videoId)}`,
+            timeout: 8000,
+            headers: { Accept: 'application/json' },
+            onload: r => {
+              clearTimeout(timeoutId);
+              if (r.status >= 200 && r.status < 300) resolve(r.responseText);
+              else reject(new Error(`HTTP ${r.status}`));
+            },
+            onerror: e => {
+              clearTimeout(timeoutId);
+              reject(e || new Error('network'));
+            },
+            ontimeout: () => {
+              clearTimeout(timeoutId);
+              reject(new Error('timeout'));
+            },
+          });
+        });
+        const parsed = JSON.parse(text || '{}');
+        const val = Number(parsed.dislikes || 0) || 0;
+        dislikeCache.set(videoId, { value: val, expiresAt: Date.now() + DISLIKE_CACHE_TTL });
+        return val;
+      }
+
+      // fallback to fetch
+      const controller = new AbortController();
+      const id = setTimeout(() => controller.abort(), 8000);
+      try {
+        const resp = await fetch(`${RETURN_DISLIKE_API}?videoId=${encodeURIComponent(videoId)}`, {
+          method: 'GET',
+          cache: 'no-cache',
+          signal: controller.signal,
+          headers: { Accept: 'application/json' },
+        });
+        clearTimeout(id);
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        const json = await resp.json();
+        const val = Number(json.dislikes || 0) || 0;
+        dislikeCache.set(videoId, { value: val, expiresAt: Date.now() + DISLIKE_CACHE_TTL });
+        return val;
+      } finally {
+        clearTimeout(id);
+      }
+    } catch {
+      // on any error, return 0 but don't throw
+      return 0;
+    }
+  };
+
+  const getVideoIdForDislike = () => {
+    try {
+      const urlObj = new URL(window.location.href);
+      const pathname = urlObj.pathname || '';
+      if (pathname.startsWith('/shorts/')) return pathname.slice(8);
+      if (pathname.startsWith('/clip/')) {
+        const meta = document.querySelector(
+          "meta[itemprop='videoId'], meta[itemprop='identifier']"
+        );
+        return meta?.getAttribute('content') || null;
+      }
+      return urlObj.searchParams.get('v');
+    } catch {
+      return null;
+    }
+  };
+
+  const getButtonsContainer = () => {
+    return (
+      document.querySelector(
+        'ytd-menu-renderer.ytd-watch-metadata > div#top-level-buttons-computed'
+      ) ||
+      document.querySelector('ytd-menu-renderer.ytd-video-primary-info-renderer > div') ||
+      document.querySelector('#menu-container #top-level-buttons-computed') ||
+      null
+    );
+  };
+
+  /**
+   * Get dislike button for Shorts page
+   * @returns {HTMLElement|null} Dislike button element
+   */
+  const getDislikeButtonShorts = () => {
+    const activeReel = document.querySelector('ytd-reel-video-renderer[is-active]');
+    if (activeReel) {
+      return (
+        activeReel.querySelector('dislike-button-view-model') ||
+        activeReel.querySelector('#dislike-button') ||
+        null
+      );
+    }
+    return (
+      document.querySelector('dislike-button-view-model') ||
+      document.querySelector('#dislike-button') ||
+      null
+    );
+  };
+
+  /**
+   * Get dislike button from buttons container
+   * @param {HTMLElement} buttons - Buttons container
+   * @returns {HTMLElement|null} Dislike button element
+   */
+  const getDislikeButtonFromContainer = buttons => {
+    if (!buttons) return null;
+
+    const segmented = buttons.querySelector('ytd-segmented-like-dislike-button-renderer');
+    if (segmented) {
+      return segmented.children[1] || document.querySelector('#segmented-dislike-button') || null;
+    }
+
+    const viewModel = buttons.querySelector('dislike-button-view-model');
+    if (viewModel) return viewModel;
+
+    // Fallback to second child
+    return buttons.children && buttons.children[1] ? buttons.children[1] : null;
+  };
+
+  const getDislikeButton = () => {
+    // Handle Shorts variants and main page segmented buttons
+    const isShorts = window.location.pathname.startsWith('/shorts');
+    if (isShorts) {
+      return getDislikeButtonShorts();
+    }
+
+    const buttons = getButtonsContainer();
+    return getDislikeButtonFromContainer(buttons);
+  };
+
+  const getOrCreateDislikeText = dislikeButton => {
+    if (!dislikeButton) return null;
+    // try common selectors
+    const textSpan =
+      dislikeButton.querySelector('span.yt-core-attributed-string') ||
+      dislikeButton.querySelector('#text') ||
+      dislikeButton.querySelector('yt-formatted-string') ||
+      dislikeButton.querySelector('span[role="text"]');
+
+    if (textSpan) return textSpan;
+
+    // create a dedicated span with id so we can clean it later
+    const created = document.createElement('span');
+    created.id = 'ytp-plus-dislike-text';
+    created.setAttribute('role', 'text');
+    created.style.marginLeft = '6px';
+    const btn = dislikeButton.querySelector('button') || dislikeButton;
+    try {
+      btn.appendChild(created);
+      btn.style.minWidth = 'auto';
+    } catch {}
+    return created;
+  };
+
+  const setDislikeDisplay = (dislikeButton, count) => {
+    try {
+      const container = getOrCreateDislikeText(dislikeButton);
+      if (!container) return;
+      const formatted = formatCompactNumber(count);
+      if (container.innerText !== String(formatted)) container.innerText = String(formatted);
+    } catch {
+      // ignore
+    }
+  };
+
+  const setupDislikeObserver = dislikeButton => {
+    if (!dislikeButton) return;
+    if (dislikeObserver) {
+      dislikeObserver.disconnect();
+      dislikeObserver = null;
+    }
+    dislikeObserver = new MutationObserver(() => {
+      // on any mutation, update displayed cached value
+      const vid = getVideoIdForDislike();
+      const cached = dislikeCache.get(vid);
+      if (cached) setDislikeDisplay(dislikeButton, cached.value);
+    });
+    try {
+      dislikeObserver.observe(dislikeButton, { childList: true, subtree: true, attributes: true });
+    } catch {}
+  };
+
+  const initReturnDislike = () => {
+    try {
+      // avoid multiple polls
+      if (dislikePollTimer) return;
+      let attempts = 0;
+      const maxAttempts = window.location.pathname.startsWith('/shorts') ? 100 : 50;
+      const interval = window.location.pathname.startsWith('/shorts') ? 100 : 200;
+      dislikePollTimer = setInterval(async () => {
+        attempts++;
+        const btn = getDislikeButton();
+        if (btn || attempts >= maxAttempts) {
+          clearInterval(dislikePollTimer);
+          dislikePollTimer = null;
+          if (btn) {
+            const vid = getVideoIdForDislike();
+            const val = await fetchDislikes(vid);
+            setDislikeDisplay(btn, val);
+            setupDislikeObserver(btn);
+          }
+        }
+      }, interval);
+    } catch {
+      // ignore
+    }
+  };
+
+  const cleanupReturnDislike = () => {
+    try {
+      if (dislikePollTimer) {
+        clearInterval(dislikePollTimer);
+        dislikePollTimer = null;
+      }
+      if (dislikeObserver) {
+        dislikeObserver.disconnect();
+        dislikeObserver = null;
+      }
+      // remove created span if present
+      const created = document.getElementById('ytp-plus-dislike-text');
+      if (created && created.parentNode) created.parentNode.removeChild(created);
+    } catch {}
+  };
+
+  /**
    * Observes DOM changes to detect tab switches
    * @returns {MutationObserver|null} The created observer or null on error
    */
@@ -209,25 +585,49 @@
   };
 
   /**
+   * Check if current page needs universal button
+   * @returns {boolean}
+   */
+  const needsUniversalButton = () => {
+    const path = window.location.pathname;
+    const { search } = window.location;
+
+    // Search results page
+    if (path === '/results' && search.includes('search_query=')) return true;
+
+    // Playlist page
+    if (path === '/playlist' && search.includes('list=')) return true;
+
+    // Home/Feed pages
+    if (path === '/' || path === '/feed/subscriptions') return true;
+
+    return false;
+  };
+
+  /**
+   * Handles click events on tab buttons
+   * @param {Event} e - Click event
+   * @returns {void}
+   */
+  const handleTabButtonClick = e => {
+    try {
+      const { target } = /** @type {{ target: HTMLElement }} */ (e);
+      const tabButton = target?.closest?.('.tab-btn[tyt-tab-content]');
+      if (tabButton) {
+        setTimeout(setupScrollListener, 100);
+      }
+    } catch (error) {
+      console.error('[YouTube+][Enhanced] Error in click handler:', error);
+    }
+  };
+
+  /**
    * Sets up event listeners for tab button clicks
    * @returns {void}
    */
   const setupEvents = () => {
     try {
-      document.addEventListener(
-        'click',
-        e => {
-          try {
-            const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-            if (target.closest && target.closest('.tab-btn[tyt-tab-content]')) {
-              setTimeout(setupScrollListener, 100);
-            }
-          } catch (error) {
-            console.error('[YouTube+][Enhanced] Error in click handler:', error);
-          }
-        },
-        true
-      );
+      document.addEventListener('click', handleTabButtonClick, true);
     } catch (error) {
       console.error('[YouTube+][Enhanced] Error in setupEvents:', error);
     }
@@ -242,6 +642,7 @@
       addStyles();
       setupEvents();
 
+      // Check for right tabs (watch page)
       const checkForTabs = () => {
         try {
           if (document.querySelector('#right-tabs')) {
@@ -255,7 +656,61 @@
         }
       };
 
+      // Check for playlist panel
+      const checkForPlaylistPanel = () => {
+        try {
+          const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
+          if (playlistPanel && !document.getElementById('playlist-panel-top-button')) {
+            createPlaylistPanelButton();
+          }
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error checking for playlist panel:', error);
+        }
+      };
+
+      // Check page type and create appropriate button
+      const checkPageType = () => {
+        try {
+          if (needsUniversalButton() && !document.getElementById('universal-top-button')) {
+            createUniversalButton();
+          }
+          checkForPlaylistPanel();
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error checking page type:', error);
+        }
+      };
+
       checkForTabs();
+      setTimeout(checkPageType, 500);
+      // Initialize ReturnYouTubeDislike integration
+      try {
+        initReturnDislike();
+      } catch {}
+
+      // Observer for playlist panel
+      const observer = new MutationObserver(() => {
+        checkForPlaylistPanel();
+      });
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+
+      // Listen for navigation changes (YouTube is SPA)
+      window.addEventListener('yt-navigate-finish', () => {
+        // cleanup and re-init dislike integration around navigation
+        try {
+          cleanupReturnDislike();
+        } catch {}
+        setTimeout(() => {
+          checkPageType();
+          checkForTabs();
+          try {
+            initReturnDislike();
+          } catch {}
+        }, 300);
+      });
     } catch (error) {
       console.error('[YouTube+][Enhanced] Error in initialization:', error);
     }
@@ -278,7 +733,7 @@
     storageKey: 'youtube_endscreen_settings',
     // Added .teaser-carousel to cover variants named 'teaser-carousel'
     selectors:
-      '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.teaser-carousel,.ytp-cards-button,.iv-drawer,.video-annotations',
+      '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.teaser-carousel,.ytp-cards-button,.iv-drawer,.video-annotations,.ytp-overlay-bottom-right',
     debounceMs: 32,
     batchSize: 20,
   };
@@ -371,37 +826,65 @@
     if (elements.length) fastRemove(elements);
   };
 
+  const getClassNameValue = node => {
+    if (typeof node.className === 'string') {
+      return node.className;
+    }
+    if (node.className && typeof node.className === 'object' && 'baseVal' in node.className) {
+      return /** @type {any} */ (node.className).baseVal;
+    }
+    return '';
+  };
+
+  /**
+   * Check if node is relevant for end screen removal
+   * @param {Node} node - DOM node to check
+   * @returns {boolean} True if relevant
+   */
+  const isRelevantNode = node => {
+    if (!(node instanceof Element)) return false;
+
+    const classNameValue = getClassNameValue(node);
+    return classNameValue.includes('ytp-') || node.querySelector?.('.ytp-ce-element');
+  };
+
+  /**
+   * Check if mutations contain relevant changes
+   * @param {MutationRecord[]} mutations - Mutation records
+   * @returns {boolean} True if has relevant changes
+   */
+  const hasRelevantChanges = mutations => {
+    for (const { addedNodes } of mutations) {
+      for (const node of addedNodes) {
+        if (isRelevantNode(node)) return true;
+      }
+    }
+    return false;
+  };
+
+  /**
+   * Create mutation observer for end screens
+   * @param {Function} throttledRemove - Throttled remove function
+   * @returns {MutationObserver} Observer instance
+   */
+  const createEndScreenObserver = throttledRemove => {
+    return new MutationObserver(mutations => {
+      if (hasRelevantChanges(mutations)) {
+        throttledRemove();
+      }
+    });
+  };
+
+  /**
+   * Setup watcher for end screens
+   * @returns {void}
+   */
   const setupWatcher = () => {
     if (state.observer || !CONFIG.enabled) return;
 
     const throttledRemove = debounce(removeEndScreens, CONFIG.debounceMs);
+    state.observer = createEndScreenObserver(throttledRemove);
 
-    state.observer = new MutationObserver(mutations => {
-      let hasRelevantChanges = false;
-      for (const { addedNodes } of mutations) {
-        for (const node of addedNodes) {
-          if (node instanceof Element) {
-            // Handle both HTML and SVG elements - className can be string or SVGAnimatedString
-            const classNameValue =
-              typeof node.className === 'string'
-                ? node.className
-                : node.className &&
-                    typeof node.className === 'object' &&
-                    'baseVal' in node.className
-                  ? /** @type {any} */ (node.className).baseVal
-                  : '';
-            if (classNameValue.includes('ytp-') || node.querySelector?.('.ytp-ce-element')) {
-              hasRelevantChanges = true;
-              break;
-            }
-          }
-        }
-        if (hasRelevantChanges) break;
-      }
-      if (hasRelevantChanges) throttledRemove();
-    });
-
-    // ✅ Register observer in cleanupManager
     YouTubeUtils.cleanupManager.registerObserver(state.observer);
 
     const target = document.querySelector('#movie_player') || document.body;
@@ -448,8 +931,9 @@
     container.querySelector('input').addEventListener(
       'change',
       e => {
-        const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-        CONFIG.enabled = target.checked;
+        const { target } = /** @type {{ target: EventTarget & HTMLInputElement }} */ (e);
+        const { checked } = /** @type {HTMLInputElement} */ (target);
+        CONFIG.enabled = checked;
         settings.save();
       },
       { passive: true }
@@ -467,15 +951,16 @@
   // Initialize
   settings.load();
 
-  if (document.readyState === 'loading') {
+  const { readyState } = document;
+  if (readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init, { once: true });
   } else {
     init();
   }
 
   const handleSettingsNavClick = e => {
-    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-    if (target.dataset?.section === 'advanced') {
+    const { target } = /** @type {{ target: HTMLElement }} */ (e);
+    if (target?.dataset?.section === 'advanced') {
       setTimeout(addSettingsUI, 10);
     }
   };
@@ -531,29 +1016,50 @@
   const OVERLAY_ID = 'yt-resume-overlay';
   const AUTO_HIDE_MS = 20000; // hide overlay after 20s
 
-  // Localization
-  const i18n = {
-    en: {
-      resumePlayback: 'Resume playback?',
-      resume: 'Resume',
-      startOver: 'Start over',
-    },
-    ru: {
-      resumePlayback: 'Продолжить воспроизведение?',
-      resume: 'Продолжить',
-      startOver: 'Начать сначала',
-    },
-  };
-
-  // Detect language
-  const getLanguage = () => {
+  // Use centralized i18n for this module
+  const _globalI18n_resume =
+    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  const _getLanguage_resume = () => {
+    try {
+      if (_globalI18n_resume && typeof _globalI18n_resume.getLanguage === 'function') {
+        return _globalI18n_resume.getLanguage();
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.getLanguage === 'function'
+      ) {
+        return window.YouTubeUtils.getLanguage();
+      }
+    } catch {
+      // fallback
+    }
     const htmlLang = document.documentElement.lang || 'en';
-    if (htmlLang.startsWith('ru')) return 'ru';
-    return 'en';
+    return htmlLang.startsWith('ru') ? 'ru' : 'en';
   };
 
-  const lang = getLanguage();
-  const t = key => i18n[lang][key] || i18n.en[key] || key;
+  const t = (key, params = {}) => {
+    try {
+      if (_globalI18n_resume && typeof _globalI18n_resume.t === 'function') {
+        return _globalI18n_resume.t(key, params);
+      }
+      if (
+        typeof window !== 'undefined' &&
+        window.YouTubeUtils &&
+        typeof window.YouTubeUtils.t === 'function'
+      ) {
+        return window.YouTubeUtils.t(key, params);
+      }
+    } catch {
+      // fall through
+    }
+    if (!key || typeof key !== 'string') return '';
+    if (Object.keys(params).length === 0) return key;
+    let result = key;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
+  };
+  // local language accessor available as _getLanguage_resume()
 
   const readStorage = () => {
     try {
@@ -569,55 +1075,76 @@
     } catch {}
   };
 
+  /**
+   * Extract video ID from URL params
+   * @returns {string|null} Video ID or null
+   */
+  const getVideoIdFromUrlParams = () => {
+    const urlParams = new URLSearchParams(window.location.search);
+    return urlParams.get('v') || null;
+  };
+
+  /**
+   * Extract video ID from canonical link
+   * @returns {string|null} Video ID or null
+   */
+  const getVideoIdFromCanonical = () => {
+    const meta = document.querySelector('link[rel="canonical"]');
+    if (!meta || !meta.href) return null;
+
+    const u = new URL(meta.href);
+    const vParam = u.searchParams.get('v');
+    if (vParam) return vParam;
+
+    // Try extracting from pathname (for /watch/ or /shorts/ URLs)
+    const pathMatch = u.pathname.match(/\/(watch|shorts)\/([^\/\?]+)/);
+    return pathMatch && pathMatch[2] ? pathMatch[2] : null;
+  };
+
+  /**
+   * Extract video ID from ytInitialPlayerResponse
+   * @returns {string|null} Video ID or null
+   */
+  const getVideoIdFromPlayerResponse = () => {
+    if (
+      window.ytInitialPlayerResponse &&
+      window.ytInitialPlayerResponse.videoDetails &&
+      window.ytInitialPlayerResponse.videoDetails.videoId
+    ) {
+      return window.ytInitialPlayerResponse.videoDetails.videoId;
+    }
+    return null;
+  };
+
+  /**
+   * Extract video ID from pathname
+   * @returns {string|null} Video ID or null
+   */
+  const getVideoIdFromPathname = () => {
+    const pathMatch = window.location.pathname.match(/\/(watch|shorts)\/([^\/\?]+)/);
+    return pathMatch && pathMatch[2] ? pathMatch[2] : null;
+  };
+
   // Get current video id from the page (works on standard watch pages)
   const getVideoId = () => {
     try {
       // First try URL parameters (most reliable)
-      const urlParams = new URLSearchParams(window.location.search);
-      const videoIdFromUrl = urlParams.get('v');
-      if (videoIdFromUrl) return videoIdFromUrl;
-
-      // Try canonical link
-      const meta = document.querySelector('link[rel="canonical"]');
-      if (meta && meta.href) {
-        const u = new URL(meta.href);
-        const vParam = u.searchParams.get('v');
-        if (vParam) return vParam;
-
-        // Try extracting from pathname (for /watch/ or /shorts/ URLs)
-        const pathMatch = u.pathname.match(/\/(watch|shorts)\/([^\/\?]+)/);
-        if (pathMatch && pathMatch[2]) return pathMatch[2];
-      }
-
-      // Fallback to ytInitialPlayerResponse
-      if (
-        window.ytInitialPlayerResponse &&
-        window.ytInitialPlayerResponse.videoDetails &&
-        window.ytInitialPlayerResponse.videoDetails.videoId
-      ) {
-        return window.ytInitialPlayerResponse.videoDetails.videoId;
-      }
-
-      // Last resort: try to extract from current URL pathname
-      const pathMatch = window.location.pathname.match(/\/(watch|shorts)\/([^\/\?]+)/);
-      if (pathMatch && pathMatch[2]) return pathMatch[2];
-
-      return null;
+      return (
+        getVideoIdFromUrlParams() ||
+        getVideoIdFromCanonical() ||
+        getVideoIdFromPlayerResponse() ||
+        getVideoIdFromPathname() ||
+        null
+      );
     } catch {
       return null;
     }
   };
 
-  const createOverlay = (seconds, onResume, onRestart) => {
-    if (document.getElementById(OVERLAY_ID)) return null;
-    const wrap = document.createElement('div');
-    wrap.id = OVERLAY_ID;
-
-    // Try to insert overlay inside the player so it appears above the progress bar
-    const player = document.querySelector('#movie_player');
-    const inPlayer = !!player;
-
-    // Ensure glassmorphism styles are available for the overlay
+  /**
+   * Inject resume overlay styles
+   */
+  const injectResumeOverlayStyles = () => {
     const resumeOverlayStyles = `
       .ytp-resume-overlay{min-width:180px;max-width:36vw;background:rgba(24, 24, 24, 0.3);color:var(--yt-spec-text-primary,#fff);padding:12px 14px;border-radius:12px;backdrop-filter:blur(8px) saturate(150%);-webkit-backdrop-filter:blur(8px) saturate(150%);box-shadow:0 14px 40px rgba(0,0,0,0.48);border:1.25px solid rgba(255,255,255,0.06);font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;align-items:center;text-align:center}
       .ytp-resume-overlay .ytp-resume-title{font-weight:600;margin-bottom:8px}
@@ -626,8 +1153,9 @@
       .ytp-resume-overlay .ytp-resume-btn.primary{background:#1e88e5;color:#fff}
       .ytp-resume-overlay .ytp-resume-btn.ghost{background:rgba(255,255,255,0.06);color:#fff}
     `;
+
     try {
-      if (window.YouTubeUtils && YouTubeUtils.StyleManager) {
+      if (window.YouTubeUtils?.StyleManager) {
         YouTubeUtils.StyleManager.add('ytp-resume-overlay-styles', resumeOverlayStyles);
       } else if (!document.getElementById('ytp-resume-overlay-styles')) {
         const s = document.createElement('style');
@@ -636,59 +1164,90 @@
         (document.head || document.documentElement).appendChild(s);
       }
     } catch {}
+  };
 
-    if (inPlayer) {
+  /**
+   * Position overlay wrapper in player or body
+   * @param {HTMLElement} wrap - Wrapper element
+   * @param {HTMLElement|null} player - Player element
+   */
+  const positionOverlayWrapper = (wrap, player) => {
+    wrap.className = 'ytp-resume-overlay';
+
+    if (player) {
       try {
-        // Ensure player can be a positioning context
-        const playerStyle = window.getComputedStyle(
-          /** @type {Element} */ (/** @type {unknown} */ (player))
-        );
+        const playerStyle = window.getComputedStyle(player);
         if (playerStyle.position === 'static') player.style.position = 'relative';
       } catch {}
 
-      // Position centered inside the player
-      wrap.className = 'ytp-resume-overlay';
-      // absolute center (use transform to center by both axes)
       wrap.style.cssText =
         'position:absolute;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:9999;pointer-events:auto;';
       player.appendChild(wrap);
     } else {
-      // Fallback: fixed centered on the page
-      wrap.className = 'ytp-resume-overlay';
       wrap.style.cssText =
         'position:fixed;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:1200;pointer-events:auto;';
       document.body.appendChild(wrap);
     }
+  };
+
+  /**
+   * Create overlay button
+   * @param {string} className - Button class name
+   * @param {string} text - Button text
+   * @param {Function} onClick - Click handler
+   * @param {HTMLElement} wrap - Wrapper to remove on click
+   * @returns {HTMLElement} Button element
+   */
+  const createOverlayButton = (className, text, onClick, wrap) => {
+    const btn = document.createElement('button');
+    btn.className = `ytp-resume-btn ${className}`;
+    btn.textContent = text;
+    btn.addEventListener('click', () => {
+      try {
+        onClick();
+      } catch {}
+      try {
+        wrap.remove();
+      } catch {}
+    });
+    return btn;
+  };
+
+  /**
+   * Register cleanup handlers for overlay
+   * @param {Function} cancel - Cancel timeout function
+   * @param {HTMLElement} wrap - Wrapper element
+   */
+  const registerOverlayCleanup = (cancel, wrap) => {
+    if (window.YouTubeUtils?.cleanupManager) {
+      YouTubeUtils.cleanupManager.register(() => {
+        try {
+          cancel();
+        } catch {}
+        try {
+          wrap.remove();
+        } catch {}
+      });
+    }
+  };
+
+  const createOverlay = (seconds, onResume, onRestart) => {
+    if (document.getElementById(OVERLAY_ID)) return null;
+
+    const wrap = document.createElement('div');
+    wrap.id = OVERLAY_ID;
+
+    const player = document.querySelector('#movie_player');
+    injectResumeOverlayStyles();
+    positionOverlayWrapper(wrap, player);
 
     const title = document.createElement('div');
     title.className = 'ytp-resume-title';
     title.textContent = `${t('resumePlayback')} (${formatTime(seconds)})`;
 
-    const btnResume = document.createElement('button');
-    btnResume.className = 'ytp-resume-btn primary';
-    btnResume.textContent = t('resume');
-    const btnRestart = document.createElement('button');
-    btnRestart.className = 'ytp-resume-btn ghost';
-    btnRestart.textContent = t('startOver');
+    const btnResume = createOverlayButton('primary', t('resume'), onResume, wrap);
+    const btnRestart = createOverlayButton('ghost', t('startOver'), onRestart, wrap);
 
-    btnResume.addEventListener('click', () => {
-      try {
-        onResume();
-      } catch {}
-      try {
-        wrap.remove();
-      } catch {}
-    });
-    btnRestart.addEventListener('click', () => {
-      try {
-        onRestart();
-      } catch {}
-      try {
-        wrap.remove();
-      } catch {}
-    });
-
-    // group actions and center them
     const actions = document.createElement('div');
     actions.className = 'ytp-resume-actions';
     actions.appendChild(btnResume);
@@ -703,20 +1262,8 @@
       } catch {}
     }, AUTO_HIDE_MS);
 
-    // Return function to cancel timeout
     const cancel = () => clearTimeout(to);
-
-    // Register cleanup: cancel timeout and remove overlay when cleanup runs
-    if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-      YouTubeUtils.cleanupManager.register(() => {
-        try {
-          cancel();
-        } catch {}
-        try {
-          wrap.remove();
-        } catch {}
-      });
-    }
+    registerOverlayCleanup(cancel, wrap);
 
     return cancel;
   };
@@ -754,11 +1301,11 @@
           const currentVid = getCurrentVideoId();
           if (!currentVid) return;
 
-          const t = Math.floor(videoEl.currentTime || 0);
+          const curSec = Math.floor(videoEl.currentTime || 0);
           const now = Date.now();
-          if (t && (!lastSavedAt || now - lastSavedAt > SAVE_THROTTLE_MS)) {
+          if (curSec && (!lastSavedAt || now - lastSavedAt > SAVE_THROTTLE_MS)) {
             const s = readStorage();
-            s[currentVid] = t;
+            s[currentVid] = curSec;
             writeStorage(s);
             lastSavedAt = now;
           }
@@ -900,9 +1447,9 @@
 
   /** @type {any} */
   const globalContext =
-    typeof unsafeWindow !== 'undefined'
-      ? /** @type {any} */ (unsafeWindow)
-      : /** @type {any} */ (window);
+    typeof unsafeWindow === 'undefined'
+      ? /** @type {any} */ (window)
+      : /** @type {any} */ (unsafeWindow);
 
   const gmApi = globalContext?.GM ?? null;
   const gmInfo = globalContext?.GM_info ?? null;
@@ -935,9 +1482,9 @@
       // If head isn't available yet, wait for DOMContentLoaded and insert then.
       const onReady = () => {
         try {
-          const t = document.head || document.documentElement;
-          if (t && typeof t.insertAdjacentHTML === 'function') {
-            t.insertAdjacentHTML('beforeend', html);
+          const targetElement = document.head || document.documentElement;
+          if (targetElement && typeof targetElement.insertAdjacentHTML === 'function') {
+            targetElement.insertAdjacentHTML('beforeend', html);
           }
         } catch {}
       };
@@ -950,223 +1497,47 @@
   };
 
   insertStylesSafely(`<style>
-        .ytp-btn {
-            border-radius: 8px;
-            font-family: 'Roboto', 'Arial', sans-serif;
-            font-size: 1.4rem;
-            line-height: 2rem;
-            font-weight: 500;
-            padding: 0.5em;
-            margin-left: 0.6em;
-            user-select: none;
-        }
-        
-        .ytp-btn, .ytp-btn > * {
-            text-decoration: none;
-            cursor: pointer;
-        }
-        
-        .ytp-btn-sections {
-            padding: 0;
-        }
-        
-        .ytp-btn-sections > .ytp-btn-section {
-            padding: 0.5em;
-            display: inline-block;
-        }
- 
-        .ytp-btn-sections > .ytp-btn-section:first-child {
-            border-top-left-radius: 8px;
-            border-bottom-left-radius: 8px;
-        }
- 
-        .ytp-btn-sections > .ytp-btn-section:nth-last-child(1 of .ytp-btn-section) {
-            border-top-right-radius: 8px;
-            border-bottom-right-radius: 8px;
-        }
-        
-        .ytp-badge {
-            border-radius: 8px;
-            padding: 0.2em;
-            font-size: 0.8em;
-            vertical-align: top;
-        }
- 
-        .ytp-play-all-btn {
-            background-color: #bf4bcc;
-            color: white;
-        }
- 
-        .ytp-play-all-btn:hover {
-            background-color: #d264de;
-        }
-        
-        .ytp-random-btn > .ytp-btn-section, .ytp-random-badge, .ytp-random-notice, .ytp-random-popover > * {
-            background-color: #2b66da;
-            color: white;
-        }
- 
-        .ytp-random-btn > .ytp-btn-section:hover, .ytp-random-popover > *:hover {
-            background-color: #6192ee;
-        }
-        
-        .ytp-play-all-btn.ytp-unsupported {
-            background-color: #828282;
-            color: white;
-        }
-        
-        .ytp-random-popover {
-            position: absolute;
-            border-radius: 8px;
-            font-size: 1.6rem;
-            transform: translate(-100%, 0.4em);
-        }
-        
-        .ytp-random-popover > * {
-            display: block;
-            text-decoration: none;
-            padding: 0.4em;
-        }
-        
-        .ytp-random-popover > :first-child {
-            border-top-left-radius: 8px;
-            border-top-right-radius: 8px;
-        }
-        
-        .ytp-random-popover > :last-child {
-            border-bottom-left-radius: 8px;
-            border-bottom-right-radius: 8px;
-        }
-    
-        .ytp-random-popover > *:not(:last-child) {
-            border-bottom: 1px solid #6e8dbb;
-        }
-    
-        .ytp-button-container {
-            display: flex;
-            width: 100%;
-            margin-top: 1em;
-            margin-bottom: -1em;
-        }
- 
-        ytd-rich-grid-renderer .ytp-button-container > :first-child {
-            margin-left: 0;
-        }
-        
+        .ytp-btn {border-radius: 8px; font-family: 'Roboto', 'Arial', sans-serif; font-size: 1.4rem; line-height: 2rem; font-weight: 500; padding: 0.5em; margin-left: 0.6em; user-select: none;}        
+        .ytp-btn, .ytp-btn > * {text-decoration: none; cursor: pointer;}        
+        .ytp-btn-sections {padding: 0;}        
+        .ytp-btn-sections > .ytp-btn-section {padding: 0.5em; display: inline-block;} 
+        .ytp-btn-sections > .ytp-btn-section:first-child {border-top-left-radius: 8px; border-bottom-left-radius: 8px;} 
+        .ytp-btn-sections > .ytp-btn-section:nth-last-child(1 of .ytp-btn-section) {border-top-right-radius: 8px; border-bottom-right-radius: 8px;}        
+        .ytp-badge {border-radius: 8px; padding: 0.2em; font-size: 0.8em; vertical-align: top;} 
+        .ytp-play-all-btn {background-color: #bf4bcc; color: white;} 
+        .ytp-play-all-btn:hover {background-color: #d264de;}        
+        .ytp-random-btn > .ytp-btn-section, .ytp-random-badge, .ytp-random-notice, .ytp-random-popover > * {background-color: #2b66da; color: white;} 
+        .ytp-random-btn > .ytp-btn-section:hover, .ytp-random-popover > *:hover {background-color: #6192ee;}        
+        .ytp-play-all-btn.ytp-unsupported {background-color: #828282; color: white;}        
+        .ytp-random-popover {position: absolute; border-radius: 8px; font-size: 1.6rem; transform: translate(-100%, 0.4em);}        
+        .ytp-random-popover > * {display: block; text-decoration: none; padding: 0.4em;}        
+        .ytp-random-popover > :first-child {border-top-left-radius: 8px; border-top-right-radius: 8px;}        
+        .ytp-random-popover > :last-child {border-bottom-left-radius: 8px; border-bottom-right-radius: 8px;}    
+        .ytp-random-popover > *:not(:last-child) {border-bottom: 1px solid #6e8dbb;}    
+        .ytp-button-container {display: flex; width: 100%; margin-top: 1em; margin-bottom: -1em;} 
+        ytd-rich-grid-renderer .ytp-button-container > :first-child {margin-left: 0;}        
         /* fetch() API introduces a race condition. This hides the occasional duplicate buttons */
-        .ytp-play-all-btn ~ .ytp-play-all-btn,
-        .ytp-random-btn ~ .ytp-random-btn {
-            display: none;
-        }
-        
+        .ytp-play-all-btn ~ .ytp-play-all-btn, .ytp-random-btn ~ .ytp-random-btn {display: none;}        
         /* Fix for mobile view */
-        ytm-feed-filter-chip-bar-renderer .ytp-btn {
-            margin-right: 12px;
-            padding: 0.4em;
-        }
-        
-        body:has(#secondary ytd-playlist-panel-renderer[ytp-random]) .ytp-prev-button.ytp-button,
-        body:has(#secondary ytd-playlist-panel-renderer[ytp-random]) .ytp-next-button.ytp-button:not([ytp-random="applied"]) {
-            display: none !important;
-        }
-        
-        #secondary ytd-playlist-panel-renderer[ytp-random] ytd-menu-renderer.ytd-playlist-panel-renderer {
-            height: 1em;
-            visibility: hidden;
-        }
-        
-        #secondary ytd-playlist-panel-renderer[ytp-random]:not(:hover) ytd-playlist-panel-video-renderer {
-            filter: blur(2em);
-        }
- 
-        .ytp-random-notice {
-            padding: 1em;
-            z-index: 1000;
-        }
-        
-        .ytp-playlist-emulator {
-            margin-bottom: 1.6rem;
-            border-radius: 1rem;
-        }
-        
-        .ytp-playlist-emulator > .title {
-            border-top-left-radius: 1rem;
-            border-top-right-radius: 1rem;
-            font-size: 2rem;
-            background-color: #323232;
-            color: white;
-            padding: 0.8rem;
-        }
-        
-        .ytp-playlist-emulator > .information {
-            font-size: 1rem;
-            background-color: #2b2a2a;
-            color: white;
-            padding: 0.8rem;
-        }
-        
-        .ytp-playlist-emulator > .footer {
-            border-bottom-left-radius: 1rem;
-            border-bottom-right-radius: 1rem;
-            background-color: #323232;
-            padding: 0.8rem;
-        }
-        
-        .ytp-playlist-emulator > .items {
-            max-height: 500px;
-            overflow-y: auto;
-            overflow-x: hidden;
-        }
-        
-        .ytp-playlist-emulator:not([data-failed]) > .items:empty::before {
-            content: 'Loading playlist...';
-            background-color: #626262;
-            padding: 0.8rem;
-            color: white;
-            font-size: 2rem;
-            display: block;
-        }
-        
-        .ytp-playlist-emulator[data-failed="rejected"] > .items:empty::before {
-            content: "Make sure to allow the external API call to ytplaylist.robert.wesner.io to keep viewing playlists that YouTube doesn't natively support!";
-            background-color: #491818;
-            padding: 0.8rem;
-            color: #ff7c7c;
-            font-size: 1rem;
-            display: block;
-        }
-        
-        .ytp-playlist-emulator > .items > .item {
-            background-color: #2c2c2c;
-            padding: 0.8rem;
-            border: 1px solid #1b1b1b;
-            font-size: 1.6rem;
-            color: white;
-            min-height: 5rem;
-            cursor: pointer;
-        }
-        
-        .ytp-playlist-emulator > .items > .item:hover {
-            background-color: #505050;
-        }
-        
-        .ytp-playlist-emulator > .items > .item:not(:last-of-type) {
-            border-bottom: 0;
-        }
-        
-        .ytp-playlist-emulator > .items > .item[data-current] {
-            background-color: #767676;
-        }
-        
-        body:has(.ytp-playlist-emulator) .ytp-prev-button.ytp-button,
-        body:has(.ytp-playlist-emulator) .ytp-next-button.ytp-button:not([ytp-emulation="applied"]) {
-            display: none !important;
-        }
-        
+        ytm-feed-filter-chip-bar-renderer .ytp-btn {margin-right: 12px; padding: 0.4em;}        
+        body:has(#secondary ytd-playlist-panel-renderer[ytp-random]) .ytp-prev-button.ytp-button, body:has(#secondary ytd-playlist-panel-renderer[ytp-random]) .ytp-next-button.ytp-button:not([ytp-random="applied"]) {display: none !important;}        
+        #secondary ytd-playlist-panel-renderer[ytp-random] ytd-menu-renderer.ytd-playlist-panel-renderer {height: 1em; visibility: hidden;}        
+        #secondary ytd-playlist-panel-renderer[ytp-random]:not(:hover) ytd-playlist-panel-video-renderer {filter: blur(2em);} 
+        .ytp-random-notice {padding: 1em; z-index: 1000;}        
+        .ytp-playlist-emulator {margin-bottom: 1.6rem; border-radius: 1rem;}        
+        .ytp-playlist-emulator > .title {border-top-left-radius: 1rem; border-top-right-radius: 1rem; font-size: 2rem; background-color: #323232; color: white; padding: 0.8rem;}        
+        .ytp-playlist-emulator > .information {font-size: 1rem; background-color: #2b2a2a; color: white; padding: 0.8rem;}        
+        .ytp-playlist-emulator > .footer {border-bottom-left-radius: 1rem; border-bottom-right-radius: 1rem; background-color: #323232; padding: 0.8rem;}        
+        .ytp-playlist-emulator > .items {max-height: 500px; overflow-y: auto; overflow-x: hidden;}        
+        .ytp-playlist-emulator:not([data-failed]) > .items:empty::before {content: 'Loading playlist...'; background-color: #626262; padding: 0.8rem; color: white; font-size: 2rem; display: block;}        
+        .ytp-playlist-emulator[data-failed="rejected"] > .items:empty::before {content: "Make sure to allow the external API call to ytplaylist.robert.wesner.io to keep viewing playlists that YouTube doesn't natively support!"; background-color: #491818; padding: 0.8rem; color: #ff7c7c; font-size: 1rem; display: block;}        
+        .ytp-playlist-emulator > .items > .item {background-color: #2c2c2c; padding: 0.8rem; border: 1px solid #1b1b1b; font-size: 1.6rem; color: white; min-height: 5rem; cursor: pointer;}        
+        .ytp-playlist-emulator > .items > .item:hover {background-color: #505050;}      
+        .ytp-playlist-emulator > .items > .item:not(:last-of-type) {border-bottom: 0;}        
+        .ytp-playlist-emulator > .items > .item[data-current] {background-color: #767676;}        
+        body:has(.ytp-playlist-emulator) .ytp-prev-button.ytp-button, body:has(.ytp-playlist-emulator) .ytp-next-button.ytp-button:not([ytp-emulation="applied"]) {display: none !important;}        
         /* hide when sorting by oldest */
-        ytm-feed-filter-chip-bar-renderer > div :nth-child(3).selected ~ .ytp-btn:not(.ytp-unsupported), ytd-feed-filter-chip-bar-renderer iron-selector#chips :nth-child(3).iron-selected ~ .ytp-btn:not(.ytp-unsupported) {
-            display: none;
-        }
+        ytm-feed-filter-chip-bar-renderer > div :nth-child(3).selected ~ .ytp-btn:not(.ytp-unsupported), ytd-feed-filter-chip-bar-renderer iron-selector#chips :nth-child(3).iron-selected ~ .ytp-btn:not(.ytp-unsupported) {display: none;}
     </style>`);
 
   const getVideoId = url => {
@@ -1199,73 +1570,75 @@
 
   const isAdPlaying = () => !!document.querySelector('.ad-interrupting');
 
+  const buildUrl = (v, list, ytpRandom) => {
+    const randomParam = ytpRandom === null ? '' : `&ytp-random=${ytpRandom}`;
+    return `/watch?v=${v}&list=${list}${randomParam}`;
+  };
+
   const redirect = (v, list, ytpRandom = null) => {
+    // Mobile: use direct navigation
     if (location.host === 'm.youtube.com') {
-      // Mobile: use direct navigation
-      const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
+      const url = buildUrl(v, list, ytpRandom);
       window.location.href = url;
-    } else {
-      // Desktop: try YouTube's client-side routing first, with fallback
-      try {
-        const playlistPanel = document.querySelector('ytd-playlist-panel-renderer #items');
-        if (playlistPanel) {
-          const redirector = document.createElement('a');
-          redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
-          redirector.setAttribute('hidden', '');
-          redirector.data = {
-            commandMetadata: {
-              webCommandMetadata: {
-                url: `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`,
-                webPageType: 'WEB_PAGE_TYPE_WATCH',
-                rootVe: 3832, // ??? required though
-              },
-            },
-            watchEndpoint: {
-              videoId: v,
-              playlistId: list,
-            },
-          };
-          playlistPanel.append(redirector);
-          redirector.click();
-        } else {
-          // Fallback: use direct navigation if playlist panel not found
-          const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
-          window.location.href = url;
-        }
-      } catch {
-        // Fallback: use direct navigation on error
-        const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
+      return;
+    }
+
+    // Desktop: try YouTube's client-side routing first, with fallback
+    try {
+      const playlistPanel = document.querySelector('ytd-playlist-panel-renderer #items');
+      if (!playlistPanel) {
+        // Fallback: use direct navigation if playlist panel not found
+        const url = `/watch?v=${v}&list=${list}${ytpRandom === null ? '' : `&ytp-random=${ytpRandom}`}`;
         window.location.href = url;
+        return;
       }
+
+      const redirector = document.createElement('a');
+      redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
+      redirector.setAttribute('hidden', '');
+      redirector.data = {
+        commandMetadata: {
+          webCommandMetadata: {
+            url: buildUrl(v, list, ytpRandom),
+            webPageType: 'WEB_PAGE_TYPE_WATCH',
+            rootVe: 3832, // ??? required though
+          },
+        },
+        watchEndpoint: {
+          videoId: v,
+          playlistId: list,
+        },
+      };
+      playlistPanel.append(redirector);
+      redirector.click();
+    } catch {
+      // Fallback: use direct navigation on error
+      const url = `/watch?v=${v}&list=${list}${ytpRandom === null ? '' : `&ytp-random=${ytpRandom}`}`;
+      window.location.href = url;
     }
   };
 
   let id = '';
-  const apply = () => {
-    if (id === '') {
-      // do not apply prematurely, caused by mutation observer
-      console.warn('[Play All] Channel ID not yet determined');
-      return;
-    }
-
+  /**
+   * Find or create parent container for play buttons
+   * @returns {HTMLElement|null} Parent container element
+   */
+  const getOrCreateParentContainer = () => {
     let parent =
       location.host === 'm.youtube.com'
-        ? // mobile view
-          queryHTMLElement(
+        ? queryHTMLElement(
             'ytm-feed-filter-chip-bar-renderer .chip-bar-contents, ytm-feed-filter-chip-bar-renderer > div'
           )
-        : // desktop view
-          queryHTMLElement('ytd-feed-filter-chip-bar-renderer iron-selector#chips');
+        : queryHTMLElement('ytd-feed-filter-chip-bar-renderer iron-selector#chips');
 
-    // #5: add a custom container for buttons if Latest/Popular/Oldest is missing
+    // Create custom container if standard location doesn't exist
     if (parent === null) {
       const grid = queryHTMLElement('ytd-rich-grid-renderer, ytm-rich-grid-renderer');
       if (!grid) {
-        console.warn('[Play All] Could not find grid container');
-        return;
+        console.warn('[YouTube+][Play All]', 'Could not find grid container');
+        return null;
       }
 
-      // Check if container already exists
       let existingContainer = grid.querySelector('.ytp-button-container');
       if (!existingContainer) {
         grid.insertAdjacentHTML('afterbegin', '<div class="ytp-button-container"></div>');
@@ -1274,32 +1647,32 @@
       parent = existingContainer instanceof HTMLElement ? existingContainer : null;
     }
 
-    if (!parent) {
-      console.warn('[Play All] Could not find parent container');
-      return;
+    return parent;
+  };
+
+  /**
+   * Determine playlist IDs based on current page
+   * @returns {{allPlaylist: string, popularPlaylist: string}} Playlist IDs
+   */
+  const getPlaylistIds = () => {
+    if (window.location.pathname.endsWith('/videos')) {
+      return { allPlaylist: 'UULF', popularPlaylist: 'UULP' };
     }
-
-    // Prevent duplicate buttons
-    if (parent.querySelector('.ytp-play-all-btn, .ytp-random-btn')) {
-      console.log('[Play All] Buttons already exist, skipping');
-      return;
+    if (window.location.pathname.endsWith('/shorts')) {
+      return { allPlaylist: 'UUSH', popularPlaylist: 'UUPS' };
     }
+    // Live streams
+    return { allPlaylist: 'UULV', popularPlaylist: 'UUPV' };
+  };
 
-    // See: available-lists.md
-    const [allPlaylist, popularPlaylist] = window.location.pathname.endsWith('/videos')
-      ? // Normal videos
-        // list=UULP has the all videos sorted by popular
-        // list=UU<ID> adds shorts into the playlist, list=UULF<ID> has videos without shorts
-        ['UULF', 'UULP']
-      : // Shorts
-        window.location.pathname.endsWith('/shorts')
-        ? ['UUSH', 'UUPS']
-        : // Live streams
-          ['UULV', 'UUPV'];
-
-    const playlistSuffix = id.startsWith('UC') ? id.substring(2) : id;
-
-    // Check if popular videos are displayed
+  /**
+   * Add play button to parent container
+   * @param {HTMLElement} parent - Parent container
+   * @param {string} allPlaylist - All playlist ID
+   * @param {string} popularPlaylist - Popular playlist ID
+   * @param {string} playlistSuffix - Channel ID suffix
+   */
+  const addPlayButton = (parent, allPlaylist, popularPlaylist, playlistSuffix) => {
     if (parent.querySelector(':nth-child(2).selected, :nth-child(2).iron-selected')) {
       parent.insertAdjacentHTML(
         'beforeend',
@@ -1316,75 +1689,73 @@
         `<a class="ytp-btn ytp-play-all-btn ytp-unsupported" href="https://github.com/RobertWesner/YouTube-Play-All/issues/39" target="_blank">No Playlist Found</a>`
       );
     }
+  };
 
-    const navigate = href => {
-      window.location.assign(href);
-    };
+  /**
+   * Setup mobile navigation handlers
+   * @param {HTMLElement} parent - Parent container
+   */
+  const setupMobileNavigation = parent => {
+    const navigate = href => window.location.assign(href);
 
-    if (location.host === 'm.youtube.com') {
-      // YouTube returns an "invalid response" when using client side routing for playnext=1 on mobile
-      parent.querySelectorAll('.ytp-btn').forEach(btn => {
+    parent.querySelectorAll('.ytp-btn').forEach(btn => {
+      btn.addEventListener('click', event => {
+        event.preventDefault();
+        navigate(btn.href);
+      });
+    });
+  };
+
+  /**
+   * Setup desktop navigation with random play features
+   * @param {HTMLElement} parent - Parent container
+   * @param {string} allPlaylist - All playlist ID
+   * @param {string} playlistSuffix - Channel ID suffix
+   */
+  const setupDesktopNavigation = (parent, allPlaylist, playlistSuffix) => {
+    const navigate = href => window.location.assign(href);
+
+    const attachNavigationHandler = elements => {
+      elements.forEach(btn => {
         btn.addEventListener('click', event => {
           event.preventDefault();
-
+          event.stopPropagation();
           navigate(btn.href);
         });
       });
-    } else {
-      const attachNavigationHandler = elements => {
-        elements.forEach(btn => {
-          btn.addEventListener('click', event => {
-            event.preventDefault();
-            event.stopPropagation();
+    };
 
-            navigate(btn.href);
-          });
-        });
-      };
+    attachNavigationHandler(parent.querySelectorAll('.ytp-play-all-btn:not(.ytp-unsupported)'));
 
-      attachNavigationHandler(parent.querySelectorAll('.ytp-play-all-btn:not(.ytp-unsupported)'));
+    // Add random play button
+    parent.insertAdjacentHTML(
+      'beforeend',
+      `<span class="ytp-btn ytp-random-btn ytp-btn-sections">
+        <a class="ytp-btn-section" href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=random&ytp-random-initial=1">Play Random</a><!--
+        --><span class="ytp-btn-section ytp-random-more-options-btn ytp-hover-popover">&#x25BE</span>
+      </span>`
+    );
 
-      // Only allow random play in desktop version for now
-      parent.insertAdjacentHTML(
-        'beforeend',
-        `
-                <span class="ytp-btn ytp-random-btn ytp-btn-sections">
-                    <a class="ytp-btn-section" href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=random&ytp-random-initial=1">
-                        Play Random
-                    </a><!--
-                    --><span class="ytp-btn-section ytp-random-more-options-btn ytp-hover-popover">
-                        &#x25BE
-                    </span>
-                </span>
-            `
-      );
+    // Remove existing popovers to prevent duplicates
+    document.querySelectorAll('.ytp-random-popover').forEach(popover => popover.remove());
 
-      // Remove existing popovers to prevent duplicates when navigating between tabs
-      document.querySelectorAll('.ytp-random-popover').forEach(popover => popover.remove());
+    // Add random options popover
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      `<div class="ytp-random-popover" hidden="">
+        <a href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=prefer-newest">Prefer newest</a>
+        <a href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=prefer-oldest&ytp-random-initial=1">Prefer oldest</a>
+      </div>`
+    );
 
-      document.body.insertAdjacentHTML(
-        'beforeend',
-        `
-                <div class="ytp-random-popover" hidden="">
-                    <a href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=prefer-newest">
-                        Prefer newest
-                    </a>
-                    <a href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=prefer-oldest&ytp-random-initial=1">
-                        Prefer oldest
-                    </a>
-                </div>
-            `
-      );
+    attachNavigationHandler(parent.querySelectorAll('.ytp-random-btn a'));
 
-      attachNavigationHandler(parent.querySelectorAll('.ytp-random-btn a'));
-
-      const randomPopover = document.querySelector('.ytp-random-popover');
-      if (randomPopover) {
-        attachNavigationHandler(randomPopover.querySelectorAll('a'));
-      }
+    const randomPopover = document.querySelector('.ytp-random-popover');
+    if (randomPopover) {
+      attachNavigationHandler(randomPopover.querySelectorAll('a'));
 
       const randomMoreOptionsBtn = document.querySelector('.ytp-random-more-options-btn');
-      if (randomMoreOptionsBtn && randomPopover) {
+      if (randomMoreOptionsBtn) {
         randomMoreOptionsBtn.addEventListener('click', () => {
           const rect = randomMoreOptionsBtn.getBoundingClientRect();
           randomPopover.style.top = `${rect.bottom}px`;
@@ -1398,22 +1769,117 @@
     }
   };
 
+  const apply = () => {
+    if (id === '') {
+      console.warn('[YouTube+][Play All]', 'Channel ID not yet determined');
+      return;
+    }
+
+    const parent = getOrCreateParentContainer();
+    if (!parent) {
+      console.warn('[YouTube+][Play All]', 'Could not find parent container');
+      return;
+    }
+
+    // Prevent duplicate buttons
+    if (parent.querySelector('.ytp-play-all-btn, .ytp-random-btn')) {
+      console.log('[YouTube+][Play All]', 'Buttons already exist, skipping');
+      return;
+    }
+
+    const { allPlaylist, popularPlaylist } = getPlaylistIds();
+    const playlistSuffix = id.startsWith('UC') ? id.substring(2) : id;
+
+    addPlayButton(parent, allPlaylist, popularPlaylist, playlistSuffix);
+
+    if (location.host === 'm.youtube.com') {
+      setupMobileNavigation(parent);
+    } else {
+      setupDesktopNavigation(parent, allPlaylist, playlistSuffix);
+    }
+  };
+
   const observer = new MutationObserver(() => {
     // [20250929-0] removeButton first and then apply, not addButton, since we don't need the pathname validation, and we want mobile to also use it
     removeButton();
     apply();
   });
 
+  /**
+   * Checks if current path is valid for play all button
+   * @returns {boolean} True if path is valid
+   */
+  const isValidPath = () =>
+    window.location.pathname.endsWith('/videos') ||
+    window.location.pathname.endsWith('/shorts') ||
+    window.location.pathname.endsWith('/streams');
+
+  /**
+   * Extracts channel ID from canonical link
+   * @returns {string|null} Channel ID or null if not found
+   */
+  const extractChannelIdFromCanonical = () => {
+    try {
+      const canonical = document.querySelector('link[rel="canonical"]');
+      if (!canonical || !canonical.href) {
+        return null;
+      }
+
+      const match = canonical.href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+      if (match && match[1]) {
+        return match[1];
+      }
+
+      // Try @handle format
+      const handleMatch = canonical.href.match(/\/@([^\/]+)/);
+      if (handleMatch) {
+        const pageData = document.querySelector('ytd-browse[page-subtype="channels"]');
+        if (pageData) {
+          const channelId = pageData.getAttribute('channel-id');
+          if (channelId && channelId.startsWith('UC')) {
+            return channelId;
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[YouTube+][Play All]', 'Error extracting channel ID from canonical:', e);
+    }
+    return null;
+  };
+
+  /**
+   * Extracts channel ID from page HTML
+   * @returns {Promise<string|null>} Channel ID or null if not found
+   */
+  const extractChannelIdFromHTML = async () => {
+    try {
+      const html = await (await fetch(location.href)).text();
+      const canonicalMatch = html.match(
+        /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/
+      );
+
+      if (canonicalMatch && canonicalMatch[1]) {
+        return canonicalMatch[1];
+      }
+
+      // Try alternative extraction methods
+      const channelIdMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
+      if (channelIdMatch && channelIdMatch[1]) {
+        return channelIdMatch[1];
+      }
+
+      console.warn('[YouTube+][Play All]', 'Could not extract channel ID');
+      return null;
+    } catch (e) {
+      console.error('[YouTube+][Play All]', 'Error fetching channel data:', e);
+      return null;
+    }
+  };
+
   const addButton = async () => {
     observer.disconnect();
 
-    if (
-      !(
-        window.location.pathname.endsWith('/videos') ||
-        window.location.pathname.endsWith('/shorts') ||
-        window.location.pathname.endsWith('/streams')
-      )
-    ) {
+    if (!isValidPath()) {
       return;
     }
 
@@ -1435,59 +1901,18 @@
     }
 
     // Try to extract channel ID from canonical link first
-    try {
-      const canonical = document.querySelector('link[rel="canonical"]');
-      if (canonical && canonical.href) {
-        const match = canonical.href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
-        if (match && match[1]) {
-          id = match[1];
-          apply();
-          return;
-        }
-
-        // Also try @handle format
-        const handleMatch = canonical.href.match(/\/@([^\/]+)/);
-        if (handleMatch) {
-          // Try to get channel ID from page data
-          const pageData = document.querySelector('ytd-browse[page-subtype="channels"]');
-          if (pageData) {
-            const channelId = pageData.getAttribute('channel-id');
-            if (channelId && channelId.startsWith('UC')) {
-              id = channelId;
-              apply();
-              return;
-            }
-          }
-        }
-      }
-    } catch (e) {
-      console.warn('[Play All] Error extracting channel ID from canonical:', e);
+    const channelId = extractChannelIdFromCanonical();
+    if (channelId) {
+      id = channelId;
+      apply();
+      return;
     }
 
     // Fallback: fetch HTML and parse
-    try {
-      const html = await (await fetch(location.href)).text();
-      const canonicalMatch = html.match(
-        /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/
-      );
-
-      if (canonicalMatch && canonicalMatch[1]) {
-        id = canonicalMatch[1];
-      } else {
-        // Try alternative extraction methods
-        const channelIdMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
-        if (channelIdMatch && channelIdMatch[1]) {
-          id = channelIdMatch[1];
-        }
-      }
-
-      if (id) {
-        apply();
-      } else {
-        console.warn('[Play All] Could not extract channel ID');
-      }
-    } catch (e) {
-      console.error('[Play All] Error fetching channel data:', e);
+    const htmlChannelId = await extractChannelIdFromHTML();
+    if (htmlChannelId) {
+      id = htmlChannelId;
+      apply();
     }
   };
 
@@ -1547,7 +1972,11 @@
               try {
                 handleSuccess(JSON.parse(response.responseText));
               } catch (parseError) {
-                console.error('[Play All] Failed to parse playlist response:', parseError);
+                console.error(
+                  '[YouTube+][Play All]',
+                  'Failed to parse playlist response:',
+                  parseError
+                );
                 handleError();
               }
             },
@@ -1569,7 +1998,7 @@
           .then(resp => resp.json())
           .then(handleSuccess)
           .catch(err => {
-            console.error('[Play All] Playlist fetch failed:', err);
+            console.error('[YouTube+][Play All]', 'Playlist fetch failed:', err);
             handleError();
           });
       });
@@ -1621,7 +2050,7 @@
       );
       if (current instanceof HTMLElement) {
         current.setAttribute('data-current', '');
-        const parentElement = current.parentElement;
+        const { parentElement } = current;
         if (parentElement instanceof HTMLElement) {
           const docElement = /** @type {any} */ (document.documentElement);
           const fontSize = parseFloat(getComputedStyle(docElement).fontSize || '16');
@@ -1630,70 +2059,70 @@
       }
     };
 
-    const emulatePlaylist = () => {
-      if (!window.location.pathname.endsWith('/watch')) {
-        return;
-      }
-
-      const params = new URLSearchParams(window.location.search);
-      const list = params.get('list');
-      if (!list) {
-        return;
-      }
-      if (params.has('ytp-random')) {
-        return;
-      }
-
-      // prevent playlist emulation on queue
-      // its impossible to fetch that playlist externally anyway
-      // https://github.com/RobertWesner/YouTube-Play-All/issues/33
-      if (list.startsWith('TLPQ')) {
-        return;
-      }
-
-      // No user ID in the list, cannot be fetched externally -> no emulation
-      if (list.length <= 4) {
-        return;
-      }
-
-      const existingEmulator = document.querySelector('.ytp-playlist-emulator');
-      if (existingEmulator) {
-        if (list === existingEmulator.getAttribute('data-list')) {
-          markCurrentItem(params.get('v'));
-
-          return;
-        } else {
-          // necessary to lose all the client side manipulations like SHIFT + N and the play next button
-          window.location.reload();
-        }
-      }
-
-      if (!new URLSearchParams(window.location.search).has('list')) {
-        return;
-      }
-
+    /**
+     * Check if playlist emulation should be skipped
+     * @param {URLSearchParams} params - URL search params
+     * @param {string|null} list - Playlist ID
+     * @returns {boolean} True if should skip emulation
+     */
+    const shouldSkipEmulation = (params, list) => {
+      if (!window.location.pathname.endsWith('/watch')) return true;
+      if (!list) return true;
+      if (params.has('ytp-random')) return true;
+      // prevent playlist emulation on queue (TLPQ playlists cannot be fetched externally)
+      if (list.startsWith('TLPQ')) return true;
+      // No user ID in the list, cannot be fetched externally
+      if (list.length <= 4) return true;
+      if (!new URLSearchParams(window.location.search).has('list')) return true;
       if (
         !document.querySelector(
           '#secondary-inner > ytd-playlist-panel-renderer#playlist #items:empty'
         )
       ) {
-        return;
+        return true;
+      }
+      return false;
+    };
+
+    /**
+     * Handle existing playlist emulator
+     * @param {HTMLElement|null} existingEmulator - Existing emulator element
+     * @param {string} list - Playlist ID
+     * @param {string|null} videoId - Current video ID
+     * @returns {boolean} True if handled and should exit
+     */
+    const handleExistingEmulator = (existingEmulator, list, videoId) => {
+      if (!existingEmulator) return false;
+
+      if (list === existingEmulator.getAttribute('data-list')) {
+        markCurrentItem(videoId);
+        return true;
       }
 
+      // Reload to clear client-side manipulations
+      window.location.reload();
+      return true;
+    };
+
+    /**
+     * Create playlist emulator UI element
+     * @param {string} list - Playlist ID
+     * @returns {HTMLElement} Created emulator element
+     */
+    const createPlaylistEmulator = list => {
       const playlistEmulator = document.createElement('div');
       playlistEmulator.className = 'ytp-playlist-emulator';
       playlistEmulator.innerHTML = `
-                <div class="title">
-                    Playlist emulator
-                </div>
-                <div class="information">
-                    It looks like YouTube is unable to handle this large playlist.
-                    Playlist emulation is a <b>limited</b> fallback feature of ytp to enable you to watch even more content. <br>
-                </div>
-                <div class="items"></div>
-                <div class="footer"></div>
-            `;
+        <div class="title">Playlist emulator</div>
+        <div class="information">
+          It looks like YouTube is unable to handle this large playlist.
+          Playlist emulation is a <b>limited</b> fallback feature of ytp to enable you to watch even more content. <br>
+        </div>
+        <div class="items"></div>
+        <div class="footer"></div>
+      `;
       playlistEmulator.setAttribute('data-list', list);
+
       const playlistHost = document.querySelector(
         '#secondary-inner > ytd-playlist-panel-renderer#playlist'
       );
@@ -1701,18 +2130,23 @@
         playlistHost.insertAdjacentElement('afterend', /** @type {any} */ (playlistEmulator));
       }
 
+      return playlistEmulator;
+    };
+
+    /**
+     * Load and process playlist items
+     * @param {string} list - Playlist ID
+     */
+    const loadPlaylistItems = list => {
       getItems(list).then(response => {
         if (response?.status === 'running') {
-          setTimeout(
-            () =>
-              getItems(list).then(nextResponse => {
-                if (nextResponse && Array.isArray(nextResponse.items)) {
-                  processItems(nextResponse.items);
-                }
-              }),
-            5000
-          );
-
+          setTimeout(() => {
+            getItems(list).then(nextResponse => {
+              if (nextResponse && Array.isArray(nextResponse.items)) {
+                processItems(nextResponse.items);
+              }
+            });
+          }, 5000);
           return;
         }
 
@@ -1720,7 +2154,12 @@
           processItems(response.items);
         }
       });
+    };
 
+    /**
+     * Setup next button emulation
+     */
+    const setupNextButton = () => {
       const nextButtonInterval = setInterval(() => {
         const nextButton = document.querySelector(
           '#ytd-player .ytp-next-button.ytp-button:not([ytp-emulation="applied"])'
@@ -1738,7 +2177,12 @@
           newButton.addEventListener('click', () => playNextEmulationItem());
         }
       }, 1000);
+    };
 
+    /**
+     * Setup keyboard shortcuts for playlist navigation
+     */
+    const setupKeyboardShortcuts = () => {
       document.addEventListener(
         'keydown',
         event => {
@@ -1746,33 +2190,33 @@
           if (event.shiftKey && event.key.toLowerCase() === 'n') {
             event.stopImmediatePropagation();
             event.preventDefault();
-
             playNextEmulationItem();
           }
         },
         true
       );
+    };
 
+    /**
+     * Monitor video progress and auto-advance
+     */
+    const setupAutoAdvance = () => {
       setInterval(() => {
         const player = getPlayer();
-        if (!player || typeof player.getProgressState !== 'function') {
-          return;
-        }
+        if (!player || typeof player.getProgressState !== 'function') return;
 
         const progressState = player.getProgressState();
-        if (!progressState) {
-          return;
-        }
+        if (!progressState) return;
 
         // Do not listen for watch progress when watching advertisements
         if (!isAdPlaying()) {
-          // Autoplay random video
-          if (
+          const isNearEnd =
             typeof progressState.current === 'number' &&
             typeof progressState.duration === 'number' &&
-            progressState.current >= progressState.duration - 2
-          ) {
-            // make sure vanilla autoplay doesnt take over
+            progressState.current >= progressState.duration - 2;
+
+          if (isNearEnd) {
+            // Prevent vanilla autoplay from taking over
             if (typeof player.pauseVideo === 'function') player.pauseVideo();
             if (typeof player.seekTo === 'function') player.seekTo(0);
             playNextEmulationItem();
@@ -1781,13 +2225,32 @@
       }, 500);
     };
 
+    /**
+     * Main playlist emulation function
+     */
+    const emulatePlaylist = () => {
+      const params = new URLSearchParams(window.location.search);
+      const list = params.get('list');
+
+      if (shouldSkipEmulation(params, list)) return;
+
+      const existingEmulator = document.querySelector('.ytp-playlist-emulator');
+      if (handleExistingEmulator(existingEmulator, list, params.get('v'))) return;
+
+      createPlaylistEmulator(list);
+      loadPlaylistItems(list);
+      setupNextButton();
+      setupKeyboardShortcuts();
+      setupAutoAdvance();
+    };
+
     if (location.host === 'm.youtube.com') {
       // Note: Mobile playlist emulation is currently not supported due to different DOM structure
       // and API limitations on mobile YouTube. Future implementation would require:
       // - Mobile-specific DOM selectors
       // - Touch event handling
       // - Responsive UI adjustments
-      console.log('[Play All] Mobile playlist emulation not yet supported');
+      console.log('[YouTube+][Play All]', 'Mobile playlist emulation not yet supported');
     } else {
       window.addEventListener('yt-navigate-finish', () => setTimeout(emulatePlaylist, 1000));
     }
@@ -1833,6 +2296,97 @@
       localStorage.removeItem(getStorageKey());
     }
 
+    /**
+     * Calculate video index based on random mode
+     * @param {number} videosLength - Total number of videos
+     * @param {string} randomMode - Random mode setting
+     * @returns {number} Video index
+     */
+    const calculateVideoIndex = (videosLength, randomMode) => {
+      const preferredCount = Math.max(1, Math.min(Math.floor(videosLength * 0.2), 20));
+
+      let videoIndex;
+      switch (randomMode) {
+        case 'prefer-newest':
+          videoIndex = Math.floor(Math.random() * preferredCount);
+          break;
+        case 'prefer-oldest':
+          videoIndex = videosLength - preferredCount + Math.floor(Math.random() * preferredCount);
+          break;
+        default:
+          videoIndex = Math.floor(Math.random() * videosLength);
+      }
+
+      // Safety clamp in case of unexpected edge cases
+      return Math.max(0, Math.min(videoIndex, videosLength - 1));
+    };
+
+    /**
+     * Reload page with new video
+     * @param {string} videoId - Video ID
+     * @param {URLSearchParams} params - URL parameters
+     * @param {string} randomMode - Random mode setting
+     */
+    const reloadWithVideo = (videoId, params, randomMode) => {
+      params.set('v', videoId);
+      params.set('ytp-random', randomMode);
+      params.delete('t');
+      params.delete('index');
+      params.delete('ytp-random-initial');
+      window.location.href = `${window.location.pathname}?${params.toString()}`;
+    };
+
+    /**
+     * Manual redirect fallback
+     * @param {string} videoId - Video ID
+     * @param {string} listId - Playlist ID
+     * @param {string} randomMode - Random mode setting
+     */
+    const manualRedirectFallback = (videoId, listId, randomMode) => {
+      const redirector = document.createElement('a');
+      redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
+      redirector.setAttribute('hidden', '');
+      redirector.data = {
+        commandMetadata: {
+          webCommandMetadata: {
+            url: `/watch?v=${videoId}&list=${listId}&ytp-random=${randomMode}`,
+            webPageType: 'WEB_PAGE_TYPE_WATCH',
+            rootVe: 3832,
+          },
+        },
+        watchEndpoint: {
+          videoId,
+          playlistId: listId,
+        },
+      };
+      const listContainer = document.querySelector('ytd-playlist-panel-renderer #items');
+      if (listContainer instanceof HTMLElement) {
+        listContainer.append(redirector);
+      } else {
+        document.body.appendChild(redirector);
+      }
+      redirector.click();
+    };
+
+    /**
+     * Navigate to next random video
+     * @param {string} videoId - Video ID
+     * @param {URLSearchParams} params - URL parameters
+     * @param {string} randomMode - Random mode setting
+     */
+    const navigateToVideo = (videoId, params, randomMode) => {
+      try {
+        redirect(videoId, params.get('list'), randomMode);
+      } catch (error) {
+        console.error(
+          '[YouTube+][Play All]',
+          'Error using redirect(), falling back to manual redirect:',
+          error
+        );
+        manualRedirectFallback(videoId, params.get('list'), randomMode);
+      }
+    };
+
     const playNextRandom = (reload = false) => {
       const playerInstance = getPlayer();
       if (playerInstance && typeof playerInstance.pauseVideo === 'function') {
@@ -1840,97 +2394,27 @@
       }
 
       const videos = Object.entries(getStorage()).filter(([_, watched]) => !watched);
+      if (videos.length === 0) return;
+
       const params = new URLSearchParams(window.location.search);
-
-      if (videos.length === 0) {
-        return;
-      }
-
-      // Either one fifth or at most the 20 newest.
-      const preferredCount = Math.max(1, Math.min(Math.floor(videos.length * 0.2), 20));
-
-      let videoIndex;
-      switch (ytpRandom) {
-        case 'prefer-newest':
-          // Select between latest 20 videos
-          videoIndex = Math.floor(Math.random() * preferredCount);
-
-          break;
-        case 'prefer-oldest':
-          // Select between oldest `preferredCount` videos (the last N entries).
-          // videos is an array where order follows the playlist DOM order; to pick
-          // from the oldest items we need to start at `videos.length - preferredCount`.
-          videoIndex = videos.length - preferredCount + Math.floor(Math.random() * preferredCount);
-
-          break;
-        default:
-          videoIndex = Math.floor(Math.random() * videos.length);
-      }
-
-      // Safety clamp in case of unexpected edge cases
-      if (videoIndex < 0) videoIndex = 0;
-      if (videoIndex >= videos.length) videoIndex = videos.length - 1;
+      const videoIndex = calculateVideoIndex(videos.length, ytpRandom);
+      const selectedVideoId = videos[videoIndex][0];
 
       if (reload) {
-        params.set('v', videos[videoIndex][0]);
-        params.set('ytp-random', ytpRandom);
-        params.delete('t');
-        params.delete('index');
-        params.delete('ytp-random-initial');
-        window.location.href = `${window.location.pathname}?${params.toString()}`;
+        reloadWithVideo(selectedVideoId, params, ytpRandom);
       } else {
-        // Use the redirect() function for consistent navigation
-        try {
-          redirect(videos[videoIndex][0], params.get('list'), ytpRandom);
-        } catch (error) {
-          console.error(
-            '[Play All] Error using redirect(), falling back to manual redirect:',
-            error
-          );
-          // Fallback to manual redirect if the redirect() function fails
-          const redirector = document.createElement('a');
-          redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
-          redirector.setAttribute('hidden', '');
-          redirector.data = {
-            commandMetadata: {
-              webCommandMetadata: {
-                url: `/watch?v=${videos[videoIndex][0]}&list=${params.get('list')}&ytp-random=${ytpRandom}`,
-                webPageType: 'WEB_PAGE_TYPE_WATCH',
-                rootVe: 3832,
-              },
-            },
-            watchEndpoint: {
-              videoId: videos[videoIndex][0],
-              playlistId: params.get('list'),
-            },
-          };
-          const listContainer = document.querySelector('ytd-playlist-panel-renderer #items');
-          if (listContainer instanceof HTMLElement) {
-            listContainer.append(redirector);
-          } else {
-            document.body.appendChild(redirector);
-          }
-          redirector.click();
-        }
+        navigateToVideo(selectedVideoId, params, ytpRandom);
       }
     };
 
     let isIntervalSet = false;
 
-    const applyRandomPlay = () => {
-      if (!window.location.pathname.endsWith('/watch')) {
-        return;
-      }
-
-      const playlistContainer = document.querySelector('#secondary ytd-playlist-panel-renderer');
-      if (playlistContainer === null) {
-        return;
-      }
-      if (playlistContainer.hasAttribute('ytp-random')) {
-        return;
-      }
-
-      playlistContainer.setAttribute('ytp-random', 'applied');
+    /**
+     * Adds random play notice to playlist header
+     * @param {Element} playlistContainer - Playlist container element
+     * @returns {void}
+     */
+    const addRandomPlayNotice = playlistContainer => {
       const headerContainer = playlistContainer.querySelector('.header');
       if (headerContainer) {
         headerContainer.insertAdjacentHTML(
@@ -1943,10 +2427,14 @@
             `
         );
       }
+    };
 
-      const storage = getStorage();
-
-      // Robustly collect playlist anchors - different YT layouts use different selectors
+    /**
+     * Collects and deduplicates playlist anchors
+     * @param {Element} playlistContainer - Playlist container element
+     * @returns {Array<HTMLAnchorElement>} Unique playlist anchors
+     */
+    const collectPlaylistAnchors = playlistContainer => {
       const anchorSelectors = [
         '#wc-endpoint',
         'ytd-playlist-panel-video-renderer a#wc-endpoint',
@@ -1973,9 +2461,21 @@
         }
       });
 
-      const navigate = href => (window.location.href = href);
+      return uniq;
+    };
 
-      uniq.forEach(element => {
+    /**
+     * Processes playlist anchors for random play
+     * @param {Array<HTMLAnchorElement>} anchors - Playlist anchors
+     * @param {object} storage - Video watch storage
+     * @returns {void}
+     */
+    const processPlaylistAnchors = (anchors, storage) => {
+      const navigate = href => {
+        window.location.href = href;
+      };
+
+      anchors.forEach(element => {
         let videoId = null;
         try {
           videoId = new URL(element.href, window.location.origin).searchParams.get('v');
@@ -1994,7 +2494,9 @@
           const u = new URL(element.href, window.location.origin);
           u.searchParams.set('ytp-random', ytpRandom);
           element.href = u.toString();
-        } catch {}
+        } catch {
+          // Ignore URL parsing errors
+        }
 
         // This bypasses the client side routing
         element.addEventListener('click', event => {
@@ -2007,33 +2509,38 @@
           element.parentElement?.setAttribute('hidden', '');
         }
       });
-      localStorage.setItem(getStorageKey(), JSON.stringify(storage));
+    };
 
-      if (urlParams.get('ytp-random-initial') === '1' || isWatched(getVideoId(location.href))) {
-        playNextRandom();
-
-        return;
-      }
-
+    /**
+     * Sets up random play badge and cancel handler
+     * @param {Element} playlistContainer - Playlist container element
+     * @returns {void}
+     */
+    const setupRandomPlayBadge = playlistContainer => {
       const header = playlistContainer.querySelector('h3 a');
-      if (header && header.tagName === 'A') {
-        const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
-        anchorHeader.innerHTML += ` <span class="ytp-badge ytp-random-badge">${ytpRandom} <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`;
-        anchorHeader.href = 'javascript:void(0)';
-        const badge = anchorHeader.querySelector('.ytp-random-badge');
-        if (badge) {
-          badge.addEventListener('click', event => {
-            event.preventDefault();
+      if (!header || header.tagName !== 'A') return;
 
-            localStorage.removeItem(getStorageKey());
+      const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
+      anchorHeader.innerHTML += ` <span class="ytp-badge ytp-random-badge">${ytpRandom} <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`;
+      anchorHeader.href = 'javascript:void(0)';
 
-            const params = new URLSearchParams(location.search);
-            params.delete('ytp-random');
-            window.location.href = `${window.location.pathname}?${params.toString()}`;
-          });
-        }
+      const badge = anchorHeader.querySelector('.ytp-random-badge');
+      if (badge) {
+        badge.addEventListener('click', event => {
+          event.preventDefault();
+          localStorage.removeItem(getStorageKey());
+          const params = new URLSearchParams(location.search);
+          params.delete('ytp-random');
+          window.location.href = `${window.location.pathname}?${params.toString()}`;
+        });
       }
+    };
 
+    /**
+     * Sets up keyboard shortcut for skipping videos
+     * @returns {void}
+     */
+    const setupKeyboardShortcut = () => {
       document.addEventListener(
         'keydown',
         event => {
@@ -2041,27 +2548,90 @@
           if (event.shiftKey && event.key.toLowerCase() === 'n') {
             event.stopImmediatePropagation();
             event.preventDefault();
-
             const videoId = getVideoId(location.href);
             markWatched(videoId);
-            // Unfortunately there is no workaround to YouTube redirecting to the next in line without a reload
             playNextRandom(true);
           }
         },
         true
       );
+    };
 
-      if (isIntervalSet) {
-        return;
+    /**
+     * Update URL with random parameter
+     * @param {string} randomMode - Random mode setting
+     */
+    const updateUrlWithRandomParam = randomMode => {
+      const params = new URLSearchParams(location.search);
+      params.set('ytp-random', randomMode);
+      window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+    };
+
+    /**
+     * Validate progress state
+     * @param {Object} progressState - Progress state object
+     * @returns {boolean} True if valid
+     */
+    const isValidProgressState = progressState => {
+      return (
+        progressState &&
+        typeof progressState.current === 'number' &&
+        typeof progressState.duration === 'number'
+      );
+    };
+
+    /**
+     * Handle video progress and autoplay
+     * @param {Object} progressState - Progress state object
+     * @param {string} videoId - Current video ID
+     * @param {Object} player - Player instance
+     */
+    const handleVideoProgress = (progressState, videoId, player) => {
+      if (isAdPlaying()) return;
+
+      // Mark video as watched at 90% completion
+      if (progressState.current / progressState.duration >= 0.9) {
+        if (videoId) markWatched(videoId);
       }
-      isIntervalSet = true;
 
+      // Autoplay next random video near end
+      if (progressState.current >= progressState.duration - 2) {
+        if (typeof player.pauseVideo === 'function') player.pauseVideo();
+        if (typeof player.seekTo === 'function') player.seekTo(0);
+        playNextRandom();
+      }
+    };
+
+    /**
+     * Setup custom next button handler
+     * @param {string} videoId - Current video ID
+     */
+    const setupCustomNextButton = videoId => {
+      const nextButton = document.querySelector(
+        '#ytd-player .ytp-next-button.ytp-button:not([ytp-random="applied"])'
+      );
+      if (nextButton instanceof HTMLElement) {
+        const newButton = document.createElement('span');
+        newButton.className = nextButton.className;
+        newButton.innerHTML = nextButton.innerHTML;
+        nextButton.replaceWith(newButton);
+
+        newButton.setAttribute('ytp-random', 'applied');
+        newButton.addEventListener('click', () => {
+          if (videoId) markWatched(videoId);
+          playNextRandom();
+        });
+      }
+    };
+
+    /**
+     * Sets up progress monitoring interval
+     * @returns {void}
+     */
+    const setupProgressMonitoring = () => {
       setInterval(() => {
         const videoId = getVideoId(location.href);
-
-        const params = new URLSearchParams(location.search);
-        params.set('ytp-random', ytpRandom);
-        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+        updateUrlWithRandomParam(ytpRandom);
 
         const player = getPlayer();
         if (!player || typeof player.getProgressState !== 'function') {
@@ -2069,46 +2639,49 @@
         }
 
         const progressState = player.getProgressState();
-        if (
-          !progressState ||
-          typeof progressState.current !== 'number' ||
-          typeof progressState.duration !== 'number'
-        ) {
+        if (!isValidProgressState(progressState)) {
           return;
         }
 
-        // Do not listen for watch progress when watching advertisements
-        if (!isAdPlaying()) {
-          if (progressState.current / progressState.duration >= 0.9) {
-            if (videoId) markWatched(videoId);
-          }
-
-          // Autoplay random video
-          if (progressState.current >= progressState.duration - 2) {
-            // make sure vanilla autoplay doesnt take over
-            if (typeof player.pauseVideo === 'function') player.pauseVideo();
-            if (typeof player.seekTo === 'function') player.seekTo(0);
-            playNextRandom();
-          }
-        }
-
-        const nextButton = document.querySelector(
-          '#ytd-player .ytp-next-button.ytp-button:not([ytp-random="applied"])'
-        );
-        if (nextButton instanceof HTMLElement) {
-          // Replace with span to prevent anchor click events
-          const newButton = document.createElement('span');
-          newButton.className = nextButton.className;
-          newButton.innerHTML = nextButton.innerHTML;
-          nextButton.replaceWith(newButton);
-
-          newButton.setAttribute('ytp-random', 'applied');
-          newButton.addEventListener('click', () => {
-            if (videoId) markWatched(videoId);
-            playNextRandom();
-          });
-        }
+        handleVideoProgress(progressState, videoId, player);
+        setupCustomNextButton(videoId);
       }, 1000);
+    };
+
+    /**
+     * Main function to apply random play functionality
+     * @returns {void}
+     */
+    const applyRandomPlay = () => {
+      if (!window.location.pathname.endsWith('/watch')) {
+        return;
+      }
+
+      const playlistContainer = document.querySelector('#secondary ytd-playlist-panel-renderer');
+      if (!playlistContainer || playlistContainer.hasAttribute('ytp-random')) {
+        return;
+      }
+
+      playlistContainer.setAttribute('ytp-random', 'applied');
+      addRandomPlayNotice(playlistContainer);
+
+      const storage = getStorage();
+      const anchors = collectPlaylistAnchors(playlistContainer);
+      processPlaylistAnchors(anchors, storage);
+      localStorage.setItem(getStorageKey(), JSON.stringify(storage));
+
+      if (urlParams.get('ytp-random-initial') === '1' || isWatched(getVideoId(location.href))) {
+        playNextRandom();
+        return;
+      }
+
+      setupRandomPlayBadge(playlistContainer);
+      setupKeyboardShortcut();
+
+      if (!isIntervalSet) {
+        isIntervalSet = true;
+        setupProgressMonitoring();
+      }
     };
 
     setInterval(applyRandomPlay, 1000);
