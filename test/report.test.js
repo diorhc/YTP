@@ -264,7 +264,7 @@ describe('Report module', () => {
       delete require.cache[require.resolve('../src/report.js')];
 
       // Set up debug info BEFORE loading module
-      window.YouTubePlusDebug = { version: '2.2' };
+      window.YouTubePlusDebug = { version: '2.1' };
       window.YouTubeUtils = {
         SettingsManager: {
           load: () => ({ test: 'settings' }),

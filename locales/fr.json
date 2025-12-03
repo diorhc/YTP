@@ -13,6 +13,7 @@
   "screenshotButton": "Bouton de capture",
   "screenshotButtonDesc": "Ajouter un bouton de capture d'écran au lecteur vidéo",
   "downloadButton": "Bouton de téléchargement",
+  "downloadButtonDesc": "Ajouter un bouton de téléchargement avec plusieurs options de sites au lecteur vidéo",
   "customDownloader": "Utiliser un téléchargeur personnalisé",
   "customDownload": "Utiliser mon téléchargeur",
   "directDownload": "Téléchargement direct",
@@ -92,7 +93,7 @@
   "settingsAriaLabel": "Ouvrir le menu des paramètres",
   "settingsMenuAriaLabel": "Paramètres d'affichage des statistiques",
   "unknown": "Inconnu",
-  "privacy": "Confidentialité",
+  "privacy": "En envoyant, vous acceptez d'inclure les informations spécifiées. N'incluez pas de mots de passe ou de jetons personnels",
   "monetization": "Monétisation",
   "country": "Pays",
   "duration": "Durée",
@@ -114,6 +115,7 @@
   "upToDate": "À jour",
   "checkForUpdates": "Vérifier les mises à jour",
   "autoCheckUpdates": "Vérifier automatiquement les mises à jour",
+  "manualInstallHint": "Impossible d'ouvrir automatiquement la mise à jour. Veuillez télécharger manuellement depuis GreasyFork.",
   "updatePageFallback": "Ouverture de la page de mise à jour...",
   "never": "Jamais",
   "justNow": "À l'instant",
@@ -192,6 +194,7 @@
   "commentManagerControls": "Contrôles du gestionnaire de commentaires",
   "commentManagement": "Gestion des commentaires",
   "enableCommentManager": "Activer le gestionnaire de commentaires",
+  "bulkDeleteDescription": "Ajouter des cases à cocher et une fonctionnalité de suppression en masse à vos commentaires",
   "timecodes": "Timecodes",
   "noTimecodesFound": "Aucun timecode trouvé",
   "clickToAdd": "Cliquez sur + pour ajouter l'heure actuelle",
@@ -205,6 +208,7 @@
   "enableTimecode": "Activer le panneau de timecode",
   "keyboardShortcut": "Raccourci clavier",
   "enableDescription": "Activer le panneau de timecode/chapitre vidéo avec navigation rapide",
+  "shortcutDescription": "Personnaliser la combinaison de touches pour basculer le panneau de timecode",
   "foundTimecodes": "Timecodes trouvés: {count}",
   "cannotDeleteChapter": "Impossible de supprimer les chapitres YouTube",
   "invalidTimeFormat": "Format de temps invalide",
@@ -217,6 +221,5 @@
   "delete": "Supprimer",
   "confirmDelete": "Supprimer le timecode \"{label}\"?",
   "reloadError": "Erreur lors du rechargement des timecodes",
-  "cannotEditChapter": "Impossible de modifier les chapitres YouTube",
-  "save": "Enregistrer"
+  "cannotEditChapter": "Impossible de modifier les chapitres YouTube"
 }

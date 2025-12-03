@@ -99,7 +99,6 @@ if (
  * Main execution script for YouTube tab view
  * @param {string} _communicationKey - Unique key for cross-context communication (reserved for future use)
  */
-/* eslint-disable max-lines-per-function, complexity, max-depth */
 const executionScript = _communicationKey => {
   /** @const {boolean} Debug flag for attachment/detachment events */
   const DEBUG_5084 = false;
@@ -550,7 +549,6 @@ const executionScript = _communicationKey => {
         const d = tParam => {
           const ytcsiValue = tParam || e.ytcsi;
           if (ytcsiValue) {
-            /* eslint-disable no-return-assign */
             return (
               (e.ytcsi = new Proxy(ytcsiValue, {
                 get: (proxy, prop) =>
@@ -558,13 +556,11 @@ const executionScript = _communicationKey => {
               })),
               !0
             );
-            /* eslint-enable no-return-assign */
           }
         };
         d() ||
           Object.defineProperty(e, 'ytcsi', {
             get() {},
-            /* eslint-disable-next-line no-sequences */
             set: value => (value && (delete e.ytcsi, d(value)), !0),
             enumerable: !1,
             configurable: !0,
@@ -1036,7 +1032,6 @@ const executionScript = _communicationKey => {
     const lockSet = new Proxy(_locks, {
       get(target, prop) {
         if (target[prop] > MAX_ATTRIBUTE_VALUE) target[prop] = ATTRIBUTE_RESET_VALUE;
-        /* eslint-disable-next-line no-return-assign */
         return (target[prop] = (target[prop] || 0) + 1);
       },
       set(_target, _prop, _val) {
@@ -1472,9 +1467,12 @@ const executionScript = _communicationKey => {
         const switchingTo = activeLink ? getAttributeSafe(activeLink, 'tyt-tab-content') || '' : '';
 
         if (DEBUG_5085) {
-          console.log(
-            `[YouTube+] switchToTab: switching to "${switchingTo}", activated ${activatedCount}, deactivated ${deactivatedCount}`
-          );
+          window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug(
+              `[YouTube+] switchToTab: switching to "${switchingTo}", activated ${activatedCount}, deactivated ${deactivatedCount}`
+            );
         }
 
         if (switchingTo) {
@@ -2240,10 +2238,18 @@ const executionScript = _communicationKey => {
           ) {
             // setTimeout(() => chatCnt.urlChanged, 136);
             if (typeof chatCnt.urlChangedAsync12 === 'function') {
-              DEBUG_5085 && console.log('elements.chat urlChangedAsync12', 61);
+              DEBUG_5085 &&
+                window.YouTubeUtils &&
+                YouTubeUtils.logger &&
+                YouTubeUtils.logger.debug &&
+                YouTubeUtils.logger.debug('elements.chat urlChangedAsync12', 61);
               chatCnt.urlChanged();
             } else {
-              DEBUG_5085 && console.log('elements.chat urlChangedAsync12', 62);
+              DEBUG_5085 &&
+                window.YouTubeUtils &&
+                YouTubeUtils.logger &&
+                YouTubeUtils.logger.debug &&
+                YouTubeUtils.logger.debug('elements.chat urlChangedAsync12', 62);
               setTimeout(() => chatCnt.urlChanged(), 136);
             }
           }
@@ -2686,7 +2692,11 @@ const executionScript = _communicationKey => {
 
       const conditionFulfillment = req => {
         const command = req ? req.command : null;
-        DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - 0801', command);
+        DEBUG_handleNavigateFactory &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug('handleNavigateFactory - 0801', command);
         if (!command) return;
 
         if (command && (command.commandMetadata || 0).webCommandMetadata && command.watchEndpoint) {
@@ -3106,13 +3116,19 @@ const executionScript = _communicationKey => {
       const ytdFlexyCnt = insp(ytdFlexyElm);
       if (ytdFlexyCnt && typeof ytdFlexyCnt.videoId === 'string') return ytdFlexyCnt.videoId;
       if (ytdFlexyElm && typeof ytdFlexyElm.videoId === 'string') return ytdFlexyElm.videoId;
-      console.log('video id not found');
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug('video id not found');
       return '';
     };
 
     // eslint-disable-next-line no-unused-vars
     const holdInlineExpanderAlwaysExpanded = inlineExpanderCnt => {
-      console.log('holdInlineExpanderAlwaysExpanded');
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug('holdInlineExpanderAlwaysExpanded');
       if (inlineExpanderCnt.alwaysShowExpandButton === true) {
         inlineExpanderCnt.alwaysShowExpandButton = false;
       }
@@ -3444,7 +3460,10 @@ const executionScript = _communicationKey => {
         if (t instanceof Element) return t;
         if (i > 0) {
           // try later
-          console.log('ytd-live-chat-frame::attached - delayPn(200)');
+          window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug('ytd-live-chat-frame::attached - delayPn(200)');
           await delayPn(200);
         }
       }
@@ -3645,7 +3664,11 @@ const executionScript = _communicationKey => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-watch-next-secondary-results-renderer::attached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-watch-next-secondary-results-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -3672,7 +3695,11 @@ const executionScript = _communicationKey => {
 
       'ytd-watch-next-secondary-results-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-watch-next-secondary-results-renderer::detached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-watch-next-secondary-results-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -3681,7 +3708,13 @@ const executionScript = _communicationKey => {
           elements.related = null;
           hostElement.removeAttribute000('tyt-videos-list');
         }
-        console.log('ytd-watch-next-secondary-results-renderer::detached', hostElement);
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(
+            'ytd-watch-next-secondary-results-renderer::detached',
+            hostElement
+          );
       },
 
       settingCommentsVideoId: hostElement => {
@@ -3803,7 +3836,11 @@ const executionScript = _communicationKey => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-comments::attached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-comments::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -3818,7 +3855,10 @@ const executionScript = _communicationKey => {
         if (!hostElement || hostElement.id !== 'comments') return;
         // if (!hostElement || hostElement.closest('[hidden]')) return;
         elements.comments = hostElement;
-        console.log('ytd-comments::attached');
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug('ytd-comments::attached');
         Promise.resolve(hostElement).then(eventMap['settingCommentsVideoId']).catch(console.warn);
 
         if (hostElement && hostElement instanceof Element && hostElement.isConnected) {
@@ -3836,7 +3876,11 @@ const executionScript = _communicationKey => {
 
         if (elements.comments !== hostElement) return;
         if (hostElement.isConnected === false) return;
-        DEBUG_5085 && console.log(7932, 'comments');
+        DEBUG_5085 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(7932, 'comments');
 
         // if(!elements.comments || elements.comments.isConnected === false) return;
         if (hostElement && !hostElement.closest('#right-tabs')) {
@@ -3863,7 +3907,11 @@ const executionScript = _communicationKey => {
       },
       'ytd-comments::detached': hostElement => {
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-comments::detached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-comments::detached');
         // console.log(858, hostElement)
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
@@ -3935,7 +3983,11 @@ const executionScript = _communicationKey => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-comments-header-renderer::attached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-comments-header-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -3967,7 +4019,11 @@ const executionScript = _communicationKey => {
 
       'ytd-comments-header-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-comments-header-renderer::detached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-comments-header-renderer::detached');
 
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
@@ -4149,12 +4205,12 @@ const executionScript = _communicationKey => {
 
         /*
                  
-                        console.log('ytd-expander::defined 01');
+                        (window.YouTubeUtils && YouTubeUtils.logger && YouTubeUtils.logger.debug) && YouTubeUtils.logger.debug('ytd-expander::defined 01');
                         
                         CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback = connectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback)
                         CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback = disconnectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback)
                         
-                        console.log('ytd-expander::defined 02');
+                        (window.YouTubeUtils && YouTubeUtils.logger && YouTubeUtils.logger.debug) && YouTubeUtils.logger.debug('ytd-expander::defined 02');
                  
                         */
 
@@ -4206,7 +4262,10 @@ const executionScript = _communicationKey => {
           !hostElement.matches('[tyt-main-info]')
         ) {
           elements.infoExpander = hostElement;
-          console.log(128384, elements.infoExpander);
+          window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug(128384, elements.infoExpander);
 
           // console.log(1299, hostElement.parentNode, isRightTabsInserted)
 
@@ -4222,7 +4281,10 @@ const executionScript = _communicationKey => {
 
           if (elements.infoExpander !== hostElement) return;
           if (hostElement.isConnected === false) return;
-          console.log(7932, 'infoExpander');
+          window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug(7932, 'infoExpander');
 
           elements.infoExpander.classList.add('tyt-main-info'); // add a classname for it
 
@@ -4279,7 +4341,14 @@ const executionScript = _communicationKey => {
           // return;
         }
 
-        DEBUG_5084 && console.log(5084, 'ytd-expandable-video-description-body-renderer::attached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(
+            5084,
+            'ytd-expandable-video-description-body-renderer::attached'
+          );
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4340,7 +4409,13 @@ const executionScript = _communicationKey => {
         // console.log(5992, hostElement)
         if (hostElement.hasAttribute000('tyt-main-info')) {
           DEBUG_5084 &&
-            console.log(5084, 'ytd-expandable-video-description-body-renderer::detached');
+            window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug(
+              5084,
+              'ytd-expandable-video-description-body-renderer::detached'
+            );
           elements.infoExpander = null;
           hostElement.removeAttribute000('tyt-main-info');
         }
@@ -4432,7 +4507,11 @@ const executionScript = _communicationKey => {
           ioComment.unobserve(hostElement);
           hostElement.removeAttribute000('tyt-content-comment-entry');
         } else if (hostElement.hasAttribute000('tyt-main-info')) {
-          DEBUG_5084 && console.log(5084, 'ytd-expander::detached');
+          DEBUG_5084 &&
+            window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug(5084, 'ytd-expander::detached');
           elements.infoExpander = null;
           hostElement.removeAttribute000('tyt-main-info');
         }
@@ -4558,7 +4637,11 @@ const executionScript = _communicationKey => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-live-chat-frame::attached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-live-chat-frame::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4571,7 +4654,10 @@ const executionScript = _communicationKey => {
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
         if (!hostElement || hostElement.id !== 'chat') return;
-        console.log('ytd-live-chat-frame::attached');
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug('ytd-live-chat-frame::attached');
 
         const lockId = lockSet['ytdLiveAttachedLock'];
         const chatElem = await getGeneralChatElement();
@@ -4611,19 +4697,33 @@ const executionScript = _communicationKey => {
           }, 320);
           Promise.resolve(lockSet['layoutFixLock']).then(layoutFix);
         } else {
-          console.log('Issue found in ytd-live-chat-frame::attached', chatElem, hostElement);
+          window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug(
+              'Issue found in ytd-live-chat-frame::attached',
+              chatElem,
+              hostElement
+            );
         }
       },
 
       'ytd-live-chat-frame::detached': hostElement => {
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-live-chat-frame::detached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-live-chat-frame::detached');
 
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
         // hostElement.__connectedFlg__ = 9;
-        console.log('ytd-live-chat-frame::detached');
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug('ytd-live-chat-frame::detached');
         if (hostElement.hasAttribute000('tyt-active-chat-frame')) {
           aoChat.disconnect();
           aoChat.takeRecords();
@@ -4692,7 +4792,11 @@ const executionScript = _communicationKey => {
 
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-engagement-panel-section-list-renderer::attached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-engagement-panel-section-list-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4731,7 +4835,11 @@ const executionScript = _communicationKey => {
       'ytd-engagement-panel-section-list-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-engagement-panel-section-list-renderer::detached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-engagement-panel-section-list-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -4777,7 +4885,11 @@ const executionScript = _communicationKey => {
 
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-watch-metadata::attached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-watch-metadata::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4798,7 +4910,11 @@ const executionScript = _communicationKey => {
       'ytd-watch-metadata::detached': hostElement => {
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-watch-metadata::detached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-watch-metadata::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected === false) {
           // if (hostElement.__connectedFlg__ !== 8) return;
@@ -4838,7 +4954,11 @@ const executionScript = _communicationKey => {
 
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-playlist-panel-renderer::attached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-playlist-panel-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4869,7 +4989,11 @@ const executionScript = _communicationKey => {
       'ytd-playlist-panel-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-playlist-panel-renderer::detached');
+        DEBUG_5084 &&
+          window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(5084, 'ytd-playlist-panel-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected === false) {
           // if (hostElement.__connectedFlg__ !== 8) return;
@@ -4884,11 +5008,17 @@ const executionScript = _communicationKey => {
       relatedElementProvided: target => {
         if (target.closest('[hidden]')) return;
         elements.related = target;
-        console.log('relatedElementProvided');
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug('relatedElementProvided');
         videosElementProvidedPromise.resolve();
       },
       onceInfoExpanderElementProvidedPromised: () => {
-        console.log('hide-default-text-inline-expander');
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug('hide-default-text-inline-expander');
         const ytdFlexyElm = elements.flexy;
         if (ytdFlexyElm) {
           ytdFlexyElm.setAttribute111('hide-default-text-inline-expander', '');
@@ -5065,11 +5195,19 @@ const executionScript = _communicationKey => {
               materialTabs.removeEventListener('click', eventMap['tabs-btn-click'], true);
               // Add new handler
               materialTabs.addEventListener('click', eventMap['tabs-btn-click'], true);
-              console.log('[YouTube+] Tab click handler attached successfully to #material-tabs');
+              window.YouTubeUtils &&
+                YouTubeUtils.logger &&
+                YouTubeUtils.logger.debug &&
+                YouTubeUtils.logger.debug(
+                  '[YouTube+] Tab click handler attached successfully to #material-tabs'
+                );
 
               // Also attach to individual buttons as fallback
               const tabButtons = materialTabs.querySelectorAll('.tab-btn[tyt-tab-content]');
-              console.log(`[YouTube+] Found ${tabButtons.length} tab buttons`);
+              window.YouTubeUtils &&
+                YouTubeUtils.logger &&
+                YouTubeUtils.logger.debug &&
+                YouTubeUtils.logger.debug(`[YouTube+] Found ${tabButtons.length} tab buttons`);
 
               tabButtons.forEach(btn => {
                 btn.style.cursor = 'pointer';
@@ -5079,7 +5217,13 @@ const executionScript = _communicationKey => {
               });
             } else {
               console.error('[YouTube+] CRITICAL: #material-tabs not found after creation!');
-              console.log('[YouTube+] rightTabs HTML:', rightTabs.outerHTML?.substring(0, 500));
+              window.YouTubeUtils &&
+                YouTubeUtils.logger &&
+                YouTubeUtils.logger.debug &&
+                YouTubeUtils.logger.debug(
+                  '[YouTube+] rightTabs HTML:',
+                  rightTabs.outerHTML?.substring(0, 500)
+                );
             }
 
             inPageRearrange = true;
@@ -5088,14 +5232,20 @@ const executionScript = _communicationKey => {
             }
             inPageRearrange = false;
           } else if (rightTabs) {
-            console.log('[YouTube+] rightTabs already exists, checking handlers');
+            window.YouTubeUtils &&
+              YouTubeUtils.logger &&
+              YouTubeUtils.logger.debug &&
+              YouTubeUtils.logger.debug('[YouTube+] rightTabs already exists, checking handlers');
 
             // Ensure handler is attached even if tabs already exist
             const materialTabs = rightTabs.querySelector('#material-tabs');
             if (materialTabs) {
               materialTabs.removeEventListener('click', eventMap['tabs-btn-click'], true);
               materialTabs.addEventListener('click', eventMap['tabs-btn-click'], true);
-              console.log('[YouTube+] Re-attached tab click handler');
+              window.YouTubeUtils &&
+                YouTubeUtils.logger &&
+                YouTubeUtils.logger.debug &&
+                YouTubeUtils.logger.debug('[YouTube+] Re-attached tab click handler');
             }
           }
 
@@ -5112,7 +5262,10 @@ const executionScript = _communicationKey => {
             );
 
             const tabButtons = document.querySelectorAll('.tab-btn[tyt-tab-content]');
-            console.log(`[YouTube+] Observing ${tabButtons.length} tab buttons`);
+            window.YouTubeUtils &&
+              YouTubeUtils.logger &&
+              YouTubeUtils.logger.debug &&
+              YouTubeUtils.logger.debug(`[YouTube+] Observing ${tabButtons.length} tab buttons`);
             for (const btn of tabButtons) {
               if (btn && btn instanceof Element && btn.isConnected) {
                 try {
@@ -5494,22 +5647,37 @@ const executionScript = _communicationKey => {
         }
 
         if (shouldDoAutoFix) {
-          console.log(388, 'd');
+          window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug(388, 'd');
           if (lastPanel === 'chat') {
-            console.log(388, 'd1c');
+            window.YouTubeUtils &&
+              YouTubeUtils.logger &&
+              YouTubeUtils.logger.debug &&
+              YouTubeUtils.logger.debug(388, 'd1c');
             ytBtnExpandChat();
             actioned = true;
           } else if (lastPanel === 'playlist') {
-            console.log(388, 'd1p');
+            window.YouTubeUtils &&
+              YouTubeUtils.logger &&
+              YouTubeUtils.logger.debug &&
+              YouTubeUtils.logger.debug(388, 'd1p');
             ytBtnOpenPlaylist();
             actioned = true;
           } else if (lastTab) {
-            console.log(388, 'd2t');
+            window.YouTubeUtils &&
+              YouTubeUtils.logger &&
+              YouTubeUtils.logger.debug &&
+              YouTubeUtils.logger.debug(388, 'd2t');
             switchToTab(lastTab);
             actioned = true;
           } else if (resetForPanelDisappeared) {
             // if lastTab is undefined
-            console.log(388, 'd2d');
+            window.YouTubeUtils &&
+              YouTubeUtils.logger &&
+              YouTubeUtils.logger.debug &&
+              YouTubeUtils.logger.debug(388, 'd2d');
             Promise.resolve(lockSet['fixInitialTabStateLock'])
               .then(eventMap['fixInitialTabStateFn'])
               .catch(console.warn);
@@ -5564,10 +5732,18 @@ const executionScript = _communicationKey => {
             ? checkElementExist('ytd-watch-flexy[is-two-columns_]', '[hidden]')
             : null;
         if (checkElementExist('ytd-playlist-panel-renderer#playlist', '[hidden], [collapsed]')) {
-          DEBUG_5085 && console.log('fixInitialTabStateFn 1p');
+          DEBUG_5085 &&
+            window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug('fixInitialTabStateFn 1p');
           switchToTab(null);
         } else if (checkElementExist('ytd-live-chat-frame#chat', '[hidden], [collapsed]')) {
-          DEBUG_5085 && console.log('fixInitialTabStateFn 1a');
+          DEBUG_5085 &&
+            window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug('fixInitialTabStateFn 1a');
           switchToTab(null);
           if (checkElementExist('ytd-watch-flexy[theater]', '[hidden]')) {
             ytBtnCollapseChat();
@@ -5575,11 +5751,18 @@ const executionScript = _communicationKey => {
         } else if (qTab) {
           const hasTheater = qTab.hasAttribute('theater');
           if (hasTheater) {
-            DEBUG_5085 && console.log('fixInitialTabStateFn 1c');
+            DEBUG_5085 &&
+              window.YouTubeUtils &&
+              YouTubeUtils.logger &&
+              YouTubeUtils.logger.debug &&
+              YouTubeUtils.logger.debug('fixInitialTabStateFn 1c');
             switchToTab(null);
           } else {
             if (DEBUG_5085) {
-              console.log('fixInitialTabStateFn 1b');
+              window.YouTubeUtils &&
+                YouTubeUtils.logger &&
+                YouTubeUtils.logger.debug &&
+                YouTubeUtils.logger.debug('fixInitialTabStateFn 1b');
             }
             const btn0 = document.querySelector('.tab-btn-visible'); // or default button
             if (btn0) {
@@ -5589,7 +5772,11 @@ const executionScript = _communicationKey => {
             }
           }
         } else {
-          DEBUG_5085 && console.log('fixInitialTabStateFn 1z');
+          DEBUG_5085 &&
+            window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug('fixInitialTabStateFn 1z');
         }
         // console.log('fixInitialTabStateFn 0d');
         fixInitialTabStateK++;
@@ -5642,7 +5829,10 @@ const executionScript = _communicationKey => {
           const tabContent = getAttributeSafe(tabBtn, 'tyt-tab-content');
 
           if (DEBUG_5085) {
-            console.log('[YouTube+] Tab clicked:', tabContent, tabBtn);
+            window.YouTubeUtils &&
+              YouTubeUtils.logger &&
+              YouTubeUtils.logger.debug &&
+              YouTubeUtils.logger.debug('[YouTube+] Tab clicked:', tabContent, tabBtn);
           }
 
           if (tabContent) {
@@ -5788,11 +5978,14 @@ const executionScript = _communicationKey => {
     // eslint-disable-next-line no-unused-vars
     executionFinished = 1;
   } catch (e) {
-    console.log('error 0xF491');
+    window.YouTubeUtils &&
+      YouTubeUtils.logger &&
+      YouTubeUtils.logger.debug &&
+      YouTubeUtils.logger.debug('error 0xF491');
     console.error(e);
   }
 };
-/* eslint-enable max-lines-per-function, complexity, max-depth */
+
 const styles = {
   main: `
 @keyframes relatedElementProvided{0%{background-position-x:3px;}100%{background-position-x:4px;}}

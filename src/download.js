@@ -1,5 +1,7 @@
 /**
  * YouTube+ Download Module
+ * Unified download system with button UI and download functionality
+ * @version 3.0
  */
 
 (function () {
@@ -7,7 +9,7 @@
 
   // Check dependencies
   if (typeof YouTubeUtils === 'undefined') {
-    logger.error('YouTubeUtils not found!');
+    console.error('[YouTube+ Download] YouTubeUtils not found!');
     return;
   }
 
@@ -149,11 +151,30 @@
 
   const { NotificationManager } = YouTubeUtils;
 
-  // Translation helper: use YouTubeUtils.t if available, otherwise a noop passthrough
-  const t =
-    typeof YouTubeUtils !== 'undefined' && typeof YouTubeUtils.t === 'function'
-      ? YouTubeUtils.t
-      : key => key;
+  // Translation helper: dynamically resolve central i18n (embedded) at call time
+  // to avoid missing translations due to initialization order. Falls back to
+  // YouTubeUtils.t if present, otherwise returns the key (with simple params).
+  function t(key, params = {}) {
+    try {
+      if (typeof window !== 'undefined') {
+        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
+          return window.YouTubePlusI18n.t(key, params);
+        }
+        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
+          return window.YouTubeUtils.t(key, params);
+        }
+      }
+    } catch {
+      // ignore and fall back
+    }
+
+    // Minimal fallback: return key with simple interpolation
+    const str = String(key || '');
+    if (!params || Object.keys(params).length === 0) return str;
+    let result = str;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
+  }
 
   // Initialize logger (logger is defined in build order before this module)
   /* global YouTubePlusLogger */
@@ -386,7 +407,7 @@
    * @param {string} thumbnailUrl - Thumbnail URL
    * @returns {Promise<Blob>} Album art blob
    */
-  async function createSquareAlbumArt(thumbnailUrl) {
+  function createSquareAlbumArt(thumbnailUrl) {
     return new Promise((resolve, reject) => {
       const img = document.createElement('img');
       img.crossOrigin = 'anonymous';
@@ -971,7 +992,10 @@
                 return;
               }
 
-              console.log(`[Download] File downloaded: ${formatBytes(blob.size)}`);
+              window.YouTubeUtils &&
+                YouTubeUtils.logger &&
+                YouTubeUtils.logger.debug &&
+                YouTubeUtils.logger.debug(`[Download] File downloaded: ${formatBytes(blob.size)}`);
 
               // Embed thumbnail for audio files
               if (format === 'audio' && embedThumbnail) {
@@ -1688,9 +1712,508 @@
     _modalElements = null;
   }
 
+  // ============================================================================
+  // DOWNLOAD BUTTON UI (merged from download-button.js)
+  // ============================================================================
+
+  /**
+   * Helper to wait for download API to be available
+   * @param {number} timeout - Timeout in milliseconds
+   * @returns {Promise<Object|undefined>} Download API or undefined
+   */
+  const waitForDownloadAPI = timeout =>
+    new Promise(resolve => {
+      const interval = 200;
+      let waited = 0;
+
+      if (typeof window.YouTubePlusDownload !== 'undefined') {
+        return resolve(window.YouTubePlusDownload);
+      }
+
+      const id = setInterval(() => {
+        waited += interval;
+        if (typeof window.YouTubePlusDownload !== 'undefined') {
+          clearInterval(id);
+          return resolve(window.YouTubePlusDownload);
+        }
+        if (waited >= timeout) {
+          clearInterval(id);
+          return resolve(undefined);
+        }
+      }, interval);
+    });
+
+  /**
+   * Fallback clipboard copy for older browsers
+   * @param {string} text - Text to copy
+   * @param {Function} tFn - Translation function
+   * @param {Object} notificationMgr - Notification manager
+   */
+  const fallbackCopyToClipboard = (text, tFn, notificationMgr) => {
+    const input = document.createElement('input');
+    input.value = text;
+    document.body.appendChild(input);
+    input.select();
+    document.execCommand('copy');
+    document.body.removeChild(input);
+    notificationMgr.show(tFn('copiedToClipboard'), {
+      duration: 2000,
+      type: 'success',
+    });
+  };
+
+  /**
+   * Build URL from template
+   * @param {string} template - URL template
+   * @param {string} videoId - Video ID
+   * @param {string} videoUrl - Full video URL
+   * @returns {string} Built URL
+   */
+  const buildUrl = (template, videoId, videoUrl) =>
+    (template || '')
+      .replace('{videoId}', videoId || '')
+      .replace('{videoUrl}', encodeURIComponent(videoUrl || ''));
+
+  /**
+   * Create download button element
+   * @param {Function} tFn - Translation function
+   * @returns {HTMLElement} Button element
+   */
+  const createButtonElement = tFn => {
+    const button = document.createElement('div');
+    button.className = 'ytp-button ytp-download-button';
+    button.setAttribute('title', tFn('downloadOptions'));
+    button.setAttribute('tabindex', '0');
+    button.setAttribute('role', 'button');
+    button.setAttribute('aria-haspopup', 'true');
+    button.setAttribute('aria-expanded', 'false');
+    button.innerHTML = `
+      <svg fill="currentColor" width="24" height="24" viewBox="0 0 256 256" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:auto;vertical-align:middle;">
+        <path d="M83.17188,112.83984a4.00026,4.00026,0,0,1,5.65624-5.6582L124,142.34473V40a4,4,0,0,1,8,0V142.34473l35.17188-35.16309a4.00026,4.00026,0,0,1,5.65624,5.6582l-42,41.98926a4.00088,4.00088,0,0,1-5.65624,0ZM216,148a4.0002,4.0002,0,0,0-4,4v56a4.00427,4.00427,0,0,1-4,4H48a4.00427,4.00427,0,0,1-4-4V152a4,4,0,0,0-8,0v56a12.01343,12.01343,0,0,0,12,12H208a12.01343,12.01343,0,0,0,12-12V152A4.0002,4.0002,0,0,0,216,148Z"/>
+      </svg>
+    `;
+    return button;
+  };
+
+  /**
+   * Position dropdown below button
+   * @param {HTMLElement} button - Button element
+   * @param {HTMLElement} dropdown - Dropdown element
+   */
+  const positionDropdown = (button, dropdown) => {
+    const rect = button.getBoundingClientRect();
+    const left = Math.max(8, rect.left + rect.width / 2 - 75);
+    const bottom = Math.max(8, window.innerHeight - rect.top + 12);
+    dropdown.style.left = `${left}px`;
+    dropdown.style.bottom = `${bottom}px`;
+  };
+
+  /**
+   * Download Site Actions - Handle different types of downloads
+   */
+  const createDownloadActions = (tFn, ytUtils) => {
+    /**
+     * Handle direct download
+     */
+    const handleDirectDownload = async () => {
+      const api = await waitForDownloadAPI(2000);
+      if (!api) {
+        console.error('[YouTube+] Direct download module not loaded');
+        ytUtils.NotificationManager.show(tFn('directDownloadModuleNotAvailable'), {
+          duration: 3000,
+          type: 'error',
+        });
+        return;
+      }
+
+      try {
+        if (typeof api.openModal === 'function') {
+          api.openModal();
+          return;
+        }
+        if (typeof api.downloadVideo === 'function') {
+          await api.downloadVideo({ format: 'video', quality: '1080' });
+          return;
+        }
+      } catch (err) {
+        console.error('[YouTube+] Direct download invocation failed:', err);
+      }
+
+      ytUtils.NotificationManager.show(tFn('directDownloadModuleNotAvailable'), {
+        duration: 3000,
+        type: 'error',
+      });
+    };
+
+    /**
+     * Handle YTDL download - copies URL to clipboard and opens YTDL
+     * @param {string} url - YTDL URL
+     */
+    const handleYTDLDownload = url => {
+      const videoId = new URLSearchParams(location.search).get('v');
+      const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : location.href;
+
+      // Copy to clipboard
+      navigator.clipboard
+        .writeText(videoUrl)
+        .then(() => {
+          ytUtils.NotificationManager.show(tFn('copiedToClipboard'), {
+            duration: 2000,
+            type: 'success',
+          });
+        })
+        .catch(() => {
+          fallbackCopyToClipboard(videoUrl, tFn, ytUtils.NotificationManager);
+        });
+
+      // Open YTDL in new tab
+      window.open(url, '_blank');
+    };
+
+    /**
+     * Helper to open download site or trigger direct download
+     * @param {string} url - Download URL
+     * @param {boolean} isYTDL - Whether this is YTDL download
+     * @param {boolean} isDirect - Whether this is direct download
+     * @param {HTMLElement} dropdown - Dropdown element to hide
+     * @param {HTMLElement} button - Button element
+     */
+    const openDownloadSite = (url, isYTDL, isDirect, dropdown, button) => {
+      dropdown.classList.remove('visible');
+      button.setAttribute('aria-expanded', 'false');
+
+      if (isDirect) {
+        handleDirectDownload();
+        return;
+      }
+
+      if (isYTDL) {
+        handleYTDLDownload(url);
+        return;
+      }
+
+      window.open(url, '_blank');
+    };
+
+    return { handleDirectDownload, handleYTDLDownload, openDownloadSite };
+  };
+
+  /**
+   * Download Sites Configuration Builder
+   * @param {Function} tFn - Translation function
+   * @returns {Function} Builder function
+   */
+  const createDownloadSitesBuilder = tFn => {
+    return (customization, enabledSites, videoId, videoUrl) => {
+      const baseSites = [
+        {
+          key: 'y2mate',
+          name: customization?.y2mate?.name || 'Y2Mate',
+          url: buildUrl(
+            customization?.y2mate?.url || `https://www.y2mate.com/youtube/{videoId}`,
+            videoId,
+            videoUrl
+          ),
+          isYTDL: false,
+          isDirect: false,
+        },
+        {
+          key: 'ytdl',
+          name: 'by YTDL',
+          url: `http://localhost:5005`,
+          isYTDL: true,
+          isDirect: false,
+        },
+        {
+          key: 'direct',
+          name: tFn('directDownload'),
+          url: '#',
+          isYTDL: false,
+          isDirect: true,
+        },
+      ];
+
+      const downloadSites = baseSites.filter(s => enabledSites[s.key] !== false);
+      return { baseSites, downloadSites };
+    };
+  };
+
+  /**
+   * Create dropdown options element
+   * @param {Array} downloadSites - Download sites configuration
+   * @param {HTMLElement} button - Button element
+   * @param {Function} openDownloadSiteFn - Click handler
+   * @returns {HTMLElement} Dropdown element
+   */
+  const createDropdownOptions = (downloadSites, button, openDownloadSiteFn) => {
+    const options = document.createElement('div');
+    options.className = 'download-options';
+    options.setAttribute('role', 'menu');
+
+    const list = document.createElement('div');
+    list.className = 'download-options-list';
+
+    downloadSites.forEach(site => {
+      const opt = document.createElement('div');
+      opt.className = 'download-option-item';
+      opt.textContent = site.name;
+      opt.setAttribute('role', 'menuitem');
+      opt.setAttribute('tabindex', '0');
+
+      opt.addEventListener('click', () =>
+        openDownloadSiteFn(site.url, site.isYTDL, site.isDirect, options, button)
+      );
+
+      opt.addEventListener('keydown', e => {
+        if (e.key === 'Enter' || e.key === ' ') {
+          openDownloadSiteFn(site.url, site.isYTDL, site.isDirect, options, button);
+        }
+      });
+
+      list.appendChild(opt);
+    });
+
+    options.appendChild(list);
+    return options;
+  };
+
+  /**
+   * Setup dropdown hover behavior
+   * @param {HTMLElement} button - Button element
+   * @param {HTMLElement} dropdown - Dropdown element
+   */
+  const setupDropdownHoverBehavior = (button, dropdown) => {
+    let downloadHideTimer;
+
+    const showDropdown = () => {
+      clearTimeout(downloadHideTimer);
+      positionDropdown(button, dropdown);
+      dropdown.classList.add('visible');
+      button.setAttribute('aria-expanded', 'true');
+    };
+
+    const hideDropdown = () => {
+      clearTimeout(downloadHideTimer);
+      downloadHideTimer = setTimeout(() => {
+        dropdown.classList.remove('visible');
+        button.setAttribute('aria-expanded', 'false');
+      }, 180);
+    };
+
+    button.addEventListener('mouseenter', () => {
+      clearTimeout(downloadHideTimer);
+      showDropdown();
+    });
+
+    button.addEventListener('mouseleave', () => {
+      clearTimeout(downloadHideTimer);
+      downloadHideTimer = setTimeout(hideDropdown, 180);
+    });
+
+    dropdown.addEventListener('mouseenter', () => {
+      clearTimeout(downloadHideTimer);
+      showDropdown();
+    });
+
+    dropdown.addEventListener('mouseleave', () => {
+      clearTimeout(downloadHideTimer);
+      downloadHideTimer = setTimeout(hideDropdown, 180);
+    });
+
+    button.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        if (dropdown.classList.contains('visible')) {
+          hideDropdown();
+        } else {
+          showDropdown();
+        }
+      }
+    });
+  };
+
+  /**
+   * Download Button Manager - Handles download button creation and dropdown management
+   * @param {Object} config - Configuration object
+   * @param {Object} config.settings - Settings object
+   * @param {Function} config.t - Translation function
+   * @param {Function} config.getElement - Get element function
+   * @param {Object} config.YouTubeUtils - YouTube utilities
+   * @returns {Object} Download button manager API
+   */
+  const createDownloadButtonManager = config => {
+    const { settings, t: tFn, getElement, YouTubeUtils: ytUtils } = config;
+
+    const actions = createDownloadActions(tFn, ytUtils);
+    const buildDownloadSites = createDownloadSitesBuilder(tFn);
+
+    /**
+     * Add download button to controls
+     * @param {HTMLElement} controls - Controls container
+     */
+    const addDownloadButton = controls => {
+      if (!settings.enableDownload) return;
+
+      try {
+        const existingBtn = controls.querySelector('.ytp-download-button');
+        if (existingBtn) existingBtn.remove();
+      } catch {
+        // ignore
+      }
+
+      const videoId = new URLSearchParams(location.search).get('v');
+      const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : location.href;
+
+      const customization = settings.downloadSiteCustomization || {
+        y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+      };
+
+      const enabledSites = settings.downloadSites || { y2mate: true, ytdl: true, direct: true };
+      const { downloadSites } = buildDownloadSites(customization, enabledSites, videoId, videoUrl);
+
+      const button = createButtonElement(tFn);
+
+      if (downloadSites.length === 1) {
+        const singleSite = downloadSites[0];
+        button.style.cursor = 'pointer';
+        const tempDropdown = document.createElement('div');
+        button.addEventListener('click', () =>
+          actions.openDownloadSite(
+            singleSite.url,
+            singleSite.isYTDL,
+            singleSite.isDirect,
+            tempDropdown,
+            button
+          )
+        );
+        controls.insertBefore(button, controls.firstChild);
+        return;
+      }
+
+      const dropdown = createDropdownOptions(downloadSites, button, actions.openDownloadSite);
+
+      const existingDownload = document.querySelector('.download-options');
+      if (existingDownload) existingDownload.remove();
+
+      try {
+        document.body.appendChild(dropdown);
+      } catch {
+        button.appendChild(dropdown);
+      }
+
+      setupDropdownHoverBehavior(button, dropdown);
+
+      try {
+        if (typeof window !== 'undefined') {
+          window.youtubePlus = window.youtubePlus || {};
+          window.youtubePlus.downloadButtonManager = window.youtubePlus.downloadButtonManager || {};
+
+          window.youtubePlus.downloadButtonManager.addDownloadButton = controlsArg =>
+            addDownloadButton(controlsArg);
+          window.youtubePlus.downloadButtonManager.refreshDownloadButton = () => {
+            try {
+              const btn = document.querySelector('.ytp-download-button');
+              const dd = document.querySelector('.download-options');
+
+              // If we should show downloads but the elements are missing, attempt to recreate
+              if (settings.enableDownload && (!btn || !dd)) {
+                try {
+                  const controlsEl = document.querySelector('.ytp-right-controls');
+                  if (controlsEl) {
+                    // recreate button + dropdown
+                    addDownloadButton(controlsEl);
+                  }
+                } catch {
+                  /* ignore recreation errors */
+                }
+              }
+
+              if (settings.enableDownload) {
+                if (btn) btn.style.display = '';
+                if (dd) dd.style.display = '';
+              } else {
+                if (btn) btn.style.display = 'none';
+                if (dd) dd.style.display = 'none';
+              }
+            } catch {
+              /* ignore */
+            }
+          };
+
+          window.youtubePlus.rebuildDownloadDropdown = () => {
+            try {
+              const controlsEl = document.querySelector('.ytp-right-controls');
+              if (!controlsEl) return;
+              window.youtubePlus.downloadButtonManager.addDownloadButton(controlsEl);
+              window.youtubePlus.settings = window.youtubePlus.settings || settings;
+            } catch (e) {
+              console.warn('[YouTube+] rebuildDownloadDropdown failed:', e);
+            }
+          };
+        }
+      } catch (e) {
+        console.warn('[YouTube+] expose rebuildDownloadDropdown failed:', e);
+      }
+
+      controls.insertBefore(button, controls.firstChild);
+    };
+
+    /**
+     * Refresh download button visibility based on settings
+     */
+    const refreshDownloadButton = () => {
+      const button = getElement('.ytp-download-button');
+      let dropdown = document.querySelector('.download-options');
+
+      // If downloads are enabled but the dropdown/button are missing, recreate them
+      if (settings.enableDownload && (!button || !dropdown)) {
+        try {
+          const controlsEl = document.querySelector('.ytp-right-controls');
+          if (controlsEl) {
+            addDownloadButton(controlsEl);
+            // re-query after creation
+            dropdown = document.querySelector('.download-options');
+          }
+        } catch (e) {
+          logger && logger.warn && logger.warn('[YouTube+] recreate download button failed:', e);
+        }
+      }
+
+      if (settings.enableDownload) {
+        if (button) button.style.display = '';
+        if (dropdown) dropdown.style.display = '';
+      } else {
+        if (button) button.style.display = 'none';
+        if (dropdown) dropdown.style.display = 'none';
+      }
+    };
+
+    return {
+      addDownloadButton,
+      refreshDownloadButton,
+    };
+  };
+
+  // ============================================================================
+  // MODULE INITIALIZATION
+  // ============================================================================
+
   function init() {
-    console.log('[YouTube+ Download] API module loaded');
-    console.log('[YouTube+ Download] Use window.YouTubePlusDownload.downloadVideo() to download');
+    try {
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug('[YouTube+ Download] Unified module loaded');
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug(
+          '[YouTube+ Download] Use window.YouTubePlusDownload.downloadVideo() to download'
+        );
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug('[YouTube+ Download] Button manager available');
+    } catch {}
   }
 
   // Export public API
@@ -1718,6 +2241,9 @@
       // Initialize (called automatically)
       init,
     };
+
+    // Export button manager for basic.js
+    window.YouTubePlusDownloadButton = { createDownloadButtonManager };
   }
 
   // Export module to global scope for module loader
@@ -1727,7 +2253,7 @@
       openModal,
       getVideoId,
       getVideoTitle,
-      version: '2.2',
+      version: '3.0',
     };
   }
 

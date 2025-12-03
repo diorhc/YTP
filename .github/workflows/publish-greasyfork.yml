@@ -4,6 +4,10 @@ on:
   release:
     types: [published]
 
+concurrency:
+  group: publish-greasyfork
+  cancel-in-progress: false
+
 jobs:
   publish:
     runs-on: ubuntu-latest
@@ -23,8 +27,18 @@ jobs:
       - name: Build userscript
         run: npm run build
 
+      - name: Verify build
+        run: |
+          if [ ! -f "youtube.user.js" ]; then
+            echo "✗ Build failed - youtube.user.js not found"
+            exit 1
+          fi
+          echo "✓ Build verified"
+          ls -lh youtube.user.js
+
       - name: Publish to GreasyFork
         env:
           GREASYFORK_USERNAME: ${{ secrets.GREASYFORK_USERNAME }}
           GREASYFORK_PASSWORD: ${{ secrets.GREASYFORK_PASSWORD }}
         run: node .github/scripts/upload-greasyfork.js
+        continue-on-error: false

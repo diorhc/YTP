@@ -16,15 +16,15 @@ function validateBuildConfig() {
 
   // Check for required directories
   const srcDir = path.join(ROOT, 'src');
-  if (fs.existsSync(srcDir)) {
-    // source directory exists
-  } else {
+  if (!fs.existsSync(srcDir)) {
     errors.push('Source directory (src/) not found');
   }
 
   // Check for build order file
   const buildOrderPath = path.join(ROOT, 'build.order.json');
-  if (fs.existsSync(buildOrderPath)) {
+  if (!fs.existsSync(buildOrderPath)) {
+    warnings.push('build.order.json not found - using default ordering');
+  } else {
     try {
       const buildOrder = JSON.parse(fs.readFileSync(buildOrderPath, 'utf8'));
       if (!Array.isArray(buildOrder)) {
@@ -33,23 +33,17 @@ function validateBuildConfig() {
     } catch (e) {
       errors.push(`Invalid build.order.json: ${e.message}`);
     }
-  } else {
-    warnings.push('build.order.json not found - using default ordering');
   }
 
   // Check for userscript metadata
   const userscriptPath = path.join(ROOT, 'userscript.js');
-  if (fs.existsSync(userscriptPath)) {
-    // userscript metadata present
-  } else {
+  if (!fs.existsSync(userscriptPath)) {
     warnings.push('userscript.js not found - using fallback metadata');
   }
 
   // Check for package.json
   const packagePath = path.join(ROOT, 'package.json');
-  if (fs.existsSync(packagePath)) {
-    // package.json present
-  } else {
+  if (!fs.existsSync(packagePath)) {
     warnings.push('package.json not found');
   }
 
@@ -140,15 +134,17 @@ function runValidation() {
     depsValidation.warnings.forEach(warn => console.log(`   - ${warn}`));
   }
 
-  if (hasErrors) {
+  if (
+    !hasErrors &&
+    configValidation.warnings.length === 0 &&
+    depsValidation.warnings.length === 0
+  ) {
+    console.log('✅ All validation checks passed!\n');
+  } else if (!hasErrors) {
+    console.log('\n✅ Validation passed with warnings\n');
+  } else {
     console.log('\n❌ Validation failed - please fix errors before building\n');
     process.exit(1);
-  }
-
-  if (configValidation.warnings.length === 0 && depsValidation.warnings.length === 0) {
-    console.log('✅ All validation checks passed!\n');
-  } else {
-    console.log('\n✅ Validation passed with warnings\n');
   }
 }
 

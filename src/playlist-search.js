@@ -6,30 +6,25 @@
   if (window._playlistSearchInitialized) return;
   window._playlistSearchInitialized = true;
 
-  // Use centralized i18n for playlist placeholder
-  const _globalI18n_playlist =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
-  const t = (key, params = {}) => {
-    try {
-      if (_globalI18n_playlist && typeof _globalI18n_playlist.t === 'function') {
-        return _globalI18n_playlist.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fallback
-    }
-    if (!key || typeof key !== 'string') return '';
-    if (Object.keys(params).length === 0) return key;
-    let result = key;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
-    return result;
+  // Localization
+  const i18n = {
+    en: {
+      searchPlaceholder: 'Search in {playlist}...',
+    },
+    ru: {
+      searchPlaceholder: 'Поиск в плейлисте "{playlist}"...',
+    },
   };
+
+  // Detect language
+  const getLanguage = () => {
+    const htmlLang = document.documentElement.lang || 'en';
+    if (htmlLang.startsWith('ru')) return 'ru';
+    return 'en';
+  };
+
+  const lang = getLanguage();
+  const t = key => i18n[lang][key] || i18n.en[key] || key;
 
   // Utility functions for performance optimization
   const debounce = (func, wait) => {
@@ -50,9 +45,7 @@
       if (!inThrottle) {
         func(...args);
         inThrottle = true;
-        setTimeout(() => {
-          inThrottle = false;
-        }, limit);
+        setTimeout(() => (inThrottle = false), limit);
       }
     };
   };
@@ -78,17 +71,13 @@
     itemsCache: new Map(), // Cache for faster lookups
   };
 
-  // Common selectors cached to avoid repeated string allocations and query lookups
-  const ITEM_TITLE_SELECTOR = '#video-title';
-  const ITEM_BYLINE_SELECTOR = '#byline';
-
   // Load settings from localStorage
   const loadSettings = () => {
     try {
       const saved = localStorage.getItem(config.storageKey);
       if (saved) Object.assign(config, JSON.parse(saved));
     } catch (error) {
-      console.warn('[YouTube+][Playlist Search]', 'Failed to load settings:', error);
+      console.warn('[Playlist Search] Failed to load settings:', error);
     }
   };
 
@@ -110,47 +99,9 @@
 
       return null;
     } catch (error) {
-      console.warn('[YouTube+][Playlist Search]', 'Failed to get playlist ID:', error);
+      console.warn('[Playlist Search] Failed to get playlist ID:', error);
       return null;
     }
-  };
-
-  /**
-   * Sanitize and limit title length
-   * @param {string} title - Title to sanitize
-   * @param {number} maxLength - Maximum length
-   * @returns {string} Sanitized title
-   */
-  const sanitizeTitle = (title, maxLength = 100) => {
-    const trimmed = title.trim();
-    return trimmed.length > maxLength ? `${trimmed.substring(0, maxLength)}...` : trimmed;
-  };
-
-  /**
-   * Find title element by selectors
-   * @param {Element|HTMLElement} playlistPanel - Playlist panel element
-   * @param {string[]} selectors - Array of CSS selectors
-   * @returns {string|null} Found title or null
-   */
-  const findTitleBySelectors = (playlistPanel, selectors) => {
-    for (const selector of selectors) {
-      const el = playlistPanel?.querySelector(selector) || document.querySelector(selector);
-      if (el && el.textContent && el.textContent.trim()) {
-        return sanitizeTitle(el.textContent);
-      }
-    }
-    return null;
-  };
-
-  /**
-   * Get title from meta tags
-   * @returns {string|null} Meta title or null
-   */
-  const getTitleFromMeta = () => {
-    const meta =
-      document.querySelector('meta[name="title"]') ||
-      document.querySelector('meta[property="og:title"]');
-    return meta && meta.content ? sanitizeTitle(meta.content) : null;
   };
 
   /**
@@ -161,82 +112,35 @@
    */
   const getPlaylistDisplayName = (playlistPanel, listId) => {
     try {
-      const titleSelectors = [
-        '.title',
-        'h3 a',
-        '#header-title',
-        '#title',
-        '.playlist-title',
-        'h1.title',
-      ];
+      // Common places for title: .title, h3 a, #header-title, #title
+      const sel = ['.title', 'h3 a', '#header-title', '#title', '.playlist-title', 'h1.title'];
+      for (const s of sel) {
+        const el = playlistPanel.querySelector(s) || document.querySelector(s);
+        if (el && el.textContent && el.textContent.trim()) {
+          // Sanitize and limit length
+          const title = el.textContent.trim();
+          return title.length > 100 ? title.substring(0, 100) + '...' : title;
+        }
+      }
 
-      // Try finding title by selectors
-      const titleFromSelectors = findTitleBySelectors(playlistPanel, titleSelectors);
-      if (titleFromSelectors) return titleFromSelectors;
-
-      // Fallback to meta tags
-      const titleFromMeta = getTitleFromMeta();
-      if (titleFromMeta) return titleFromMeta;
+      // Fallback to meta or channel-specific metadata
+      const meta =
+        document.querySelector('meta[name="title"]') ||
+        document.querySelector('meta[property="og:title"]');
+      if (meta && meta.content) {
+        const title = meta.content.trim();
+        return title.length > 100 ? title.substring(0, 100) + '...' : title;
+      }
     } catch (error) {
-      console.warn('[YouTube+][Playlist Search]', 'Failed to get display name:', error);
+      console.warn('[Playlist Search] Failed to get display name:', error);
     }
 
     // Default to sanitized id if nothing else
-    return listId && typeof listId === 'string' ? listId.substring(0, 50) : 'playlist';
-  };
-
-  /**
-   * Setup observer to wait for playlist panel
-   * @param {MutationObserver} observer - Observer instance
-   */
-  const setupPanelObserver = observer => {
-    try {
-      if (document.body) {
-        observer.observe(document.body, { childList: true, subtree: true });
-      } else {
-        document.addEventListener(
-          'DOMContentLoaded',
-          () => {
-            try {
-              observer.observe(document.body, { childList: true, subtree: true });
-            } catch (observeError) {
-              console.error(
-                '[YouTube+][PlaylistSearch] observer.observe failed after DOMContentLoaded:',
-                observeError
-              );
-            }
-          },
-          { once: true }
-        );
-      }
-    } catch (observeError) {
-      console.error('[YouTube+][PlaylistSearch] observer.observe failed:', observeError);
+    if (listId && typeof listId === 'string') {
+      return listId.substring(0, 50); // Limit length
     }
-  };
 
-  /**
-   * Wait for playlist panel to appear in DOM
-   * @returns {void}
-   */
-  const waitForPlaylistPanel = () => {
-    const observer = new MutationObserver((_mutations, obs) => {
-      const panel = document.querySelector('ytd-playlist-panel-renderer');
-      if (panel) {
-        try {
-          obs.disconnect();
-        } catch {}
-        addSearchUI();
-      }
-    });
-
-    setupPanelObserver(observer);
-
-    // Timeout fallback to prevent infinite observation
-    setTimeout(() => {
-      try {
-        observer.disconnect();
-      } catch {}
-    }, 5000);
+    return 'playlist';
   };
 
   // Add search UI to playlist panel
@@ -249,7 +153,22 @@
     // Find playlist panel (works both on /watch and on playlist pages)
     const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
     if (!playlistPanel) {
-      waitForPlaylistPanel();
+      // Use MutationObserver instead of setTimeout for better performance
+      const observer = new MutationObserver((_mutations, obs) => {
+        const panel = document.querySelector('ytd-playlist-panel-renderer');
+        if (panel) {
+          obs.disconnect();
+          addSearchUI();
+        }
+      });
+
+      observer.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
+
+      // Timeout fallback to prevent infinite observation
+      setTimeout(() => observer.disconnect(), 5000);
       return;
     }
 
@@ -302,10 +221,8 @@
     }, config.searchDebounceMs);
 
     searchInput.addEventListener('input', e => {
-      const { target } = e;
-      const inputEl = /** @type {HTMLInputElement} */ (target);
-      const { value } = inputEl;
-      debouncedFilter(value);
+      const target = /** @type {HTMLInputElement} */ (e.target);
+      debouncedFilter(target.value);
     });
 
     searchContainer.appendChild(searchInput);
@@ -335,8 +252,11 @@
       }
     } else {
       // Fallback: prepend to the panel root to ensure visibility
-      // insertBefore with null second arg appends when no firstChild exists
-      playlistPanel.insertBefore(searchContainer, playlistPanel.firstChild);
+      if (playlistPanel.firstChild) {
+        playlistPanel.insertBefore(searchContainer, playlistPanel.firstChild);
+      } else {
+        playlistPanel.appendChild(searchContainer);
+      }
     }
 
     // Store original items
@@ -347,77 +267,6 @@
   };
 
   // Setup MutationObserver for dynamic playlist updates
-  /**
-   * Handle mutations to playlist items
-   * @returns {void}
-   */
-  const handlePlaylistMutations = throttle(() => {
-    const currentCount = state.originalItems.length;
-    const newItems = document.querySelectorAll(
-      'ytd-playlist-panel-renderer ytd-playlist-panel-video-renderer'
-    );
-
-    // Only recollect if item count changed significantly
-    if (Math.abs(newItems.length - currentCount) > 0) {
-      collectOriginalItems();
-
-      // Re-apply current search filter if any
-      if (state.searchInput && state.searchInput.value) {
-        filterPlaylistItems(state.searchInput.value);
-      }
-    }
-  }, config.observerThrottleMs);
-
-  /**
-   * Setup fallback body observer
-   * @returns {void}
-   */
-  const setupBodyObserverFallback = () => {
-    const bodyObserver = new MutationObserver((_mutations, obs) => {
-      const panel = document.querySelector('ytd-playlist-panel-renderer');
-      if (panel) {
-        try {
-          state.mutationObserver.observe(panel, { childList: true, subtree: true });
-        } catch (err) {
-          console.warn(
-            '[YouTube+][Playlist Search] Failed to observe playlist panel after fallback:',
-            err
-          );
-        }
-        obs.disconnect();
-      }
-    });
-    try {
-      bodyObserver.observe(document.body, { childList: true, subtree: true });
-      setTimeout(() => bodyObserver.disconnect(), 5000);
-    } catch (err) {
-      console.warn(
-        '[YouTube+][Playlist Search] Failed to observe document.body for playlist fallback:',
-        err
-      );
-    }
-  };
-
-  /**
-   * Observe playlist panel or setup fallback
-   * @param {Element} playlistPanel - Playlist panel element
-   * @returns {void}
-   */
-  const observePlaylistPanel = playlistPanel => {
-    try {
-      if (playlistPanel && playlistPanel instanceof Element && playlistPanel.isConnected) {
-        state.mutationObserver.observe(playlistPanel, { childList: true, subtree: true });
-      } else if (document.body) {
-        setupBodyObserverFallback();
-      }
-    } catch (observeError) {
-      console.error(
-        '[YouTube+][Playlist Search] Failed to set up playlist observer:',
-        observeError
-      );
-    }
-  };
-
   const setupPlaylistObserver = () => {
     // Disconnect existing observer if any
     if (state.mutationObserver) {
@@ -427,83 +276,76 @@
     const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
     if (!playlistPanel) return;
 
-    state.mutationObserver = new MutationObserver(handlePlaylistMutations);
-    observePlaylistPanel(playlistPanel);
+    // Throttled handler for mutations
+    const handleMutations = throttle(() => {
+      const currentCount = state.originalItems.length;
+      const newItems = document.querySelectorAll(
+        'ytd-playlist-panel-renderer ytd-playlist-panel-video-renderer'
+      );
+
+      // Only recollect if item count changed significantly
+      if (Math.abs(newItems.length - currentCount) > 0) {
+        collectOriginalItems();
+
+        // Re-apply current search filter if any
+        if (state.searchInput && state.searchInput.value) {
+          filterPlaylistItems(state.searchInput.value);
+        }
+      }
+    }, config.observerThrottleMs);
+
+    state.mutationObserver = new MutationObserver(handleMutations);
+
+    // Observe the playlist container for changes
+    state.mutationObserver.observe(playlistPanel, {
+      childList: true,
+      subtree: true,
+    });
   };
 
   /**
    * Collect all playlist items for filtering with limit
    */
-  /**
-   * Get playlist items from DOM
-   * @returns {NodeList} Playlist items
-   */
-  const getPlaylistItems = () => {
-    return document.querySelectorAll(
+  const collectOriginalItems = () => {
+    const items = document.querySelectorAll(
       'ytd-playlist-panel-renderer ytd-playlist-panel-video-renderer'
     );
-  };
 
-  /**
-   * Limit items to max configured amount
-   * @param {NodeList|Array} items - Items to limit
-   * @returns {Array} Limited items array
-   */
-  const limitPlaylistItems = items => {
+    // Limit number of items to prevent performance issues
     if (items.length > config.maxPlaylistItems) {
       console.warn(
-        `[YouTube+][Playlist Search] Playlist has ${items.length} items, limiting to ${config.maxPlaylistItems}`
+        `[Playlist Search] Playlist has ${items.length} items, limiting to ${config.maxPlaylistItems}`
       );
     }
-    return Array.from(items).slice(0, config.maxPlaylistItems);
-  };
 
-  /**
-   * Extract item data from DOM element
-   * @param {HTMLElement} item - Playlist item element
-   * @param {number} index - Item index
-   * @returns {Object} Item data
-   */
-  const extractItemData = (item, index) => {
-    const videoId = item.getAttribute('video-id') || `item-${index}`;
-    // Use cached selector constants to reduce string churn
-    const titleEl = item.querySelector(ITEM_TITLE_SELECTOR);
-    const bylineEl = item.querySelector(ITEM_BYLINE_SELECTOR);
-
-    return {
-      element: item,
-      videoId,
-      title: titleEl?.textContent?.trim()?.toLowerCase() || '',
-      channel: bylineEl?.textContent?.trim()?.toLowerCase() || '',
-    };
-  };
-
-  /**
-   * Get or create cached item data
-   * @param {HTMLElement} item - Playlist item element
-   * @param {number} index - Item index
-   * @returns {Object} Item data
-   */
-  const getCachedItemData = (item, index) => {
-    const videoId = item.getAttribute('video-id') || `item-${index}`;
-
-    if (state.itemsCache.has(videoId)) {
-      return state.itemsCache.get(videoId);
-    }
-
-    const itemData = extractItemData(item, index);
-    state.itemsCache.set(videoId, itemData);
-    return itemData;
-  };
-
-  /**
-   * Collect original playlist items and cache them
-   */
-  const collectOriginalItems = () => {
-    const items = getPlaylistItems();
+    // Clear cache when collecting new items
     state.itemsCache.clear();
-    const itemsArray = limitPlaylistItems(items);
-    state.originalItems = itemsArray.map((item, index) => getCachedItemData(item, index));
+
+    const itemsArray = Array.from(items).slice(0, config.maxPlaylistItems);
+
+    state.originalItems = itemsArray.map((item, index) => {
+      const videoId = item.getAttribute('video-id') || `item-${index}`;
+
+      // Check if this item is already cached
+      if (state.itemsCache.has(videoId)) {
+        return state.itemsCache.get(videoId);
+      }
+
+      const titleEl = item.querySelector('#video-title');
+      const bylineEl = item.querySelector('#byline');
+
+      const itemData = {
+        element: item,
+        videoId,
+        title: titleEl?.textContent?.trim()?.toLowerCase() || '',
+        channel: bylineEl?.textContent?.trim()?.toLowerCase() || '',
+      };
+
+      // Cache the item data
+      state.itemsCache.set(videoId, itemData);
+
+      return itemData;
+    });
   };
 
   /**
@@ -518,17 +360,16 @@
 
     // Validate and sanitize query
     if (query && typeof query !== 'string') {
-      console.warn('[YouTube+][Playlist Search]', 'Invalid query type');
+      console.warn('[Playlist Search] Invalid query type');
       return;
     }
 
     // Limit query length to prevent performance issues
-    let processedQuery = query;
-    if (processedQuery && processedQuery.length > config.maxQueryLength) {
-      processedQuery = processedQuery.substring(0, config.maxQueryLength);
+    if (query && query.length > config.maxQueryLength) {
+      query = query.substring(0, config.maxQueryLength);
     }
 
-    if (!processedQuery || processedQuery.trim() === '') {
+    if (!query || query.trim() === '') {
       // Show all items using RAF for smooth update
       state.rafId = requestAnimationFrame(() => {
         state.originalItems.forEach(item => {
@@ -539,7 +380,7 @@
       return;
     }
 
-    const searchTerm = processedQuery.toLowerCase().trim();
+    const searchTerm = query.toLowerCase().trim();
     let visibleCount = 0;
 
     // Batch DOM updates using RAF
@@ -555,8 +396,10 @@
             updates.push({ element: item.element, display: '' });
           }
           visibleCount++;
-        } else if (item.element.style.display !== 'none') {
-          updates.push({ element: item.element, display: 'none' });
+        } else {
+          if (item.element.style.display !== 'none') {
+            updates.push({ element: item.element, display: 'none' });
+          }
         }
       });
 
@@ -575,7 +418,10 @@
   // Update results count (optional visual feedback)
   const updateResultsCount = (visible, total) => {
     // Could add a results counter here if desired
-    console.log('[YouTube+][Playlist Search]', `Showing ${visible} of ${total} videos`);
+    window.YouTubeUtils &&
+      YouTubeUtils.logger &&
+      YouTubeUtils.logger.debug &&
+      YouTubeUtils.logger.debug(`[Playlist Search] Showing ${visible} of ${total} videos`);
   };
 
   // Clean up search UI
@@ -628,15 +474,6 @@
     // Cleanup on page unload
     window.addEventListener('beforeunload', cleanup);
   };
-
-  // Export module to global scope for module loader
-  if (typeof window !== 'undefined') {
-    window.YouTubePlaylistSearch = {
-      init,
-      cleanup,
-      version: '2.2',
-    };
-  }
 
   // Start
   init();

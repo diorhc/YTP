@@ -1,12 +1,126 @@
-/**
- * YouTube+ Internationalization (i18n) System - v3.0
- * Динамическая система переводов с загрузкой из внешних JSON файлов
+﻿/**
+ * YouTube+ Internationalization (i18n) System - v3.1
+ * Unified i18n system with integrated loader
  * @module i18n
- * @version 3.0
+ * @version 3.1
  */
 
 (function () {
   'use strict';
+
+  // ============================================================================
+  // I18N LOADER (merged from i18n-loader.js)
+  // ============================================================================
+
+  const GITHUB_CONFIG = {
+    owner: 'diorhc',
+    repo: 'YTP',
+    branch: 'main',
+    basePath: 'locales',
+  };
+
+  const CDN_URLS = {
+    github: `https://raw.githubusercontent.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/${GITHUB_CONFIG.branch}/${GITHUB_CONFIG.basePath}`,
+    jsdelivr: `https://cdn.jsdelivr.net/gh/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}@${GITHUB_CONFIG.branch}/${GITHUB_CONFIG.basePath}`,
+  };
+
+  const AVAILABLE_LANGUAGES = ['en', 'ru', 'kr', 'fr', 'du', 'cn', 'tw', 'jp', 'tr'];
+
+  const LANGUAGE_NAMES = {
+    en: 'English',
+    ru: 'Русский',
+    kr: '한국어',
+    fr: 'Français',
+    du: 'Nederlands',
+    cn: '简体中文',
+    tw: '繁體中文',
+    jp: '日本語',
+    tr: 'Türkçe',
+  };
+
+  const translationsCache = new Map();
+  const loadingPromises = new Map();
+
+  /**
+   * Fetch translation from CDN or embedded source
+   * @param {string} lang - Language code
+   * @returns {Promise<Object>} Translation object
+   */
+  async function fetchTranslation(lang) {
+    // Use embedded translations if available (fast local fallback)
+    try {
+      if (typeof window !== 'undefined' && window.YouTubePlusEmbeddedTranslations) {
+        const embedded = window.YouTubePlusEmbeddedTranslations[lang];
+        if (embedded) {
+          window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug(
+              '[YouTube+][i18n]',
+              `Using embedded translations for ${lang}`
+            );
+          return embedded;
+        }
+      }
+    } catch (e) {
+      console.warn('[YouTube+][i18n]', 'Error reading embedded translations', e);
+    }
+
+    try {
+      const url = `${CDN_URLS.jsdelivr}/${lang}.json`;
+      const response = await fetch(url, {
+        cache: 'default',
+        headers: { Accept: 'application/json' },
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      return await response.json();
+    } catch {
+      try {
+        const url = `${CDN_URLS.github}/${lang}.json`;
+        console.warn('[YouTube+][i18n]', `Primary CDN failed, trying GitHub raw: ${url}`);
+        const response = await fetch(url, {
+          cache: 'default',
+          headers: { Accept: 'application/json' },
+        });
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+      } catch (err) {
+        console.error('[YouTube+][i18n]', `Failed to fetch translations for ${lang}:`, err);
+        throw err;
+      }
+    }
+  }
+
+  /**
+   * Load translations for a language (with caching)
+   * @param {string} lang - Language code
+   * @returns {Promise<Object>} Translation object
+   */
+  function loadTranslationsFromLoader(lang) {
+    const languageCode = AVAILABLE_LANGUAGES.includes(lang) ? lang : 'en';
+    if (translationsCache.has(languageCode)) return translationsCache.get(languageCode);
+    if (loadingPromises.has(languageCode)) return loadingPromises.get(languageCode);
+
+    const loadPromise = (async () => {
+      try {
+        const translations = await fetchTranslation(languageCode);
+        translationsCache.set(languageCode, translations);
+        loadingPromises.delete(languageCode);
+        return translations;
+      } catch (error) {
+        loadingPromises.delete(languageCode);
+        if (languageCode !== 'en') return loadTranslationsFromLoader('en');
+        throw error;
+      }
+    })();
+
+    loadingPromises.set(languageCode, loadPromise);
+    return loadPromise;
+  }
+
+  // ============================================================================
+  // I18N CORE SYSTEM
+  // ============================================================================
 
   /**
    * Current language
@@ -70,7 +184,7 @@
         document.documentElement.lang || document.querySelector('html')?.getAttribute('lang');
       if (ytLang) {
         const mapped = languageMap[ytLang.toLowerCase()] || ytLang.toLowerCase().substr(0, 2);
-        if (window.YouTubePlusI18nLoader?.AVAILABLE_LANGUAGES.includes(mapped)) {
+        if (AVAILABLE_LANGUAGES.includes(mapped)) {
           return mapped;
         }
       }
@@ -79,7 +193,7 @@
       const browserLang = navigator.language || navigator.userLanguage || 'en';
       const mapped = languageMap[browserLang.toLowerCase()] || browserLang.split('-')[0];
 
-      if (window.YouTubePlusI18nLoader?.AVAILABLE_LANGUAGES.includes(mapped)) {
+      if (AVAILABLE_LANGUAGES.includes(mapped)) {
         return mapped;
       }
 
@@ -95,11 +209,6 @@
    * @returns {Promise<boolean>} Success status
    */
   async function loadTranslations() {
-    if (!window.YouTubePlusI18nLoader) {
-      console.error('[YouTube+][i18n]', 'i18n-loader not available');
-      return false;
-    }
-
     if (loadingPromise) {
       await loadingPromise;
       return true;
@@ -107,13 +216,22 @@
 
     loadingPromise = (async () => {
       try {
-        console.log('[YouTube+][i18n]', `Loading translations for ${currentLanguage}...`);
-        translations = await window.YouTubePlusI18nLoader.loadTranslations(currentLanguage);
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(
+            '[YouTube+][i18n]',
+            `Loading translations for ${currentLanguage}...`
+          );
+        translations = await loadTranslationsFromLoader(currentLanguage);
         translationCache.clear(); // Clear cache on new load
-        console.log(
-          '[YouTube+][i18n]',
-          `✓ Loaded ${Object.keys(translations).length} translations for ${currentLanguage}`
-        );
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(
+            '[YouTube+][i18n]',
+            `✓ Loaded ${Object.keys(translations).length} translations for ${currentLanguage}`
+          );
         return true;
       } catch (error) {
         console.error('[YouTube+][i18n]', 'Failed to load translations:', error);
@@ -222,7 +340,7 @@
    * @returns {string[]} Array of language codes
    */
   function getAvailableLanguages() {
-    return window.YouTubePlusI18nLoader?.AVAILABLE_LANGUAGES || ['en'];
+    return AVAILABLE_LANGUAGES;
   }
 
   /**
@@ -371,23 +489,13 @@
     try {
       currentLanguage = detectLanguage();
 
-      // Wait for i18n-loader to be available
-      let attempts = 0;
-      while (!window.YouTubePlusI18nLoader && attempts < 50) {
-        await new Promise(resolve => setTimeout(resolve, 100));
-        attempts++;
-      }
-
-      if (!window.YouTubePlusI18nLoader) {
-        console.error('[YouTube+][i18n]', 'i18n-loader not available after waiting');
-        return;
-      }
-
-      const languageNames = window.YouTubePlusI18nLoader.LANGUAGE_NAMES;
-      console.log(
-        '[YouTube+][i18n]',
-        `Detected language: ${currentLanguage} (${languageNames[currentLanguage] || currentLanguage})`
-      );
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug(
+          '[YouTube+][i18n]',
+          `Detected language: ${currentLanguage} (${LANGUAGE_NAMES[currentLanguage] || currentLanguage})`
+        );
 
       // Load translations
       await loadTranslations();
@@ -432,6 +540,14 @@
   if (typeof window !== 'undefined') {
     window.YouTubePlusI18n = i18nAPI;
 
+    // Expose loader API for backward compatibility
+    window.YouTubePlusI18nLoader = {
+      loadTranslations: loadTranslationsFromLoader,
+      AVAILABLE_LANGUAGES,
+      LANGUAGE_NAMES,
+      CDN_URLS,
+    };
+
     // Also expose as part of YouTubeUtils if it exists
     if (window.YouTubeUtils) {
       window.YouTubeUtils.i18n = i18nAPI;
@@ -447,6 +563,9 @@
 
   // Auto-initialize
   initialize().then(() => {
-    console.log('[YouTube+][i18n]', 'i18n system initialized successfully');
+    window.YouTubeUtils &&
+      YouTubeUtils.logger &&
+      YouTubeUtils.logger.debug &&
+      YouTubeUtils.logger.debug('[YouTube+][i18n]', 'i18n system initialized successfully');
   });
 })();

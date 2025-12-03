@@ -1081,7 +1081,9 @@ const YouTubeUtils = (() => {
         return await fn();
       } catch (error) {
         if (i === retries - 1) throw error;
-        await new Promise(resolve => setTimeout(resolve, delay * (i + 1)));
+        await new Promise(resolve => {
+          setTimeout(resolve, delay * (i + 1));
+        });
       }
     }
   };
@@ -1125,7 +1127,10 @@ if (typeof window !== 'undefined') {
   } catch {}
 
   // Add initialization health check (non-intrusive)
-  console.log('[YouTube+ v2.2] Core utilities merged');
+  window.YouTubeUtils &&
+    YouTubeUtils.logger &&
+    YouTubeUtils.logger.debug &&
+    YouTubeUtils.logger.debug('[YouTube+ v2.2] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
@@ -1139,7 +1144,10 @@ if (typeof window !== 'undefined') {
       YouTubeUtils.clearCache();
       YouTubeUtils.StyleManager.clear();
       YouTubeUtils.NotificationManager.clearAll();
-      console.log('[YouTube+] All resources cleared');
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug('[YouTube+] All resources cleared');
     },
     stats: () => ({
       observers: YouTubeUtils.cleanupManager.observers.size,

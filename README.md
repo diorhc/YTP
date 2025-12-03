@@ -1,21 +1,29 @@
 ![Extension Cover](https://i.imgur.com/Dt5jG3M.png)
 ![Youtube Music](https://i.imgur.com/LOC8X6P.png)
 
-<!-- GREASYFORK_INSTALLS:START -->
+<!-- CI/CD STATUS BADGES -->
+<div align="center">
 
+[![CI/CD Pipeline](https://github.com/diorhc/YTP/actions/workflows/ci.yml/badge.svg)](https://github.com/diorhc/YTP/actions/workflows/ci.yml)
+[![Update GreasyFork Badges](https://github.com/diorhc/YTP/actions/workflows/update-greasyfork-badges.yml/badge.svg)](https://github.com/diorhc/YTP/actions/workflows/update-greasyfork-badges.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
+
+</div>
+
+<!-- GREASYFORK_INSTALLS:START -->
 
 <div style="text-align:center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-181-blue" style="transform:scale(1.15);transform-origin:center;" />
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-211-blue" style="transform:scale(1.15);transform-origin:center;" />
   </a>
   <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="version" src="https://img.shields.io/badge/version-2.1-blue" style="transform:scale(1.15);transform-origin:center;" />
+    <img alt="version" src="https://img.shields.io/badge/version-2.2.1-blue" style="transform:scale(1.15);transform-origin:center;" />
   </a>
   <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js" style="display:inline-block;margin:0 15px;">
     <img alt="Install Script" src="https://img.shields.io/badge/Release-Install-brightgreen" style="transform:scale(1.15);transform-origin:center;" />
   </a>
 </div>
-
 
 <!-- GREASYFORK_INSTALLS:END -->
 

@@ -11,31 +11,9 @@
   // Minimal guards for shared utils
   const Y = /** @type {any} */ (window).YouTubeUtils || {};
 
-  // Use centralized i18n for report module
-  const _globalI18n_report =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
-  /**
-   * Translation function for this module
-   * Delegates to global i18n when available, otherwise performs simple param replacement
-   */
-  function t(key, params = {}) {
-    try {
-      if (_globalI18n_report && typeof _globalI18n_report.t === 'function') {
-        return _globalI18n_report.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fallback
-    }
-    if (!key || typeof key !== 'string') return '';
-    // Fallback to embedded English strings when global i18n not available
-    const FALLBACK_EN = {
+  // Internationalization for report module
+  const i18n = {
+    en: {
       shortTitle: 'Short title (one line)',
       emailOptional: 'Your email (optional)',
       descriptionPlaceholder: 'Describe the issue, steps to reproduce, expected vs actual',
@@ -61,14 +39,69 @@
       failedOpenGithub: 'Failed to open GitHub issue',
       reportCopied: 'Report copied to clipboard',
       copyFailed: 'Copy failed — please copy manually',
-    };
+    },
+    ru: {
+      shortTitle: 'Краткий заголовок (в одну строку)',
+      emailOptional: 'Ваш email (необязательно)',
+      descriptionPlaceholder:
+        'Опишите проблему, шаги для воспроизведения, ожидаемое и фактическое поведение',
+      includeDebug: 'Включить отладочную информацию (версия, URL, настройки)',
+      openGitHub: 'Открыть заявку на GitHub',
+      copyReport: 'Копировать отчет',
+      prepareEmail: 'Подготовить письмо',
+      privacy:
+        'Отправляя, вы соглашаетесь включить указанную информацию. Не включайте пароли или личные токены.',
+      typeBug: 'Ошибка',
+      typeFeature: 'Запрос функции',
+      typeOther: 'Другое',
+      titleRequired: 'Требуется заголовок',
+      titleMin: 'Заголовок должен быть не менее 5 символов',
+      descRequired: 'Требуется описание',
+      descMin: 'Описание должно быть не менее 10 символов',
+      invalidEmail: 'Неправильный формат email',
+      fixErrorsPrefix: 'Пожалуйста, исправьте следующие ошибки:\n• ',
+      opening: 'Открываю...',
+      copying: 'Копирую...',
+      copied: 'Скопировано!',
+      openingGithubNotification: 'Открываю GitHub в новой вкладке',
+      failedOpenGithub: 'Не удалось открыть заявку на GitHub',
+      reportCopied: 'Отчет скопирован в буфер обмена',
+      copyFailed: 'Копирование не удалось — пожалуйста, скопируйте вручную',
+    },
+  };
 
-    let template = FALLBACK_EN[key] || key;
-    if (Object.keys(params).length === 0) return template;
-    for (const [k, v] of Object.entries(params)) {
-      template = template.split(`{${k}}`).join(String(v));
+  // Get browser language
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  /**
+   * Translation function: prefer central i18n if present, otherwise fallback
+   * to module-local translations (keeps existing en/ru behavior).
+   * @param {string} key - Translation key
+   * @returns {string} Translated text
+   */
+  function t(key, params = {}) {
+    try {
+      if (typeof window !== 'undefined') {
+        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
+          return window.YouTubePlusI18n.t(key, params);
+        }
+        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
+          return window.YouTubeUtils.t(key, params);
+        }
+      }
+    } catch {
+      // fallback to local i18n
     }
-    return template;
+
+    const lang = getLanguage();
+    const str = (i18n[lang] && i18n[lang][key]) || i18n.en[key] || key;
+    if (!params || Object.keys(params).length === 0) return str;
+    let result = str;
+    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    return result;
   }
 
   /**
@@ -156,159 +189,32 @@
   }
 
   /**
-   * Get fallback debug info on error
-   * @returns {Object} Minimal debug info
-   */
-  function getFallbackDebugInfo() {
-    return {
-      version: 'unknown',
-      userAgent: 'unknown',
-      url: 'unknown',
-      language: 'unknown',
-      settings: null,
-      error: 'Failed to collect debug info',
-    };
-  }
-
-  /**
-   * Get version from debug info
-   * @returns {string} Version string
-   */
-  function getVersion() {
-    return /** @type {any} */ (window.YouTubePlusDebug || {}).version || 'unknown';
-  }
-
-  /**
-   * Get settings snapshot
-   * @returns {Object|null} Settings object or null
-   */
-  function getSettings() {
-    return typeof Y.SettingsManager === 'object' ? Y.SettingsManager.load() : null;
-  }
-
-  /**
-   * Get document language
-   * @returns {string} Language code
-   */
-  function getLanguage() {
-    return document.documentElement.lang || navigator.language || 'unknown';
-  }
-
-  /**
    * Collect debug information for reports
    * @returns {Object} Debug information object
    */
   function getDebugInfo() {
     try {
-      return {
-        version: getVersion(),
+      const debug = {
+        version: /** @type {any} */ (window.YouTubePlusDebug || {}).version || 'unknown',
         userAgent: navigator.userAgent || 'unknown',
         url: location.href || 'unknown',
-        language: getLanguage(),
-        settings: getSettings(),
+        language: document.documentElement.lang || navigator.language || 'unknown',
+        settings: typeof Y.SettingsManager === 'object' ? Y.SettingsManager.load() : null,
       };
+      return debug;
     } catch (err) {
       if (Y && typeof Y.logError === 'function') {
         Y.logError('Report', 'Failed to collect debug info', err);
       }
-      return getFallbackDebugInfo();
+      return {
+        version: 'unknown',
+        userAgent: 'unknown',
+        url: 'unknown',
+        language: 'unknown',
+        settings: null,
+        error: 'Failed to collect debug info',
+      };
     }
-  }
-
-  /**
-   * Get type label from type string
-   * @param {string} type - Type string (bug/feature/other)
-   * @returns {string} Translated label
-   */
-  function getTypeLabel(type) {
-    const typeMap = {
-      bug: t('typeBug'),
-      feature: t('typeFeature'),
-      other: t('typeOther'),
-    };
-    return typeMap[type] || typeMap.other;
-  }
-
-  /**
-   * Get issue title prefix from type
-   * @param {string} type - Type string
-   * @returns {string} Title prefix
-   */
-  function getTitlePrefix(type) {
-    const prefixMap = {
-      bug: '[Bug]',
-      feature: '[Feature]',
-      other: '[YouTube+][Report]',
-    };
-    return prefixMap[type] || prefixMap.other;
-  }
-
-  /**
-   * Create minimal debug info on stringify error
-   * @param {Object} debug - Full debug object
-   * @returns {string} JSON string
-   */
-  function createMinimalDebugJson(debug) {
-    const minimalDebug = {
-      version: debug.version || 'unknown',
-      userAgent: debug.userAgent || 'unknown',
-      url: debug.url || 'unknown',
-    };
-    try {
-      return JSON.stringify(minimalDebug, null, 2);
-    } catch {
-      return '{ "error": "Failed to stringify debug info" }';
-    }
-  }
-
-  /**
-   * Stringify debug info with fallback
-   * @param {Object} debug - Debug object
-   * @returns {string} JSON string
-   */
-  function stringifyDebugInfo(debug) {
-    try {
-      return JSON.stringify(debug, null, 2);
-    } catch (err) {
-      if (Y && typeof Y.logError === 'function') {
-        Y.logError('Report', 'Failed to stringify debug info', err);
-      }
-      return createMinimalDebugJson(debug);
-    }
-  }
-
-  /**
-   * Add debug section to lines
-   * @param {Array<string>} lines - Lines array
-   * @param {Object} debug - Debug object
-   */
-  function addDebugSection(lines, debug) {
-    lines.push('\n---\n**Debug info**\n');
-    lines.push('```json');
-    lines.push(stringifyDebugInfo(debug));
-    lines.push('```');
-    lines.push('\n_Please do not include sensitive personal data._');
-  }
-
-  /**
-   * Build issue body lines
-   * @param {Object} params - Report parameters
-   * @returns {Array<string>} Body lines
-   */
-  function buildBodyLines({ type, description, email, includeDebug }) {
-    const debug = includeDebug ? getDebugInfo() : null;
-    const lines = [];
-
-    lines.push(`**Type:** ${getTypeLabel(type)}`);
-    if (email) lines.push(`**Reporter email (optional):** ${email}`);
-    lines.push('\n**Description:**\n');
-    lines.push(description || '(no description)');
-
-    if (debug) {
-      addDebugSection(lines, debug);
-    }
-
-    return lines;
   }
 
   /**
@@ -321,11 +227,44 @@
    * @param {boolean} params.includeDebug - Include debug info
    * @returns {{title: string, body: string}} Issue payload
    */
-  function buildIssuePayload(params) {
-    const { type, title } = params;
-    const lines = buildBodyLines(params);
+  function buildIssuePayload({ type, title, description, email, includeDebug }) {
+    const debug = includeDebug ? getDebugInfo() : null;
+
+    const lines = [];
+    const typeLabel =
+      type === 'bug' ? t('typeBug') : type === 'feature' ? t('typeFeature') : t('typeOther');
+    lines.push(`**Type:** ${typeLabel}`);
+    if (email) lines.push(`**Reporter email (optional):** ${email}`);
+    lines.push('\n**Description:**\n');
+    lines.push(description || '(no description)');
+    if (debug) {
+      lines.push('\n---\n**Debug info**\n');
+      lines.push('```json');
+      try {
+        lines.push(JSON.stringify(debug, null, 2));
+      } catch (err) {
+        if (Y && typeof Y.logError === 'function') {
+          Y.logError('Report', 'Failed to stringify debug info', err);
+        }
+        // Fallback to minimal debug info
+        const minimalDebug = {
+          version: debug.version || 'unknown',
+          userAgent: debug.userAgent || 'unknown',
+          url: debug.url || 'unknown',
+        };
+        try {
+          lines.push(JSON.stringify(minimalDebug, null, 2));
+        } catch {
+          lines.push('{ "error": "Failed to stringify debug info" }');
+        }
+      }
+      lines.push('```');
+      lines.push('\n_Please do not include sensitive personal data._');
+    }
+
     const body = lines.join('\n');
-    const issueTitle = `${getTitlePrefix(type)} ${title || ''}`.trim();
+    const issueTitle =
+      `${type === 'bug' ? '[Bug]' : type === 'feature' ? '[Feature]' : '[Report]'} ${title || ''}`.trim();
     return { title: issueTitle, body };
   }
 
@@ -386,10 +325,23 @@
   }
 
   /**
-   * Create type selection dropdown
-   * @returns {HTMLElement} Type select element
+   * Render report section in settings modal with glassmorphism styling
+   * @param {HTMLElement} modal - Settings modal element
    */
-  function createTypeSelect() {
+  function renderReportSection(modal) {
+    if (!modal || !modal.querySelector) return;
+
+    const section = modal.querySelector('.ytp-plus-settings-section[data-section="report"]');
+    if (!section) return;
+
+    // Clear existing content and build a small form
+    section.innerHTML = '';
+
+    const form = mk('div', {
+      style:
+        'display:flex;flex-direction:column;gap:var(--yt-space-sm);margin-top:var(--yt-space-md);',
+    });
+
     const typeSelect = mk(
       'select',
       {
@@ -406,14 +358,7 @@
       const o = mk('option', { value: opt.v }, [opt.l]);
       typeSelect.appendChild(o);
     });
-    return typeSelect;
-  }
 
-  /**
-   * Create form input elements
-   * @returns {{titleInput: HTMLElement, emailInput: HTMLElement, descInput: HTMLElement}}
-   */
-  function createFormInputs() {
     const inputStyle =
       'padding:var(--yt-space-sm);border-radius:var(--yt-radius-sm);background:var(--yt-input-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);font-size:14px;transition:var(--yt-transition);box-sizing:border-box;';
 
@@ -429,17 +374,10 @@
     const descInput = mk('textarea', {
       placeholder: t('descriptionPlaceholder'),
       rows: 6,
-      style: `${inputStyle}resize:vertical;font-family:inherit;`,
+      style: inputStyle + 'resize:vertical;font-family:inherit;',
     });
 
-    return { titleInput, emailInput, descInput };
-  }
-
-  /**
-   * Create debug checkbox with label
-   * @returns {{includeDebug: HTMLElement, debugCheckboxInput: HTMLElement}}
-   */
-  function createDebugCheckbox() {
+    // checkbox input is created separately so we can listen to changes and show a preview
     const debugCheckboxInput = mk('input', {
       type: 'checkbox',
       class: 'ytp-plus-settings-checkbox',
@@ -450,16 +388,9 @@
         style:
           'font-size:13px;display:flex;gap:var(--yt-space-sm);align-items:center;color:var(--yt-text-primary);cursor:pointer;align-self:center;',
       },
-      [debugCheckboxInput, ` ${t('includeDebug')}`]
+      [debugCheckboxInput, ' ' + t('includeDebug')]
     );
-    return { includeDebug, debugCheckboxInput };
-  }
 
-  /**
-   * Create action buttons for form
-   * @returns {{actions: HTMLElement, submitBtn: HTMLElement, copyBtn: HTMLElement, emailBtn: HTMLElement}}
-   */
-  function createActionButtons() {
     const actions = mk('div', {
       style: 'display:flex;gap:var(--yt-space-sm);margin-top:var(--yt-space-sm);flex-wrap:wrap;',
     });
@@ -471,15 +402,14 @@
     actions.appendChild(copyBtn);
     actions.appendChild(emailBtn);
 
-    return { actions, submitBtn, copyBtn, emailBtn };
-  }
-
-  /**
-   * Create debug preview area
-   * @returns {HTMLElement} Debug preview element
-   */
-  function createDebugPreview() {
-    return mk(
+    form.appendChild(typeSelect);
+    form.appendChild(titleInput);
+    form.appendChild(emailInput);
+    form.appendChild(descInput);
+    form.appendChild(includeDebug);
+    // Debug preview area: hidden by default, placed directly under the includeDebug checkbox
+    // Use a container `div` so we can build structured, safe DOM (header + collapsible JSON)
+    const debugPreview = mk(
       'div',
       {
         class: 'glass-card',
@@ -488,67 +418,8 @@
       },
       []
     );
-  }
-
-  /**
-   * Render report section in settings modal with glassmorphism styling
-   * @param {HTMLElement} modal - Settings modal element
-   */
-  /**
-   * Render report section in settings modal
-   * Refactored to use helper functions and reduce complexity
-   * @param {HTMLElement} modal - Settings modal element
-   */
-  function renderReportSection(modal) {
-    if (!modal || !modal.querySelector) return;
-
-    const section = modal.querySelector('.ytp-plus-settings-section[data-section="report"]');
-    if (!section) return;
-
-    // Use report handlers module. In test or CommonJS environments the handlers
-    // may not have been loaded yet, so try to require the module as a fallback.
-    let handlers = window.YouTubeReportHandlers || {};
-    if (!handlers.gatherFormData) {
-      try {
-        // In node/jest environment require will load and attach handlers to window
-        require('./report-handlers.js');
-      } catch (err) {
-        // ignore - we'll handle missing handlers below; reference err to satisfy linters
-        if (err) {
-          /* intentionally empty */
-        }
-      }
-      handlers = window.YouTubeReportHandlers || {};
-      if (!handlers.gatherFormData) {
-        if (Y.logError) {
-          Y.logError('Report', 'YouTubeReportHandlers not loaded', new Error('Missing handlers'));
-        }
-        return;
-      }
-    }
-
-    // Clear existing content and build form
-    section.innerHTML = '';
-
-    const form = mk('div', {
-      style:
-        'display:flex;flex-direction:column;gap:var(--yt-space-sm);margin-top:var(--yt-space-md);',
-    });
-
-    // Create form elements
-    const typeSelect = createTypeSelect();
-    const { titleInput, emailInput, descInput } = createFormInputs();
-    const { includeDebug, debugCheckboxInput } = createDebugCheckbox();
-    const { actions, submitBtn, copyBtn, emailBtn } = createActionButtons();
-    const debugPreview = createDebugPreview();
-
-    // Assemble form
-    form.appendChild(typeSelect);
-    form.appendChild(titleInput);
-    form.appendChild(emailInput);
-    form.appendChild(descInput);
-    form.appendChild(includeDebug);
     form.appendChild(debugPreview);
+
     form.appendChild(actions);
 
     const privacy = mk(
@@ -563,31 +434,300 @@
     section.appendChild(form);
     section.appendChild(privacy);
 
-    // Gather form data function
-    const gather = () =>
-      handlers.gatherFormData(
-        { typeSelect, titleInput, descInput, emailInput, debugCheckbox: debugCheckboxInput },
-        t,
-        { validateTitle, validateDescription, isValidEmail }
-      );
+    // (debugPreview is appended inside the form, directly under the checkbox)
 
-    // Wire up checkbox to debug preview
-    debugCheckboxInput.addEventListener('change', () =>
-      handlers.updateDebugPreview(debugCheckboxInput, debugPreview, getDebugInfo, mk)
-    );
+    /**
+     * Update debug preview based on checkbox state
+     */
+    function updateDebugPreview() {
+      try {
+        if (debugCheckboxInput.checked) {
+          const d = getDebugInfo();
 
-    // Wire up event handlers
-    submitBtn.addEventListener('click', e =>
-      handlers.handleGitHubSubmit(e, { submitBtn }, gather, buildIssuePayload, openGitHubIssue, t)
-    );
+          // Clear previous content
+          debugPreview.innerHTML = '';
 
-    copyBtn.addEventListener('click', e =>
-      handlers.handleCopyReport(e, { copyBtn }, gather, buildIssuePayload, copyToClipboard, t)
-    );
+          // Header with important fields
+          const header = mk(
+            'div',
+            { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:6px;' },
+            []
+          );
+          header.appendChild(
+            mk('div', {}, ['Version: ', mk('strong', {}, [String(d.version || 'unknown')])])
+          );
+          header.appendChild(
+            mk('div', {}, [
+              'User agent: ',
+              mk('code', { style: 'font-size:11px;color:var(--yt-text-secondary);' }, [
+                String(d.userAgent || ''),
+              ]),
+            ])
+          );
 
-    emailBtn.addEventListener('click', e =>
-      handlers.handleEmailReport(e, { emailBtn }, gather, buildIssuePayload, t)
-    );
+          const urlStr = String(d.url || 'unknown');
+          let urlEl = mk('span', {}, [urlStr]);
+          try {
+            if (/^https?:\/\//i.test(urlStr)) {
+              urlEl = mk(
+                'a',
+                {
+                  href: urlStr,
+                  target: '_blank',
+                  rel: 'noopener noreferrer',
+                  style: 'color:var(--yt-accent);word-break:break-all;',
+                },
+                [urlStr]
+              );
+            }
+          } catch (e) {
+            // leave as plain text if anything odd and log
+            if (Y && typeof Y.logError === 'function') {
+              Y.logError('Report', 'URL link creation failed', e);
+            }
+            urlEl = mk('span', {}, [String(urlStr)]);
+          }
+          header.appendChild(mk('div', {}, ['URL: ', urlEl]));
+          header.appendChild(
+            mk('div', {}, ['Language: ', mk('code', {}, [String(d.language || '')])])
+          );
+
+          debugPreview.appendChild(header);
+
+          // Settings (if available) – collapsible
+          if (d.settings) {
+            const settingsDetails = mk('details', {}, [mk('summary', {}, ['Settings'])]);
+            settingsDetails.appendChild(
+              mk('pre', { style: 'white-space:pre-wrap;margin:6px 0 0 0;font-size:11px;' }, [
+                JSON.stringify(d.settings, null, 2),
+              ])
+            );
+            debugPreview.appendChild(settingsDetails);
+          }
+
+          // Full debug JSON (collapsible)
+          const fullDetails = mk('details', {}, [mk('summary', {}, ['Full debug JSON'])]);
+          fullDetails.appendChild(
+            mk('pre', { style: 'white-space:pre-wrap;margin:6px 0 0 0;font-size:11px;' }, [
+              JSON.stringify(d, null, 2),
+            ])
+          );
+          debugPreview.appendChild(fullDetails);
+
+          debugPreview.style.display = 'block';
+        } else {
+          debugPreview.innerHTML = '';
+          debugPreview.style.display = 'none';
+        }
+      } catch (err) {
+        if (Y && typeof Y.logError === 'function') {
+          Y.logError('Report', 'updateDebugPreview failed', err);
+        }
+      }
+    }
+
+    // wire up checkbox to preview
+    debugCheckboxInput.addEventListener('change', updateDebugPreview);
+
+    /**
+     * Gather and validate form data
+     * @returns {{type: string, title: string, description: string, email: string, includeDebug: boolean, errors: string[]}}
+     */
+    function gather() {
+      const type = /** @type {HTMLSelectElement} */ (typeSelect).value;
+      const rawTitle = /** @type {HTMLInputElement} */ (titleInput).value.trim();
+      const rawDescription = /** @type {HTMLTextAreaElement} */ (descInput).value.trim();
+      const rawEmail = /** @type {HTMLInputElement} */ (emailInput).value.trim();
+      const includeDebugValue = /** @type {HTMLInputElement} */ (
+        includeDebug.querySelector('input')
+      ).checked;
+
+      const errors = [];
+
+      // Validate title
+      if (!rawTitle) {
+        errors.push(t('titleRequired'));
+      } else if (rawTitle.length < 5) {
+        errors.push(t('titleMin'));
+      }
+
+      // Validate description
+      if (!rawDescription) {
+        errors.push(t('descRequired'));
+      } else if (rawDescription.length < 10) {
+        errors.push(t('descMin'));
+      }
+
+      // Validate email if provided
+      if (rawEmail && !isValidEmail(rawEmail)) {
+        errors.push(t('invalidEmail'));
+      }
+
+      return {
+        type,
+        title: validateTitle(rawTitle),
+        description: validateDescription(rawDescription),
+        email: rawEmail && isValidEmail(rawEmail) ? rawEmail : '',
+        includeDebug: includeDebugValue,
+        errors,
+      };
+    }
+
+    submitBtn.addEventListener('click', e => {
+      e.preventDefault();
+      if (submitBtn.disabled) return; // Prevent double-click
+
+      try {
+        const data = gather();
+
+        // Check for validation errors
+        if (data.errors && data.errors.length > 0) {
+          const errorMsg = t('fixErrorsPrefix') + data.errors.join('\n• ');
+          if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
+            Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
+          } else {
+            console.warn('[Report] Validation errors:', data.errors);
+          }
+          return;
+        }
+
+        // Add loading state
+        const originalText = submitBtn.textContent;
+        submitBtn.disabled = true;
+        submitBtn.textContent = t('opening');
+        submitBtn.style.opacity = '0.6';
+
+        const payload = buildIssuePayload(data);
+        openGitHubIssue(payload);
+
+        if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
+          Y.NotificationManager.show(t('openingGithubNotification'), { duration: 2500 });
+        }
+
+        // Reset button after a delay
+        setTimeout(() => {
+          submitBtn.disabled = false;
+          submitBtn.textContent = originalText;
+          submitBtn.style.opacity = '1';
+        }, 2000);
+      } catch (err) {
+        if (Y.logError) Y.logError('Report', 'Failed to open GitHub issue', err);
+        if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
+          Y.NotificationManager.show(t('failedOpenGithub'), {
+            duration: 3000,
+            type: 'error',
+          });
+        }
+        submitBtn.disabled = false;
+        submitBtn.textContent = t('openGitHub');
+        submitBtn.style.opacity = '1';
+      }
+    });
+
+    copyBtn.addEventListener('click', e => {
+      e.preventDefault();
+      if (copyBtn.disabled) return; // Prevent double-click
+
+      try {
+        const data = gather();
+
+        // Check for validation errors
+        if (data.errors && data.errors.length > 0) {
+          const errorMsg = t('fixErrorsPrefix') + data.errors.join('\n• ');
+          if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
+            Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
+          } else {
+            console.warn('[Report] Validation errors:', data.errors);
+          }
+          return;
+        }
+
+        // Add loading state
+        const originalText = copyBtn.textContent;
+        copyBtn.disabled = true;
+        copyBtn.textContent = t('copying');
+        copyBtn.style.opacity = '0.6';
+
+        const payload = buildIssuePayload(data);
+        const full = `Title: ${payload.title}\n\n${payload.body}`;
+
+        copyToClipboard(full)
+          .then(() => {
+            if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
+              Y.NotificationManager.show(t('reportCopied'), { duration: 2000 });
+            }
+            copyBtn.textContent = t('copied');
+            copyBtn.style.opacity = '1';
+            setTimeout(() => {
+              copyBtn.disabled = false;
+              copyBtn.textContent = originalText;
+            }, 2000);
+          })
+          .catch(err => {
+            if (Y && typeof Y.logError === 'function') Y.logError('Report', 'copy failed', err);
+            if (Y && Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
+              Y.NotificationManager.show(t('copyFailed'), {
+                duration: 3000,
+                type: 'error',
+              });
+            } else {
+              console.warn('Copy failed; please copy manually', err);
+            }
+            copyBtn.disabled = false;
+            copyBtn.textContent = originalText;
+            copyBtn.style.opacity = '1';
+          });
+      } catch (err) {
+        if (Y.logError) Y.logError('Report', 'Failed to copy report', err);
+        copyBtn.disabled = false;
+        copyBtn.textContent = t('copyReport');
+        copyBtn.style.opacity = '1';
+      }
+    });
+
+    emailBtn.addEventListener('click', e => {
+      e.preventDefault();
+      if (emailBtn.disabled) return; // Prevent double-click
+
+      try {
+        const data = gather();
+
+        // Check for validation errors
+        if (data.errors && data.errors.length > 0) {
+          const errorMsg = t('fixErrorsPrefix') + data.errors.join('\n• ');
+          if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
+            Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
+          } else {
+            console.warn('[Report] Validation errors:', data.errors);
+          }
+          return;
+        }
+
+        const originalText = emailBtn.textContent;
+        emailBtn.disabled = true;
+        emailBtn.textContent = t('opening');
+        emailBtn.style.opacity = '0.6';
+
+        const payload = buildIssuePayload(data);
+        const subject = payload.title;
+        // No dedicated mail address in userscript; open mail client with prefilled body
+        const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
+          payload.body
+        )}`;
+        window.location.href = mailto;
+
+        setTimeout(() => {
+          emailBtn.disabled = false;
+          emailBtn.textContent = originalText;
+          emailBtn.style.opacity = '1';
+        }, 2000);
+      } catch (err) {
+        if (Y.logError) Y.logError('Report', 'Failed to prepare email', err);
+        emailBtn.disabled = false;
+        emailBtn.textContent = t('prepareEmail');
+        emailBtn.style.opacity = '1';
+      }
+    });
   }
 
   // Expose render function

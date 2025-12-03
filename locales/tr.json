@@ -113,6 +113,7 @@
   "upToDate": "Güncel",
   "checkForUpdates": "Güncellemeleri Kontrol Et",
   "autoCheckUpdates": "Güncellemeleri otomatik kontrol et",
+  "manualInstallHint": "Güncelleme otomatik olarak açılamadı. Lütfen GreasyFork'tan manuel olarak indirin.",
   "updatePageFallback": "Güncelleme sayfası açılıyor...",
   "never": "Asla",
   "justNow": "Az önce",
@@ -127,7 +128,7 @@
   "adBlocker": "Reklam Engelleyici",
   "adBlockerDescription": "Reklamları otomatik olarak atla ve reklam öğelerini kaldır",
   "statisticsButtonDescription": "Video oynatıcıda istatistik butonunu göster",
-  "privacy": "Gizlilik",
+  "privacy": "Göndererek, sağlanan bilgileri eklemeyi kabul ediyorsunuz. Lütfen şifre veya kişisel anahtar eklemeyin.",
   "seekBackward": "Geri sar",
   "seekForward": "İleri sar",
   "volumeUp": "Ses aç",
@@ -220,6 +221,5 @@
   "delete": "Sil",
   "confirmDelete": "\"{label}\" zaman kodunu sil?",
   "reloadError": "Zaman kodları yenilenirken hata",
-  "cannotEditChapter": "YouTube bölümleri düzenlenemez",
-  "save": "Kaydet"
+  "cannotEditChapter": "YouTube bölümleri düzenlenemez"
 }

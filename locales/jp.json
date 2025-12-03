@@ -93,7 +93,7 @@
   "settingsAriaLabel": "設定メニューを開く",
   "settingsMenuAriaLabel": "統計表示設定",
   "unknown": "不明",
-  "privacy": "プライバシー",
+  "privacy": "送信することで、指定された情報を含めることに同意したことになります。パスワードや個人用トークンは含めないでください。",
   "monetization": "収益化",
   "country": "国",
   "duration": "再生時間",
@@ -115,6 +115,7 @@
   "upToDate": "最新です",
   "checkForUpdates": "アップデートを確認",
   "autoCheckUpdates": "自動的にアップデートを確認",
+  "manualInstallHint": "更新を自動的に開くことができません。GreasyForkから手動でダウンロードしてください。",
   "updatePageFallback": "アップデートページを開いています...",
   "never": "なし",
   "justNow": "たった今",
@@ -220,6 +221,5 @@
   "delete": "削除",
   "confirmDelete": "タイムコード \"{label}\" を削除しますか？",
   "reloadError": "タイムコードの再読み込み中にエラーが発生しました",
-  "cannotEditChapter": "YouTubeチャプターは編集できません",
-  "save": "保存"
+  "cannotEditChapter": "YouTubeチャプターは編集できません"
 }

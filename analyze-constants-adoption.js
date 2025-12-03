@@ -1,133 +1,71 @@
 #!/usr/bin/env node
-
 /**
- * Script to help adopt YouTubePlusConstants across all modules
- * This script identifies remaining opportunities and provides suggestions
+ * analyze-constants-adoption.js
+ * Analyzes adoption of constants and best practices
  */
+
+'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
-const SRC_DIR = path.join(__dirname, 'src');
+function analyzeConstantsAdoption() {
+  console.log('🔍 Analyzing constants adoption...\n');
 
-// Patterns to find and suggested replacements
-const PATTERNS = [
-  {
-    name: 'SVG Namespace',
-    pattern: /'http:\/\/www\.w3\.org\/2000\/svg'/g,
-    replacement: "window.YouTubePlusConstants?.SVG_NS || 'http://www.w3.org/2000/svg'",
-    alternatePattern: /"http:\/\/www\.w3\.org\/2000\/svg"/g,
-  },
-  {
-    name: 'Module Name - Timecode',
-    pattern: /'\[YouTube\+\]\[Timecode\]'/g,
-    replacement: "window.YouTubePlusConstants?.MODULE_NAMES.TIMECODE || '[YouTube+][Timecode]'",
-  },
-  {
-    name: 'Module Name - Thumbnail',
-    pattern: /'\[YouTube\+\]\[Thumbnail\]'/g,
-    replacement: "window.YouTubePlusConstants?.MODULE_NAMES.THUMBNAIL || '[YouTube+][Thumbnail]'",
-  },
-  {
-    name: 'Module Name - Stats',
-    pattern: /'\[YouTube\+\]\[Stats\]'/g,
-    replacement: "window.YouTubePlusConstants?.MODULE_NAMES.STATS || '[YouTube+][Stats]'",
-  },
-  {
-    name: 'Module Name - Enhanced',
-    pattern: /'\[YouTube\+\]\[Enhanced\]'/g,
-    replacement: "window.YouTubePlusConstants?.MODULE_NAMES.ENHANCED || '[YouTube+][Enhanced]'",
-  },
-];
-
-function analyzeFile(filePath) {
-  const content = fs.readFileSync(filePath, 'utf8');
-  const fileName = path.basename(filePath);
-  const results = [];
-
-  PATTERNS.forEach(pattern => {
-    const mainMatches = content.match(pattern.pattern);
-    const altMatches = pattern.alternatePattern ? content.match(pattern.alternatePattern) : null;
-    const totalMatches =
-      (mainMatches ? mainMatches.length : 0) + (altMatches ? altMatches.length : 0);
-
-    if (totalMatches > 0) {
-      results.push({
-        file: fileName,
-        pattern: pattern.name,
-        occurrences: totalMatches,
-        suggestion: `Replace with: ${pattern.replacement}`,
-      });
-    }
-  });
-
-  return results;
-}
-
-function main() {
-  console.log('🔍 Analyzing codebase for constant adoption opportunities...\n');
-
+  const srcDir = path.join(__dirname, 'src');
   const files = fs
-    .readdirSync(SRC_DIR)
-    .filter(f => f.endsWith('.js') && f !== 'constants.js')
-    .map(f => path.join(SRC_DIR, f));
+    .readdirSync(srcDir)
+    .filter(f => f.endsWith('.js'))
+    .sort();
 
-  let totalOpportunities = 0;
-  const opportunitiesByFile = {};
+  let totalConst = 0;
+  let totalLet = 0;
+  let totalVar = 0;
+
+  console.log('Variable Declaration Usage:');
+  console.log('─'.repeat(70));
 
   files.forEach(file => {
-    const results = analyzeFile(file);
-    if (results.length > 0) {
-      const fileName = path.basename(file);
-      opportunitiesByFile[fileName] = results;
-      results.forEach(r => (totalOpportunities += r.occurrences));
-    }
+    const filePath = path.join(srcDir, file);
+    const content = fs.readFileSync(filePath, 'utf8');
+
+    const constCount = (content.match(/\bconst\s+/g) || []).length;
+    const letCount = (content.match(/\blet\s+/g) || []).length;
+    const varCount = (content.match(/\bvar\s+/g) || []).length;
+
+    totalConst += constCount;
+    totalLet += letCount;
+    totalVar += varCount;
+
+    const total = constCount + letCount + varCount;
+    const constPercent = total > 0 ? ((constCount / total) * 100).toFixed(1) : 0;
+
+    console.log(
+      `  ${file.padEnd(30)} const: ${constCount.toString().padStart(3)}  let: ${letCount.toString().padStart(3)}  var: ${varCount.toString().padStart(3)}  (${constPercent}% const)`
+    );
   });
 
-  // Display results
-  console.log(
-    `📊 Found ${totalOpportunities} opportunities across ${Object.keys(opportunitiesByFile).length} files\n`
-  );
+  console.log('─'.repeat(70));
+  console.log(`\n📊 Summary:`);
+  console.log(`  Total const: ${totalConst}`);
+  console.log(`  Total let: ${totalLet}`);
+  console.log(`  Total var: ${totalVar}`);
 
-  Object.entries(opportunitiesByFile).forEach(([fileName, opportunities]) => {
-    const fileTotal = opportunities.reduce((sum, o) => sum + o.occurrences, 0);
-    console.log(`📄 ${fileName} (${fileTotal} occurrences):`);
-    opportunities.forEach(opp => {
-      console.log(`   • ${opp.pattern}: ${opp.occurrences} times`);
-      console.log(`     ${opp.suggestion}`);
-    });
-    console.log('');
-  });
+  const total = totalConst + totalLet + totalVar;
+  const constPercent = ((totalConst / total) * 100).toFixed(1);
 
-  // Summary recommendations
-  console.log('💡 Recommendations:\n');
-  console.log('1. Create a helper function at the top of each module:');
-  console.log('   ```javascript');
-  console.log('   const getConstants = () => window.YouTubePlusConstants || {};');
-  console.log("   const SVG_NS = getConstants().SVG_NS || 'http://www.w3.org/2000/svg';");
-  console.log('   ```\n');
-  console.log(
-    '2. Replace all occurrences systematically, starting with the most repeated patterns'
-  );
-  console.log('3. Run tests after each file to ensure nothing breaks');
-  console.log('4. Expected savings: ~3-5KB per 100 replacements\n');
+  console.log(`  Overall const usage: ${constPercent}%`);
 
-  // Save report
-  const reportPath = path.join(__dirname, 'constants-adoption-report.json');
-  fs.writeFileSync(
-    reportPath,
-    JSON.stringify(
-      {
-        timestamp: new Date().toISOString(),
-        totalOpportunities,
-        filesAnalyzed: files.length,
-        opportunitiesByFile,
-      },
-      null,
-      2
-    )
-  );
-  console.log(`📝 Detailed report saved to: ${path.basename(reportPath)}`);
+  if (totalVar > 0) {
+    console.log(`\n⚠️  Found ${totalVar} 'var' declarations (consider migrating to const/let)`);
+  }
+
+  console.log('\n✅ Constants adoption analysis complete!\n');
 }
 
-main();
+try {
+  analyzeConstantsAdoption();
+} catch (error) {
+  console.error('❌ Error:', error.message);
+  process.exit(1);
+}

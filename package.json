@@ -1,6 +1,6 @@
 {
   "name": "youtubeplus",
-  "version": "2.2",
+  "version": "2.2.1",
   "description": "Professional-grade YouTube enhancement userscript with modular architecture, comprehensive error handling, performance monitoring, and automated testing",
   "private": true,
   "author": "diorhc",
@@ -27,13 +27,14 @@
     "npm": ">=8.0.0"
   },
   "scripts": {
-    "prepare": "husky || echo 'Husky not installed'",
+    "prepare": "husky install",
     "dev": "npm run build:watch",
     "start": "npm run build:watch",
     "build": "node build.js",
     "build:optimized": "node build.js --optimized",
     "build:minify": "node build.js --minify",
     "build:watch": "node build.js --watch",
+    "build:embed": "npm run build && node embed-translations.js",
     "build:analyze": "npm run build && npm run benchmark",
     "build:sourcemap": "npm run build && node generate-sourcemap.js",
     "build:production": "npm run clean && npm run build:minify && npm run validate:build",
@@ -83,7 +84,7 @@
     "quality:full": "npm run validate:all && npm run analyze:all && npm run security:check",
     "prerelease": "npm run quality:full && npm run build:production",
     "docs:serve": "echo 'Documentation server not configured' && exit 1",
-    "update:badges": "node .github/scripts/update-greasyfork-badges.js https://greasyfork.org/ru/scripts/537017-youtube README.md"
+    "update:badges": "node scripts/update-greasyfork-badges.js https://greasyfork.org/ru/scripts/537017-youtube README.md"
   },
   "devDependencies": {
     "@microsoft/eslint-formatter-sarif": "^3.1.0",

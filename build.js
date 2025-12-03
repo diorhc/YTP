@@ -17,10 +17,14 @@
  *   node build.js --minify     - Build with full minification
  */
 
+/* Allow console usage in build scripts (these are developer tools, not runtime code) */
+/* eslint-disable no-console */
+
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const vm = require('vm');
+const { performance } = require('perf_hooks');
 
 // Determine project root: if this script sits in a `src` folder, use parent,
 // otherwise use its directory. This prevents scanning the wrong directory
@@ -36,6 +40,113 @@ const DEBOUNCE_MS = 200;
 
 // Possible order manifest files (JSON array of filenames or plain text lines)
 const ORDER_MANIFESTS = ['build.order.json', 'build.order.txt'];
+
+// Performance tracking with better memory management
+const perfTimings = new Map();
+const startPerfTimer = name => {
+  perfTimings.set(name, performance.now());
+};
+const endPerfTimer = name => {
+  const start = perfTimings.get(name);
+  if (start) {
+    const duration = performance.now() - start;
+    perfTimings.delete(name);
+    return duration;
+  }
+  return 0;
+};
+
+// Clear old timers periodically to prevent memory leaks
+const _cleanPerfTimers = () => {
+  if (perfTimings.size > 50) {
+    perfTimings.clear();
+  }
+};
+
+// Cache for metadata extraction and file processing (with size limits)
+const MAX_CACHE_SIZE = 100;
+const metadataCache = new Map();
+const stripMetaCache = new Map();
+
+// Improved cache management with LRU-like behavior
+function _manageCacheSize(cache, maxSize = MAX_CACHE_SIZE) {
+  if (cache.size > maxSize) {
+    const keysToDelete = Array.from(cache.keys()).slice(0, cache.size - maxSize);
+    keysToDelete.forEach(key => cache.delete(key));
+  }
+}
+
+// Build cache for incremental builds
+const BUILD_CACHE_FILE = path.join(ROOT, '.build-cache.json');
+let buildCache = { files: {}, lastBuild: 0 };
+
+/**
+ * Load build cache from disk
+ */
+function loadBuildCache() {
+  try {
+    if (fs.existsSync(BUILD_CACHE_FILE)) {
+      const data = fs.readFileSync(BUILD_CACHE_FILE, 'utf8');
+      buildCache = JSON.parse(data);
+      if (verbose) {
+        console.log(`Loaded build cache with ${Object.keys(buildCache.files).length} entries`);
+      }
+    }
+  } catch (e) {
+    if (verbose) {
+      console.warn('Failed to load build cache:', e.message);
+    }
+    buildCache = { files: {}, lastBuild: 0 };
+  }
+}
+
+/**
+ * Save build cache to disk
+ */
+function saveBuildCache() {
+  try {
+    fs.writeFileSync(BUILD_CACHE_FILE, JSON.stringify(buildCache, null, 2), 'utf8');
+  } catch (e) {
+    if (verbose) console.warn('Failed to save build cache:', e.message);
+  }
+}
+
+/**
+ * Check if file has changed since last build
+ * @param {string} filePath - Path to file
+ * @returns {boolean} True if file changed or is new
+ */
+function hasFileChanged(filePath) {
+  try {
+    const stats = fs.statSync(filePath);
+    const mtime = stats.mtimeMs;
+    const cached = buildCache.files[filePath];
+
+    if (!cached || cached.mtime !== mtime) {
+      buildCache.files[filePath] = { mtime, size: stats.size };
+      return true;
+    }
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+// Pre-compiled regex patterns for better performance
+const REGEX_PATTERNS = {
+  lineStyleMeta: /\/\/\s*==UserScript==[\s\S]*?\/\/\s*==\/UserScript==/,
+  blockStyleMeta: /\/\*[\s\S]*?==UserScript==[\s\S]*?==\/UserScript==[\s\S]*?\*\//,
+  stripLineMeta: /\/\/\s*==UserScript==[\s\S]*?\/\/\s*==\/UserScript==/g,
+  stripBlockMeta: /\/\*\s*==UserScript==[\s\S]*?==\/UserScript==\s*\*\//g,
+  regexPattern: /\/(?:[^\\/\n]|\\.)+\/[gimsuvy]*/g,
+  whitespace: /[ \t]+/g,
+  multipleNewlines: /\n{3,}/g,
+  leadingWhitespace: /^(\s+)/,
+  trailingWhitespace: /\s+$/,
+  surroundingWhitespace: /^\s+|\s+$/g,
+  regexContext: /[=([{:;!&|?+\-*%^~,]$|return$|match$|test$|replace$|split$|exec$/,
+  regexFlags: /[gimsuyv]/,
+};
 
 /**
  * Safely read a file, returning null on error
@@ -76,13 +187,29 @@ function readFileSafe(p) {
  */
 function extractMeta(content) {
   if (!content) return null;
+
+  // Check cache first
+  const cacheKey = content.substring(0, 500); // Use first 500 chars as cache key
+  if (metadataCache.has(cacheKey)) {
+    return metadataCache.get(cacheKey);
+  }
+
   // Match either a // style userscript meta block or a /* */ block
-  const lineStyle = /\/\/\s*==UserScript==[\s\S]*?\/\/\s*==\/UserScript==/;
-  const blockStyle = /\/\*[\s\S]*?==UserScript==[\s\S]*?==\/UserScript==[\s\S]*?\*\//;
-  const m1 = content.match(lineStyle);
-  if (m1) return m1[0];
-  const m2 = content.match(blockStyle);
-  if (m2) return m2[0];
+  const m1 = content.match(REGEX_PATTERNS.lineStyleMeta);
+  if (m1) {
+    metadataCache.set(cacheKey, m1[0]);
+    _manageCacheSize(metadataCache);
+    return m1[0];
+  }
+  const m2 = content.match(REGEX_PATTERNS.blockStyleMeta);
+  if (m2) {
+    metadataCache.set(cacheKey, m2[0]);
+    _manageCacheSize(metadataCache);
+    return m2[0];
+  }
+
+  metadataCache.set(cacheKey, null);
+  _manageCacheSize(metadataCache);
   return null;
 }
 
@@ -93,10 +220,23 @@ function extractMeta(content) {
  */
 function stripMeta(content) {
   if (!content) return '';
+
+  // Use content hash instead of full content for better cache efficiency
+  const cacheKey = content.length + '_' + content.substring(0, 100);
+
+  // Check cache first
+  if (stripMetaCache.has(cacheKey)) {
+    return stripMetaCache.get(cacheKey);
+  }
+
   // remove any userscript meta blocks so they don't duplicate in modules
-  return content
-    .replace(/\/\/\s*==UserScript==[\s\S]*?\/\/\s*==\/UserScript==/g, '')
-    .replace(/\/\*\s*==UserScript==[\s\S]*?==\/UserScript==\s*\*\//g, '');
+  const result = content
+    .replace(REGEX_PATTERNS.stripLineMeta, '')
+    .replace(REGEX_PATTERNS.stripBlockMeta, '');
+
+  stripMetaCache.set(cacheKey, result);
+  _manageCacheSize(stripMetaCache);
+  return result;
 }
 
 /**
@@ -122,7 +262,7 @@ function stripMeta(content) {
 function _isRegexContext(resultSoFar) {
   const beforeTrimmed = resultSoFar.trimEnd();
   const lastChars = beforeTrimmed.slice(-10);
-  return /[=([{:;!&|?+\-*%^~,]$|return$|match$|test$|replace$|split$|exec$/.test(lastChars);
+  return REGEX_PATTERNS.regexContext.test(lastChars);
 }
 
 /**
@@ -134,7 +274,7 @@ function _isRegexContext(resultSoFar) {
 function _consumeRegexFlags(line, startIdx) {
   let flags = '';
   let idx = startIdx;
-  while (idx + 1 < line.length && /[gimsuyv]/.test(line[idx + 1])) {
+  while (idx + 1 < line.length && REGEX_PATTERNS.regexFlags.test(line[idx + 1])) {
     idx++;
     flags += line[idx];
   }
@@ -183,10 +323,10 @@ function _processRegexChar(line, j) {
  * @param {string} src
  * @returns {string}
  */
-// eslint-disable-next-line complexity
 function _removeCommentsPreserveStrings(src) {
   const lines = src.split('\n');
-  const out = [];
+  const out = new Array(lines.length);
+  let outIdx = 0;
   let inBlock = false;
 
   for (let i = 0; i < lines.length; i++) {
@@ -202,8 +342,9 @@ function _removeCommentsPreserveStrings(src) {
     let inString = false;
     let stringChar = '';
     let inRegex = false;
+    const lineLength = line.length;
 
-    for (let j = 0; j < line.length; j++) {
+    for (let j = 0; j < lineLength; j++) {
       const ch = line[j];
       const next = line[j + 1];
 
@@ -269,7 +410,12 @@ function _removeCommentsPreserveStrings(src) {
       result += ch;
     }
 
-    out.push(result);
+    out[outIdx++] = result;
+  }
+
+  // Trim to actual size if we skipped lines
+  if (outIdx < out.length) {
+    out.length = outIdx;
   }
 
   return out.join('\n');
@@ -283,61 +429,86 @@ function _removeCommentsPreserveStrings(src) {
  * - preserves regex literals to avoid breaking them
  */
 function _normalizeWhitespace(src) {
-  return src
-    .split('\n')
-    .map(line => {
-      // First, preserve regex literals by temporarily replacing them
-      const regexMatches = [];
-      let tempLine = line;
+  const lines = src.split('\n');
+  const processedLines = new Array(lines.length);
 
-      // Match regex patterns like /.../ with flags (g, i, m, etc.)
-      // This regex finds: / followed by non-/ chars (with escape handling), then / and optional flags
-      const regexPattern = /\/(?:[^\\/\n]|\\.)+\/[gimsuvy]*/g;
-      tempLine = tempLine.replace(regexPattern, match => {
-        regexMatches.push(match);
-        return `__REGEX_${regexMatches.length - 1}__`;
-      });
+  for (let i = 0; i < lines.length; i++) {
+    const line = lines[i];
 
-      // Now process whitespace on the line with placeholders
-      let processed = tempLine.replace(/\s+$/, '');
-      processed = processed.replace(/[ \t]+/g, ' ');
-      const leadingMatch = processed.match(/^(\s+)/);
-      if (leadingMatch) {
-        const indent = Math.min(leadingMatch[1].length, 4);
-        processed = ' '.repeat(indent) + processed.trim();
-      }
+    // First, preserve regex literals by temporarily replacing them
+    const regexMatches = [];
+    const tempLine = line.replace(REGEX_PATTERNS.regexPattern, match => {
+      regexMatches.push(match);
+      return `__REGEX_${regexMatches.length - 1}__`;
+    });
 
-      // Restore regex literals
-      regexMatches.forEach((regex, idx) => {
-        processed = processed.replace(`__REGEX_${idx}__`, regex);
-      });
+    // Now process whitespace on the line with placeholders
+    let processed = tempLine.replace(REGEX_PATTERNS.trailingWhitespace, '');
+    processed = processed.replace(REGEX_PATTERNS.whitespace, ' ');
+    const leadingMatch = processed.match(REGEX_PATTERNS.leadingWhitespace);
+    if (leadingMatch) {
+      const indent = Math.min(leadingMatch[1].length, 4);
+      processed = ' '.repeat(indent) + processed.trim();
+    }
 
-      return processed;
-    })
+    // Restore regex literals
+    for (let j = 0; j < regexMatches.length; j++) {
+      processed = processed.replace(`__REGEX_${j}__`, regexMatches[j]);
+    }
+
+    processedLines[i] = processed;
+  }
+
+  return processedLines
     .join('\n')
-    .replace(/\n{3,}/g, '\n\n')
-    .replace(/^\s+|\s+$/g, '');
+    .replace(REGEX_PATTERNS.multipleNewlines, '\n\n')
+    .replace(REGEX_PATTERNS.surroundingWhitespace, '');
 }
 
 function simpleOptimize(code, headerBlock) {
   if (!code) return '';
 
+  startPerfTimer('simpleOptimize');
+
   const headerText = headerBlock || extractMeta(code) || '';
   let body = headerText ? code.replace(headerText, '') : code;
 
   // remove comments safely
+  startPerfTimer('removeComments');
   body = _removeCommentsPreserveStrings(body);
+  if (verbose) {
+    const commentsDuration = endPerfTimer('removeComments');
+    console.log(`  ⏱️  Comment removal: ${commentsDuration.toFixed(2)}ms`);
+  }
 
-  // remove empty lines
-  body = body
-    .split('\n')
-    .filter(l => l.trim().length > 0)
-    .join('\n');
+  // remove empty lines (optimized with array pre-allocation estimate)
+  startPerfTimer('removeEmptyLines');
+  const lines = body.split('\n');
+  const nonEmptyLines = [];
+  for (let i = 0; i < lines.length; i++) {
+    if (lines[i].trim().length > 0) {
+      nonEmptyLines.push(lines[i]);
+    }
+  }
+  body = nonEmptyLines.join('\n');
+  if (verbose) {
+    const emptyLinesDuration = endPerfTimer('removeEmptyLines');
+    console.log(`  ⏱️  Empty line removal: ${emptyLinesDuration.toFixed(2)}ms`);
+  }
 
   // normalize whitespace
+  startPerfTimer('normalizeWhitespace');
   body = _normalizeWhitespace(body);
+  if (verbose) {
+    const whitespaceDuration = endPerfTimer('normalizeWhitespace');
+    console.log(`  ⏱️  Whitespace normalization: ${whitespaceDuration.toFixed(2)}ms`);
+  }
 
   const finalCode = `${(headerText ? `${headerText.trim()}\n\n` : '') + body.trim()}\n`;
+
+  const totalDuration = endPerfTimer('simpleOptimize');
+  if (verbose) console.log(`  ⏱️  Total optimization: ${totalDuration.toFixed(2)}ms`);
+
   return finalCode;
 }
 
@@ -599,25 +770,31 @@ function ensureLocalEslint() {
 /**
  * Merges module files into a single output string
  * @param {Array} files - Array of file objects
- * @returns {{code: string, mergedCount: number, skippedCount: number}} Merged code and stats
+ * @returns {{code: string, mergedCount: number, skippedCount: number, changedCount: number}} Merged code and stats
  */
 function mergeModuleFiles(files) {
+  startPerfTimer('mergeModuleFiles');
+
   const parts = [header.trim(), '\n'];
   let mergedCount = 0;
   let skippedCount = 0;
+  let changedCount = 0;
 
-  for (const f of files) {
+  // Read all files in parallel for better performance
+  const fileContents = files.map(f => {
     const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
     const p = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
-    const content = readFileSafe(p);
-
+    const displayName = typeof f === 'string' ? path.basename(f) : f.name;
+    const changed = hasFileChanged(p);
+    if (changed) changedCount++;
+    return { path: p, displayName, content: readFileSafe(p), changed };
+  }); // Process all file contents
+  for (const { path: p, displayName, content } of fileContents) {
     if (content === null) {
       console.warn(`⚠️  Could not read: ${path.relative(ROOT, p)}`);
       skippedCount++;
       continue;
     }
-
-    const displayName = typeof f === 'string' ? path.basename(f) : f.name;
 
     const clean = stripMeta(content).trim();
     if (!clean) {
@@ -634,10 +811,21 @@ function mergeModuleFiles(files) {
 
   const mergedCode = `${parts.join('\n\n')}\n`;
 
+  const duration = endPerfTimer('mergeModuleFiles');
+  if (verbose) {
+    console.log(`  ⏱️  Merge time: ${duration.toFixed(2)}ms`);
+    if (changedCount < mergedCount) {
+      console.log(
+        `  📦 Changed files: ${changedCount}/${mergedCount} (${((changedCount / mergedCount) * 100).toFixed(1)}%)`
+      );
+    }
+  }
+
   return {
     code: mergedCode,
     mergedCount,
     skippedCount,
+    changedCount,
   };
 } /**
  * Validates syntax using vm.Script
@@ -992,10 +1180,21 @@ async function performTerserMinification(code, outPath) {
  * @returns {Promise<boolean>} True if build succeeded
  */
 async function buildOnceCustom(outPath) {
+  startPerfTimer('totalBuild');
+
+  // Load build cache for incremental builds
+  if (!watch) {
+    loadBuildCache();
+  }
+
   if (verbose) console.log(`Starting build process for ${outPath}...`);
 
+  startPerfTimer('collectModules');
   const files = collectModuleFiles();
-  if (verbose) console.log(`Found ${files.length} module(s) to merge`);
+  const collectDuration = endPerfTimer('collectModules');
+  if (verbose) {
+    console.log(`Found ${files.length} module(s) to merge (${collectDuration.toFixed(2)}ms)`);
+  }
 
   // Merge module files
   const { code, mergedCount, skippedCount } = mergeModuleFiles(files);
@@ -1004,8 +1203,14 @@ async function buildOnceCustom(outPath) {
     console.warn(`⚠️  Skipped ${skippedCount} module(s) due to errors or empty content`);
   }
 
+  startPerfTimer('writeFile');
   fs.writeFileSync(outPath, code, 'utf8');
-  console.log(`\n✓ Built ${path.relative(ROOT, outPath)} from ${mergedCount} modules:`);
+  const writeDuration = endPerfTimer('writeFile');
+
+  const fileSize = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2);
+  console.log(
+    `\n✓ Built ${path.relative(ROOT, outPath)} from ${mergedCount} modules (${fileSize}KB, ${writeDuration.toFixed(2)}ms):`
+  );
 
   for (const f of files) {
     const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
@@ -1015,23 +1220,49 @@ async function buildOnceCustom(outPath) {
   }
 
   // Validate syntax
+  startPerfTimer('validateSyntax');
   if (!validateSyntax(code, outPath)) {
     return false;
   }
+  const validateDuration = endPerfTimer('validateSyntax');
+  if (verbose) console.log(`  ⏱️  Syntax validation: ${validateDuration.toFixed(2)}ms`);
 
   // Run ESLint
+  startPerfTimer('eslint');
   if (!runEslintValidation(outPath)) {
     return false;
   }
+  const eslintDuration = endPerfTimer('eslint');
+  if (!noEslint && verbose) console.log(`  ⏱️  ESLint: ${eslintDuration.toFixed(2)}ms`);
 
   // Optimize or minify if requested
   if (minify || optimized) {
+    startPerfTimer('optimize');
     if (!(await optimizeOrMinify(code, outPath))) {
       return false;
     }
+    const optimizeDuration = endPerfTimer('optimize');
+    if (verbose) console.log(`  ⏱️  Optimization: ${optimizeDuration.toFixed(2)}ms`);
   }
 
-  console.log('✓ Build completed successfully.');
+  const totalDuration = endPerfTimer('totalBuild');
+  console.log(`✓ Build completed successfully in ${(totalDuration / 1000).toFixed(2)}s`);
+
+  // Save build cache for next incremental build
+  if (!watch) {
+    buildCache.lastBuild = Date.now();
+    saveBuildCache();
+  }
+
+  // Log performance summary if verbose
+  if (verbose) {
+    console.log('\n📊 Performance Summary:');
+    console.log(`  Total: ${(totalDuration / 1000).toFixed(2)}s`);
+    console.log(
+      `  Throughput: ${Math.round((code.split('\n').length / totalDuration) * 1000)} lines/sec`
+    );
+  }
+
   return true;
 }
 

@@ -110,7 +110,10 @@
       errorState.circuitState === CircuitState.OPEN &&
       now - errorState.circuitLastFailureTime >= circuitBreaker.resetTimeout
     ) {
-      console.log('[YouTube+] Circuit breaker transitioning to HALF_OPEN');
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug('[YouTube+] Circuit breaker transitioning to HALF_OPEN');
       errorState.circuitState = CircuitState.HALF_OPEN;
       errorState.circuitSuccessCount = 0;
     }
@@ -120,7 +123,10 @@
       if (errorState.circuitState === CircuitState.HALF_OPEN) {
         errorState.circuitSuccessCount++;
         if (errorState.circuitSuccessCount >= circuitBreaker.halfOpenAttempts) {
-          console.log('[YouTube+] Circuit breaker CLOSED - system recovered');
+          window.YouTubeUtils &&
+            YouTubeUtils.logger &&
+            YouTubeUtils.logger.debug &&
+            YouTubeUtils.logger.debug('[YouTube+] Circuit breaker CLOSED - system recovered');
           errorState.circuitState = CircuitState.CLOSED;
           errorState.circuitFailureCount = 0;
           errorState.circuitSuccessCount = 0;
@@ -354,7 +360,10 @@
   const performLegacyRecovery = (error, context) => {
     // Attempt module-specific recovery
     if (context.module) {
-      console.log(`[YouTube+] Attempting recovery for module: ${context.module}`);
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug(`[YouTube+] Attempting recovery for module: ${context.module}`);
 
       // Try to reinitialize the module if possible
       const Y = window.YouTubeUtils;
@@ -379,7 +388,10 @@
         (error.message.includes('null') || error.message.includes('undefined')) &&
         context.element
       ) {
-        console.log('[YouTube+] Attempting to re-query DOM element');
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug('[YouTube+] Attempting to re-query DOM element');
         // Could trigger element re-query here
       }
     }
@@ -539,6 +551,9 @@
       config: ErrorBoundaryConfig,
     };
 
-    console.log('[YouTube+][Error Boundary]', 'Error boundary initialized');
+    window.YouTubeUtils &&
+      YouTubeUtils.logger &&
+      YouTubeUtils.logger.debug &&
+      YouTubeUtils.logger.debug('[YouTube+][Error Boundary]', 'Error boundary initialized');
   }
 })();

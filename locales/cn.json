@@ -164,7 +164,7 @@
   "openGitHub": "打开 GitHub Issue",
   "copyReport": "复制报告",
   "prepareEmail": "准备电子邮件",
-  "privacy": "提交即表示您同意包含所提供的信息。不要包含密码或个人令牌。",
+  "privacy": "提交即表示您同意包含所述信息。请勿包含密码或个人令牌。",
   "typeBug": "错误 / Bug",
   "typeFeature": "功能请求",
   "typeOther": "其他",
@@ -221,6 +221,5 @@
   "delete": "删除",
   "confirmDelete": "删除时间码 \"{label}\"？",
   "reloadError": "重新加载时间码时出错",
-  "cannotEditChapter": "无法编辑 YouTube 章节",
-  "save": "保存"
+  "cannotEditChapter": "无法编辑 YouTube 章节"
 }

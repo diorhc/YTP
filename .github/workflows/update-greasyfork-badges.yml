@@ -6,6 +6,10 @@ on:
     - cron: '0 0 * * *'
   workflow_dispatch: # Позволяет запускать вручную
 
+concurrency:
+  group: update-badges
+  cancel-in-progress: true
+
 jobs:
   update-badges:
     runs-on: ubuntu-latest
@@ -14,30 +18,82 @@ jobs:
       contents: write
     
     steps:
+      - name: Set up job
+        run: echo "Starting GreasyFork badges update..."
+      
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
       
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '18'
+          node-version: '20'
+          cache: 'npm'
+      
+      - name: Install dependencies
+        run: npm ci
+      
+      - name: Verify script exists
+        run: |
+          if [ -f "scripts/update-greasyfork-badges.js" ]; then
+            echo "✓ Script found"
+            ls -lh scripts/update-greasyfork-badges.js
+          else
+            echo "✗ Script not found"
+            ls -la scripts/ || echo "Scripts directory not found"
+            exit 1
+          fi
       
       - name: Update GreasyFork badges
+        id: update-badges
         run: |
+          set +e
           node scripts/update-greasyfork-badges.js https://greasyfork.org/ru/scripts/537017-youtube README.md
+          EXIT_CODE=$?
+          set -e
+          
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "✓ Badges updated successfully"
+            echo "success=true" >> $GITHUB_OUTPUT
+          else
+            echo "✗ Failed to update badges (exit code: $EXIT_CODE)"
+            echo "success=false" >> $GITHUB_OUTPUT
+            # Don't fail the workflow, just skip commit
+          fi
+        continue-on-error: true
       
       - name: Check for changes
         id: git-check
+        if: steps.update-badges.outputs.success == 'true'
         run: |
-          git diff --exit-code README.md || echo "changed=true" >> $GITHUB_OUTPUT
+          if git diff --quiet README.md; then
+            echo "No changes detected"
+            echo "changed=false" >> $GITHUB_OUTPUT
+          else
+            echo "Changes detected"
+            echo "changed=true" >> $GITHUB_OUTPUT
+          fi
       
       - name: Commit and push if changed
-        if: steps.git-check.outputs.changed == 'true'
+        if: steps.update-badges.outputs.success == 'true' && steps.git-check.outputs.changed == 'true'
         run: |
           git config --local user.email "github-actions[bot]@users.noreply.github.com"
           git config --local user.name "github-actions[bot]"
           git add README.md
           git commit -m "chore: auto-update GreasyFork badges [skip ci]"
           git push
+      
+      - name: Post Setup Node.js
+        if: always()
+        run: echo "Workflow completed"
+      
+      - name: Post Checkout repository
+        if: always()
+        run: echo "Checkout step completed"
+      
+      - name: Complete job
+        if: always()
+        run: echo "Job finished"

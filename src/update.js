@@ -293,7 +293,10 @@
       try {
         YouTubeUtils.NotificationManager.show(text, { type, duration });
       } catch (error) {
-        console.log(`[YouTube+] ${type.toUpperCase()}:`, text, error);
+        window.YouTubeUtils &&
+          YouTubeUtils.logger &&
+          YouTubeUtils.logger.debug &&
+          YouTubeUtils.logger.debug(`[YouTube+] ${type.toUpperCase()}:`, text, error);
       }
     },
   };
@@ -595,7 +598,7 @@
       }
     };
 
-    return await fetchMeta(url);
+    return fetchMeta(url);
   };
 
   /**
@@ -610,7 +613,10 @@
 
     if (shouldShowNotification) {
       showUpdateNotification(updateDetails);
-      console.log(`YouTube + Update available: ${updateDetails.version}`);
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug(`YouTube + Update available: ${updateDetails.version}`);
       return;
     }
 
@@ -1042,14 +1048,16 @@
    * @returns {void}
    */
   const logInitialization = () => {
-    if (typeof console !== 'undefined' && console.log) {
-      console.log('YouTube + Update Checker initialized', {
-        version: UPDATE_CONFIG.currentVersion,
-        enabled: UPDATE_CONFIG.enabled,
-        lastCheck: new Date(updateState.lastCheck).toLocaleString(),
-        updateAvailable: updateState.updateAvailable,
-      });
-    }
+    try {
+      if (window.YouTubeUtils && YouTubeUtils.logger && YouTubeUtils.logger.debug) {
+        YouTubeUtils.logger.debug('YouTube + Update Checker initialized', {
+          version: UPDATE_CONFIG.currentVersion,
+          enabled: UPDATE_CONFIG.enabled,
+          lastCheck: new Date(updateState.lastCheck).toLocaleString(),
+          updateAvailable: updateState.updateAvailable,
+        });
+      }
+    } catch {}
   };
 
   /**

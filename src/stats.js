@@ -867,28 +867,100 @@
    */
   function getPageVideoStats() {
     try {
-      // Use centralized helpers from YouTubeStatsHelpers
+      // Use centralized helpers from YouTubeStatsHelpers when available.
+      // If not present (some runtime environments), provide a lightweight
+      // DOM-based fallback to avoid noisy errors and still surface basic stats.
       const helpers = window.YouTubeStatsHelpers || {};
 
-      if (!helpers.extractViews) {
-        YouTubeUtils?.logError?.(
-          'Stats',
-          'YouTubeStatsHelpers not loaded',
-          new Error('Missing helpers')
-        );
-        return null;
-      }
-
-      // Merge all extracted stats
-      const result = {
-        ...helpers.extractViews(),
-        ...helpers.extractLikes(),
-        ...helpers.extractDislikes(),
-        ...helpers.extractComments(),
-        ...helpers.extractSubscribers(),
-        ...helpers.extractThumbnail(),
-        ...helpers.extractTitle(),
+      const fallbackHelpers = {
+        extractViews() {
+          try {
+            const el = document.querySelector('yt-view-count-renderer, #count .view-count');
+            const text = el && el.textContent ? el.textContent.trim() : '';
+            const match = text.replace(/[^0-9,\.]/g, '').replace(/,/g, '');
+            return match ? { views: Number(match) || null } : {};
+          } catch {
+            return {};
+          }
+        },
+        extractLikes() {
+          try {
+            const btn =
+              document.querySelector(
+                'ytd-toggle-button-renderer[is-icon-button] yt-formatted-string'
+              ) ||
+              document.querySelector(
+                '#top-level-buttons-computed ytd-toggle-button-renderer:first-child yt-formatted-string'
+              );
+            const text = btn && btn.textContent ? btn.textContent.trim() : '';
+            const match = text.replace(/[^0-9,\.]/g, '').replace(/,/g, '');
+            return match ? { likes: Number(match) || null } : {};
+          } catch {
+            return {};
+          }
+        },
+        extractDislikes() {
+          // Dislike counts may not be available; return empty
+          return {};
+        },
+        extractComments() {
+          try {
+            const el = document.querySelector(
+              '#count > ytd-comment-thread-renderer, ytd-comments-header-renderer #count'
+            );
+            const text = el && el.textContent ? el.textContent.trim() : '';
+            const match = text.replace(/[^0-9,\.]/g, '').replace(/,/g, '');
+            return match ? { comments: Number(match) || null } : {};
+          } catch {
+            return {};
+          }
+        },
+        extractSubscribers() {
+          try {
+            const el = document.querySelector('#owner-sub-count, #subscriber-count');
+            const text = el && el.textContent ? el.textContent.trim() : '';
+            return text ? { subscribers: text } : {};
+          } catch {
+            return {};
+          }
+        },
+        extractThumbnail() {
+          try {
+            const meta =
+              document.querySelector('link[rel="image_src"]') ||
+              document.querySelector('meta[property="og:image"]');
+            const url = meta && (meta.href || meta.content) ? meta.href || meta.content : null;
+            return url ? { thumbnail: url } : {};
+          } catch {
+            return {};
+          }
+        },
+        extractTitle() {
+          try {
+            const el =
+              document.querySelector('h1.title yt-formatted-string') ||
+              document.querySelector('h1');
+            const text = el && el.textContent ? el.textContent.trim() : '';
+            return text ? { title: text } : {};
+          } catch {
+            return {};
+          }
+        },
       };
+
+      const use = helpers && helpers.extractViews ? helpers : fallbackHelpers;
+
+      // Merge all extracted stats (helpers may return partial objects)
+      const result = Object.assign(
+        {},
+        use.extractViews?.() || {},
+        use.extractLikes?.() || {},
+        use.extractDislikes?.() || {},
+        use.extractComments?.() || {},
+        use.extractSubscribers?.() || {},
+        use.extractThumbnail?.() || {},
+        use.extractTitle?.() || {}
+      );
 
       return Object.keys(result).length > 0 ? result : null;
     } catch (e) {
@@ -2039,7 +2111,10 @@
   // Utility functions
   const utils = {
     log: (message, ...args) => {
-      console.log('[YouTube+][Stats]', message, ...args);
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug('[YouTube+][Stats]', message, ...args);
     },
 
     warn: (message, ...args) => {

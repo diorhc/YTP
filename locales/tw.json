@@ -164,7 +164,7 @@
   "openGitHub": "開啟 GitHub Issue",
   "copyReport": "複製報告",
   "prepareEmail": "準備電子郵件",
-  "privacy": "提交即表示您同意包含所提供的資訊。不要包含密碼或個人權杖。",
+  "privacy": "提交時，您同意包含所列資訊。請勿包含密碼或個人令牌",
   "typeBug": "錯誤 / Bug",
   "typeFeature": "功能請求",
   "typeOther": "其他",
@@ -221,6 +221,5 @@
   "delete": "刪除",
   "confirmDelete": "刪除時間碼 \"{label}\"？",
   "reloadError": "重新載入時間碼時出錯",
-  "cannotEditChapter": "無法編輯 YouTube 章節",
-  "save": "儲存"
+  "cannotEditChapter": "無法編輯 YouTube 章節"
 }

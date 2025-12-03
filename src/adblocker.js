@@ -2,34 +2,46 @@
 (function () {
   'use strict';
 
-  // Use centralized i18n where available
-  const _globalI18n =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
-  /**
-   * Translation helper that falls back to local formatting when i18n isn't available
-   * @param {string} key - Translation key or fallback string
-   * @param {Object} [params={}] - Template parameters to replace in the string
-   * @returns {string} Localized string or formatted fallback
-   */
-  const t = (key, params = {}) => {
+  // Internationalization
+  const i18n = {
+    en: {
+      adBlocker: 'Ad Blocker',
+      adBlockerDescription: 'Skip ads and remove ad elements automatically',
+    },
+    ru: {
+      adBlocker: 'Блокировщик рекламы',
+      adBlockerDescription: 'Автоматически пропускать рекламу и удалять рекламные элементы',
+    },
+  };
+
+  function getLanguage() {
+    const lang = document.documentElement.lang || navigator.language || 'en';
+    return lang.startsWith('ru') ? 'ru' : 'en';
+  }
+
+  // Translation function: prefer central i18n (embedded) when available,
+  // otherwise fall back to local i18n (en/ru).
+  function t(key, params = {}) {
     try {
-      if (_globalI18n && typeof _globalI18n.t === 'function') return _globalI18n.t(key, params);
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
+      if (typeof window !== 'undefined') {
+        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
+          return window.YouTubePlusI18n.t(key, params);
+        }
+        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
+          return window.YouTubeUtils.t(key, params);
+        }
       }
     } catch {
-      // fallback
+      // ignore and fall back to local i18n
     }
-    if (!key || typeof key !== 'string') return '';
-    if (Object.keys(params).length === 0) return key;
-    let result = key;
+
+    const lang = getLanguage();
+    const str = (i18n[lang] && i18n[lang][key]) || i18n.en[key] || key;
+    if (!params || Object.keys(params).length === 0) return str;
+    let result = str;
     for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
     return result;
-  };
+  }
 
   /**
    * Ad blocking functionality for YouTube
@@ -100,7 +112,7 @@
 
           const parsed = JSON.parse(saved);
           if (typeof parsed !== 'object' || parsed === null) {
-            console.warn('[YouTube+][AdBlocker]', 'Invalid settings format');
+            console.warn('[AdBlocker] Invalid settings format');
             return;
           }
 
@@ -117,7 +129,7 @@
             AdBlocker.config.enableLogging = false; // Default to disabled
           }
         } catch (error) {
-          console.error('[YouTube+][AdBlocker]', 'Error loading settings:', error);
+          console.error('[AdBlocker] Error loading settings:', error);
           // Set safe defaults on error
           AdBlocker.config.enabled = true;
           AdBlocker.config.enableLogging = false;
@@ -136,7 +148,7 @@
           };
           localStorage.setItem(AdBlocker.config.storageKey, JSON.stringify(settingsToSave));
         } catch (error) {
-          console.error('[YouTube+][AdBlocker]', 'Error saving settings:', error);
+          console.error('[AdBlocker] Error saving settings:', error);
         }
       },
     },
@@ -144,10 +156,6 @@
     /**
      * Get cached player elements
      * @returns {Object} Object containing player element and controller
-     */
-    /**
-     * Get cached player elements
-     * @returns {{element: Element|null, player: any}} Object containing player element and controller
      */
     getPlayer() {
       const now = Date.now();
@@ -166,10 +174,6 @@
 
     /**
      * Skip current ad by seeking to end
-     * @returns {void}
-     */
-    /**
-     * Skip current ad by seeking to its end or by using player APIs when available
      * @returns {void}
      */
     skipAd() {
@@ -224,11 +228,6 @@
     },
 
     // Minimal CSS injection
-    /**
-     * Inject minimal CSS rules to hide known ad elements
-     * Uses the project's StyleManager to avoid duplicate style tags
-     * @returns {void}
-     */
     addCss() {
       if (document.querySelector('#yt-ab-styles') || !AdBlocker.config.enabled) return;
 
@@ -237,20 +236,11 @@
       YouTubeUtils.StyleManager.add('yt-ab-styles', styles);
     },
 
-    /**
-     * Remove injected ad blocking CSS rules
-     * @returns {void}
-     */
     removeCss() {
       YouTubeUtils.StyleManager.remove('yt-ab-styles');
     },
 
     // Batched element removal
-    /**
-     * Remove ad-related DOM elements in a batched, non-blocking way
-     * Uses requestIdleCallback when available or setTimeout as a fallback
-     * @returns {void}
-     */
     removeElements() {
       if (!AdBlocker.config.enabled || AdBlocker.state.isYouTubeMusic) return;
 
@@ -268,11 +258,6 @@
     },
 
     // Optimized settings UI
-    /**
-     * Inject a settings UI entry into the extension's settings modal
-     * Adds a toggle checkbox wired to AdBlocker.config.enabled
-     * @returns {void}
-     */
     addSettingsUI() {
       const section = document.querySelector('.ytp-plus-settings-section[data-section="basic"]');
       if (!section || section.querySelector('.ab-settings')) return;
@@ -291,10 +276,8 @@
         section.appendChild(item);
 
         item.querySelector('input').addEventListener('change', e => {
-          const { target } = e;
-          const input = /** @type {EventTarget & HTMLInputElement} */ (target);
-          const { checked } = input;
-          AdBlocker.config.enabled = checked;
+          const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+          AdBlocker.config.enabled = target.checked;
           AdBlocker.settings.save();
           AdBlocker.config.enabled ? AdBlocker.addCss() : AdBlocker.removeCss();
         });
@@ -304,11 +287,6 @@
     },
 
     // Streamlined initialization
-    /**
-     * Initialize the AdBlocker module: load settings, apply CSS, register intervals
-     * and observers, and register cleanup handlers with YouTubeUtils.cleanupManager
-     * @returns {void}
-     */
     init() {
       if (AdBlocker.state.initialized) return;
       AdBlocker.state.initialized = true;
@@ -336,8 +314,8 @@
 
       // Override pushState for SPA navigation
       const originalPushState = history.pushState;
-      history.pushState = function (...args) {
-        const result = originalPushState.call(this, ...args);
+      history.pushState = function () {
+        const result = originalPushState.apply(this, arguments);
         setTimeout(handleNavigation, 50);
         return result;
       };
@@ -368,8 +346,8 @@
 
       // ✅ Register global click listener in cleanupManager
       const clickHandler = e => {
-        const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
-        if (target?.dataset?.section === 'basic') {
+        const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+        if (target.dataset?.section === 'basic') {
           setTimeout(AdBlocker.addSettingsUI, 25);
         }
       };

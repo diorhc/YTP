@@ -113,6 +113,7 @@
   "upToDate": "Up-to-date",
   "checkForUpdates": "Controleren op updates",
   "autoCheckUpdates": "Automatisch controleren op updates",
+  "manualInstallHint": "Kan update niet automatisch openen. Download handmatig van GreasyFork.",
   "updatePageFallback": "Updatepagina openen...",
   "never": "Nooit",
   "justNow": "Zojuist",
@@ -124,7 +125,7 @@
   "updateCheckFailed": "Updatecontrole mislukt: {msg}",
   "noUpdateInfo": "Geen update-informatie beschikbaar",
   "dismiss": "Sluiten",
-  "privacy": "Privacy",
+  "privacy": "Door te verzenden, ga je ermee akkoord de opgegeven informatie op te nemen. Voeg geen wachtwoorden of persoonlijke tokens toe",
   "statisticsButtonDescription": "Toon statistiekenknop in videospeler",
   "adBlocker": "Advertentieblokkeerder",
   "adBlockerDescription": "Sla advertenties over en verwijder advertentie-elementen automatisch",
@@ -220,6 +221,5 @@
   "delete": "Verwijderen",
   "confirmDelete": "Timecode \"{label}\" verwijderen?",
   "reloadError": "Fout bij opnieuw laden timecodes",
-  "cannotEditChapter": "Kan YouTube-hoofdstukken niet bewerken",
-  "save": "Opslaan"
+  "cannotEditChapter": "Kan YouTube-hoofdstukken niet bewerken"
 }

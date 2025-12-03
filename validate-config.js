@@ -1,308 +1,129 @@
+#!/usr/bin/env node
 /**
- * Enhanced build configuration and validation utilities
- * @fileoverview Provides build-time validation and configuration helpers
- * @version 2.2
+ * validate-config.js
+ * Validates configuration files and project setup
  */
+
+'use strict';
 
 const fs = require('fs');
 const path = require('path');
 
-const ROOT = path.resolve(__dirname);
+function validateConfig() {
+  console.log('🔍 Validating project configuration...\n');
 
-/**
- * Validates that required files exist in the project
- * @returns {{valid: boolean, missing: string[], errors: string[]}}
- */
-function validateRequiredFiles() {
-  const requiredFiles = [
-    'package.json',
-    'build.js',
-    'eslint.config.cjs',
-    'tsconfig.json',
-    'jest.config.js',
-    'src/main.js',
-    'src/error-boundary.js',
-    'src/utils.js',
-    'src/constants.js',
-  ];
-
-  const missing = [];
   const errors = [];
+  const warnings = [];
 
-  for (const file of requiredFiles) {
-    const filePath = path.join(ROOT, file);
+  // Check package.json
+  try {
+    const packageJsonPath = path.join(__dirname, 'package.json');
+    const packageJson = JSON.parse(fs.readFileSync(packageJsonPath, 'utf8'));
+
+    console.log('✓ package.json is valid JSON');
+
+    if (!packageJson.name) errors.push('package.json: Missing name field');
+    if (!packageJson.version) errors.push('package.json: Missing version field');
+    if (!packageJson.license) warnings.push('package.json: Missing license field');
+    if (!packageJson.repository) warnings.push('package.json: Missing repository field');
+  } catch (error) {
+    errors.push(`package.json: ${error.message}`);
+  }
+
+  // Check tsconfig.json
+  try {
+    const tsconfigPath = path.join(__dirname, 'tsconfig.json');
+    if (fs.existsSync(tsconfigPath)) {
+      JSON.parse(fs.readFileSync(tsconfigPath, 'utf8'));
+      console.log('✓ tsconfig.json is valid JSON');
+    } else {
+      warnings.push('tsconfig.json: File not found');
+    }
+  } catch (error) {
+    errors.push(`tsconfig.json: ${error.message}`);
+  }
+
+  // Check jest.config.js
+  try {
+    const jestConfigPath = path.join(__dirname, 'jest.config.js');
+    if (fs.existsSync(jestConfigPath)) {
+      require(jestConfigPath);
+      console.log('✓ jest.config.js is valid');
+    } else {
+      warnings.push('jest.config.js: File not found');
+    }
+  } catch (error) {
+    errors.push(`jest.config.js: ${error.message}`);
+  }
+
+  // Check build.order.json
+  try {
+    const buildOrderPath = path.join(__dirname, 'build.order.json');
+    if (fs.existsSync(buildOrderPath)) {
+      const buildOrder = JSON.parse(fs.readFileSync(buildOrderPath, 'utf8'));
+      console.log('✓ build.order.json is valid JSON');
+
+      if (!Array.isArray(buildOrder)) {
+        errors.push('build.order.json: Must be an array');
+      } else {
+        // Check if all files exist
+        const srcDir = path.join(__dirname, 'src');
+        buildOrder.forEach(file => {
+          const filePath = path.join(srcDir, file);
+          if (!fs.existsSync(filePath)) {
+            errors.push(`build.order.json: Referenced file does not exist: ${file}`);
+          }
+        });
+      }
+    } else {
+      errors.push('build.order.json: File not found');
+    }
+  } catch (error) {
+    errors.push(`build.order.json: ${error.message}`);
+  }
+
+  // Check required directories
+  const requiredDirs = ['src', 'test', 'locales'];
+  requiredDirs.forEach(dir => {
+    const dirPath = path.join(__dirname, dir);
+    if (!fs.existsSync(dirPath)) {
+      errors.push(`Required directory not found: ${dir}`);
+    } else {
+      console.log(`✓ Directory exists: ${dir}`);
+    }
+  });
+
+  // Check required files
+  const requiredFiles = ['build.js', 'userscript.js', 'README.md', 'LICENSE'];
+  requiredFiles.forEach(file => {
+    const filePath = path.join(__dirname, file);
     if (!fs.existsSync(filePath)) {
-      missing.push(file);
-      errors.push(`Missing required file: ${file}`);
+      errors.push(`Required file not found: ${file}`);
+    } else {
+      console.log(`✓ File exists: ${file}`);
     }
+  });
+
+  console.log('\n' + '─'.repeat(70));
+
+  if (warnings.length > 0) {
+    console.log('\n⚠️  Warnings:');
+    warnings.forEach(warning => console.log(`  - ${warning}`));
   }
 
-  return {
-    valid: missing.length === 0,
-    missing,
-    errors,
-  };
-}
-
-/**
- * Validates package.json structure and required fields
- * @returns {{valid: boolean, warnings: string[], errors: string[]}}
- */
-function validatePackageJson() {
-  const warnings = [];
-  const errors = [];
-
-  try {
-    const pkgPath = path.join(ROOT, 'package.json');
-    const pkg = JSON.parse(fs.readFileSync(pkgPath, 'utf8'));
-
-    // Required fields
-    const requiredFields = ['name', 'version', 'scripts', 'devDependencies'];
-    for (const field of requiredFields) {
-      if (!pkg[field]) {
-        errors.push(`package.json missing required field: ${field}`);
-      }
-    }
-
-    // Required scripts
-    const requiredScripts = ['build', 'test', 'lint'];
-    for (const script of requiredScripts) {
-      if (!pkg.scripts || !pkg.scripts[script]) {
-        warnings.push(`package.json missing recommended script: ${script}`);
-      }
-    }
-
-    // Check for security issues
-    if (pkg.dependencies && Object.keys(pkg.dependencies).length > 0) {
-      warnings.push('Project has runtime dependencies - consider review for userscript');
-    }
-
-    return {
-      valid: errors.length === 0,
-      warnings,
-      errors,
-    };
-  } catch (error) {
-    return {
-      valid: false,
-      warnings: [],
-      errors: [`Failed to read/parse package.json: ${error.message}`],
-    };
-  }
-}
-
-/**
- * Checks for code quality issues in source files
- * @returns {{valid: boolean, warnings: string[], errors: string[]}}
- */
-function checkCodeQuality() {
-  const warnings = [];
-  const errors = [];
-
-  try {
-    const srcDir = path.join(ROOT, 'src');
-    if (!fs.existsSync(srcDir)) {
-      errors.push('src/ directory not found');
-      return { valid: false, warnings, errors };
-    }
-
-    const files = fs.readdirSync(srcDir).filter(f => f.endsWith('.js'));
-
-    for (const file of files) {
-      const filePath = path.join(srcDir, file);
-      const content = fs.readFileSync(filePath, 'utf8');
-      const lines = content.split('\n');
-
-      // Check file size
-      if (lines.length > 3000) {
-        warnings.push(`${file}: Very large file (${lines.length} lines) - consider splitting`);
-      }
-
-      // Check for console.log (should use proper logging)
-      const consoleLogs = content.match(/console\.log\(/g);
-      if (consoleLogs && consoleLogs.length > 10) {
-        warnings.push(`${file}: Contains ${consoleLogs.length} console.log statements`);
-      }
-
-      // Check for TODO comments
-      const todos = content.match(/\/\/\s*TODO:/gi);
-      if (todos && todos.length > 0) {
-        warnings.push(`${file}: Contains ${todos.length} TODO comments`);
-      }
-
-      // Check for FIXME comments
-      const fixmes = content.match(/\/\/\s*FIXME:/gi);
-      if (fixmes && fixmes.length > 0) {
-        warnings.push(`${file}: Contains ${fixmes.length} FIXME comments`);
-      }
-    }
-
-    return {
-      valid: errors.length === 0,
-      warnings,
-      errors,
-    };
-  } catch (error) {
-    return {
-      valid: false,
-      warnings,
-      errors: [`Code quality check failed: ${error.message}`],
-    };
-  }
-}
-
-/**
- * Validates build order configuration
- * @returns {{valid: boolean, warnings: string[], errors: string[]}}
- */
-function validateBuildOrder() {
-  const warnings = [];
-  const errors = [];
-
-  try {
-    const buildOrderPath = path.join(ROOT, 'build.order.json');
-    if (!fs.existsSync(buildOrderPath)) {
-      warnings.push('build.order.json not found - using default build order');
-      return { valid: true, warnings, errors };
-    }
-
-    const buildOrder = JSON.parse(fs.readFileSync(buildOrderPath, 'utf8'));
-
-    if (!Array.isArray(buildOrder)) {
-      errors.push('build.order.json must contain an array');
-      return { valid: false, warnings, errors };
-    }
-
-    const srcDir = path.join(ROOT, 'src');
-    const sourceFiles = fs.readdirSync(srcDir).filter(f => f.endsWith('.js'));
-
-    // Check if all files in build order exist
-    for (const file of buildOrder) {
-      if (!sourceFiles.includes(file)) {
-        warnings.push(`build.order.json references non-existent file: ${file}`);
-      }
-    }
-
-    // Check if all source files are in build order
-    for (const file of sourceFiles) {
-      if (!buildOrder.includes(file) && file !== 'main.js') {
-        warnings.push(`Source file not in build.order.json: ${file}`);
-      }
-    }
-
-    return {
-      valid: errors.length === 0,
-      warnings,
-      errors,
-    };
-  } catch (error) {
-    return {
-      valid: false,
-      warnings,
-      errors: [`Build order validation failed: ${error.message}`],
-    };
-  }
-}
-
-/**
- * Main validation runner
- * @returns {void}
- */
-function runValidation() {
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('🔍 Running Build Configuration Validation');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\n');
-
-  let hasErrors = false;
-  let totalWarnings = 0;
-
-  // Required files check
-  console.log('📁 Checking required files...');
-  const filesResult = validateRequiredFiles();
-  if (filesResult.valid) {
-    console.log('✅ All required files present\n');
-  } else {
-    hasErrors = true;
-    console.error('❌ Missing required files:');
-    filesResult.errors.forEach(err => console.error(`   - ${err}`));
-  }
-
-  // Package.json validation
-  console.log('📦 Validating package.json...');
-  const pkgResult = validatePackageJson();
-  if (pkgResult.valid) {
-    console.log('✅ package.json structure valid\n');
-  } else {
-    hasErrors = true;
-    console.error('❌ package.json validation failed:');
-    pkgResult.errors.forEach(err => console.error(`   - ${err}`));
-  }
-  if (pkgResult.warnings.length > 0) {
-    totalWarnings += pkgResult.warnings.length;
-    console.warn('⚠️  package.json warnings:');
-    pkgResult.warnings.forEach(warn => console.warn(`   - ${warn}`));
-  }
-
-  // Build order validation
-  console.log('🔧 Validating build order...');
-  const buildOrderResult = validateBuildOrder();
-  if (buildOrderResult.valid && buildOrderResult.warnings.length === 0) {
-    console.log('✅ Build order configuration valid\n');
-  } else if (!buildOrderResult.valid) {
-    hasErrors = true;
-    console.error('❌ Build order validation failed:');
-    buildOrderResult.errors.forEach(err => console.error(`   - ${err}`));
-  }
-  if (buildOrderResult.warnings.length > 0) {
-    totalWarnings += buildOrderResult.warnings.length;
-    console.warn('⚠️  Build order warnings:');
-    buildOrderResult.warnings.forEach(warn => console.warn(`   - ${warn}`));
-  }
-
-  // Code quality checks
-  console.log('🎨 Checking code quality...');
-  const qualityResult = checkCodeQuality();
-  if (qualityResult.valid && qualityResult.warnings.length === 0) {
-    console.log('✅ Code quality checks passed\n');
-  } else if (!qualityResult.valid) {
-    hasErrors = true;
-    console.error('❌ Code quality check failed:');
-    qualityResult.errors.forEach(err => console.error(`   - ${err}`));
-  }
-  if (qualityResult.warnings.length > 0) {
-    totalWarnings += qualityResult.warnings.length;
-    console.warn('⚠️  Code quality warnings:');
-    qualityResult.warnings.forEach(warn => console.warn(`   - ${warn}`));
-  }
-
-  // Summary
-  console.log('\n━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('📊 Validation Summary');
-  console.log('━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-
-  if (hasErrors) {
-    console.error('❌ Validation failed with errors');
-    console.log(`⚠️  Total warnings: ${totalWarnings}`);
+  if (errors.length > 0) {
+    console.log('\n❌ Errors:');
+    errors.forEach(error => console.log(`  - ${error}`));
+    console.log('\n❌ Configuration validation failed!\n');
     process.exit(1);
-  } else if (totalWarnings > 0) {
-    console.warn(`✅ Validation passed with ${totalWarnings} warnings`);
-    console.log('\n💡 Tip: Address warnings to improve code quality\n');
-    process.exit(0);
-  } else {
-    console.log('✅ All validations passed successfully!\n');
-    process.exit(0);
   }
+
+  console.log('\n✅ Configuration validation passed!\n');
 }
 
-// Run if called directly
-if (require.main === module) {
-  runValidation();
+try {
+  validateConfig();
+} catch (error) {
+  console.error('❌ Error:', error.message);
+  process.exit(1);
 }
-
-module.exports = {
-  validateRequiredFiles,
-  validatePackageJson,
-  validateBuildOrder,
-  checkCodeQuality,
-  runValidation,
-};

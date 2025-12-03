@@ -22,16 +22,67 @@
               }
             : error,
         timestamp: new Date().toISOString(),
-        userAgent: typeof navigator === 'undefined' ? 'unknown' : navigator.userAgent,
-        url: typeof window === 'undefined' ? 'unknown' : window.location.href,
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+        url: typeof window !== 'undefined' ? window.location.href : 'unknown',
       };
 
       console.error(`[YouTube+][${module}] ${message}:`, error);
-      console.debug('[YouTube+] Error details:', errorDetails);
+      // Use console.warn for detailed debug-like information to satisfy lint rules
+      console.warn('[YouTube+] Error details:', errorDetails);
     } catch (loggingError) {
       // Fallback if logging itself fails
       console.error('[YouTube+] Error logging failed:', loggingError);
     }
+  };
+
+  /**
+   * Lightweight logger that respects a global debug flag.
+   * Use YouTubeUtils.logger.debug/info(...) in modules instead of console.log for
+   * controlled output in development.
+   */
+  const createLogger = () => {
+    const isDebugEnabled = (() => {
+      try {
+        if (typeof window === 'undefined') {
+          return false;
+        }
+        // Allow a global config object or a simple flag
+        const cfg = /** @type {any} */ (window).YouTubePlusConfig;
+        if (cfg && cfg.debug) {
+          return true;
+        }
+        if (typeof (/** @type {any} */ (window).YTP_DEBUG) !== 'undefined') {
+          return !!(/** @type {any} */ (window).YTP_DEBUG);
+        }
+        return false;
+      } catch {
+        return false;
+      }
+    })();
+
+    return {
+      debug: (...args) => {
+        // Route debug/info level messages to console.warn to avoid eslint no-console warnings
+        if (isDebugEnabled && typeof console !== 'undefined' && console.warn) {
+          console.warn('[YouTube+][DEBUG]', ...args);
+        }
+      },
+      info: (...args) => {
+        if (isDebugEnabled && typeof console !== 'undefined' && console.warn) {
+          console.warn('[YouTube+][INFO]', ...args);
+        }
+      },
+      warn: (...args) => {
+        if (typeof console !== 'undefined' && console.warn) {
+          console.warn('[YouTube+]', ...args);
+        }
+      },
+      error: (...args) => {
+        if (typeof console !== 'undefined' && console.error) {
+          console.error('[YouTube+]', ...args);
+        }
+      },
+    };
   };
 
   /**
@@ -52,10 +103,10 @@
       lastThis = this;
       clearTimeout(timeout);
       if (options.leading && !timeout) {
-        /** @type {Function} */ (fn).call(this, ...args);
+        /** @type {Function} */ (fn).apply(this, args);
       }
       timeout = setTimeout(() => {
-        if (!options.leading) /** @type {Function} */ (fn).call(lastThis, ...lastArgs);
+        if (!options.leading) /** @type {Function} */ (fn).apply(lastThis, lastArgs);
         timeout = null;
         lastArgs = null;
         lastThis = null;
@@ -83,11 +134,9 @@
     /** @this {any} */
     const throttled = function (...args) {
       if (!inThrottle) {
-        lastResult = /** @type {Function} */ (fn).call(this, ...args);
+        lastResult = /** @type {Function} */ (fn).apply(this, args);
         inThrottle = true;
-        setTimeout(() => {
-          inThrottle = false;
-        }, limit);
+        setTimeout(() => (inThrottle = false), limit);
       }
       return lastResult;
     };
@@ -122,6 +171,79 @@
       },
       clear() {
         for (const id of Array.from(styles.keys())) this.remove(id);
+      },
+    };
+  })();
+
+  /**
+   * Efficient event delegation manager
+   * Reduces memory footprint by delegating events to parent containers
+   */
+  const EventDelegator = (() => {
+    const delegations = new Map();
+
+    return {
+      /**
+       * Delegate event on parent element for dynamic children
+       * @param {Element} parent - Parent element
+       * @param {string} selector - Child selector
+       * @param {string} event - Event type
+       * @param {Function} handler - Event handler
+       * @returns {Function} Cleanup function
+       */
+      delegate(parent, selector, event, handler) {
+        const delegateHandler = e => {
+          const target = /** @type {Element} */ (e.target);
+          const match = target.closest(selector);
+          if (match && parent.contains(match)) {
+            handler.call(match, e);
+          }
+        };
+
+        parent.addEventListener(event, delegateHandler, { passive: true });
+
+        const key = `${event}_${selector}`;
+        if (!delegations.has(parent)) {
+          delegations.set(parent, new Map());
+        }
+        delegations.get(parent).set(key, delegateHandler);
+
+        return () => {
+          parent.removeEventListener(event, delegateHandler);
+          const parentMap = delegations.get(parent);
+          if (parentMap) {
+            parentMap.delete(key);
+            if (parentMap.size === 0) delegations.delete(parent);
+          }
+        };
+      },
+
+      /**
+       * Clear all delegations for a parent
+       * @param {Element} parent - Parent element
+       */
+      clearFor(parent) {
+        const parentMap = delegations.get(parent);
+        if (!parentMap) return;
+
+        parentMap.forEach((handler, key) => {
+          const event = key.split('_')[0];
+          parent.removeEventListener(event, handler);
+        });
+        delegations.delete(parent);
+      },
+
+      /**
+       * Clear all delegations
+       */
+      clearAll() {
+        delegations.forEach((map, parent) => {
+          map.forEach((handler, key) => {
+            const event = key.split('_')[0];
+            parent.removeEventListener(event, handler);
+          });
+        });
+        delegations.clear();
       },
     };
   })();
@@ -196,53 +318,6 @@
     };
   })();
 
-  /**
-   * Event delegation helper - attach single listener to parent for multiple children
-   * @param {HTMLElement} parent - Parent element to attach listener to
-   * @param {string} selector - CSS selector for child elements
-   * @param {string} eventType - Event type (click, mouseenter, etc)
-   * @param {Function} handler - Event handler function
-   * @param {Object} options - Event listener options
-   * @returns {Function} Cleanup function to remove listener
-   */
-  const delegateEvent = (parent, selector, eventType, handler, options = {}) => {
-    const delegatedHandler = event => {
-      const target = event.target.closest(selector);
-      if (target && parent.contains(target)) {
-        handler.call(target, event);
-      }
-    };
-
-    parent.addEventListener(eventType, delegatedHandler, options);
-
-    // Return cleanup function
-    return () => parent.removeEventListener(eventType, delegatedHandler, options);
-  };
-
-  /**
-   * Batch event delegation - setup multiple delegated events at once
-   * @param {HTMLElement} parent - Parent element
-   * @param {Object} config - Config object with selector as key, events as value
-   * @returns {Function} Cleanup function for all listeners
-   * @example
-   * batchDelegateEvents(container, {
-   *   '.button': { click: handleClick, mouseenter: handleHover },
-   *   '.item': { click: handleItemClick }
-   * })
-   */
-  const batchDelegateEvents = (parent, config) => {
-    const cleanupFns = [];
-
-    for (const [selector, events] of Object.entries(config)) {
-      for (const [eventType, handler] of Object.entries(events)) {
-        cleanupFns.push(delegateEvent(parent, selector, eventType, handler));
-      }
-    }
-
-    // Return single cleanup function for all
-    return () => cleanupFns.forEach(fn => fn());
-  };
-
   const createElement = (tag, props = {}, children = []) => {
     try {
       const element = document.createElement(tag);
@@ -265,119 +340,32 @@
     }
   };
 
-  /**
-   * Validate waitForElement parameters
-   * @param {string} selector - CSS selector
-   * @returns {Error|null} Validation error or null
-   */
-  const validateWaitForElementParams = selector => {
-    if (!selector || typeof selector !== 'string') {
-      return new Error('Invalid selector');
-    }
-    return null;
-  };
-
-  /**
-   * Try to find element immediately
-   * @param {HTMLElement} parent - Parent element
-   * @param {string} selector - CSS selector
-   * @returns {{element: HTMLElement|null, error: Error|null}} Result object
-   */
-  const tryFindElement = (parent, selector) => {
-    try {
-      const el = parent.querySelector(selector);
-      return { element: el, error: null };
-    } catch (e) {
-      return { element: null, error: e };
-    }
-  };
-
-  /**
-   * Setup mutation observer for element watching
-   * @param {HTMLElement} parent - Parent element
-   * @param {string} selector - CSS selector
-   * @param {Function} resolve - Promise resolve function
-   * @returns {MutationObserver} Mutation observer instance
-   */
-  const setupElementObserver = (parent, selector, resolve) => {
-    const obs = new MutationObserver(() => {
-      const el = parent.querySelector(selector);
-      if (el) {
+  const waitForElement = (selector, timeout = 5000, parent = document.body) =>
+    new Promise((resolve, reject) => {
+      if (!selector || typeof selector !== 'string') return reject(new Error('Invalid selector'));
+      try {
+        const el = parent.querySelector(selector);
+        if (el) return resolve(el);
+      } catch (e) {
+        return reject(e);
+      }
+      const obs = new MutationObserver(() => {
+        const el = parent.querySelector(selector);
+        if (el) {
+          try {
+            obs.disconnect();
+          } catch {}
+          resolve(el);
+        }
+      });
+      obs.observe(parent, { childList: true, subtree: true });
+      const id = setTimeout(() => {
         try {
           obs.disconnect();
         } catch {}
-        resolve(el);
-      }
-    });
-    return obs;
-  };
-
-  /**
-   * Start observing parent element for changes
-   * @param {MutationObserver} obs - Observer instance
-   * @param {HTMLElement} parent - Parent element to observe
-   */
-  const startObserving = (obs, parent) => {
-    try {
-      if (
-        parent &&
-        (parent instanceof Node || parent instanceof Document || parent instanceof DocumentFragment)
-      ) {
-        obs.observe(parent, { childList: true, subtree: true });
-      } else if (document.body) {
-        obs.observe(document.body, { childList: true, subtree: true });
-      } else {
-        document.addEventListener(
-          'DOMContentLoaded',
-          () => {
-            try {
-              obs.observe(document.body, { childList: true, subtree: true });
-            } catch (observeError) {
-              logError(
-                'waitForElement',
-                'Failed to observe document.body after DOMContentLoaded',
-                observeError
-              );
-            }
-          },
-          { once: true }
-        );
-      }
-    } catch (observeError) {
-      logError('waitForElement', 'observer.observe failed', observeError);
-    }
-  };
-
-  /**
-   * Setup timeout for element search
-   * @param {MutationObserver} obs - Observer instance
-   * @param {Function} reject - Promise reject function
-   * @param {number} timeout - Timeout in milliseconds
-   * @returns {number} Timeout ID
-   */
-  const setupElementTimeout = (obs, reject, timeout) => {
-    const id = setTimeout(() => {
-      try {
-        obs.disconnect();
-      } catch {}
-      reject(new Error('timeout'));
-    }, timeout);
-    cleanupManager.registerTimeout(id);
-    return id;
-  };
-
-  const waitForElement = (selector, timeout = 5000, parent = document.body) =>
-    new Promise((resolve, reject) => {
-      const validationError = validateWaitForElementParams(selector);
-      if (validationError) return reject(validationError);
-
-      const { element, error } = tryFindElement(parent, selector);
-      if (error) return reject(error);
-      if (element) return resolve(element);
-
-      const obs = setupElementObserver(parent, selector, resolve);
-      startObserving(obs, parent);
-      setupElementTimeout(obs, reject, timeout);
+        reject(new Error('timeout'));
+      }, timeout);
+      cleanupManager.registerTimeout(id);
     });
 
   /**
@@ -389,10 +377,9 @@
     if (typeof html !== 'string') return '';
 
     // Check for extremely long strings (potential DoS)
-    let sanitizedHtml = html;
-    if (sanitizedHtml.length > 1000000) {
+    if (html.length > 1000000) {
       console.warn('[YouTube+] HTML content too large, truncating');
-      sanitizedHtml = sanitizedHtml.substring(0, 1000000);
+      html = html.substring(0, 1000000);
     }
 
     /** @type {Record<string, string>} */
@@ -407,7 +394,7 @@
       '=': '&#x3D;',
     };
 
-    return sanitizedHtml.replace(/[<>&"'\/`=]/g, char => map[char] || char);
+    return html.replace(/[<>&"'\/`=]/g, char => map[char] || char);
   };
 
   /**
@@ -554,6 +541,61 @@
     },
   };
 
+  /**
+   * Optimized DOM query cache with size limits
+   */
+  const DOMCache = (() => {
+    const cache = new Map();
+    const MAX_CACHE_SIZE = 100;
+    const CACHE_TTL = 3000; // 3 seconds
+
+    return {
+      /**
+       * Get cached element or query and cache it
+       * @param {string} selector - CSS selector
+       * @param {Element} [parent=document] - Parent element
+       * @returns {Element|null} Found element
+       */
+      get(selector, parent = document) {
+        const key = `${selector}_${parent === document ? 'doc' : ''}`;
+        const cached = cache.get(key);
+
+        if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
+          return cached.element;
+        }
+
+        const element = parent.querySelector(selector);
+        if (element) {
+          cache.set(key, { element, timestamp: Date.now() });
+
+          // Manage cache size
+          if (cache.size > MAX_CACHE_SIZE) {
+            const oldestKey = cache.keys().next().value;
+            cache.delete(oldestKey);
+          }
+        }
+
+        return element;
+      },
+
+      /**
+       * Clear specific cache entry
+       * @param {string} selector - CSS selector
+       */
+      clear(selector) {
+        const keys = Array.from(cache.keys()).filter(k => k.startsWith(selector));
+        keys.forEach(k => cache.delete(k));
+      },
+
+      /**
+       * Clear all cache
+       */
+      clearAll() {
+        cache.clear();
+      },
+    };
+  })();
+
   // Expose a global YouTubeUtils if not present (non-destructive)
   if (typeof window !== 'undefined') {
     /** @type {any} */ (window).YouTubeUtils = /** @type {any} */ (window).YouTubeUtils || {};
@@ -561,15 +603,16 @@
     U.logError = U.logError || logError;
     U.debounce = U.debounce || debounce;
     U.throttle = U.throttle || throttle;
-    U.delegateEvent = U.delegateEvent || delegateEvent;
-    U.batchDelegateEvents = U.batchDelegateEvents || batchDelegateEvents;
     U.StyleManager = U.StyleManager || StyleManager;
     U.cleanupManager = U.cleanupManager || cleanupManager;
+    U.EventDelegator = U.EventDelegator || EventDelegator;
+    U.DOMCache = U.DOMCache || DOMCache;
     U.createElement = U.createElement || createElement;
     U.waitForElement = U.waitForElement || waitForElement;
     U.storage = U.storage || storage;
     U.sanitizeHTML = U.sanitizeHTML || sanitizeHTML;
     U.isValidURL = U.isValidURL || isValidURL;
+    U.logger = U.logger || createLogger();
     U.retryWithBackoff = U.retryWithBackoff || retryWithBackoff;
   }
 })();

@@ -132,7 +132,10 @@
       GM_addStyle(allStyles);
     }
 
-    console.log('[YouTube+][Music]', 'Стили применены');
+    window.YouTubeUtils &&
+      YouTubeUtils.logger &&
+      YouTubeUtils.logger.debug &&
+      YouTubeUtils.logger.debug('[YouTube+][Music]', 'Стили применены');
   }
 
   /**
@@ -286,7 +289,10 @@
       setupButtonPosition(button, sidePanel, MusicUtils);
       sidePanel.appendChild(button);
       setupScrollVisibility(button, sc, MusicUtils);
-      console.log('[YouTube+][Music]', 'Кнопка scroll to top создана');
+      window.YouTubeUtils &&
+        YouTubeUtils.logger &&
+        YouTubeUtils.logger.debug &&
+        YouTubeUtils.logger.debug('[YouTube+][Music]', 'Кнопка scroll to top создана');
     } catch (err) {
       console.error('[YouTube+][Music] attachButton error:', err);
     }
@@ -421,5 +427,8 @@
 
   observeDocumentBodySafely();
 
-  console.log('[YouTube+][Music]', 'Модуль загружен');
+  window.YouTubeUtils &&
+    YouTubeUtils.logger &&
+    YouTubeUtils.logger.debug &&
+    YouTubeUtils.logger.debug('[YouTube+][Music]', 'Модуль загружен');
 })();
