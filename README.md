@@ -16,7 +16,7 @@
 
 <div style="text-align:center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-265-blue" style="transform:scale(1.15);transform-origin:center;" />
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-277-blue" style="transform:scale(1.15);transform-origin:center;" />
   </a>
   <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
     <img alt="version" src="https://img.shields.io/badge/version-2.2.1-blue" style="transform:scale(1.15);transform-origin:center;" />
