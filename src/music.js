@@ -2,7 +2,14 @@
  * YouTube Music Enhancement Module
  * Provides UI improvements and features for YouTube Music
  * @module music
- * @version 2.2
+ * @version 2.3
+ *
+ * Features:
+ * - Scroll-to-top button with smart container detection
+ * - Enhanced navigation styles (centered search, immersive mode)
+ * - Sidebar hover effects and player enhancements
+ * - Health monitoring and automatic recovery
+ * - SPA navigation support with debounced updates
  */
 
 /* global GM_addStyle */
@@ -51,6 +58,11 @@
         #side-panel:hover tp-yt-paper-tabs {height: 4em !important;}        
         #side-panel:has(ytmusic-tab-renderer[page-type="MUSIC_PAGE_TYPE_TRACK_LYRICS"]):not(:has(ytmusic-message-renderer:not([style="display: none;"]))) {right: 0 !important; opacity: 1 !important;}        
         #side-panel {min-width: auto !important;}
+      /* Allow JS to control visibility; ensure pointer-events and positioning only. */
+        #side-panel .ytmusic-top-button { opacity: 1 !important; visibility: visible !important; pointer-events: auto !important; }
+      /* When button is placed inside the panel, prefer absolute positioning inside it
+         so it won't be forced to fixed by the global rule. Use high specificity + !important */
+        #side-panel .ytmusic-top-button {position: absolute !important; bottom: 20px !important; right: 20px !important; z-index: 1200 !important;}
     `;
 
   // Центрированный плеер
@@ -79,22 +91,44 @@
         #av-id:has(ytmusic-av-toggle) {position: absolute !important; left: 50% !important; transform: translateX(-50%) !important; top: -4em !important; opacity: 0 !important; transition: all 0.3s ease-in-out !important;}        
         #av-id:has(ytmusic-av-toggle):hover {opacity: 1 !important;}        
         #player[player-ui-state="MINIPLAYER"] {display: none !important;}
+      /* Chrome-specific robustness: ensure the AV toggle container is above overlays
+         and can receive hover even if :has() behaves differently. Also provide a
+         non-:has fallback so the element is hoverable regardless of child matching. */
+      /* Use absolute positioning (keeps internal menu alignment) but promote
+         stacking and rendering to ensure it sits above overlays and receives clicks. */
+        #av-id {position: absolute !important; left: 50% !important; transform: translateX(-50%) translateZ(0) !important; top: -4em !important; z-index: 10000 !important; pointer-events: auto !important; display: block !important; visibility: visible !important; width: auto !important; height: auto !important; will-change: transform, opacity !important;}
+        #av-id ytmusic-av-toggle {pointer-events: auto !important;}
+        #av-id:hover {opacity: 1 !important;}
+      /* Prevent overlapping overlays from stealing clicks when hovering the toggle.
+         This is a conservative rule; if a specific overlay still steals clicks we
+         can target it explicitly later. */
+        #av-id:hover, #av-id:active { filter: none !important; }
     `;
 
   // Стили для кнопки "Scroll to top"
   const scrollToTopStyles = `
         /* Base appearance for YouTube Music scroll-to-top button. */
-        .ytmusic-top-button {position: absolute; bottom: 16px; right: 16px; width: 40px; height: 40px; background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 50%; cursor: pointer; display: flex; align-items: center; justify-content: center; z-index: 1000; opacity: 0; visibility: hidden; transition: all .3s; backdrop-filter: blur(12px) saturate(180%); -webkit-backdrop-filter: blur(12px) saturate(180%); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 8px 32px 0 rgba(31,38,135,.18);}
+        .ytmusic-top-button {position: fixed !important; bottom: 100px !important; right: 20px !important; width: 48px; height: 48px; background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 50%; cursor: pointer; display: flex !important; align-items: center; justify-content: center; z-index: 10000 !important; opacity: 0; visibility: hidden; transition: all .3s cubic-bezier(0.4, 0, 0.2, 1); backdrop-filter: blur(12px) saturate(180%); -webkit-backdrop-filter: blur(12px) saturate(180%); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 8px 32px 0 rgba(31,38,135,.18); pointer-events: auto !important;}
+        /* Dark mode support */
+        html[dark] .ytmusic-top-button {background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.25);}
+        /* Light mode support */
+        html:not([dark]) .ytmusic-top-button {background: rgba(0,0,0,.08); color: #030303; border-color: rgba(0,0,0,.1);}
         /* Hover state */
-        .ytmusic-top-button:hover {background: rgba(255,255,255,.18); transform: translateY(-2px) scale(1.07); box-shadow: 0 8px 32px rgba(0,0,0,.25);} 
+        .ytmusic-top-button:hover {background: rgba(255,255,255,.25); transform: translateY(-2px) scale(1.07); box-shadow: 0 8px 32px rgba(0,0,0,.35);}
+        html[dark] .ytmusic-top-button:hover {background: rgba(255,255,255,.28);}
+        html:not([dark]) .ytmusic-top-button:hover {background: rgba(0,0,0,.15);}
         /* Visible state */
-        .ytmusic-top-button.visible {opacity: 1; visibility: visible;} 
+        .ytmusic-top-button.visible {opacity: 1 !important; visibility: visible !important;}
+        /* Force show class for debugging */
+        .ytmusic-top-button.force-show {opacity: 1 !important; visibility: visible !important; display: flex !important;}
         /* Smooth icon transitions */
-        .ytmusic-top-button svg {transition: transform .2s;} 
-        .ytmusic-top-button:hover svg {transform: translateY(-1px) scale(1.1);} 
-        /* Prevent browser/site focus ring (blue glow) and provide consistent focus style */
-        .ytmusic-top-button:focus {outline: none; box-shadow: 0 8px 32px rgba(0,0,0,.25);}
-        .ytmusic-top-button:active {transform: translateY(0) scale(0.98);} 
+        .ytmusic-top-button svg {transition: transform .2s ease;}
+        .ytmusic-top-button:hover svg {transform: translateY(-1px) scale(1.1);}
+        /* Focus and active states */
+        .ytmusic-top-button:focus {outline: 2px solid rgba(255,255,255,0.5); outline-offset: 2px; box-shadow: 0 8px 32px rgba(0,0,0,.25);}
+        .ytmusic-top-button:active {transform: translateY(0) scale(0.98);}
+        /* Responsive positioning */
+        @media (max-height: 600px) {.ytmusic-top-button {bottom: 80px !important;}}
         /* Allow reuse of the global .top-button rules when available */
         .ytmusic-top-button.top-button { /* additional shared rules can apply via .top-button */ }
     `;
@@ -132,10 +166,7 @@
       GM_addStyle(allStyles);
     }
 
-    window.YouTubeUtils &&
-      YouTubeUtils.logger &&
-      YouTubeUtils.logger.debug &&
-      YouTubeUtils.logger.debug('[YouTube+][Music]', 'Стили применены');
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Стили применены');
   }
 
   /**
@@ -145,6 +176,26 @@
    */
   const _globalI18n_music =
     typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+
+  /**
+   * Get debounce utility from YouTubeUtils or provide fallback
+   * @function getDebounce
+   * @returns {Function} Debounce function
+   * @private
+   */
+  const getDebounce = () => {
+    if (window.YouTubeUtils?.debounce) {
+      return window.YouTubeUtils.debounce;
+    }
+    // Fallback debounce implementation
+    return (fn, delay) => {
+      let timeoutId;
+      return (...args) => {
+        clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn(...args), delay);
+      };
+    };
+  };
 
   /**
    * Translation helper function with fallback support
@@ -190,8 +241,24 @@
     button.setAttribute('aria-label', t('scrollToTop'));
     button.innerHTML =
       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+
+    // Add data attribute for debugging
+    button.setAttribute('data-ytmusic-scroll-button', 'true');
+
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Button element created', {
+      id: button.id,
+      className: button.className,
+    });
+
     return button;
   }
+
+  /**
+   * Cache for scroll containers to avoid repeated searches
+   * @type {WeakMap<HTMLElement, HTMLElement|null>}
+   * @private
+   */
+  const scrollContainerCache = new WeakMap();
 
   /**
    * Find scrollable container in side panel
@@ -201,16 +268,159 @@
    * @private
    */
   function findScrollContainer(sidePanel, MusicUtils) {
-    const findContainer =
-      MusicUtils.findScrollContainer ||
-      (root => {
-        const contents = root?.querySelector('#contents');
-        if (contents && contents.scrollHeight > contents.clientHeight) return contents;
-        if (root && root.scrollHeight > root.clientHeight + 10) return root;
-        return null;
-      });
+    // Check cache first
+    if (scrollContainerCache.has(sidePanel)) {
+      const cached = scrollContainerCache.get(sidePanel);
+      // Verify cached element is still in DOM and scrollable
+      if (
+        cached &&
+        document.body.contains(cached) &&
+        cached.scrollHeight > cached.clientHeight + 10
+      ) {
+        return cached;
+      }
+      // Cache invalidated
+      scrollContainerCache.delete(sidePanel);
+    }
 
-    return findContainer(sidePanel);
+    if (MusicUtils.findScrollContainer) {
+      const result = MusicUtils.findScrollContainer(sidePanel);
+      if (result) scrollContainerCache.set(sidePanel, result);
+      return result;
+    }
+
+    // Try multiple selectors for scroll container
+    // Prioritize queue/playlist containers from the screenshot
+    const selectors = [
+      // Tab-specific content containers (most specific)
+      'ytmusic-tab-renderer[tab-identifier="FEmusic_queue"] #contents',
+      'ytmusic-tab-renderer[tab-identifier="FEmusic_up_next"] #contents',
+      'ytmusic-tab-renderer[tab-identifier="FEmusic_lyrics"] #contents',
+      'ytmusic-tab-renderer[selected] #contents', // Currently selected tab
+      'ytmusic-tab-renderer #contents', // Any tab contents
+      // Queue and playlist containers
+      'ytmusic-queue-renderer #contents',
+      'ytmusic-playlist-shelf-renderer #contents',
+      // Generic selectors
+      '#side-panel #contents',
+      '#contents.ytmusic-tab-renderer',
+      '.ytmusic-section-list-renderer',
+      '[role="tabpanel"]',
+      '.ytmusic-player-queue',
+      // Broader fallbacks
+      'ytmusic-tab-renderer',
+      '.scroller',
+      '[scroll-container]',
+    ];
+
+    for (const selector of selectors) {
+      const container = sidePanel?.querySelector(selector);
+      if (container) {
+        const isScrollable = container.scrollHeight > container.clientHeight + 10;
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          `Checking ${selector}: scrollHeight=${container.scrollHeight}, clientHeight=${container.clientHeight}, isScrollable=${isScrollable}`
+        );
+        if (isScrollable) {
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            `✓ Found scroll container: ${selector}`
+          );
+          scrollContainerCache.set(sidePanel, container);
+          return container;
+        }
+      }
+    }
+
+    // Fallback: check if side-panel itself is scrollable
+    if (sidePanel && sidePanel.scrollHeight > sidePanel.clientHeight + 10) {
+      window.YouTubeUtils?.logger?.debug?.(
+        '[YouTube+][Music]',
+        '✓ Using side-panel as scroll container'
+      );
+      scrollContainerCache.set(sidePanel, sidePanel);
+      return sidePanel;
+    }
+
+    // Try finding ANY scrollable element within side-panel
+    if (sidePanel) {
+      const allElements = Array.from(sidePanel.querySelectorAll('*'));
+
+      // Prefer elements that explicitly allow scrolling via CSS overflow, and pick the
+      // element with the largest scroll delta as a best-effort heuristic.
+      let best = null;
+      let bestScore = 0;
+
+      for (const el of allElements) {
+        try {
+          const sh = el.scrollHeight || 0;
+          const ch = el.clientHeight || 0;
+          const delta = sh - ch;
+          if (delta <= 10) continue;
+
+          const style = window.getComputedStyle?.(el) || {};
+          const overflowY = (style.overflowY || '').toLowerCase();
+
+          // Base score by delta, boost if overflow-y allows scrolling
+          let score = delta;
+          if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
+            score += 100000;
+          }
+
+          // Prefer elements with role=tabpanel or obvious content containers
+          if (el.getAttribute && el.getAttribute('role') === 'tabpanel') {
+            score += 5000;
+          }
+
+          if (score > bestScore) {
+            bestScore = score;
+            best = el;
+          }
+        } catch {
+          // ignore read errors (detached or cross-origin)
+        }
+      }
+
+      if (best) {
+        const tag = best.tagName.toLowerCase();
+        const id = best.id ? `#${best.id}` : '';
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          `✓ Best scroll container chosen: ${tag}${id}`,
+          { scrollHeight: best.scrollHeight, clientHeight: best.clientHeight, score: bestScore }
+        );
+        scrollContainerCache.set(sidePanel, best);
+        return best;
+      }
+    }
+
+    // Don't cache null result - content may load asynchronously
+    window.YouTubeUtils?.logger?.debug?.(
+      '[YouTube+][Music]',
+      '✗ No scroll container found. Available elements:',
+      Array.from(sidePanel?.querySelectorAll('*') || [])
+        .map(el => {
+          let classes = '';
+          try {
+            if (typeof el.className === 'string') {
+              const s = el.className.trim();
+              classes = s ? '.' + s.split(/\s+/).join('.') : '';
+            } else if (el.classList && typeof el.classList === 'object') {
+              const list = Array.from(el.classList).filter(Boolean);
+              classes = list.length ? '.' + list.join('.') : '';
+            }
+          } catch {
+            classes = '';
+          }
+          const scrollInfo =
+            el.scrollHeight > el.clientHeight
+              ? ` [scrollable: ${el.scrollHeight}/${el.clientHeight}]`
+              : '';
+          return el.tagName + (el.id ? `#${el.id}` : '') + classes + scrollInfo;
+        })
+        .slice(0, 30)
+    );
+    return null;
   }
 
   /**
@@ -220,33 +430,150 @@
    * @param {Object} MusicUtils - Utility module
    * @private
    */
-  function setupScrollBehavior(button, sc, MusicUtils) {
+  function setupScrollBehavior(button, sc, MusicUtils, sidePanel) {
     if (MusicUtils.setupScrollToTop) {
       MusicUtils.setupScrollToTop(button, sc);
-    } else {
-      button.addEventListener('click', () => {
-        sc.scrollTo({ top: 0, behavior: 'smooth' });
-      });
+      return;
     }
+
+    const findNearestScrollable = startEl => {
+      let el = startEl;
+      while (el && el !== document.body) {
+        try {
+          if (el.scrollHeight > el.clientHeight + 10) return el;
+        } catch {
+          // ignore errors accessing scroll properties on cross-origin or detached nodes
+        }
+        el = el.parentElement;
+      }
+      return null;
+    };
+
+    const clickHandler = ev => {
+      // Prevent other handlers or navigation from interfering
+      try {
+        ev.preventDefault?.();
+      } catch {}
+      try {
+        ev.stopPropagation?.();
+      } catch {}
+
+      // Determine best candidate to scroll: provided sc, fallback to nearest scrollable in sidePanel, then walk from button
+      let target = sc;
+      if (!target || !(target.scrollHeight > target.clientHeight + 1)) {
+        target = sidePanel && findNearestScrollable(sidePanel);
+      }
+      if (!target) {
+        target = findNearestScrollable(button.parentElement);
+      }
+      // As a last resort, use document.scrollingElement or window
+      if (!target) {
+        target = document.scrollingElement || document.documentElement || document.body;
+      }
+
+      // Debug info: record chosen target and sizes
+      try {
+        const info = {
+          chosen: target && (target.id || target.tagName || '(window)'),
+          scrollTop: target && 'scrollTop' in target ? target.scrollTop : null,
+          scrollHeight: target && 'scrollHeight' in target ? target.scrollHeight : null,
+          clientHeight: target && 'clientHeight' in target ? target.clientHeight : null,
+        };
+        // Expose last click debug info for manual inspection
+        try {
+          window.YouTubeMusic = window.YouTubeMusic || {};
+          window.YouTubeMusic._lastClickDebug = info;
+        } catch {}
+        // Log via available logger or console
+        window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'ScrollToTop click target', info);
+      } catch {}
+
+      // Try smooth scroll then fallback to instant. Attempt multiple targets (target, sc, document)
+      const tryScroll = el => {
+        if (!el) return false;
+        try {
+          if (typeof el.scrollTo === 'function') {
+            el.scrollTo({ top: 0, behavior: 'smooth' });
+            return true;
+          }
+          if ('scrollTop' in el) {
+            el.scrollTop = 0;
+            return true;
+          }
+        } catch {
+          // ignore and continue
+        }
+        return false;
+      };
+
+      let scrolled = false;
+      scrolled = tryScroll(target) || scrolled;
+      // If we have a provided sc and it differs from target, try it too
+      if (sc && sc !== target) scrolled = tryScroll(sc) || scrolled;
+      // Finally, try document/window
+      scrolled =
+        tryScroll(document.scrollingElement || document.documentElement || document.body) ||
+        scrolled;
+
+      if (!scrolled) {
+        // Last-resort direct window scroll
+        try {
+          window.scrollTo(0, 0);
+        } catch (err2) {
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            'Final scroll fallback failed',
+            err2
+          );
+        }
+      }
+    };
+
+    // Use non-passive so preventDefault works if needed
+    button.addEventListener('click', clickHandler, { passive: false });
   }
 
   /**
    * Setup button positioning styles
    * @param {HTMLElement} button - Button element
-   * @param {HTMLElement} sidePanel - Side panel element
+   * @param {HTMLElement} sidePanel - Side panel element (not used with fixed positioning)
    * @param {Object} MusicUtils - Utility module
    * @private
    */
-  function setupButtonPosition(button, sidePanel, MusicUtils) {
+  function setupButtonPosition(button, sidePanel, MusicUtils, options = {}) {
+    // options.insideSidePanel: boolean - if true, position the button inside the side panel
     if (MusicUtils.setupButtonStyles) {
-      MusicUtils.setupButtonStyles(button, sidePanel);
-    } else {
-      sidePanel.style.position = sidePanel.style.position || 'relative';
-      button.style.position = 'absolute';
-      button.style.bottom = '16px';
-      button.style.right = '16px';
-      button.style.zIndex = '1000';
+      MusicUtils.setupButtonStyles(button, sidePanel, options);
+      return;
     }
+
+    if (options.insideSidePanel && sidePanel) {
+      // When visually aligning with the side-panel but appending to `body`,
+      // use fixed positioning so the button won't be clipped by panel transforms.
+      button.style.setProperty('position', 'absolute', 'important');
+      button.style.setProperty('bottom', '20px', 'important');
+      button.style.setProperty('right', '20px', 'important');
+      // Keep z-index high enough to be above panel content but below full-screen overlays
+      button.style.setProperty('z-index', '1200', 'important');
+      button.style.setProperty('pointer-events', 'auto', 'important');
+      button.style.display = 'flex';
+    } else {
+      // Use fixed positioning so button stays visible regardless of side-panel state
+      button.style.position = 'fixed';
+      button.style.bottom = '100px'; // Above player bar (player bar is ~72px height)
+      button.style.right = '20px'; // Match CSS definition
+      button.style.zIndex = '10000'; // Higher than side-panel
+      button.style.pointerEvents = 'auto';
+      button.style.display = 'flex'; // Ensure flex display
+    }
+
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Button positioned:', {
+      position: button.style.position,
+      bottom: button.style.bottom,
+      right: button.style.right,
+      zIndex: button.style.zIndex,
+      insideSidePanel: !!options.insideSidePanel,
+    });
   }
 
   /**
@@ -257,46 +584,181 @@
    * @private
    */
   function setupScrollVisibility(button, sc, MusicUtils) {
+    // Try to use ScrollManager for better performance
+    if (window.YouTubePlusScrollManager && window.YouTubePlusScrollManager.addScrollListener) {
+      try {
+        const cleanup = window.YouTubePlusScrollManager.addScrollListener(
+          sc,
+          () => {
+            const shouldShow = sc.scrollTop > 100;
+            button.classList.toggle('visible', shouldShow);
+            window.YouTubeUtils?.logger?.debug?.(
+              '[YouTube+][Music]',
+              `Scroll position: ${sc.scrollTop}px, button visible: ${shouldShow}`
+            );
+          },
+          { debounce: 100, runInitial: true }
+        );
+
+        button._scrollCleanup = cleanup;
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          'Using ScrollManager for scroll handling'
+        );
+        return;
+      } catch {
+        console.error('[YouTube+][Music] ScrollManager failed, using fallback');
+      }
+    }
+
     if (MusicUtils.setupScrollVisibility) {
       MusicUtils.setupScrollVisibility(button, sc, 100);
-    } else {
-      const debounce = (fn, delay) => {
-        let timeoutId;
-        return (...args) => {
-          clearTimeout(timeoutId);
-          timeoutId = setTimeout(() => fn(...args), delay);
-        };
-      };
-      const scrollHandler = debounce(() => {
-        button.classList.toggle('visible', sc.scrollTop > 100);
-      }, 100);
-      sc.addEventListener('scroll', scrollHandler, { passive: true });
-      button.classList.toggle('visible', sc.scrollTop > 100);
+      return;
     }
+
+    // Fallback implementation
+    let isTabVisible = !document.hidden;
+    let rafId = null;
+
+    const updateVisibility = () => {
+      // Cancel any pending animation frame
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+      }
+
+      rafId = requestAnimationFrame(() => {
+        // Don't update if tab is hidden (performance optimization)
+        if (!isTabVisible) return;
+
+        const currentScroll = sc.scrollTop || 0;
+        const shouldShow = currentScroll > 100;
+        const wasVisible = button.classList.contains('visible');
+
+        button.classList.toggle('visible', shouldShow);
+
+        // Log only on state changes to reduce noise
+        if (shouldShow !== wasVisible) {
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            `Button visibility changed: ${shouldShow ? 'SHOWN' : 'HIDDEN'} (scroll: ${currentScroll}px)`
+          );
+        }
+      });
+    };
+
+    const debounce = getDebounce();
+    const scrollHandler = debounce(updateVisibility, 100);
+
+    // Listen for page visibility changes
+    const visibilityHandler = () => {
+      isTabVisible = !document.hidden;
+      if (isTabVisible) {
+        updateVisibility();
+      }
+    };
+
+    sc.addEventListener('scroll', scrollHandler, { passive: true });
+    document.addEventListener('visibilitychange', visibilityHandler);
+
+    // Initial check with slight delay to ensure layout is complete
+    setTimeout(updateVisibility, 100);
+    // Additional check after longer delay in case content loads asynchronously
+    setTimeout(updateVisibility, 500);
+
+    // Store cleanup function
+    button._scrollCleanup = () => {
+      if (rafId) cancelAnimationFrame(rafId);
+      sc.removeEventListener('scroll', scrollHandler);
+      document.removeEventListener('visibilitychange', visibilityHandler);
+    };
+
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Using fallback scroll handler');
   }
 
   /**
    * Attach button to container with all setup
    * @param {HTMLElement} button - Button element
-   * @param {HTMLElement} sidePanel - Side panel element
+   * @param {HTMLElement} sidePanel - Side panel element (for context, not attachment)
    * @param {HTMLElement} sc - Scroll container
    * @param {Object} MusicUtils - Utility module
    * @private
    */
   function attachButtonToContainer(button, sidePanel, sc, MusicUtils) {
     try {
-      setupScrollBehavior(button, sc, MusicUtils);
-      setupButtonPosition(button, sidePanel, MusicUtils);
-      sidePanel.appendChild(button);
+      setupScrollBehavior(button, sc, MusicUtils, sidePanel);
+
+      // Prefer to visually align the button with the side-panel, but always
+      // append to `document.body` to avoid clipping when the panel uses transforms.
+      const attachInsidePanel = !!sidePanel;
+      setupButtonPosition(button, sidePanel, MusicUtils, { insideSidePanel: attachInsidePanel });
+
+      // Always append to `body` so the button is never clipped by panel
+      // transforms/overflow. If `attachInsidePanel` is true we'll keep the
+      // button visually near the panel using a position updater below.
+      document.body.appendChild(button);
+
+      if (attachInsidePanel) {
+        try {
+          sidePanel.appendChild(button);
+        } catch (err) {
+          // Fallback to body if append fails for any reason
+          document.body.appendChild(button);
+          // Reference the error to avoid "defined but never used" lint errors
+          void err;
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            'Appending to sidePanel failed, appended to body',
+            err
+          );
+        }
+      } else {
+        document.body.appendChild(button);
+      }
+
       setupScrollVisibility(button, sc, MusicUtils);
-      window.YouTubeUtils &&
-        YouTubeUtils.logger &&
-        YouTubeUtils.logger.debug &&
-        YouTubeUtils.logger.debug('[YouTube+][Music]', 'Кнопка scroll to top создана');
+
+      // Initial visibility check - show immediately if already scrolled
+      const initialScroll = sc.scrollTop || 0;
+      if (initialScroll > 100) {
+        button.classList.add('visible');
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          `Button shown immediately (scroll: ${initialScroll}px)`
+        );
+      }
+
+      window.YouTubeUtils?.logger?.debug?.(
+        '[YouTube+][Music]',
+        'Scroll to top button created successfully',
+        {
+          buttonId: button.id,
+          scrollContainer: sc.tagName,
+          scrollContainerId: sc.id || 'no-id',
+          scrollHeight: sc.scrollHeight,
+          clientHeight: sc.clientHeight,
+          scrollTop: initialScroll,
+          position: button.style.position,
+          computedDisplay: window.getComputedStyle(button).display,
+          computedOpacity: window.getComputedStyle(button).opacity,
+          computedVisibility: window.getComputedStyle(button).visibility,
+        }
+      );
     } catch (err) {
       console.error('[YouTube+][Music] attachButton error:', err);
     }
   }
+
+  /**
+   * State tracking for button creation attempts
+   * @type {Object}
+   * @private
+   */
+  const buttonCreationState = {
+    attempts: 0,
+    maxAttempts: 5,
+    lastAttempt: 0,
+    minInterval: 500, // Minimum time between attempts
+  };
 
   /**
    * Creates a "Scroll to Top" button in YouTube Music's side panel
@@ -309,25 +771,111 @@
       // Early exit checks
       if (window.location.hostname !== 'music.youtube.com') return;
 
-      const sidePanel = document.querySelector('#side-panel');
-      if (!sidePanel || document.getElementById('ytmusic-side-panel-top-button')) return;
+      // Check if button already exists and is properly attached
+      const existingButton = document.getElementById('ytmusic-side-panel-top-button');
+      if (existingButton) {
+        // Verify it's in the DOM and has event listeners
+        if (document.body.contains(existingButton) && existingButton._scrollCleanup) {
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            'Button already exists and is properly attached'
+          );
+          return;
+        } else {
+          // Button exists but is orphaned, remove it
+          window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Removing orphaned button');
+          existingButton.remove();
+        }
+      }
 
+      // Rate limiting
+      const now = Date.now();
+      if (now - buttonCreationState.lastAttempt < buttonCreationState.minInterval) {
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          'Rate limited, skipping button creation'
+        );
+        return;
+      }
+
+      buttonCreationState.attempts++;
+      buttonCreationState.lastAttempt = now;
+
+      if (buttonCreationState.attempts > buttonCreationState.maxAttempts) {
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          `Max attempts (${buttonCreationState.maxAttempts}) reached, stopping retries`
+        );
+        return;
+      }
+
+      window.YouTubeUtils?.logger?.debug?.(
+        '[YouTube+][Music]',
+        `Creating button (attempt ${buttonCreationState.attempts}/${buttonCreationState.maxAttempts})`
+      );
+
+      const sidePanel = document.querySelector('#side-panel');
       const MusicUtils = window.YouTubePlusMusicUtils || {};
       const button = createButton();
+
+      // If no side-panel, try to find the main content area or queue
+      if (!sidePanel) {
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          'No side-panel found, checking for main content or queue'
+        );
+
+        // Try queue renderer (shown in playlist/queue view)
+        const queueRenderer = document.querySelector('ytmusic-queue-renderer');
+        if (queueRenderer) {
+          const queueContents = queueRenderer.querySelector('#contents');
+          if (queueContents) {
+            attachButtonToContainer(button, queueRenderer, queueContents, MusicUtils);
+            buttonCreationState.attempts = 0; // Reset on success
+            return;
+          }
+        }
+
+        // Try to find main scrollable area on homepage/explore pages
+        const mainContent = document.querySelector('ytmusic-browse');
+        if (mainContent) {
+          const scrollContainer = mainContent.querySelector('ytmusic-section-list-renderer');
+          if (scrollContainer) {
+            attachButtonToContainer(button, mainContent, scrollContainer, MusicUtils);
+            buttonCreationState.attempts = 0; // Reset on success
+            return;
+          }
+        }
+
+        // Retry later
+        setTimeout(createScrollToTopButton, 1000);
+        return;
+      }
+
       const scrollContainer = findScrollContainer(sidePanel, MusicUtils);
 
       if (!scrollContainer) {
-        // Retry after delay if container not found
-        setTimeout(() => {
-          const sc = findScrollContainer(sidePanel, MusicUtils);
-          if (sc) attachButtonToContainer(button, sidePanel, sc, MusicUtils);
-        }, 400);
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          'No scroll container found, will retry with backoff'
+        );
+
+        // Retry with exponential backoff
+        const backoffDelay = Math.min(500 * buttonCreationState.attempts, 3000);
+        setTimeout(createScrollToTopButton, backoffDelay);
         return;
       }
 
       attachButtonToContainer(button, sidePanel, scrollContainer, MusicUtils);
+      buttonCreationState.attempts = 0; // Reset on success
+
+      window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', '✓ Button created successfully');
     } catch (error) {
       console.error('[YouTube+][Music] Error creating scroll to top button:', error);
+      // Retry on error if we haven't exceeded max attempts
+      if (buttonCreationState.attempts < buttonCreationState.maxAttempts) {
+        setTimeout(createScrollToTopButton, 1000);
+      }
     }
   }
 
@@ -337,9 +885,61 @@
    * @returns {void}
    */
   function checkAndCreateButton() {
-    const sidePanel = document.querySelector('#side-panel');
-    if (sidePanel && !document.getElementById('ytmusic-side-panel-top-button')) {
-      setTimeout(createScrollToTopButton, 500);
+    try {
+      const existingButton = document.getElementById('ytmusic-side-panel-top-button');
+
+      // Clean up if button exists but is orphaned (no scroll listener)
+      if (existingButton) {
+        if (!existingButton._scrollCleanup || !document.body.contains(existingButton)) {
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            'Cleaning up orphaned/detached button'
+          );
+          if (existingButton._scrollCleanup) {
+            try {
+              existingButton._scrollCleanup();
+            } catch {
+              // ignore cleanup errors
+            }
+          }
+          if (existingButton._positionCleanup) {
+            try {
+              existingButton._positionCleanup();
+            } catch {
+              // ignore cleanup errors
+            }
+          }
+          existingButton.remove();
+        } else {
+          // Button exists and is healthy
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            'Button is healthy, no action needed'
+          );
+          return;
+        }
+      }
+
+      // Look for containers that need a button
+      const sidePanel = document.querySelector('#side-panel');
+      const mainContent = document.querySelector('ytmusic-browse');
+      const queueRenderer = document.querySelector('ytmusic-queue-renderer');
+      const tabRenderer = document.querySelector('ytmusic-tab-renderer[tab-identifier]');
+
+      if (sidePanel || mainContent || queueRenderer || tabRenderer) {
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          'Found container, scheduling button creation'
+        );
+        setTimeout(createScrollToTopButton, 300);
+      } else {
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          'No suitable container found yet'
+        );
+      }
+    } catch (error) {
+      console.error('[YouTube+][Music] Error in checkAndCreateButton:', error);
     }
   }
 
@@ -358,62 +958,184 @@
   const originalPushState = history.pushState;
   const originalReplaceState = history.replaceState;
 
+  // Debounce navigation handler to avoid excessive calls
+  const debounce = getDebounce();
+  const handleNavigation = debounce(() => {
+    applyStyles();
+    // Reset button creation state on navigation
+    buttonCreationState.attempts = 0;
+    buttonCreationState.lastAttempt = 0;
+    checkAndCreateButton();
+  }, 150);
+
   history.pushState = function (...args) {
     originalPushState.call(this, ...args);
-    setTimeout(() => {
-      applyStyles();
-      checkAndCreateButton();
-    }, 100);
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Navigation: pushState');
+    handleNavigation();
   };
 
   history.replaceState = function (...args) {
     originalReplaceState.call(this, ...args);
-    setTimeout(() => {
-      applyStyles();
-      checkAndCreateButton();
-    }, 100);
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Navigation: replaceState');
+    handleNavigation();
   };
 
   window.addEventListener('popstate', () => {
-    setTimeout(() => {
-      applyStyles();
-      checkAndCreateButton();
-    }, 100);
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Navigation: popstate');
+    handleNavigation();
   });
 
-  // Observer для обнаружения появления side-panel
-  const observer = new MutationObserver(() => {
-    checkAndCreateButton();
+  // Listen for yt-navigate-finish event (YouTube's custom navigation event)
+  window.addEventListener('yt-navigate-finish', () => {
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Navigation: yt-navigate-finish');
+    handleNavigation();
   });
 
+  /**
+   * Global observer for detecting side-panel appearance
+   * @type {MutationObserver|null}
+   * @private
+   */
+  let observer = null;
+
+  /**
+   * Create and configure the mutation observer
+   * @function createObserver
+   * @returns {MutationObserver}
+   * @private
+   */
+  const createObserver = () => {
+    const debounce = getDebounce();
+    const debouncedCheck = debounce(checkAndCreateButton, 250);
+    let lastCheckTime = 0;
+    const minCheckInterval = 500; // Minimum 500ms between checks
+
+    return new MutationObserver(mutations => {
+      // Rate limiting: skip if checked too recently
+      const now = Date.now();
+      if (now - lastCheckTime < minCheckInterval) return;
+
+      // Don't disconnect - keep observing for tab changes and navigation
+      const existingButton = document.getElementById('ytmusic-side-panel-top-button');
+
+      // If button exists and is properly attached, just verify it's working
+      if (
+        existingButton &&
+        document.body.contains(existingButton) &&
+        existingButton._scrollCleanup
+      ) {
+        // Button is healthy, no action needed
+        return;
+      }
+
+      // Check if any mutation added side-panel, main content, or queue
+      const hasRelevantChange = mutations.some(mutation => {
+        // Fast path: skip mutations with no added nodes
+        if (mutation.addedNodes.length === 0) return false;
+
+        // Early filter: check if any added node is an Element
+        let hasElements = false;
+        for (let i = 0; i < mutation.addedNodes.length; i++) {
+          if (mutation.addedNodes[i].nodeType === 1) {
+            hasElements = true;
+            break;
+          }
+        }
+        if (!hasElements) return false;
+
+        return Array.from(mutation.addedNodes).some(node => {
+          if (node.nodeType !== 1) return false;
+
+          const element = /** @type {Element} */ (node);
+          // Direct ID check is fastest
+          if (element.id === 'side-panel' || element.id === 'contents') return true;
+
+          // Tag name check is faster than querySelector
+          const tagName = element.tagName;
+          if (
+            tagName === 'YTMUSIC-BROWSE' ||
+            tagName === 'YTMUSIC-PLAYER-PAGE' ||
+            tagName === 'YTMUSIC-QUEUE-RENDERER' ||
+            tagName === 'YTMUSIC-TAB-RENDERER'
+          ) {
+            return true;
+          }
+
+          // Only do querySelector as last resort
+          return (
+            element.querySelector?.(
+              '#side-panel, #contents, ytmusic-browse, ytmusic-queue-renderer, ytmusic-tab-renderer'
+            ) != null
+          );
+        });
+      });
+
+      // Also check for attribute changes that might indicate tab switches
+      const hasTabChange = mutations.some(
+        mutation =>
+          mutation.type === 'attributes' &&
+          mutation.attributeName === 'selected' &&
+          mutation.target instanceof Element &&
+          mutation.target.matches?.('ytmusic-tab-renderer, tp-yt-paper-tab')
+      );
+
+      if (hasRelevantChange || hasTabChange) {
+        lastCheckTime = now;
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          'Detected relevant DOM change, checking button'
+        );
+        debouncedCheck();
+      }
+    });
+  };
+
+  /**
+   * Safely observe document body for side-panel appearance
+   * @function observeDocumentBodySafely
+   * @returns {void}
+   */
   const observeDocumentBodySafely = () => {
-    if (document.body) {
+    if (observer) return; // Already observing
+
+    const startObserving = () => {
+      if (!document.body) return;
+
       try {
+        observer = createObserver();
         observer.observe(document.body, {
           childList: true,
           subtree: true,
+          attributes: true, // Watch for attribute changes (tab switches)
+          attributeFilter: ['selected', 'tab-identifier', 'page-type'], // Only specific attributes
         });
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          '✓ Observer started with enhanced config'
+        );
       } catch (observeError) {
         console.error('[YouTube+][Music] Failed to observe document.body:', observeError);
+        // Retry with basic config
+        try {
+          observer = createObserver();
+          observer.observe(document.body, {
+            childList: true,
+            subtree: true,
+          });
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            '✓ Observer started with basic config'
+          );
+        } catch (retryError) {
+          console.error('[YouTube+][Music] Failed to start observer (retry):', retryError);
+        }
       }
+    };
+
+    if (document.body) {
+      startObserving();
     } else {
-      // Wait for DOMContentLoaded then attach
-      document.addEventListener(
-        'DOMContentLoaded',
-        () => {
-          try {
-            if (document.body) {
-              observer.observe(document.body, { childList: true, subtree: true });
-            }
-          } catch (observeError) {
-            console.error(
-              '[YouTube+][Music] Failed to observe document.body after DOMContentLoaded:',
-              observeError
-            );
-          }
-        },
-        { once: true }
-      );
+      document.addEventListener('DOMContentLoaded', startObserving, { once: true });
     }
   };
 
@@ -421,14 +1143,73 @@
   if (typeof window !== 'undefined') {
     window.YouTubeMusic = {
       observeDocumentBodySafely,
-      version: '2.2',
+      checkAndCreateButton,
+      createScrollToTopButton,
+      version: '2.3',
     };
   }
 
+  // Initialize observer
   observeDocumentBodySafely();
 
-  window.YouTubeUtils &&
-    YouTubeUtils.logger &&
-    YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+][Music]', 'Модуль загружен');
+  // Periodic health check for the button (every 30 seconds for better performance)
+  const healthCheckInterval = setInterval(() => {
+    try {
+      // Skip health check if document is hidden (tab inactive)
+      if (document.hidden) return;
+
+      const button = document.getElementById('ytmusic-side-panel-top-button');
+
+      // If button exists but is orphaned, clean it up
+      if (button && (!button._scrollCleanup || !document.body.contains(button))) {
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][Music]',
+          'Health check: removing unhealthy button'
+        );
+        button.remove();
+        checkAndCreateButton();
+      }
+
+      // If no button exists but we have a scrollable container, create one
+      if (!button) {
+        const sidePanel = document.querySelector('#side-panel');
+        if (sidePanel) {
+          checkAndCreateButton();
+        }
+      }
+    } catch (error) {
+      console.error('[YouTube+][Music] Health check error:', error);
+    }
+  }, 30000);
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    try {
+      clearInterval(healthCheckInterval);
+
+      if (observer) {
+        observer.disconnect();
+        observer = null;
+      }
+
+      const button = document.getElementById('ytmusic-side-panel-top-button');
+      if (button?._scrollCleanup) {
+        try {
+          button._scrollCleanup();
+        } catch (cleanupError) {
+          console.error('[YouTube+][Music] Button cleanup error:', cleanupError);
+        }
+      }
+
+      window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Cleanup completed');
+    } catch (error) {
+      console.error('[YouTube+][Music] Cleanup error:', error);
+    }
+  });
+
+  window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Module loaded', {
+    version: '2.3',
+    features: ['scroll-to-top', 'enhanced-styles', 'immersive-search', 'health-check'],
+    hostname: window.location.hostname,
+  });
 })();

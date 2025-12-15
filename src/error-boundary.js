@@ -405,6 +405,12 @@
     const error = event.error || new Error(event.message);
 
     const message = (error.message || event.message || '').trim();
+
+    // Suppress benign ResizeObserver errors
+    if (message.includes('ResizeObserver loop')) {
+      return false; // This is a harmless browser optimization, ignore it
+    }
+
     const source = event.filename || '';
     const isCrossOriginSource =
       source && !source.startsWith(window.location.origin) && !/YouTube\+/.test(source);

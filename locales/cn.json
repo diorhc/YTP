@@ -48,6 +48,8 @@
   "y2mateReset": "Y2Mate 已重置为默认值",
   "youtubeSettings": "YouTube + 设置",
   "takeScreenshot": "截取屏幕截图",
+  "screenshotSaved": "截图已保存",
+  "screenshotFailed": "截图失败",
   "downloadOptions": "下载选项",
   "byYTDL": "by YTDL",
   "copiedToClipboard": "视频 URL 已复制到剪贴板！",

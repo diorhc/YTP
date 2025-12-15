@@ -55,10 +55,10 @@
   const config = {
     enabled: true,
     storageKey: 'youtube_playlist_search_settings',
-    searchDebounceMs: 200, // Debounce search input
-    observerThrottleMs: 500, // Throttle mutation observer
-    maxPlaylistItems: 5000, // Maximum items to process
-    maxQueryLength: 200, // Maximum search query length
+    searchDebounceMs: 150, // Optimized debounce for better responsiveness
+    observerThrottleMs: 300, // Reduced throttle for faster updates
+    maxPlaylistItems: 10000, // Increased limit for large playlists
+    maxQueryLength: 300, // Increased for more flexible search
   };
 
   const state = {
@@ -217,13 +217,22 @@
 
     // Use debounced filtering for better performance
     const debouncedFilter = debounce(value => {
+      // Validate input length to prevent performance issues
+      if (value.length > config.maxQueryLength) {
+        searchInput.value = value.substring(0, config.maxQueryLength);
+        return;
+      }
       filterPlaylistItems(value);
     }, config.searchDebounceMs);
 
-    searchInput.addEventListener('input', e => {
-      const target = /** @type {HTMLInputElement} */ (e.target);
-      debouncedFilter(target.value);
-    });
+    searchInput.addEventListener(
+      'input',
+      e => {
+        const target = /** @type {HTMLInputElement} */ (e.target);
+        debouncedFilter(target.value);
+      },
+      { passive: true }
+    );
 
     searchContainer.appendChild(searchInput);
     state.searchInput = searchInput;
@@ -231,11 +240,12 @@
     // Try to insert the search UI into the playlist items container so it appears
     // inline with the list of videos. Prefer inserting before the first
     // ytd-playlist-panel-video-renderer if present.
+    // Use more specific selector first for better performance
     /** @type {Element|null} */
     const rawItemsContainer =
+      playlistPanel.querySelector('#items') ||
       playlistPanel.querySelector('.playlist-items.style-scope.ytd-playlist-panel-renderer') ||
-      playlistPanel.querySelector('.playlist-items') ||
-      playlistPanel.querySelector('#items');
+      playlistPanel.querySelector('.playlist-items');
 
     if (rawItemsContainer) {
       /** @type {HTMLElement} */
@@ -276,35 +286,74 @@
     const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
     if (!playlistPanel) return;
 
-    // Throttled handler for mutations
-    const handleMutations = throttle(() => {
-      const currentCount = state.originalItems.length;
-      const newItems = document.querySelectorAll(
-        'ytd-playlist-panel-renderer ytd-playlist-panel-video-renderer'
-      );
+    let lastUpdateCount = state.originalItems.length;
+    let updateScheduled = false;
 
-      // Only recollect if item count changed significantly
-      if (Math.abs(newItems.length - currentCount) > 0) {
-        collectOriginalItems();
+    // Throttled handler for mutations with better batching
+    const handleMutations = throttle(mutations => {
+      // Skip if update already scheduled
+      if (updateScheduled) return;
 
-        // Re-apply current search filter if any
-        if (state.searchInput && state.searchInput.value) {
-          filterPlaylistItems(state.searchInput.value);
+      // Fast check: only process if playlist items were actually added/removed
+      const hasRelevantChange = mutations.some(mutation => {
+        if (mutation.type !== 'childList') return false;
+        if (mutation.addedNodes.length === 0 && mutation.removedNodes.length === 0) return false;
+
+        // Check if added/removed nodes contain playlist items
+        for (let i = 0; i < mutation.addedNodes.length; i++) {
+          const node = mutation.addedNodes[i];
+          if (node.nodeType === 1) {
+            const element = /** @type {Element} */ (node);
+            if (element.tagName === 'YTD-PLAYLIST-PANEL-VIDEO-RENDERER') return true;
+          }
         }
-      }
+        for (let i = 0; i < mutation.removedNodes.length; i++) {
+          const node = mutation.removedNodes[i];
+          if (node.nodeType === 1) {
+            const element = /** @type {Element} */ (node);
+            if (element.tagName === 'YTD-PLAYLIST-PANEL-VIDEO-RENDERER') return true;
+          }
+        }
+        return false;
+      });
+
+      if (!hasRelevantChange) return;
+
+      updateScheduled = true;
+      requestAnimationFrame(() => {
+        const currentCount = lastUpdateCount;
+        const newItems = document.querySelectorAll(
+          'ytd-playlist-panel-renderer ytd-playlist-panel-video-renderer'
+        );
+
+        // Only recollect if item count changed
+        if (newItems.length !== currentCount) {
+          lastUpdateCount = newItems.length;
+          collectOriginalItems();
+
+          // Re-apply current search filter if any
+          if (state.searchInput && state.searchInput.value) {
+            filterPlaylistItems(state.searchInput.value);
+          }
+        }
+        updateScheduled = false;
+      });
     }, config.observerThrottleMs);
 
     state.mutationObserver = new MutationObserver(handleMutations);
 
-    // Observe the playlist container for changes
-    state.mutationObserver.observe(playlistPanel, {
+    // Observe only the items container, not entire subtree
+    const itemsContainer = playlistPanel.querySelector('#items, .playlist-items');
+    const targetElement = itemsContainer || playlistPanel;
+
+    state.mutationObserver.observe(targetElement, {
       childList: true,
-      subtree: true,
+      subtree: itemsContainer ? false : true, // Only observe subtree if we couldn't find items container
     });
   };
 
   /**
-   * Collect all playlist items for filtering with limit
+   * Collect all playlist items for filtering with limit and improved caching
    */
   const collectOriginalItems = () => {
     const items = document.querySelectorAll(
@@ -318,27 +367,39 @@
       );
     }
 
-    // Clear cache when collecting new items
-    state.itemsCache.clear();
+    // Don't clear cache - keep existing cached items to avoid reprocessing
+    // Only remove items that are no longer in the DOM
+    const currentVideoIds = new Set();
 
     const itemsArray = Array.from(items).slice(0, config.maxPlaylistItems);
 
     state.originalItems = itemsArray.map((item, index) => {
       const videoId = item.getAttribute('video-id') || `item-${index}`;
+      currentVideoIds.add(videoId);
 
-      // Check if this item is already cached
+      // Check if this item is already cached and element is still the same
       if (state.itemsCache.has(videoId)) {
-        return state.itemsCache.get(videoId);
+        const cached = state.itemsCache.get(videoId);
+        if (cached.element === item) {
+          return cached;
+        }
       }
 
+      // Optimize: use textContent directly without extra trim/toLowerCase calls
       const titleEl = item.querySelector('#video-title');
       const bylineEl = item.querySelector('#byline');
+
+      const title = titleEl?.textContent || '';
+      const channel = bylineEl?.textContent || '';
 
       const itemData = {
         element: item,
         videoId,
-        title: titleEl?.textContent?.trim()?.toLowerCase() || '',
-        channel: bylineEl?.textContent?.trim()?.toLowerCase() || '',
+        // Store original text and lowercased version separately for better performance
+        titleOriginal: title,
+        channelOriginal: channel,
+        title: title.trim().toLowerCase(),
+        channel: channel.trim().toLowerCase(),
       };
 
       // Cache the item data
@@ -346,6 +407,13 @@
 
       return itemData;
     });
+
+    // Clean up cache - remove items no longer in DOM
+    for (const [videoId] of state.itemsCache) {
+      if (!currentVideoIds.has(videoId)) {
+        state.itemsCache.delete(videoId);
+      }
+    }
   };
 
   /**
@@ -451,11 +519,26 @@
     state.currentPlaylistId = null;
   };
 
-  // Handle navigation changes
-  const handleNavigation = () => {
+  // Handle navigation changes with debouncing
+  const handleNavigation = debounce(() => {
+    // Check if we're still on a playlist page
+    const newPlaylistId = getCurrentPlaylistId();
+
+    // If playlist hasn't changed and UI exists, no action needed
+    if (
+      newPlaylistId === state.currentPlaylistId &&
+      document.querySelector('.ytplus-playlist-search')
+    ) {
+      return;
+    }
+
     cleanup();
-    setTimeout(addSearchUI, 300);
-  };
+
+    // Only add UI if we're on a playlist page
+    if (newPlaylistId) {
+      setTimeout(addSearchUI, 300);
+    }
+  }, 250);
 
   // Initialize
   const init = () => {

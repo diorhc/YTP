@@ -48,6 +48,8 @@
   "y2mateReset": "Y2Mate varsayılana sıfırlandı",
   "youtubeSettings": "YouTube + Ayarları",
   "takeScreenshot": "Ekran görüntüsü al",
+  "screenshotSaved": "Ekran görüntüsü kaydedildi",
+  "screenshotFailed": "Ekran görüntüsü kaydedilemedi",
   "downloadOptions": "İndirme seçenekleri",
   "byYTDL": "by YTDL",
   "copiedToClipboard": "Video URL'si panoya kopyalandı!",

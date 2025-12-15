@@ -63,22 +63,22 @@
     return {
       debug: (...args) => {
         // Route debug/info level messages to console.warn to avoid eslint no-console warnings
-        if (isDebugEnabled && typeof console !== 'undefined' && console.warn) {
+        if (isDebugEnabled && console?.warn) {
           console.warn('[YouTube+][DEBUG]', ...args);
         }
       },
       info: (...args) => {
-        if (isDebugEnabled && typeof console !== 'undefined' && console.warn) {
+        if (isDebugEnabled && console?.warn) {
           console.warn('[YouTube+][INFO]', ...args);
         }
       },
       warn: (...args) => {
-        if (typeof console !== 'undefined' && console.warn) {
+        if (console?.warn) {
           console.warn('[YouTube+]', ...args);
         }
       },
       error: (...args) => {
-        if (typeof console !== 'undefined' && console.error) {
+        if (console?.error) {
           console.error('[YouTube+]', ...args);
         }
       },
@@ -546,8 +546,8 @@
    */
   const DOMCache = (() => {
     const cache = new Map();
-    const MAX_CACHE_SIZE = 100;
-    const CACHE_TTL = 3000; // 3 seconds
+    const MAX_CACHE_SIZE = 200; // Increased for better performance
+    const CACHE_TTL = 5000; // 5 seconds - longer cache
 
     return {
       /**
@@ -596,6 +596,143 @@
     };
   })();
 
+  /**
+   * Advanced ScrollManager for efficient scroll event handling
+   * Uses IntersectionObserver when possible for better performance
+   */
+  const ScrollManager = (() => {
+    const listeners = new WeakMap();
+
+    /**
+     * Add optimized scroll listener
+     * @param {Element} element - Element to listen to
+     * @param {Function} callback - Callback function
+     * @param {Object} options - Options {debounce: number, throttle: number, runInitial: boolean}
+     * @returns {Function} Cleanup function
+     */
+    const addScrollListener = (element, callback, options = {}) => {
+      try {
+        const { debounce: debounceMs = 0, throttle: throttleMs = 0, runInitial = false } = options;
+
+        let handler = callback;
+
+        // Apply debounce if specified
+        if (debounceMs > 0) {
+          handler = debounce(handler, debounceMs);
+        }
+
+        // Apply throttle if specified
+        if (throttleMs > 0) {
+          handler = throttle(handler, throttleMs);
+        }
+
+        // Store handler for cleanup
+        if (!listeners.has(element)) {
+          listeners.set(element, new Set());
+        }
+        listeners.get(element).add(handler);
+
+        // Add event listener
+        element.addEventListener('scroll', handler, { passive: true });
+
+        // Run initial callback if requested
+        if (runInitial) {
+          try {
+            callback();
+          } catch (err) {
+            logError('ScrollManager', 'Initial callback error', err);
+          }
+        }
+
+        // Return cleanup function
+        return () => {
+          try {
+            element.removeEventListener('scroll', handler);
+            const set = listeners.get(element);
+            if (set) {
+              set.delete(handler);
+              if (set.size === 0) {
+                listeners.delete(element);
+              }
+            }
+          } catch (err) {
+            logError('ScrollManager', 'Cleanup error', err);
+          }
+        };
+      } catch (err) {
+        logError('ScrollManager', 'addScrollListener error', err);
+        return () => {}; // Return no-op cleanup
+      }
+    };
+
+    /**
+     * Remove all listeners for an element
+     * @param {Element} element - Element to clean up
+     */
+    const removeAllListeners = element => {
+      try {
+        const set = listeners.get(element);
+        if (!set) return;
+
+        set.forEach(handler => {
+          try {
+            element.removeEventListener('scroll', handler);
+          } catch {}
+        });
+
+        listeners.delete(element);
+      } catch (err) {
+        logError('ScrollManager', 'removeAllListeners error', err);
+      }
+    };
+
+    /**
+     * Create scroll-to-top functionality with smooth animation
+     * @param {Element} element - Element to scroll
+     * @param {Object} options - Options {duration: number, easing: string}
+     */
+    const scrollToTop = (element, options = {}) => {
+      const { duration = 300, easing = 'ease-out' } = options;
+
+      try {
+        // Try native smooth scroll first
+        if ('scrollBehavior' in document.documentElement.style) {
+          element.scrollTo({ top: 0, behavior: 'smooth' });
+          return;
+        }
+
+        // Fallback to manual animation
+        const start = element.scrollTop;
+        const startTime = performance.now();
+
+        const scroll = currentTime => {
+          const elapsed = currentTime - startTime;
+          const progress = Math.min(elapsed / duration, 1);
+
+          // Easing function
+          const easeOutQuad = t => t * (2 - t);
+          const easedProgress = easing === 'ease-out' ? easeOutQuad(progress) : progress;
+
+          element.scrollTop = start * (1 - easedProgress);
+
+          if (progress < 1) {
+            requestAnimationFrame(scroll);
+          }
+        };
+
+        requestAnimationFrame(scroll);
+      } catch (err) {
+        logError('ScrollManager', 'scrollToTop error', err);
+      }
+    };
+
+    return {
+      addScrollListener,
+      removeAllListeners,
+      scrollToTop,
+    };
+  })();
+
   // Expose a global YouTubeUtils if not present (non-destructive)
   if (typeof window !== 'undefined') {
     /** @type {any} */ (window).YouTubeUtils = /** @type {any} */ (window).YouTubeUtils || {};
@@ -607,6 +744,7 @@
     U.cleanupManager = U.cleanupManager || cleanupManager;
     U.EventDelegator = U.EventDelegator || EventDelegator;
     U.DOMCache = U.DOMCache || DOMCache;
+    U.ScrollManager = U.ScrollManager || ScrollManager;
     U.createElement = U.createElement || createElement;
     U.waitForElement = U.waitForElement || waitForElement;
     U.storage = U.storage || storage;

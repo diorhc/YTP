@@ -53,27 +53,26 @@
             .stats-menu-container{position:relative;display:inline-block}.stats-horizontal-menu{position:absolute;display:flex;left:100%;top:0;height:100%;visibility:hidden;opacity:0;transition:visibility 0s,opacity 0.2s linear;z-index:100}.stats-menu-container:hover .stats-horizontal-menu{visibility:visible;opacity:1}.stats-menu-button{margin-left:8px;white-space:nowrap}
             /* Modal overlay and container with glassmorphism */
             .stats-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.55));z-index:99999;display:flex;align-items:center;justify-content:center;animation:fadeInModal .18s;backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%)}
-            .stats-modal-container{max-width:900px;width:90vw;max-height:90vh;display:flex;flex-direction:column}
+            .stats-modal-container{max-width:1100px;max-height:calc(100vh - 32px);display:flex;flex-direction:column}
             .stats-modal-content{background:rgba(24,24,24,0.92);border-radius:20px;box-shadow:0 18px 40px rgba(0,0,0,0.45);overflow:hidden;display:flex;flex-direction:column;animation:scaleInModal .18s;border:1.5px solid rgba(255,255,255,0.08);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%)}
-            html[dark] .stats-modal-content{background:rgba(24,24,24,0.92)}
+            html[dark] .stats-modal-content{background:rgba(24, 24, 24, 0.25)}
             html:not([dark]) .stats-modal-content{background:rgba(255,255,255,0.95);color:#222;border:1.25px solid rgba(0,0,0,0.06)}
             .stats-modal-close{background:transparent;border:none;color:#fff;font-size:36px;line-height:1;width:36px;height:36px;cursor:pointer;transition:transform .15s ease,color .15s;display:flex;align-items:center;justify-content:center;border-radius:8px;padding:0}
             .stats-modal-close:hover{color:#ff6b6b;transform:scale(1.1)}
             html:not([dark]) .stats-modal-close{color:#666}
-            html:not([dark]) .stats-modal-close:hover{color:#ff6b6b}
-            
+            html:not([dark]) .stats-modal-close:hover{color:#ff6b6b}            
             /* Modal body */
-            .stats-modal-body{padding:24px;overflow-y:auto;flex:1}
+            .stats-modal-body{padding:16px;overflow:visible;flex:1;display:flex;flex-direction:column}
             /* Thumbnail preview */
             /* Thumbnail/title layout: title centered above a row with image left and stats grid right */
             .stats-thumb-title-centered{font-size:16px;font-weight:600;color:#fff;margin:0 0 12px 0;text-align:center}
             html:not([dark]) .stats-thumb-title-centered{color:#111}
-            .stats-thumb-row{display:flex;gap:16px;align-items:flex-start;margin-bottom:16px}
-            .stats-thumb-img{width:450px;height:260px;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid rgba(255,255,255,0.06)}
+            .stats-thumb-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+            .stats-thumb-img{width:36vw;max-width:420px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid rgba(255,255,255,0.06);max-height:44vh}
             html:not([dark]) .stats-thumb-img{border:1px solid rgba(0,0,0,0.06)}
             /* ensure the grid takes remaining horizontal space */
-            .stats-thumb-row .stats-grid{flex:1}
-            .stats-thumb-left{display:flex;flex-direction:column;align-items:flex-start;gap:8px}
+            .stats-thumb-row .stats-grid{flex:1;min-width:0}
+            .stats-thumb-left{display:flex;flex-direction:column;align-items:center;gap:8px}
             .stats-thumb-left .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
             html:not([dark]) .stats-thumb-left .stats-thumb-sub{color:rgba(0,0,0,0.6)}
             /* extras row under thumbnail: inline, single line */
@@ -81,26 +80,21 @@
             .stats-thumb-extras .stats-card{padding:8px 10px}
             .stats-thumb-meta{display:flex;flex-direction:column;justify-content:center}
             .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
-            html:not([dark]) .stats-thumb-sub{color:rgba(0,0,0,0.6)}
-            
+            html:not([dark]) .stats-thumb-sub{color:rgba(0,0,0,0.6)}            
             /* Loading state */
             .stats-loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#fff}
             html:not([dark]) .stats-loader{color:#666}
             .stats-spinner{width:60px;height:60px;animation:spin 1s linear infinite;margin-bottom:16px}
-            .stats-spinner circle{stroke-dasharray:80;stroke-dashoffset:60;animation:dash 1.5s ease-in-out infinite}
-            
+            .stats-spinner circle{stroke-dasharray:80;stroke-dashoffset:60;animation:dash 1.5s ease-in-out infinite}            
             /* Error state */
             .stats-error{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#ff6b6b;text-align:center}
-            .stats-error-icon{width:60px;height:60px;margin-bottom:16px;stroke:#ff6b6b}
-            
+            .stats-error-icon{width:60px;height:60px;margin-bottom:16px;stroke:#ff6b6b}            
             /* Stats grid */
-            .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:16px}
-            
+            .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}            
             /* Stats card */
-            .stats-card{background:rgba(255,255,255,0.05);border-radius:12px;padding:20px;display:flex;align-items:center;gap:16px;border:1px solid rgba(255,255,255,0.1);transition:transform .2s ease,box-shadow .2s ease}
+            .stats-card{background:rgba(255,255,255,0.05);border-radius:12px;padding:12px;display:flex;align-items:center;gap:12px;border:1px solid rgba(255,255,255,0.08);transition:transform .18s ease,box-shadow .18s ease}
             html:not([dark]) .stats-card{background:rgba(0,0,0,0.03);border:1px solid rgba(0,0,0,0.1)}
-            .stats-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,0.3)}
-            
+            .stats-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,0.3)}            
             /* Stats icon */
             .stats-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
             .stats-icon svg{width:24px;height:24px}
@@ -111,22 +105,23 @@
             .stats-icon-viewers{background:rgba(234,179,8,0.15);color:#eab308}
             .stats-icon-subscribers{background:rgba(236,72,153,0.15);color:#ec4899}
             .stats-icon-videos{background:rgba(14,165,233,0.15);color:#0ea5e9}
-            
+            /* Pair likes/dislikes into a single grid cell */
+            .stats-card-pair{display:flex;gap:8px;align-items:stretch}
+            .stats-card-pair .stats-card{flex:1;margin:0}
+            @media(max-width:480px){.stats-card-pair{flex-direction:column}}            
             /* Stats info */
             .stats-info{flex:1;min-width:0}
-            .stats-label{font-size:14px;color:rgba(255,255,255,0.7);margin-bottom:4px;font-weight:500}
+            .stats-label{font-size:13px;color:rgba(255,255,255,0.72);margin-bottom:4px;font-weight:500}
             html:not([dark]) .stats-label{color:rgba(0,0,0,0.6)}
-            .stats-value{font-size:28px;font-weight:700;color:#fff;line-height:1.2;margin-bottom:2px}
+            .stats-value{font-size:20px;font-weight:700;color:#fff;line-height:1.2;margin-bottom:2px}
             html:not([dark]) .stats-value{color:#111}
             .stats-exact{font-size:13px;color:rgba(255,255,255,0.5);font-weight:400}
-            html:not([dark]) .stats-exact{color:rgba(0,0,0,0.5)}
-            
+            html:not([dark]) .stats-exact{color:rgba(0,0,0,0.5)}            
             /* Animations */
             @keyframes fadeInModal{from{opacity:0}to{opacity:1}}
             @keyframes scaleInModal{from{transform:scale(0.95);opacity:0}to{transform:scale(1);opacity:1}}
             @keyframes spin{to{transform:rotate(360deg)}}
-            @keyframes dash{0%{stroke-dashoffset:80}50%{stroke-dashoffset:10}100%{stroke-dashoffset:80}}
-            
+            @keyframes dash{0%{stroke-dashoffset:80}50%{stroke-dashoffset:10}100%{stroke-dashoffset:80}}            
             /* Responsive */
             @media(max-width:768px){.stats-modal-container{width:95vw}.stats-grid{grid-template-columns:1fr}.stats-card{padding:16px}}
         `;
@@ -1188,7 +1183,12 @@
   function makeStatsCard(labelKey, value, exact, iconClass, iconSvg) {
     const display = value == null ? t('unknown') : formatNumber(value);
     // Show exact 0 as "0" (0 is falsy), only show dash when null/undefined
-    const exactText = exact !== null && exact !== undefined ? exact.toLocaleString() : '—';
+    // Ensure numeric values are properly converted to integers for exact display
+    let exactText = '—';
+    if (exact !== null && exact !== undefined) {
+      const numExact = Number(exact);
+      exactText = !isNaN(numExact) ? Math.floor(numExact).toLocaleString() : String(exact);
+    }
     return `
         <div class="stats-card">
           <div class="stats-icon ${iconClass}">
@@ -1288,6 +1288,10 @@
       thumbnail: getValue('thumbnail'),
       title: getValue('title'),
       liveViewer: getValue('liveViewer'),
+      // Preserve extra metadata when available (duration, country, monetization)
+      duration: getValue('duration'),
+      country: getValue('country'),
+      monetized: getValue('monetized', 'isMonetized', 'monetization'),
     };
   }
 
@@ -1299,9 +1303,28 @@
    */
   function getVideoExtras(apiStats, pageStats) {
     const helpers = window.YouTubeStatsHelpers || {};
-    const duration = helpers.getDurationFromSources?.(apiStats) || null;
-    const country = helpers.getCountryFromSources?.(apiStats, pageStats) || null;
-    const monetization = helpers.getMonetizationFromSources?.(apiStats, pageStats, t) || null;
+    // Prefer explicit fields on the stats objects first, then fall back to helper functions
+    const duration =
+      apiStats?.duration ??
+      pageStats?.duration ??
+      helpers.getDurationFromSources?.(apiStats, pageStats) ??
+      null;
+    const country =
+      apiStats?.country ??
+      pageStats?.country ??
+      helpers.getCountryFromSources?.(apiStats, pageStats) ??
+      null;
+
+    // Monetization can be boolean or descriptive string from helpers
+    let monetization = null;
+    if (apiStats?.monetized != null) {
+      monetization = apiStats.monetized === true ? t('yes') : t('no');
+    } else if (pageStats?.monetized != null) {
+      monetization = pageStats.monetized === true ? t('yes') : t('no');
+    } else {
+      monetization = helpers.getMonetizationFromSources?.(apiStats, pageStats, t) ?? null;
+    }
+
     return { duration, country, monetization };
   }
 
@@ -1574,12 +1597,12 @@
    * @returns {string} HTML string
    */
   function createMonetizationCard(extras, stats) {
-    if (!extras.monetization) return '';
-    const isMonetized = extras.monetization === t('yes') || stats.monetized === true;
+    const monetizationValue = extras.monetization || t('unknown');
+    const isMonetized = extras.monetization === t('yes') || stats?.monetized === true;
     const monIcon = isMonetized
       ? `<svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>`
       : `<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
-    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-subscribers">${monIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('monetization')}</div><div class="stats-value" style="font-size:16px;">${extras.monetization}</div></div></div>`;
+    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-subscribers">${monIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('monetization')}</div><div class="stats-value" style="font-size:16px;">${monetizationValue}</div></div></div>`;
   }
 
   /**
@@ -1588,10 +1611,16 @@
    * @returns {string} HTML string
    */
   function createCountryCard(extras) {
-    if (!extras.country || extras.country === t('unknown')) return '';
-    const countryCode = extras.country.toUpperCase();
-    const flagUrl = `https://cdn.jsdelivr.net/gh/lipis/flag-icons@7.3.2/flags/4x3/${countryCode.toLowerCase()}.svg`;
-    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views"><img src="${flagUrl}" alt="${countryCode}" width="32" height="24" style="border-radius:4px;"/></div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryCode}</div></div></div>`;
+    const countryValue = extras.country || t('unknown');
+    const countryCode =
+      extras.country && extras.country !== t('unknown') ? extras.country.toUpperCase() : '';
+    const globeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
+
+    if (countryCode) {
+      const flagUrl = `https://cdn.jsdelivr.net/gh/lipis/flag-icons@7.3.2/flags/4x3/${countryCode.toLowerCase()}.svg`;
+      return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views"><img src="${flagUrl}" alt="${countryCode}" width="32" height="24" style="border-radius:4px;" onerror="this.style.display='none';this.parentElement.innerHTML='${globeIcon}'"/></div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryCode}</div></div></div>`;
+    }
+    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views">${globeIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryValue}</div></div></div>`;
   }
 
   /**
@@ -1599,10 +1628,74 @@
    * @param {Object} extras - Video extras
    * @returns {string} HTML string
    */
+  /**
+   * Format duration values into human readable strings.
+   * Accepts seconds (number or numeric string), ISO8601 (PT1H2M3S),
+   * or colon-formatted strings (MM:SS or HH:MM:SS).
+   * Returns null when value cannot be parsed.
+   * @param {number|string} value
+   * @returns {string|null}
+   */
+  function formatDuration(value) {
+    if (value == null) return null;
+
+    function pad(n) {
+      return String(n).padStart(2, '0');
+    }
+
+    function secToHms(sec) {
+      sec = Math.max(0, Math.floor(Number(sec) || 0));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
+      return `${m}:${pad(s)}`;
+    }
+
+    // number -> seconds
+    if (typeof value === 'number' && Number.isFinite(value)) return secToHms(value);
+
+    // numeric string
+    if (typeof value === 'string') {
+      const s = value.trim();
+      if (/^\d+$/.test(s)) return secToHms(Number(s));
+
+      // ISO 8601 duration PT#H#M#S
+      const iso = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i.exec(s);
+      if (iso) {
+        const h = parseInt(iso[1] || '0', 10);
+        const m = parseInt(iso[2] || '0', 10);
+        const sec = parseInt(iso[3] || '0', 10);
+        const total = h * 3600 + m * 60 + sec;
+        return secToHms(total);
+      }
+
+      // Already colon formatted like M:SS or H:MM:SS
+      if (/^\d+:\d{1,2}(:\d{1,2})?$/.test(s)) {
+        const parts = s.split(':').map(p => p.replace(/^0+(\d)/, '$1'));
+        // normalize to pad minutes/seconds
+        if (parts.length === 2) {
+          const [mm, ss] = parts;
+          return `${Number(mm)}:${pad(Number(ss))}`;
+        }
+        if (parts.length === 3) {
+          const [hh, mm, ss] = parts;
+          return `${Number(hh)}:${pad(Number(mm))}:${pad(Number(ss))}`;
+        }
+      }
+
+      // fallback: return as-is (useful when API already provides formatted text)
+      return s || null;
+    }
+
+    return null;
+  }
   function createDurationCard(extras) {
-    if (!extras.duration || extras.duration === t('unknown')) return '';
+    const raw = extras?.duration ?? null;
+    const formatted = formatDuration(raw);
+    const durationValue = formatted || (raw ? String(raw) : null) || t('unknown');
     const durationIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
-    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-videos">${durationIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('duration')}</div><div class="stats-value" style="font-size:16px;">${extras.duration}</div></div></div>`;
+    return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-videos">${durationIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('duration')}</div><div class="stats-value" style="font-size:16px;">${durationValue}</div></div></div>`;
   }
 
   /**
@@ -1632,7 +1725,57 @@
 
     const titleHtml = title ? `<div class="stats-thumb-title-centered">${title}</div>` : '';
     const defs = getVideoStatDefinitions(fields);
-    const parts = defs.map(d => makeStatsCard(d.label, d.value, d.exact, d.iconClass, d.iconSvg));
+
+    // Build individual cards but group likes+dislikes into a single grid cell so
+    // they appear side-by-side on one line.
+    const viewsDef = defs.find(d => d.label === 'views');
+    const likesDef = defs.find(d => d.label === 'likes');
+    const dislikesDef = defs.find(d => d.label === 'dislikes');
+    const commentsDef = defs.find(d => d.label === 'comments');
+
+    const viewsHtml = viewsDef
+      ? makeStatsCard(
+          viewsDef.label,
+          viewsDef.value,
+          viewsDef.exact,
+          viewsDef.iconClass,
+          viewsDef.iconSvg
+        )
+      : '';
+    const likesHtml = likesDef
+      ? makeStatsCard(
+          likesDef.label,
+          likesDef.value,
+          likesDef.exact,
+          likesDef.iconClass,
+          likesDef.iconSvg
+        )
+      : '';
+    const dislikesHtml = dislikesDef
+      ? makeStatsCard(
+          dislikesDef.label,
+          dislikesDef.value,
+          dislikesDef.exact,
+          dislikesDef.iconClass,
+          dislikesDef.iconSvg
+        )
+      : '';
+    const commentsHtml = commentsDef
+      ? makeStatsCard(
+          commentsDef.label,
+          commentsDef.value,
+          commentsDef.exact,
+          commentsDef.iconClass,
+          commentsDef.iconSvg
+        )
+      : '';
+
+    const pairHtml =
+      likesHtml || dislikesHtml
+        ? `<div class="stats-card-pair">${likesHtml}${dislikesHtml}</div>`
+        : '';
+
+    const parts = [viewsHtml, pairHtml, commentsHtml].filter(Boolean);
 
     const liveViewerCard = createLiveViewerCard(liveViewer);
     if (liveViewerCard) parts.push(liveViewerCard);
@@ -3712,7 +3855,7 @@
     window.YouTubeStats = {
       init,
       cleanup,
-      version: '2.2',
+      version: '2.3',
     };
   }
 

@@ -48,6 +48,8 @@
   "y2mateReset": "Y2Mate gereset naar standaardinstellingen",
   "youtubeSettings": "YouTube + Instellingen",
   "takeScreenshot": "Schermafbeelding maken",
+  "screenshotSaved": "Schermafbeelding opgeslagen",
+  "screenshotFailed": "Schermafbeelding mislukt",
   "downloadOptions": "Downloadopties",
   "byYTDL": "by YTDL",
   "copiedToClipboard": "Video-URL gekopieerd naar klembord!",

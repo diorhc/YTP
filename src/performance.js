@@ -78,10 +78,7 @@
       }
 
       if (PerformanceConfig.enableConsoleOutput) {
-        window.YouTubeUtils &&
-          YouTubeUtils.logger &&
-          YouTubeUtils.logger.debug &&
-          YouTubeUtils.logger.debug(`[YouTube+ Perf] ${name}: ${duration.toFixed(2)}ms`);
+        window.YouTubeUtils?.logger?.debug?.(`[YouTube+ Perf] ${name}: ${duration.toFixed(2)}ms`);
       }
 
       // Try native performance API
@@ -175,10 +172,7 @@
     metrics.timings.set(name, metric);
 
     if (PerformanceConfig.enableConsoleOutput) {
-      window.YouTubeUtils &&
-        YouTubeUtils.logger &&
-        YouTubeUtils.logger.debug &&
-        YouTubeUtils.logger.debug(`[YouTube+ Perf] ${name}: ${value}`, metadata);
+      window.YouTubeUtils?.logger?.debug?.(`[YouTube+ Perf] ${name}: ${value}`, metadata);
     }
   };
 

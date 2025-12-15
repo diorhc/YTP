@@ -48,6 +48,8 @@
   "y2mateReset": "Y2Mate сброшен к значениям по умолчанию",
   "youtubeSettings": "Настройки YouTube +",
   "takeScreenshot": "Сделать скриншот",
+  "screenshotSaved": "Скриншот сохранён",
+  "screenshotFailed": "Не удалось сохранить скриншот",
   "downloadOptions": "Варианты загрузки",
   "byYTDL": "by YTDL",
   "copiedToClipboard": "URL видео скопирован в буфер обмена!",

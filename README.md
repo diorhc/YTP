@@ -1,31 +1,18 @@
 ![Extension Cover](https://i.imgur.com/Dt5jG3M.png)
 ![Youtube Music](https://i.imgur.com/LOC8X6P.png)
 
-<!-- CI/CD STATUS BADGES -->
-<div align="center">
-
-[![CI/CD Pipeline](https://github.com/diorhc/YTP/actions/workflows/ci.yml/badge.svg)](https://github.com/diorhc/YTP/actions/workflows/ci.yml)
-[![Update GreasyFork Badges](https://github.com/diorhc/YTP/actions/workflows/update-greasyfork-badges.yml/badge.svg)](https://github.com/diorhc/YTP/actions/workflows/update-greasyfork-badges.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Node.js Version](https://img.shields.io/badge/node-%3E%3D18.0.0-brightgreen)](https://nodejs.org/)
-
-</div>
-
 <!-- GREASYFORK_INSTALLS:START -->
-
-
-<div style="text-align:center">
-  <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-362-blue" style="transform:scale(1.15);transform-origin:center;" />
+<p align="center">
+  <a href="https://greasyfork.org/ru/scripts/537017-youtube">
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-370-blue?style=flat-square" height="25" />
+  </a>&nbsp;&nbsp;
+  <a href="https://greasyfork.org/ru/scripts/537017-youtube">
+    <img alt="version" src="https://img.shields.io/badge/version-2.3-blue?style=flat-square" height="25" />
+  </a>&nbsp;&nbsp;
+  <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
+    <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
   </a>
-  <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="version" src="https://img.shields.io/badge/version-2.2.1-blue" style="transform:scale(1.15);transform-origin:center;" />
-  </a>
-  <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="Install Script" src="https://img.shields.io/badge/GreasyFork-Install-brightgreen" style="transform:scale(1.15);transform-origin:center;" />
-  </a>
-</div>
-
+</p>
 
 <!-- GREASYFORK_INSTALLS:END -->
 
@@ -38,7 +25,9 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 - 🔹 Enable Picture-in-Picture (PIP) — via hotkey.
 - 🔹 Add/copy timecodes to videos (convenient for notes and editing) — via hotkey.
 - 🔹 Download videos through external services (Y2Mate - can be changed and edited to your own) and integration with my project [by YTDL](https://github.com/diorhc/YTDL), now with direct download from YouTube.
-- 🔹 Screenshot current frame and save locally.
+- 🔹 Download audio and subtitles.
+- 🔹 Take a screenshot of the current frame and save it locally.
+- 🔹 Support for zoom in the player.
 - 🔹 "Statistics" button on video page — quick access to views/subscribers/engagement.
 - 🔹 Channel statistics: quick overview of key metrics in one click.
 - 🔹 Hotkeys in Shorts (e.g., Shift+/ for hotkey reference).
@@ -61,11 +50,12 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 ```text
             Action                                                      Key
             -----------------------------------------------             -------
-            Enable/disable PIP                                          P
-            Add current timecode to description/comment                 T
+            Enable/disable PIP                                          ... + P
+            Add current timecode to description/comment                 ... + T
             Take screenshot of frame                                    S
             Open comment manager                                        C
             Show hotkey reference                                       Shift/
+            Zoom in/out video in player                                 Shift + Mouse Wheel
 ```
 
 > All keys can be reassigned in script settings.

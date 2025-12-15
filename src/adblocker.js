@@ -81,7 +81,7 @@
       moviePlayer: null,
       ytdPlayer: null,
       lastCacheTime: 0,
-      cacheTimeout: 5000,
+      cacheTimeout: 10000, // Increased cache timeout for better performance
     },
 
     /**

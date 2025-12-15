@@ -48,6 +48,8 @@
   "y2mateReset": "Y2Mate가 기본값으로 초기화됨",
   "youtubeSettings": "YouTube + 설정",
   "takeScreenshot": "스크린샷 찍기",
+  "screenshotSaved": "스크린샷 저장됨",
+  "screenshotFailed": "스크린샷 저장 실패",
   "downloadOptions": "다운로드 옵션",
   "byYTDL": "by YTDL",
   "copiedToClipboard": "비디오 URL이 클립보드에 복사되었습니다!",

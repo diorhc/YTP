@@ -48,6 +48,8 @@
   "y2mateReset": "Y2Mate がデフォルトにリセットされました",
   "youtubeSettings": "YouTube + 設定",
   "takeScreenshot": "スクリーンショットを撮る",
+  "screenshotSaved": "スクリーンショットを保存しました",
+  "screenshotFailed": "スクリーンショットの保存に失敗しました",
   "downloadOptions": "ダウンロードオプション",
   "byYTDL": "by YTDL",
   "copiedToClipboard": "動画URLがクリップボードにコピーされました！",

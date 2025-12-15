@@ -127,7 +127,7 @@ const YouTubeUtils = (() => {
 
   // Use performance helpers or fallback
   const debounce =
-    Performance.debounce ||
+    Performance?.debounce ||
     ((func, wait, options = {}) => {
       let timeout = null;
       /** @this {any} */
@@ -149,7 +149,7 @@ const YouTubeUtils = (() => {
     });
 
   const throttle =
-    Performance.throttle ||
+    Performance?.throttle ||
     ((func, limit) => {
       let inThrottle = false;
       /** @this {any} */
@@ -221,8 +221,8 @@ const YouTubeUtils = (() => {
    * DOM Selector Cache with automatic cleanup
    */
   const selectorCache = new Map();
-  const CACHE_MAX_SIZE = 50;
-  const CACHE_MAX_AGE = 5000; // 5 seconds
+  const CACHE_MAX_SIZE = 100; // Increased for better performance
+  const CACHE_MAX_AGE = 10000; // 10 seconds - longer retention
 
   /**
    * Cached querySelector with LRU-like eviction
@@ -970,13 +970,21 @@ const YouTubeUtils = (() => {
     NotificationManager.clearAll();
   });
 
-  // Periodic cache cleanup to prevent memory leaks
-  const cacheCleanupInterval = setInterval(() => {
+  // Periodic cache cleanup to prevent memory leaks (using requestIdleCallback when available)
+  const cacheCleanup = () => {
     const now = Date.now();
     for (const [key, value] of selectorCache.entries()) {
       if (!value.element?.isConnected || now - value.timestamp > CACHE_MAX_AGE) {
         selectorCache.delete(key);
       }
+    }
+  };
+
+  const cacheCleanupInterval = setInterval(() => {
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(cacheCleanup, { timeout: 2000 });
+    } else {
+      cacheCleanup();
     }
   }, 30000); // Clean every 30 seconds
 
@@ -1130,11 +1138,11 @@ if (typeof window !== 'undefined') {
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.2] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.3] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.2',
+    version: '2.3',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1165,7 +1173,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.2 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.3 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1301,6 +1309,51 @@ if (typeof window !== 'undefined') {
           this.setupCurrentPage();
         }
       });
+
+      // Keyboard shortcut: press 'S' to take a screenshot when not typing
+      try {
+        const screenshotKeyHandler = e => {
+          // Only react to plain 's' key without modifiers
+          if (!e || !e.key) return;
+          if (!(e.key === 's' || e.key === 'S')) return;
+          if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+
+          // Ignore when focus is on editable elements
+          const active = document.activeElement;
+          if (active) {
+            const tag = (active.tagName || '').toLowerCase();
+            if (
+              tag === 'input' ||
+              tag === 'textarea' ||
+              tag === 'select' ||
+              active.isContentEditable
+            ) {
+              return;
+            }
+          }
+
+          if (!this.settings.enableScreenshot) return;
+
+          try {
+            this.captureFrame();
+          } catch (err) {
+            if (YouTubeUtils && YouTubeUtils.logError) {
+              YouTubeUtils.logError('Basic', 'Keyboard screenshot failed', err);
+            }
+          }
+        };
+
+        YouTubeUtils.cleanupManager.registerListener(
+          document,
+          'keydown',
+          screenshotKeyHandler,
+          true
+        );
+      } catch (e) {
+        if (YouTubeUtils && YouTubeUtils.logError) {
+          YouTubeUtils.logError('Basic', 'Failed to register screenshot keyboard shortcut', e);
+        }
+      }
     },
 
     saveSettings() {
@@ -1973,7 +2026,33 @@ if (typeof window !== 'undefined') {
       const link = document.createElement('a');
       link.href = canvas.toDataURL('image/png');
       link.download = `${videoTitle}.png`;
-      link.click();
+      try {
+        link.click();
+
+        // Notify success (use translation if available)
+        try {
+          const translated = typeof t === 'function' ? t('screenshotSaved') : null;
+          const message =
+            translated && translated !== 'screenshotSaved' ? translated : 'Screenshot saved';
+          this.showNotification(message, 2000);
+        } catch {
+          this.showNotification('Screenshot saved', 2000);
+        }
+      } catch (err) {
+        if (YouTubeUtils && YouTubeUtils.logError) {
+          YouTubeUtils.logError('Basic', 'Screenshot download failed', err);
+        }
+        try {
+          const translatedFail = typeof t === 'function' ? t('screenshotFailed') : null;
+          const failMsg =
+            translatedFail && translatedFail !== 'screenshotFailed'
+              ? translatedFail
+              : 'Screenshot failed';
+          this.showNotification(failMsg, 3000);
+        } catch {
+          this.showNotification('Screenshot failed', 3000);
+        }
+      }
     },
 
     showNotification(message, duration = 2000) {

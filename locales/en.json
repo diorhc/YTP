@@ -48,6 +48,8 @@
   "y2mateReset": "Y2Mate reset to defaults",
   "youtubeSettings": "YouTube + Settings",
   "takeScreenshot": "Take screenshot",
+  "screenshotSaved": "Screenshot saved",
+  "screenshotFailed": "Screenshot failed",
   "downloadOptions": "Download options",
   "byYTDL": "by YTDL",
   "copiedToClipboard": "Video URL copied to clipboard!",

@@ -35,8 +35,8 @@ const OUT = path.join(ROOT, 'youtube.user.js');
 // exclude basenames only (we'll search in either ROOT or ROOT/src)
 const EXCLUDE = new Set(['youtube.user.js', 'userscript.js', 'build.js']);
 
-// Watch debounce ms
-const DEBOUNCE_MS = 200;
+// Watch debounce ms (optimized)
+const DEBOUNCE_MS = 150;
 
 // Possible order manifest files (JSON array of filenames or plain text lines)
 const ORDER_MANIFESTS = ['build.order.json', 'build.order.txt'];
@@ -64,7 +64,7 @@ const _cleanPerfTimers = () => {
 };
 
 // Cache for metadata extraction and file processing (with size limits)
-const MAX_CACHE_SIZE = 100;
+const MAX_CACHE_SIZE = 200; // Increased for better performance
 const metadataCache = new Map();
 const stripMetaCache = new Map();
 
@@ -473,11 +473,11 @@ function simpleOptimize(code, headerBlock) {
   const headerText = headerBlock || extractMeta(code) || '';
   let body = headerText ? code.replace(headerText, '') : code;
 
-  // remove comments safely
+  // remove comments safely (optimized)
   startPerfTimer('removeComments');
   body = _removeCommentsPreserveStrings(body);
-  if (verbose) {
-    const commentsDuration = endPerfTimer('removeComments');
+  const commentsDuration = endPerfTimer('removeComments');
+  if (verbose && commentsDuration > 10) {
     console.log(`  ⏱️  Comment removal: ${commentsDuration.toFixed(2)}ms`);
   }
 

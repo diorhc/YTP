@@ -1079,6 +1079,21 @@
       return;
     }
 
+    // Don't add avatar overlay inside Shorts lockups/containers — these are
+    // special UI elements where avatar overlays are undesirable.
+    if (
+      img.closest('ytm-shorts-lockup-view-model') ||
+      container.closest('ytm-shorts-lockup-view-model') ||
+      img.closest('.shortsLockupViewModelHost') ||
+      container.closest('.shortsLockupViewModelHost') ||
+      img.closest('[class*="shortsLockupViewModelHost"]') ||
+      container.closest('[class*="shortsLockupViewModelHost"]') ||
+      img.closest('[class*="shorts"]') ||
+      container.closest('[class*="shorts"]')
+    ) {
+      return;
+    }
+
     if (container.querySelector('.avatar-overlay')) return;
 
     if (getComputedStyle(container).position === 'static') {

@@ -1,6 +1,6 @@
 {
   "name": "youtubeplus",
-  "version": "2.2.1",
+  "version": "2.3",
   "description": "Professional-grade YouTube enhancement userscript with modular architecture, comprehensive error handling, performance monitoring, and automated testing",
   "private": true,
   "author": "diorhc",

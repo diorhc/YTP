@@ -218,13 +218,14 @@ const executionScript = _communicationKey => {
     const HTMLElement_ = HTMLElement.prototype.constructor;
 
     /**
-     * Simple cache for frequently used querySelector results
-     * Helps reduce DOM traversal overhead with memory limits
+     * Enhanced cache for frequently used querySelector results
+     * Helps reduce DOM traversal overhead with memory limits and WeakMap for elements
      */
     const selectorCache = new Map();
+    const elementCache = new WeakMap(); // Auto-cleanup when elements are garbage collected
 
-    const CACHE_MAX_SIZE = 50; // Maximum cache entries to prevent memory leaks
-    const CACHE_TTL = 5000; // 5 seconds
+    const CACHE_MAX_SIZE = 100; // Increased for better performance
+    const CACHE_TTL = 10000; // 10 seconds - longer cache for stable elements
 
     /**
      * Clear expired cache entries and enforce size limit
@@ -264,13 +265,28 @@ const executionScript = _communicationKey => {
     }
 
     /**
-     * Query single element from a specific parent
+     * Query single element from a specific parent with caching
      * @param {Element} elm - Parent element to query from
      * @param {string} selector - CSS selector string
      * @returns {Element | null} Found element or null
      */
     const qsOne = (elm, selector) => {
-      return HTMLElement_.prototype.querySelector.call(elm, selector);
+      if (!elm?.querySelector) return null;
+
+      // Check element cache first
+      const cacheKey = selector;
+      const cached = elementCache.get(elm);
+      if (cached?.[cacheKey]?.isConnected) {
+        return cached[cacheKey];
+      }
+
+      const result = HTMLElement_.prototype.querySelector.call(elm, selector);
+      if (result) {
+        const cache = cached || {};
+        cache[cacheKey] = result;
+        elementCache.set(elm, cache);
+      }
+      return result;
     };
 
     /**
@@ -3171,14 +3187,54 @@ const executionScript = _communicationKey => {
       }
     };
 
+    const setExpand = cnt => {
+      if (typeof cnt.set === 'function') {
+        cnt.set('isExpanded', true);
+        if (typeof cnt.isExpandedChanged === 'function') cnt.isExpandedChanged();
+      } else if (cnt.isExpanded === false) {
+        cnt.isExpanded = true;
+        if (typeof cnt.isExpandedChanged === 'function') cnt.isExpandedChanged();
+      }
+    };
+
+    const cloneMethods = {
+      updateTextOnSnippetTypeChange() {
+        if (this.isResetMutation === false) this.isResetMutation = true;
+        if (this.isExpanded === true) this.isExpanded = false;
+        setExpand(this, true);
+        if (this.isResetMutation === false) this.isResetMutation = true;
+        try {
+          true || (this.isResetMutation && this.mutationCallback());
+        } catch (e) {
+          console.error(e);
+        }
+      },
+      collapse() {},
+      computeExpandButtonOffset() {
+        return 0;
+      },
+      dataChanged() {},
+    };
+
     const fixInlineExpanderMethods = inlineExpanderCnt => {
       if (inlineExpanderCnt && !inlineExpanderCnt.__$$idncjk8487$$__) {
         inlineExpanderCnt.__$$idncjk8487$$__ = true;
-        inlineExpanderCnt.updateTextOnSnippetTypeChange = function () {
-          true || (this.isResetMutation && this.mutationCallback());
-        };
+        inlineExpanderCnt.dataChanged = cloneMethods.dataChanged;
+        inlineExpanderCnt.updateTextOnSnippetTypeChange =
+          cloneMethods.updateTextOnSnippetTypeChange;
+        if (typeof inlineExpanderCnt.collapse === 'function') {
+          inlineExpanderCnt.collapse = cloneMethods.collapse;
+        }
+        if (typeof inlineExpanderCnt.computeExpandButtonOffset === 'function') {
+          inlineExpanderCnt.computeExpandButtonOffset = cloneMethods.computeExpandButtonOffset;
+        }
         // inlineExpanderCnt.hasAttributedStringText = true;
-        inlineExpanderCnt.isResetMutation = true;
+        if (typeof inlineExpanderCnt.isResetMutation === 'boolean') {
+          inlineExpanderCnt.isResetMutation = true;
+        }
+        if (typeof inlineExpanderCnt.collapseLabel === 'string') {
+          inlineExpanderCnt.collapseLabel = '';
+        }
         fixInlineExpanderDisplay(inlineExpanderCnt); // do the initial fix
       }
     };
@@ -3264,8 +3320,7 @@ const executionScript = _communicationKey => {
               const inlineExpanderElm = mainInfo.querySelector('ytd-text-inline-expander');
               const inlineExpanderCnt = insp(inlineExpanderElm);
               if (inlineExpanderCnt && inlineExpanderCnt.isExpanded === false) {
-                inlineExpanderCnt.isExpanded = true;
-                inlineExpanderCnt.isExpandedChanged();
+                setExpand(inlineExpanderCnt, true);
                 // holdInlineExpanderAlwaysExpanded(inlineExpanderCnt);
               }
               break;
@@ -5380,6 +5435,9 @@ const executionScript = _communicationKey => {
         if (!ytdFlexyElm) return;
         const p = tabAStatus;
         const q = calculationFn(p, 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 4096);
+        // If the only change between p and q is fullscreen enter/leave,
+        // avoid auto-cancelling theater mode — keep theater persistent.
+        const isFullscreenToggle = Boolean((p & 64) !== (q & 64));
 
         let resetForPanelDisappeared = false;
         let special = 0;
@@ -5439,7 +5497,9 @@ const executionScript = _communicationKey => {
           } else if (special === 2) {
             ytBtnCollapseChat();
           } else if (special === 3) {
-            ytBtnCancelTheater();
+            if (!isFullscreenToggle) {
+              ytBtnCancelTheater();
+            }
             if (lastTab) {
               switchToTab(lastTab);
             }
@@ -5514,7 +5574,9 @@ const executionScript = _communicationKey => {
 
         // p->q +128
         if ((p & (1 | 16 | 128)) === (1 | 16) && (q & (1 | 16 | 128)) === (1 | 16 | 128)) {
-          ytBtnCancelTheater();
+          if (!isFullscreenToggle) {
+            ytBtnCancelTheater();
+          }
           actioned = true;
         }
 
@@ -5548,7 +5610,9 @@ const executionScript = _communicationKey => {
           (q & (1 | 2 | 8 | 16 | 32)) === (1 | 0 | 8 | 16 | 0)
         ) {
           // p->q +8
-          ytBtnCancelTheater();
+          if (!isFullscreenToggle) {
+            ytBtnCancelTheater();
+          }
           actioned = true;
         } else if (
           (p & (1 | 16 | 32)) === (0 | 16 | 0) &&
@@ -5586,7 +5650,9 @@ const executionScript = _communicationKey => {
           actioned = true;
         } else if ((p & 3) === 1 && (q & 3) === 3) {
           // p->q +2
-          ytBtnCancelTheater();
+          if (!isFullscreenToggle) {
+            ytBtnCancelTheater();
+          }
           actioned = true;
         } else if ((p & 10) === 2 && (q & 10) === 10) {
           // p->q +8
@@ -6067,6 +6133,7 @@ body ytd-watch-flexy:not([is-two-columns_]) #chat.ytd-watch-flexy{margin-top:0;}
 body ytd-watch-flexy:not([is-two-columns_]) ytd-watch-metadata.ytd-watch-flexy{margin-bottom:0;}
 ytd-watch-metadata.ytd-watch-flexy ytd-metadata-row-container-renderer{display:none;}
 #tab-info [show-expand-button] #expand-sizer.ytd-text-inline-expander{visibility:initial;}
+#tab-info #collapse.button.ytd-text-inline-expander {display: none;}
 #tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#left-arrow-container.ytd-video-description-infocards-section-renderer>#left-arrow,#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#right-arrow-container.ytd-video-description-infocards-section-renderer>#right-arrow{border:6px solid transparent;opacity:.65;}
 #tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#left-arrow-container.ytd-video-description-infocards-section-renderer>#left-arrow:hover,#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#right-arrow-container.ytd-video-description-infocards-section-renderer>#right-arrow:hover{opacity:1;}
 #tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>div#left-arrow-container::before{content:'';background:transparent;width:40px;display:block;height:40px;position:absolute;left:-20px;top:0;z-index:-1;}

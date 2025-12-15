@@ -319,6 +319,80 @@
   };
 
   /**
+   * Remove duplicate text patterns from a string
+   * @param {string} text - Text to deduplicate
+   * @returns {string} Deduplicated text
+   */
+  const removeDuplicateText = text => {
+    if (!text || text.length < 10) return text;
+
+    let cleaned = text.trim();
+
+    // Remove trailing ellipsis and truncation markers
+    cleaned = cleaned.replace(/\s*\.{2,}$/, '').replace(/\s*…$/, '');
+
+    const words = cleaned.split(/\s+/);
+    if (words.length < 4) return cleaned; // Too short to have meaningful duplicates
+
+    // Try exact half split first
+    const half = Math.floor(words.length / 2);
+    if (half >= 2) {
+      const firstHalf = words.slice(0, half).join(' ');
+      const secondHalf = words.slice(half, half * 2).join(' ');
+      if (firstHalf === secondHalf) {
+        return firstHalf;
+      }
+    }
+
+    // Try sliding window approach for partial duplicates
+    // Search for the longest repeating pattern
+    const minPatternLength = Math.max(2, Math.floor(words.length / 4));
+    const maxPatternLength = Math.floor(words.length / 2);
+
+    for (let len = maxPatternLength; len >= minPatternLength; len--) {
+      const pattern = words.slice(0, len).join(' ');
+      const patternWords = words.slice(0, len);
+
+      // Check if this pattern appears again anywhere in the text
+      for (let offset = 1; offset <= words.length - len; offset++) {
+        let matchCount = 0;
+        let partialWordMatch = false;
+        const testWords = words.slice(offset, Math.min(offset + len, words.length));
+
+        for (let i = 0; i < patternWords.length; i++) {
+          const patternWord = patternWords[i];
+          const testWord = testWords[i];
+
+          if (!testWord) break;
+
+          // Exact match
+          if (patternWord === testWord) {
+            matchCount++;
+          }
+          // Partial match (for truncated words like "сте..." vs "стекла")
+          else if (testWord.length >= 3 && patternWord.startsWith(testWord)) {
+            matchCount += 0.8; // Partial credit
+            partialWordMatch = true;
+          } else if (patternWord.length >= 3 && testWord.startsWith(patternWord)) {
+            matchCount += 0.8; // Partial credit
+            partialWordMatch = true;
+          }
+        }
+
+        // If 70%+ of the pattern matches (allowing for partial words), it's a duplicate
+        const similarity = matchCount / patternWords.length;
+        const effectiveMatches = Math.floor(matchCount);
+        if (
+          similarity >= 0.7 &&
+          (effectiveMatches >= 2 || (matchCount >= 1.5 && partialWordMatch))
+        ) {
+          return pattern;
+        }
+      }
+    }
+
+    return cleaned;
+  }; /**
    * Parse time string to seconds with validation
    * @param {string} timeStr - Time string (MM:SS or HH:MM:SS)
    * @returns {number|null} Seconds or null if invalid
@@ -393,18 +467,28 @@
           const time = parseTime(match[1]);
           if (time !== null && !seen.has(time)) {
             seen.add(time);
-            // Sanitize label text
-            let label = (match[2] || formatTime(time))
+            // Sanitize label text - only use match[2] if it exists and is not empty
+            let label = (match[2] || '')
               .trim()
               .replace(/^\d+[\.\)]\s*/, '')
+              .replace(/\s+/g, ' ') // Normalize whitespace
               .substring(0, 100); // Limit label length
+
+            // Debug logging
+            const originalLabel = label;
 
             // Remove potentially dangerous characters
             label = label.replace(/[<>\"']/g, '');
 
-            if (label) {
-              timecodes.push({ time, label, originalText: match[1] });
+            // Remove duplicate text in label
+            label = removeDuplicateText(label);
+
+            if (originalLabel !== label && label.length > 0) {
+              console.warn('[Timecode] Description deduplicated:', originalLabel, '->', label);
             }
+
+            // Only add if we have actual content (time is always added, label can be empty)
+            timecodes.push({ time, label: label || '', originalText: match[1] });
           }
         }
 
@@ -556,7 +640,7 @@
     if (descriptionText) {
       const extracted = extractTimecodes(descriptionText);
       extracted.forEach(tc => {
-        if (tc.time >= 0 && tc.label?.trim()) {
+        if (tc.time >= 0) {
           uniqueMap.set(tc.time.toString(), tc);
         }
       });
@@ -566,8 +650,18 @@
     const chapters = getYouTubeChapters();
 
     chapters.forEach(chapter => {
-      if (chapter.time >= 0 && chapter.label?.trim()) {
-        uniqueMap.set(chapter.time.toString(), chapter);
+      if (chapter.time >= 0) {
+        const key = chapter.time.toString();
+        const existing = uniqueMap.get(key);
+        // Prefer chapter label if existing label is empty or duplicate
+        if (existing && chapter.label && chapter.label.length > existing.label.length) {
+          uniqueMap.set(key, { ...existing, label: chapter.label, isChapter: true });
+        } else if (!existing) {
+          uniqueMap.set(key, chapter);
+        } else {
+          // Mark existing as chapter
+          uniqueMap.set(key, { ...existing, isChapter: true });
+        }
       }
     });
 
@@ -663,7 +757,24 @@
         const time = parseTime(timeText.trim());
         if (time !== null) {
           // Очищаем заголовок от лишних пробелов и переносов строк
-          const cleanTitle = titleText?.trim().replace(/\s+/g, ' ') || formatTime(time);
+          let cleanTitle = titleText?.trim().replace(/\s+/g, ' ') || '';
+
+          // Debug logging
+          if (cleanTitle && cleanTitle.length > 0) {
+            console.warn('[Timecode Debug] Raw chapter title:', cleanTitle);
+          }
+
+          // Remove time prefix if present in label
+          cleanTitle = cleanTitle.replace(/^\d{1,2}:\d{2}(?::\d{2})?\s*[-–—:]?\s*/, '');
+
+          // Remove duplicate text (some YouTube chapters repeat the title)
+          const deduplicated = removeDuplicateText(cleanTitle);
+
+          if (cleanTitle !== deduplicated) {
+            console.warn('[Timecode] Removed duplicate:', cleanTitle, '->', deduplicated);
+          }
+
+          cleanTitle = deduplicated;
           chapters.set(time.toString(), {
             time,
             label: cleanTitle,
@@ -788,51 +899,52 @@
         #timecode-panel.hidden{transform:translateX(300px);opacity:0;pointer-events:none}
         #timecode-panel.auto-tracking{box-shadow:0 12px 48px rgba(255,0,0,0.12);border-color:rgba(255,0,0,0.25)}
         #timecode-header{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid rgba(255,255,255,0.04);background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);cursor:move}
-                #timecode-title{font-weight:600;margin:0;font-size:15px;user-select:none;display:flex;align-items:center;gap:8px}
-                #timecode-tracking-indicator{width:8px;height:8px;background:red;border-radius:50%;opacity:0;transition:opacity .3s}
-                #timecode-panel.auto-tracking #timecode-tracking-indicator{opacity:1}
-                #timecode-current-time{font-family:monospace;font-size:12px;padding:2px 6px;background:rgba(255,0,0,.3);border-radius:3px;margin-left:auto}
-                #timecode-header-controls{display:flex;align-items:center;gap:6px}
-                #timecode-reload,#timecode-close{background:transparent;border:none;color:inherit;cursor:pointer;width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:background .18s,color .18s}
-                #timecode-reload:hover,#timecode-close:hover{background:rgba(255,255,255,0.04)}
-                #timecode-reload.loading{animation:timecode-spin .8s linear infinite}
-                #timecode-list{overflow-y:auto;padding:8px 0;max-height:calc(70vh - 80px);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
-                #timecode-list::-webkit-scrollbar{width:6px}
-                #timecode-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
-                .timecode-item{padding:10px 14px;display:flex;align-items:center;cursor:pointer;transition:background-color .16s,transform .12s;border-left:3px solid transparent;position:relative;border-radius:8px;margin:6px 10px}
-                .timecode-item:hover{background:rgba(255,255,255,0.04);transform:translateY(-2px)}
-                .timecode-item:hover .timecode-actions{opacity:1}
-                .timecode-item.active{background:linear-gradient(90deg, rgba(255,68,68,0.12), rgba(255,68,68,0.04));border-left-color:#ff6666;box-shadow:inset 0 0 0 1px rgba(255,68,68,0.03)}
-                .timecode-item.active.pulse{animation:pulse .8s ease-out}
-                .timecode-item.editing{background:linear-gradient(90deg, rgba(255,170,0,0.08), rgba(255,170,0,0.03));border-left-color:#ffaa00}
-                .timecode-item.editing .timecode-actions{opacity:1}
-                @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
-                @keyframes timecode-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-                .timecode-time{font-family:monospace;margin-right:10px;color:rgba(255,255,255,.8);font-size:13px;min-width:45px}
-                .timecode-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;flex:1}
-                .timecode-item.has-chapter .timecode-time{color:#ff4444}
-                .timecode-progress{width:0;height:2px;background:#ff4444;position:absolute;bottom:0;left:0;transition:width .3s;opacity:.8}
-                .timecode-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:4px;opacity:0;transition:opacity .2s;background:rgba(0,0,0,.8);border-radius:4px;padding:2px}
-                .timecode-action{background:none;border:none;color:rgba(255,255,255,.8);cursor:pointer;padding:4px;font-size:12px;border-radius:2px;transition:color .2s,background-color .2s}
-                .timecode-action:hover{color:#fff;background:rgba(255,255,255,.2)}
-                .timecode-action.edit:hover{color:#ffaa00}
-                .timecode-action.delete:hover{color:#ff4444}
-                #timecode-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;color:rgba(255,255,255,.7);font-size:13px}
-                #timecode-form{padding:12px;border-top:1px solid rgba(255,255,255,.04);display:none}
-                #timecode-form.visible{display:block}
-                #timecode-form input{width:100%;margin-bottom:8px;padding:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:4px;color:#fff;font-size:13px}
-                #timecode-form input::placeholder{color:rgba(255,255,255,.6)}
-                #timecode-form-buttons{display:flex;gap:8px;justify-content:flex-end}
-                #timecode-form-buttons button{padding:6px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s}
-                #timecode-form-cancel{background:rgba(255,255,255,.2);color:#fff}
-                #timecode-form-cancel:hover{background:rgba(255,255,255,.3)}
-                #timecode-form-save{background:#ff4444;color:#fff}
-                #timecode-form-save:hover{background:#ff6666}
+        #timecode-title{font-weight:600;margin:0;font-size:15px;user-select:none;display:flex;align-items:center;gap:8px}
+        #timecode-tracking-indicator{width:8px;height:8px;background:red;border-radius:50%;opacity:0;transition:opacity .3s}
+        #timecode-panel.auto-tracking #timecode-tracking-indicator{opacity:1}
+        #timecode-current-time{font-family:monospace;font-size:12px;padding:2px 6px;background:rgba(255,0,0,.3);border-radius:3px;margin-left:auto}
+        #timecode-header-controls{display:flex;align-items:center;gap:6px}
+        #timecode-reload,#timecode-close{background:transparent;border:none;color:inherit;cursor:pointer;width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:background .18s,color .18s}
+        #timecode-reload:hover,#timecode-close:hover{background:rgba(255,255,255,0.04)}
+        #timecode-reload.loading{animation:timecode-spin .8s linear infinite}
+        #timecode-list{overflow-y:auto;padding:8px 0;max-height:calc(70vh - 80px);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
+        #timecode-list::-webkit-scrollbar{width:6px}
+        #timecode-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
+        .timecode-item{padding:10px 14px;display:flex;align-items:center;cursor:pointer;transition:background-color .16s,transform .12s;border-left:3px solid transparent;position:relative;border-radius:8px;margin:6px 10px}
+        .timecode-item:hover{background:rgba(255,255,255,0.04);transform:translateY(-2px)}
+        .timecode-item:hover .timecode-actions{opacity:1}
+        .timecode-item.active{background:linear-gradient(90deg, rgba(255,68,68,0.12), rgba(255,68,68,0.04));border-left-color:#ff6666;box-shadow:inset 0 0 0 1px rgba(255,68,68,0.03)}
+        .timecode-item.active.pulse{animation:pulse .8s ease-out}
+        .timecode-item.editing{background:linear-gradient(90deg, rgba(255,170,0,0.08), rgba(255,170,0,0.03));border-left-color:#ffaa00}
+        .timecode-item.editing .timecode-actions{opacity:1}
+        @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
+        @keyframes timecode-spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+        .timecode-time{font-family:monospace;margin-right:10px;color:rgba(255,255,255,.8);font-size:13px;min-width:45px;flex-shrink:0}
+        .timecode-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;flex:1;margin-left:4px}
+        .timecode-item:not(:has(.timecode-label)) .timecode-time{flex:1;text-align:left}
+        .timecode-item.has-chapter .timecode-time{color:#ff4444}
+        .timecode-progress{width:0;height:2px;background:#ff4444;position:absolute;bottom:0;left:0;transition:width .3s;opacity:.8}
+        .timecode-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:4px;opacity:0;transition:opacity .2s;background:rgba(0,0,0,.8);border-radius:4px;padding:2px}
+        .timecode-action{background:none;border:none;color:rgba(255,255,255,.8);cursor:pointer;padding:4px;font-size:12px;border-radius:2px;transition:color .2s,background-color .2s}
+        .timecode-action:hover{color:#fff;background:rgba(255,255,255,.2)}
+        .timecode-action.edit:hover{color:#ffaa00}
+        .timecode-action.delete:hover{color:#ff4444}
+        #timecode-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;color:rgba(255,255,255,.7);font-size:13px}
+        #timecode-form{padding:12px;border-top:1px solid rgba(255,255,255,.04);display:none}
+        #timecode-form.visible{display:block}
+        #timecode-form input{width:100%;margin-bottom:8px;padding:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:4px;color:#fff;font-size:13px}
+        #timecode-form input::placeholder{color:rgba(255,255,255,.6)}
+        #timecode-form-buttons{display:flex;gap:8px;justify-content:flex-end}
+        #timecode-form-buttons button{padding:6px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s}
+        #timecode-form-cancel{background:rgba(255,255,255,.2);color:#fff}
+        #timecode-form-cancel:hover{background:rgba(255,255,255,.3)}
+        #timecode-form-save{background:#ff4444;color:#fff}
+        #timecode-form-save:hover{background:#ff6666}
         #timecode-actions{padding:10px;border-top:1px solid rgba(255,255,255,.04);display:flex;gap:8px;background:linear-gradient(180deg,transparent,rgba(0,0,0,0.03))}
         #timecode-actions button{padding:8px 12px;border:none;border-radius:8px;cursor:pointer;font-size:13px;transition:background .18s;color:inherit;background:rgba(255,255,255,0.02)}
         #timecode-actions button:hover{background:rgba(255,255,255,0.04)}
         #timecode-track-toggle.active{background:linear-gradient(90deg,#ff6b6b,#ff4444);color:#fff}
-            `;
+        `;
     YouTubeUtils.StyleManager.add('timecode-panel-styles', styles);
   };
 
@@ -1043,7 +1155,7 @@
     const timecodes = getCurrentTimecodes();
     const newTimecode = {
       time,
-      label: labelValue || formatTime(time),
+      label: labelValue || '',
       isUserAdded: true,
       isChapter: false,
     };
@@ -1091,7 +1203,10 @@
 
     const videoTitle = document.title.replace(/\s-\sYouTube$/, '');
     let content = `${videoTitle}\n\nTimecodes:\n`;
-    timecodes.forEach(tc => (content += `${formatTime(tc.time)} - ${tc.label}\n`));
+    timecodes.forEach(tc => {
+      const label = tc.label?.trim();
+      content += label ? `${formatTime(tc.time)} - ${label}\n` : `${formatTime(tc.time)}\n`;
+    });
 
     if (navigator.clipboard?.writeText) {
       navigator.clipboard.writeText(content).then(() => {
@@ -1117,7 +1232,33 @@
     list.innerHTML = timecodes
       .map((tc, i) => {
         const timeStr = formatTime(tc.time);
-        const label = (tc.label?.trim() || timeStr).replace(
+        // Only use label if it exists and is different from time
+        let rawLabel = tc.label?.trim() || '';
+
+        // Remove time prefix from label if it starts with the same time
+        const timePattern = /^\d{1,2}:\d{2}(?::\d{2})?\s*[-–—:]?\s*/;
+        rawLabel = rawLabel.replace(timePattern, '');
+
+        // Remove duplicate text in label (final safety check)
+        const beforeDedup = rawLabel;
+        rawLabel = removeDuplicateText(rawLabel);
+
+        if (beforeDedup !== rawLabel && rawLabel.length > 0) {
+          console.warn('[Timecode] Display deduplicated:', beforeDedup, '->', rawLabel);
+        }
+
+        // Normalize time comparisons (remove leading zeros for comparison)
+        const normalizedTime = timeStr.replace(/^0+:/, '');
+        const normalizedLabel = rawLabel.replace(/^0+:/, '');
+
+        const hasCustomLabel =
+          rawLabel &&
+          rawLabel !== timeStr &&
+          normalizedLabel !== normalizedTime &&
+          rawLabel !== tc.originalText &&
+          rawLabel.length > 0;
+        const displayLabel = hasCustomLabel ? rawLabel : '';
+        const safeLabel = displayLabel.replace(
           /[<>&"']/g,
           c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' })[c]
         );
@@ -1126,7 +1267,7 @@
         return `
           <div class="timecode-item ${tc.isChapter ? 'has-chapter' : ''}" data-time="${tc.time}" data-index="${i}">
             <div class="timecode-time">${timeStr}</div>
-            <div class="timecode-label" title="${label}">${label}</div>
+            ${safeLabel ? `<div class="timecode-label" title="${safeLabel}">${safeLabel}</div>` : ''}
             <div class="timecode-progress"></div>
             ${
               isEditable
@@ -1338,7 +1479,7 @@
     try {
       const minimal = timecodes.map(tc => ({
         t: tc.time,
-        l: tc.label?.trim() || formatTime(tc.time),
+        l: tc.label?.trim() || '',
         c: tc.isChapter || false,
         u: tc.isUserAdded || false,
       }));
@@ -1372,14 +1513,19 @@
     if (!items) return [];
 
     return Array.from(items)
-      .map(item => ({
-        time: parseFloat(item.dataset.time),
-        label:
-          item.querySelector('.timecode-label')?.textContent ||
-          formatTime(parseFloat(item.dataset.time)),
-        isChapter: item.classList.contains('has-chapter'),
-        isUserAdded: !item.classList.contains('has-chapter') || false,
-      }))
+      .map(item => {
+        const time = parseFloat(item.dataset.time);
+        const labelEl = item.querySelector('.timecode-label');
+        // Only use label if element exists and has actual text content
+        const label = labelEl?.textContent?.trim() || '';
+
+        return {
+          time,
+          label: label, // Keep original label (can be empty)
+          isChapter: item.classList.contains('has-chapter'),
+          isUserAdded: !item.classList.contains('has-chapter') || false,
+        };
+      })
       .sort((a, b) => a.time - b.time);
   };
 
