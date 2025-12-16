@@ -51,6 +51,8 @@ module.exports = [
         GM_xmlhttpRequest: 'readonly',
         // Project-specific globals (defined in main.js, shared across modules)
         YouTubeUtils: 'readonly',
+        YouTubeSecurityUtils: 'readonly',
+        YouTubeDOMCache: 'readonly',
         closestFromAnchor: 'readonly',
         _querySelector: 'readonly',
         findContentsRenderer: 'readonly',
@@ -70,16 +72,41 @@ module.exports = [
       },
     },
     rules: {
-      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^_' }],
+      'no-unused-vars': ['warn', { argsIgnorePattern: '^_', varsIgnorePattern: '^(_|\\$|byId)' }],
       'no-console': ['warn', { allow: ['warn', 'error'] }],
       'prefer-const': 'warn',
       'no-var': 'warn',
       eqeqeq: ['warn', 'smart'],
       curly: ['warn', 'multi-line'],
-      'no-undef': 'error',
+      'no-undef': ['error', { typeof: false }],
       'no-prototype-builtins': 'warn',
       // Allow debug flag patterns like: DEBUG && console.log()
       'no-unused-expressions': ['warn', { allowShortCircuit: true, allowTernary: true }],
+      // Security rules
+      'no-eval': 'error',
+      'no-implied-eval': 'error',
+      'no-new-func': 'error',
+      'no-script-url': 'error',
+      'no-self-compare': 'error',
+      'no-sequences': 'warn',
+      'no-throw-literal': 'warn',
+      'no-with': 'error',
+      radix: 'warn',
+      'no-restricted-properties': [
+        'error',
+        {
+          object: 'document',
+          property: 'write',
+          message: 'document.write is unsafe. Use DOM manipulation instead.',
+        },
+      ],
+      'no-restricted-globals': [
+        'error',
+        {
+          name: 'eval',
+          message: 'eval() is unsafe and should not be used.',
+        },
+      ],
     },
   },
   {

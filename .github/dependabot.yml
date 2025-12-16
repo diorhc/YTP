@@ -1,0 +1,52 @@
+# Dependabot configuration for automatic dependency updates
+# Автоматическое обновление зависимостей
+
+version: 2
+updates:
+  # NPM dependencies
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "automated"
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    # Группировка обновлений для уменьшения PR
+    groups:
+      development-dependencies:
+        dependency-type: "development"
+        update-types:
+          - "minor"
+          - "patch"
+      production-dependencies:
+        dependency-type: "production"
+        update-types:
+          - "patch"
+    # Автоматическое создание PR для обновлений безопасности
+    allow:
+      - dependency-type: "all"
+    # Игнорировать определенные зависимости (если необходимо)
+    ignore: []
+      # Example: игнорировать мажорные обновления для стабильных пакетов
+      # - dependency-name: "eslint"
+      #   update-types: ["version-update:semver-major"]
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "09:00"
+    open-pull-requests-limit: 5
+    labels:
+      - "github-actions"
+      - "automated"
+    commit-message:
+      prefix: "ci"

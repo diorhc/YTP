@@ -92,7 +92,11 @@
     lastVideoCheck: 0,
   };
 
-  // Optimized video selector with caching
+  /**
+   * Get the currently active video element in YouTube Shorts with caching
+   * Optimizes performance by caching results for 100ms
+   * @returns {HTMLVideoElement|null} The active video element or null if not found
+   */
   const getCurrentVideo = (() => {
     const selectors = ['ytd-reel-video-renderer[is-active] video', '#shorts-player video', 'video'];
 
@@ -119,8 +123,16 @@
 
   // Optimized utilities
   const utils = {
+    /**
+     * Check if current page is a YouTube Shorts page
+     * @returns {boolean} True if on Shorts page
+     */
     isInShortsPage: () => location.pathname.startsWith('/shorts/'),
 
+    /**
+     * Check if an input element currently has focus
+     * @returns {boolean} True if input/textarea/contenteditable is focused
+     */
     isInputFocused: () => {
       const el = document.activeElement;
       return el?.matches?.('input, textarea, [contenteditable="true"]') || el?.isContentEditable;
@@ -187,6 +199,10 @@
       }
     },
 
+    /**
+     * Get default keyboard shortcuts configuration
+     * @returns {Object} Object containing default shortcut definitions
+     */
     getDefaultShortcuts: () => ({
       seekBackward: {
         key: 'ArrowLeft',
@@ -234,10 +250,17 @@
     }),
   };
 
-  // Optimized feedback system
+  /**
+   * Feedback system for displaying temporary notifications in Shorts
+   * Uses glassmorphism design for visual feedback
+   */
   const feedback = (() => {
     let element = null;
 
+    /**
+     * Create or retrieve the feedback element
+     * @returns {HTMLElement} The feedback container element
+     */
     const create = () => {
       if (element) return element;
 
@@ -265,6 +288,11 @@
     };
 
     return {
+      /**
+       * Display a feedback message to the user
+       * @param {string} text - Message text to display
+       * @returns {void}
+       */
       show: text => {
         state.lastAction = text;
         clearTimeout(state.actionTimeout);
@@ -289,6 +317,10 @@
 
   // Optimized actions
   const actions = {
+    /**
+     * Seek backward 5 seconds in the video
+     * @returns {void}
+     */
     seekBackward: () => {
       const video = getCurrentVideo();
       if (video) {
@@ -297,6 +329,10 @@
       }
     },
 
+    /**
+     * Seek forward 5 seconds in the video
+     * @returns {void}
+     */
     seekForward: () => {
       const video = getCurrentVideo();
       if (video) {
@@ -305,6 +341,11 @@
       }
     },
 
+    /**
+     * Toggle captions/subtitles on or off
+     * Attempts to click UI button first, then falls back to programmatic toggle
+     * @returns {void}
+     */
     toggleCaptions: () => {
       // Try to click a captions/subtitles button first
       try {
@@ -348,6 +389,10 @@
       feedback.show(t('captionsUnavailable'));
     },
 
+    /**
+     * Increase video volume by 10%
+     * @returns {void}
+     */
     volumeUp: () => {
       const video = getCurrentVideo();
       if (video) {
@@ -356,6 +401,10 @@
       }
     },
 
+    /**
+     * Decrease video volume by 10%
+     * @returns {void}
+     */
     volumeDown: () => {
       const video = getCurrentVideo();
       if (video) {
@@ -364,6 +413,11 @@
       }
     },
 
+    /**
+     * Toggle video mute state
+     * Attempts to click UI mute button first, then falls back to programmatic toggle
+     * @returns {void}
+     */
     mute: () => {
       const video = getCurrentVideo();
 
@@ -402,13 +456,24 @@
       }
     },
 
+    /**
+     * Show or hide the keyboard shortcuts help panel
+     * @returns {void}
+     */
     showHelp: () => helpPanel.toggle(),
   };
 
-  // Help panel system
+  /**
+   * Help panel system for displaying keyboard shortcuts reference
+   * Provides interactive UI for viewing and editing shortcuts
+   */
   const helpPanel = (() => {
     let panel = null;
 
+    /**
+     * Create or retrieve the help panel element
+     * @returns {HTMLElement} The help panel container element
+     */
     const create = () => {
       if (panel) return panel;
 
@@ -467,6 +532,10 @@
     };
 
     return {
+      /**
+       * Display the help panel
+       * @returns {void}
+       */
       show: () => {
         const p = create();
         p.classList.add('visible');
@@ -474,6 +543,10 @@
         p.focus();
       },
 
+      /**
+       * Hide the help panel
+       * @returns {void}
+       */
       hide: () => {
         if (panel) {
           panel.classList.remove('visible');
@@ -481,8 +554,16 @@
         }
       },
 
+      /**
+       * Toggle help panel visibility
+       * @returns {void}
+       */
       toggle: () => (state.helpVisible ? helpPanel.hide() : helpPanel.show()),
 
+      /**
+       * Refresh the help panel by removing and recreating it
+       * @returns {void}
+       */
       refresh: () => {
         if (panel) {
           panel.remove();
@@ -492,7 +573,12 @@
     };
   })();
 
-  // Shortcut editing
+  /**
+   * Open dialog to edit a keyboard shortcut
+   * @param {string} actionKey - The action identifier to edit
+   * @param {string} currentKey - The current key binding
+   * @returns {void}
+   */
   const editShortcut = (actionKey, currentKey) => {
     const dialog = document.createElement('div');
     dialog.className = 'glass-modal shortcut-edit-dialog';
@@ -545,7 +631,11 @@
     document.addEventListener('keydown', handleKey, true);
   };
 
-  // Optimized styles with glassmorphism
+  /**
+   * Add glassmorphism styles for Shorts keyboard controls
+   * Uses CSS custom properties for theme support
+   * @returns {void}
+   */
   const addStyles = () => {
     if (document.getElementById('shorts-keyboard-styles')) return;
 
@@ -592,7 +682,12 @@
     YouTubeUtils.StyleManager.add('shorts-keyboard-styles', styles);
   };
 
-  // Main keyboard handler
+  /**
+   * Main keyboard event handler for Shorts controls
+   * Routes keypress events to appropriate actions
+   * @param {KeyboardEvent} e - The keyboard event
+   * @returns {void}
+   */
   const handleKeydown = e => {
     if (
       !config.enabled ||
@@ -615,7 +710,11 @@
     }
   };
 
-  // Initialize
+  /**
+   * Initialize the Shorts keyboard controls module
+   * Sets up event listeners and styles
+   * @returns {void}
+   */
   const init = () => {
     utils.loadSettings();
     addStyles();

@@ -57,6 +57,8 @@
     "security:audit": "npm audit --audit-level=moderate",
     "security:fix": "npm audit fix",
     "security:check": "npm audit --audit-level=high --production",
+    "security:innerHTML": "node -e \"const fs = require('fs'); const result = require('child_process').execSync('grep -r innerHTML src/ --include=*.js || true').toString(); fs.writeFileSync('innerHTML-usage.txt', result); console.log('innerHTML usage saved to innerHTML-usage.txt');\"",
+    "security:full": "npm run security:check && npm run security:innerHTML && npm run lint",
     "precommit": "lint-staged",
     "prepush": "npm run typecheck && npm run test:unit",
     "validate": "npm run typecheck && npm run lint && npm run test:unit",

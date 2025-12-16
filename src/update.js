@@ -51,10 +51,14 @@
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.3',
+    currentVersion: '2.3.1',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
+    // If true, attempt to automatically initiate installation when an update is found
+    // NOTE: This will try to open the install URL (GM_openInTab / window.open / navigation).
+    // Keep disabled by default for safety; enable only if you want auto-install behavior.
+    autoInstallOnCheck: false,
   };
 
   const windowRef = typeof window === 'undefined' ? null : window;
@@ -720,6 +724,30 @@
 
     handleUpdateResult(updateDetails, force);
     utils.saveSettings();
+
+    // Auto-install if configured and update wasn't dismissed
+    if (updateState.updateAvailable && UPDATE_CONFIG.autoInstallOnCheck) {
+      try {
+        const dismissed = sessionStorage.getItem('update_dismissed');
+        if (dismissed !== updateDetails.version) {
+          const started = installUpdate(updateDetails);
+          if (started) {
+            // Persist that we've acted on this update so we don't keep reopening it
+            markUpdateDismissed(updateDetails);
+            try {
+              utils.showNotification(t('installing'));
+            } catch {}
+          } else {
+            console.warn(
+              '[YouTube+][Update] Auto-install could not be initiated for',
+              updateDetails.downloadUrl
+            );
+          }
+        }
+      } catch (e) {
+        console.error('[YouTube+][Update] Auto-installation failed:', e);
+      }
+    }
   };
 
   /**

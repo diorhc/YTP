@@ -2,25 +2,12 @@
 (function () {
   'use strict';
 
-  // Internationalization
-  const i18n = {
-    en: {
-      adBlocker: 'Ad Blocker',
-      adBlockerDescription: 'Skip ads and remove ad elements automatically',
-    },
-    ru: {
-      adBlocker: 'Блокировщик рекламы',
-      adBlockerDescription: 'Автоматически пропускать рекламу и удалять рекламные элементы',
-    },
-  };
-
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  // Translation function: prefer central i18n (embedded) when available,
-  // otherwise fall back to local i18n (en/ru).
+  /**
+   * Translation helper - uses centralized i18n system
+   * @param {string} key - Translation key
+   * @param {Object} params - Interpolation parameters
+   * @returns {string} Translated string
+   */
   function t(key, params = {}) {
     try {
       if (typeof window !== 'undefined') {
@@ -32,15 +19,9 @@
         }
       }
     } catch {
-      // ignore and fall back to local i18n
+      // Fallback to key if central i18n unavailable
     }
-
-    const lang = getLanguage();
-    const str = (i18n[lang] && i18n[lang][key]) || i18n.en[key] || key;
-    if (!params || Object.keys(params).length === 0) return str;
-    let result = str;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
-    return result;
+    return key;
   }
 
   /**

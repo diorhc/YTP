@@ -30,7 +30,18 @@ const hasInit =
 console.log('🚀 Инициализация:', hasInit ? '✅ Найдена' : '❌ НЕ НАЙДЕНА');
 
 // Проверить ошибки
-const hasBindError = content.includes('.bind(YouTubeEnhancer)');
+// Strip string literals and comments before searching to avoid false positives
+function stripCommentsAndStrings(src) {
+  // Remove string literals (single, double, template)
+  let withoutStrings = src.replace(/'(?:\\.|[^'\\])*'|"(?:\\.|[^"\\])*"|`(?:\\.|[^`\\])*`/g, '');
+  // Remove block and line comments
+  withoutStrings = withoutStrings.replace(/\/\*[\s\S]*?\*\//g, '');
+  withoutStrings = withoutStrings.replace(/\/\/.*$/gm, '');
+  return withoutStrings;
+}
+
+const cleaned = stripCommentsAndStrings(content);
+const hasBindError = cleaned.includes('.bind(YouTubeEnhancer)');
 console.log('⚠️  .bind() проблемы:', hasBindError ? '❌ Найдены' : '✅ Отсутствуют');
 
 // Размер файла

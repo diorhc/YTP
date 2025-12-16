@@ -6,25 +6,27 @@
   if (window._playlistSearchInitialized) return;
   window._playlistSearchInitialized = true;
 
-  // Localization
-  const i18n = {
-    en: {
-      searchPlaceholder: 'Search in {playlist}...',
-    },
-    ru: {
-      searchPlaceholder: 'Поиск в плейлисте "{playlist}"...',
-    },
+  /**
+   * Translation helper - uses centralized i18n system
+   * @param {string} key - Translation key
+   * @param {Object} params - Interpolation parameters
+   * @returns {string} Translated string
+   */
+  const t = (key, params = {}) => {
+    try {
+      if (typeof window !== 'undefined') {
+        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
+          return window.YouTubePlusI18n.t(key, params);
+        }
+        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
+          return window.YouTubeUtils.t(key, params);
+        }
+      }
+    } catch {
+      // Fallback to key if central i18n unavailable
+    }
+    return key;
   };
-
-  // Detect language
-  const getLanguage = () => {
-    const htmlLang = document.documentElement.lang || 'en';
-    if (htmlLang.startsWith('ru')) return 'ru';
-    return 'en';
-  };
-
-  const lang = getLanguage();
-  const t = key => i18n[lang][key] || i18n.en[key] || key;
 
   // Utility functions for performance optimization
   const debounce = (func, wait) => {
@@ -75,7 +77,16 @@
   const loadSettings = () => {
     try {
       const saved = localStorage.getItem(config.storageKey);
-      if (saved) Object.assign(config, JSON.parse(saved));
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        // Use safeMerge to prevent prototype pollution
+        if (window.YouTubeUtils && window.YouTubeUtils.safeMerge) {
+          window.YouTubeUtils.safeMerge(config, parsed);
+        } else {
+          // Fallback: only copy known safe keys
+          if (typeof parsed.enabled === 'boolean') config.enabled = parsed.enabled;
+        }
+      }
     } catch (error) {
       console.warn('[Playlist Search] Failed to load settings:', error);
     }

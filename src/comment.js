@@ -6,64 +6,26 @@
 (function () {
   'use strict';
 
-  // Internationalization (i18n) system
-  const i18n = {
-    en: {
-      commentManager: 'Comment Manager',
-      deleteSelected: 'Delete Selected',
-      selectAll: 'Select All',
-      clearAll: 'Clear All',
-      selectComment: 'Select comment',
-      togglePanel: 'Toggle panel',
-      commentManagerControls: 'Comment manager controls',
-      commentManagement: 'Comment Management',
-      enableCommentManager: 'Enable comment manager',
-      bulkDeleteDescription: 'Add checkboxes and bulk delete functionality to your comments',
-    },
-    ru: {
-      commentManager: 'Менеджер комментариев',
-      deleteSelected: 'Удалить выбранные',
-      selectAll: 'Выбрать все',
-      clearAll: 'Очистить все',
-      selectComment: 'Выбрать комментарий',
-      togglePanel: 'Переключить панель',
-      commentManagerControls: 'Управление менеджером комментариев',
-      commentManagement: 'Управление комментариями',
-      enableCommentManager: 'Включить менеджер комментариев',
-      bulkDeleteDescription: 'Добавить чекбоксы и функцию массового удаления к вашим комментариям',
-    },
-  };
-
-  // Get browser language
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  // Translation function: prefer central i18n (embedded) when available,
-  // otherwise fall back to module-local translations (keeps existing en/ru behavior).
+  /**
+   * Translation helper - uses centralized i18n system
+   * @param {string} key - Translation key
+   * @param {Object} params - Interpolation parameters
+   * @returns {string} Translated string
+   */
   function t(key, params = {}) {
     try {
       if (typeof window !== 'undefined') {
-        // Prefer explicit YouTubePlusI18n if present
         if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
           return window.YouTubePlusI18n.t(key, params);
         }
-        // Otherwise, prefer YouTubeUtils.t if available
         if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
           return window.YouTubeUtils.t(key, params);
         }
       }
     } catch {
-      // ignore and fall back to local i18n
+      // Fallback to key if central i18n unavailable
     }
-
-    const lang = getLanguage();
-    const str = (i18n[lang] && i18n[lang][key]) || i18n.en[key] || key;
-    if (!params || Object.keys(params).length === 0) return str;
-    let result = str;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
-    return result;
+    return key;
   }
 
   /**

@@ -11,97 +11,26 @@
   // Minimal guards for shared utils
   const Y = /** @type {any} */ (window).YouTubeUtils || {};
 
-  // Internationalization for report module
-  const i18n = {
-    en: {
-      shortTitle: 'Short title (one line)',
-      emailOptional: 'Your email (optional)',
-      descriptionPlaceholder: 'Describe the issue, steps to reproduce, expected vs actual',
-      includeDebug: 'Include debug info (version, URL, settings)',
-      openGitHub: 'Open GitHub Issue',
-      copyReport: 'Copy Report',
-      prepareEmail: 'Prepare Email',
-      privacy:
-        'By submitting you agree to include the provided information. Do not include passwords or personal tokens.',
-      typeBug: 'Bug / Error',
-      typeFeature: 'Feature Request',
-      typeOther: 'Other',
-      titleRequired: 'Title is required',
-      titleMin: 'Title must be at least 5 characters',
-      descRequired: 'Description is required',
-      descMin: 'Description must be at least 10 characters',
-      invalidEmail: 'Invalid email format',
-      fixErrorsPrefix: 'Please fix the following errors:\n• ',
-      opening: 'Opening...',
-      copying: 'Copying...',
-      copied: 'Copied!',
-      openingGithubNotification: 'Opening GitHub in a new tab',
-      failedOpenGithub: 'Failed to open GitHub issue',
-      reportCopied: 'Report copied to clipboard',
-      copyFailed: 'Copy failed — please copy manually',
-    },
-    ru: {
-      shortTitle: 'Краткий заголовок (в одну строку)',
-      emailOptional: 'Ваш email (необязательно)',
-      descriptionPlaceholder:
-        'Опишите проблему, шаги для воспроизведения, ожидаемое и фактическое поведение',
-      includeDebug: 'Включить отладочную информацию (версия, URL, настройки)',
-      openGitHub: 'Открыть заявку на GitHub',
-      copyReport: 'Копировать отчет',
-      prepareEmail: 'Подготовить письмо',
-      privacy:
-        'Отправляя, вы соглашаетесь включить указанную информацию. Не включайте пароли или личные токены.',
-      typeBug: 'Ошибка',
-      typeFeature: 'Запрос функции',
-      typeOther: 'Другое',
-      titleRequired: 'Требуется заголовок',
-      titleMin: 'Заголовок должен быть не менее 5 символов',
-      descRequired: 'Требуется описание',
-      descMin: 'Описание должно быть не менее 10 символов',
-      invalidEmail: 'Неправильный формат email',
-      fixErrorsPrefix: 'Пожалуйста, исправьте следующие ошибки:\n• ',
-      opening: 'Открываю...',
-      copying: 'Копирую...',
-      copied: 'Скопировано!',
-      openingGithubNotification: 'Открываю GitHub в новой вкладке',
-      failedOpenGithub: 'Не удалось открыть заявку на GitHub',
-      reportCopied: 'Отчет скопирован в буфер обмена',
-      copyFailed: 'Копирование не удалось — пожалуйста, скопируйте вручную',
-    },
-  };
-
-  // Get browser language
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
   /**
-   * Translation function: prefer central i18n if present, otherwise fallback
-   * to module-local translations (keeps existing en/ru behavior).
+   * Translation function - uses centralized i18n system
    * @param {string} key - Translation key
+   * @param {Object} params - Interpolation parameters
    * @returns {string} Translated text
    */
   function t(key, params = {}) {
     try {
       if (typeof window !== 'undefined') {
-        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
+        if (window.YouTubePlusI18n?.t && typeof window.YouTubePlusI18n.t === 'function') {
           return window.YouTubePlusI18n.t(key, params);
         }
-        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
+        if (window.YouTubeUtils?.t && typeof window.YouTubeUtils.t === 'function') {
           return window.YouTubeUtils.t(key, params);
         }
       }
     } catch {
-      // fallback to local i18n
+      // Fallback to key if central i18n unavailable
     }
-
-    const lang = getLanguage();
-    const str = (i18n[lang] && i18n[lang][key]) || i18n.en[key] || key;
-    if (!params || Object.keys(params).length === 0) return str;
-    let result = str;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
-    return result;
+    return key;
   }
 
   /**
@@ -117,7 +46,13 @@
       if (k === 'class') {
         el.className = /** @type {string} */ (v);
       } else if (k === 'html') {
-        el.innerHTML = /** @type {string} */ (v);
+        // ✅ SECURITY FIX: Use createSafeHTML for innerHTML
+        if (typeof window._ytplusCreateHTML === 'function') {
+          el.innerHTML = window._ytplusCreateHTML(/** @type {string} */ (v));
+        } else {
+          // Fallback: sanitize and set
+          el.innerHTML = sanitizeHTML(/** @type {string} */ (v));
+        }
       } else if (k.startsWith('on') && typeof v === 'function') {
         el.addEventListener(k.substring(2).toLowerCase(), /** @type {EventListener} */ (v));
       } else {
@@ -136,7 +71,7 @@
    * @returns {string} Sanitized HTML
    */
   function sanitizeHTML(html) {
-    if (Y.sanitizeHTML && typeof Y.sanitizeHTML === 'function') {
+    if (Y?.sanitizeHTML && typeof Y.sanitizeHTML === 'function') {
       return Y.sanitizeHTML(html);
     }
     // Fallback sanitizer
@@ -195,11 +130,11 @@
   function getDebugInfo() {
     try {
       const debug = {
-        version: /** @type {any} */ (window.YouTubePlusDebug || {}).version || 'unknown',
-        userAgent: navigator.userAgent || 'unknown',
-        url: location.href || 'unknown',
-        language: document.documentElement.lang || navigator.language || 'unknown',
-        settings: typeof Y.SettingsManager === 'object' ? Y.SettingsManager.load() : null,
+        version: /** @type {any} */ (window.YouTubePlusDebug)?.version || 'unknown',
+        userAgent: navigator?.userAgent || 'unknown',
+        url: location?.href || 'unknown',
+        language: document.documentElement?.lang || navigator?.language || 'unknown',
+        settings: typeof Y?.SettingsManager === 'object' ? Y.SettingsManager.load() : null,
       };
       return debug;
     } catch (err) {
@@ -342,22 +277,62 @@
         'display:flex;flex-direction:column;gap:var(--yt-space-sm);margin-top:var(--yt-space-md);',
     });
 
-    const typeSelect = mk(
-      'select',
-      {
-        style:
-          'padding:var(--yt-space-sm);border-radius:var(--yt-radius-sm);background:var(--yt-input-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);font-size:14px;cursor:pointer;transition:var(--yt-transition);',
-      },
-      []
-    );
-    [
+    // Hidden native select (kept for form value access); visible UI will be a custom glass-dropdown
+    const typeSelect = mk('select', { style: 'display:none;' }, []);
+    const typeOptions = [
       { v: 'bug', l: t('typeBug') },
       { v: 'feature', l: t('typeFeature') },
       { v: 'other', l: t('typeOther') },
-    ].forEach(opt => {
+    ];
+    typeOptions.forEach(opt => {
       const o = mk('option', { value: opt.v }, [opt.l]);
       typeSelect.appendChild(o);
     });
+
+    // Build visible glass-dropdown using shared styles
+    const typeDropdown = mk('div', {
+      class: 'glass-dropdown',
+      id: 'report-type-dropdown',
+      tabindex: '0',
+      role: 'listbox',
+      'aria-expanded': 'false',
+    });
+
+    const defaultLabel = typeOptions[0].l;
+    const toggleBtn = mk(
+      'button',
+      { class: 'glass-dropdown__toggle', type: 'button', 'aria-haspopup': 'listbox' },
+      [mk('span', { class: 'glass-dropdown__label' }, [defaultLabel])]
+    );
+
+    // add chevron svg to toggle
+    toggleBtn.appendChild(
+      mk(
+        'svg',
+        {
+          class: 'glass-dropdown__chev',
+          width: '12',
+          height: '12',
+          viewBox: '0 0 24 24',
+          fill: 'none',
+          stroke: 'currentColor',
+          'stroke-width': '2',
+        },
+        [mk('polyline', { points: '6 9 12 15 18 9' }, [])]
+      )
+    );
+
+    const listEl = mk('ul', { class: 'glass-dropdown__list', role: 'presentation' }, []);
+    typeOptions.forEach((opt, i) => {
+      const li = mk('li', { class: 'glass-dropdown__item', 'data-value': opt.v, role: 'option' }, [
+        opt.l,
+      ]);
+      if (i === 0) li.setAttribute('aria-selected', 'true');
+      listEl.appendChild(li);
+    });
+
+    typeDropdown.appendChild(toggleBtn);
+    typeDropdown.appendChild(listEl);
 
     const inputStyle =
       'padding:var(--yt-space-sm);border-radius:var(--yt-radius-sm);background:var(--yt-input-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);font-size:14px;transition:var(--yt-transition);box-sizing:border-box;';
@@ -402,7 +377,9 @@
     actions.appendChild(copyBtn);
     actions.appendChild(emailBtn);
 
+    // append hidden select and visible dropdown
     form.appendChild(typeSelect);
+    form.appendChild(typeDropdown);
     form.appendChild(titleInput);
     form.appendChild(emailInput);
     form.appendChild(descInput);
@@ -433,6 +410,100 @@
 
     section.appendChild(form);
     section.appendChild(privacy);
+
+    // Initialize interactions for the glass-dropdown (sync to hidden select)
+    (function initReportTypeDropdown() {
+      try {
+        const hidden = typeSelect; // the hidden native select
+        const dropdown = typeDropdown;
+        const toggle = dropdown.querySelector('.glass-dropdown__toggle');
+        const list = dropdown.querySelector('.glass-dropdown__list');
+        const label = dropdown.querySelector('.glass-dropdown__label');
+        let items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+        let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
+        if (idx < 0) idx = 0;
+
+        const openList = () => {
+          dropdown.setAttribute('aria-expanded', 'true');
+          list.style.display = 'block';
+          items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+        };
+        const closeList = () => {
+          dropdown.setAttribute('aria-expanded', 'false');
+          list.style.display = 'none';
+        };
+
+        // ensure initial hidden select value matches selected item
+        const selectedItem = items[idx];
+        if (selectedItem) {
+          hidden.value = selectedItem.dataset.value || '';
+          label.textContent = selectedItem.textContent || '';
+        }
+
+        toggle.addEventListener('click', () => {
+          const expanded = dropdown.getAttribute('aria-expanded') === 'true';
+          if (expanded) closeList();
+          else openList();
+        });
+
+        document.addEventListener('click', e => {
+          if (!dropdown.contains(e.target)) closeList();
+        });
+
+        list.addEventListener('click', e => {
+          const it = e.target.closest('.glass-dropdown__item');
+          if (!it) return;
+          const val = it.dataset.value;
+          hidden.value = val;
+          list
+            .querySelectorAll('.glass-dropdown__item')
+            .forEach(li => li.removeAttribute('aria-selected'));
+          it.setAttribute('aria-selected', 'true');
+          label.textContent = it.textContent;
+          hidden.dispatchEvent(new Event('change', { bubbles: true }));
+          closeList();
+        });
+
+        // keyboard navigation
+        dropdown.addEventListener('keydown', e => {
+          const expanded = dropdown.getAttribute('aria-expanded') === 'true';
+          if (e.key === 'ArrowDown') {
+            e.preventDefault();
+            if (!expanded) openList();
+            idx = Math.min(idx + 1, items.length - 1);
+            items.forEach(it => it.removeAttribute('aria-selected'));
+            items[idx].setAttribute('aria-selected', 'true');
+            items[idx].scrollIntoView({ block: 'nearest' });
+          } else if (e.key === 'ArrowUp') {
+            e.preventDefault();
+            if (!expanded) openList();
+            idx = Math.max(idx - 1, 0);
+            items.forEach(it => it.removeAttribute('aria-selected'));
+            items[idx].setAttribute('aria-selected', 'true');
+            items[idx].scrollIntoView({ block: 'nearest' });
+          } else if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            if (!expanded) {
+              openList();
+              return;
+            }
+            const it = items[idx];
+            if (it) {
+              hidden.value = it.dataset.value;
+              hidden.dispatchEvent(new Event('change', { bubbles: true }));
+              label.textContent = it.textContent;
+              closeList();
+            }
+          } else if (e.key === 'Escape') {
+            closeList();
+          }
+        });
+      } catch (err) {
+        if (Y && typeof Y.logError === 'function') {
+          Y.logError('Report', 'initReportTypeDropdown', err);
+        }
+      }
+    })();
 
     // (debugPreview is appended inside the form, directly under the checkbox)
 

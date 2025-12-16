@@ -254,11 +254,30 @@
     const intervals = new Set();
     const timeouts = new Set();
     const animationFrames = new Set();
+    // Map elements -> Set of observers (WeakMap so entries are GC'd when element removed)
+    const elementObservers = new WeakMap();
 
     return {
-      registerObserver(o) {
+      /**
+       * Register an observer for global cleanup and optionally associate it with an element.
+       * If an element is provided the observer will be tracked in a WeakMap so when
+       * the element is GC'd the mapping is removed automatically.
+       * @param {MutationObserver|IntersectionObserver|ResizeObserver} o
+       * @param {Element} [el]
+       */
+      registerObserver(o, el) {
         try {
-          observers.add(o);
+          if (o) observers.add(o);
+          if (el && typeof el === 'object') {
+            try {
+              let set = elementObservers.get(el);
+              if (!set) {
+                set = new Set();
+                elementObservers.set(el, set);
+              }
+              set.add(o);
+            } catch {}
+          }
         } catch {}
         return o;
       },
@@ -287,12 +306,19 @@
       },
       cleanup() {
         try {
+          // Disconnect all registered observers
           for (const o of observers) {
             try {
-              o.disconnect();
+              if (o && typeof o.disconnect === 'function') o.disconnect();
             } catch {}
           }
           observers.clear();
+
+          // Also attempt to disconnect observers associated with elements
+          try {
+            // We cannot iterate WeakMap keys; instead we iterate observers set already
+            // which covers all observers registered via registerObserver above.
+          } catch {}
           for (const keyEntry of listeners.values()) {
             try {
               keyEntry.target.removeEventListener(keyEntry.ev, keyEntry.fn, keyEntry.opts);
@@ -311,6 +337,47 @@
       },
       // expose for debug
       observers,
+      elementObservers,
+      /**
+       * Disconnect and remove observers associated with a given element
+       * @param {Element} el
+       */
+      disconnectForElement(el) {
+        try {
+          const set = elementObservers.get(el);
+          if (!set) return;
+          for (const o of set) {
+            try {
+              if (o && typeof o.disconnect === 'function') o.disconnect();
+              observers.delete(o);
+            } catch {}
+          }
+          elementObservers.delete(el);
+        } catch (e) {
+          logError('cleanupManager', 'disconnectForElement failed', e);
+        }
+      },
+      /**
+       * Disconnect a single observer and remove it from tracking
+       * @param {MutationObserver|IntersectionObserver|ResizeObserver} o
+       */
+      disconnectObserver(o) {
+        try {
+          if (!o) return;
+          try {
+            if (typeof o.disconnect === 'function') o.disconnect();
+          } catch {}
+          observers.delete(o);
+          // remove from any element sets
+          try {
+            // Can't iterate WeakMap directly; attempt best-effort sweep by checking
+            // known element keys via listeners map as a hint (not comprehensive).
+            // This is a noop if not found; primary removal is from observers set.
+          } catch {}
+        } catch (e) {
+          logError('cleanupManager', 'disconnectObserver failed', e);
+        }
+      },
       listeners,
       intervals,
       timeouts,
@@ -398,6 +465,33 @@
   };
 
   /**
+   * Escape HTML for use in attributes (more strict than sanitizeHTML)
+   * Prevents XSS in HTML attributes like onclick, onerror, etc.
+   * @param {string} str - String to escape
+   * @returns {string} Escaped string safe for HTML attributes
+   */
+  const escapeHTMLAttribute = str => {
+    if (typeof str !== 'string') return '';
+
+    /** @type {Record<string, string>} */
+    const map = {
+      '<': '&lt;',
+      '>': '&gt;',
+      '&': '&amp;',
+      '"': '&quot;',
+      "'": '&#39;',
+      '/': '&#x2F;',
+      '`': '&#x60;',
+      '=': '&#x3D;',
+      '\n': '&#10;',
+      '\r': '&#13;',
+      '\t': '&#9;',
+    };
+
+    return str.replace(/[<>&"'\/`=\n\r\t]/g, char => map[char] || char);
+  };
+
+  /**
    * Validate URL to prevent injection attacks
    * @param {string} url - URL to validate
    * @returns {boolean} Whether URL is safe
@@ -415,6 +509,99 @@
     } catch {
       return false;
     }
+  };
+
+  /**
+   * Safely merge objects without prototype pollution
+   * Prevents __proto__, constructor, and prototype pollution attacks
+   * @template T
+   * @param {T} target - Target object
+   * @param {Object} source - Source object to merge
+   * @returns {T} Merged target object
+   */
+  const safeMerge = (target, source) => {
+    if (!source || typeof source !== 'object') return target;
+    if (!target || typeof target !== 'object') return target;
+
+    // List of dangerous keys that could lead to prototype pollution
+    const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
+
+    for (const key in source) {
+      // Skip inherited properties
+      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
+
+      // Skip dangerous keys
+      if (dangerousKeys.includes(key)) {
+        console.warn(`[YouTube+][Security] Blocked attempt to set dangerous key: ${key}`);
+        continue;
+      }
+
+      // Only copy own enumerable properties
+      const value = source[key];
+
+      // Deep clone objects (one level deep for safety)
+      if (value && typeof value === 'object' && !Array.isArray(value)) {
+        target[key] = safeMerge(target[key] || {}, value);
+      } else {
+        target[key] = value;
+      }
+    }
+
+    return target;
+  };
+
+  /**
+   * Validate and sanitize video ID
+   * @param {string} videoId - Video ID to validate
+   * @returns {string|null} Valid video ID or null
+   */
+  const validateVideoId = videoId => {
+    if (typeof videoId !== 'string') return null;
+    // YouTube video IDs are 11 characters, alphanumeric + dash and underscore
+    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
+    return videoId;
+  };
+
+  /**
+   * Validate and sanitize playlist ID
+   * @param {string} playlistId - Playlist ID to validate
+   * @returns {string|null} Valid playlist ID or null
+   */
+  const validatePlaylistId = playlistId => {
+    if (typeof playlistId !== 'string') return null;
+    // YouTube playlist IDs typically start with PL, UU, LL, RD, etc. and contain alphanumeric + dash and underscore
+    if (!/^[a-zA-Z0-9_-]+$/.test(playlistId) || playlistId.length < 2 || playlistId.length > 50) {
+      return null;
+    }
+    return playlistId;
+  };
+
+  /**
+   * Validate and sanitize channel ID
+   * @param {string} channelId - Channel ID to validate
+   * @returns {string|null} Valid channel ID or null
+   */
+  const validateChannelId = channelId => {
+    if (typeof channelId !== 'string') return null;
+    // YouTube channel IDs start with UC and are 24 characters long
+    if (!/^UC[a-zA-Z0-9_-]{22}$/.test(channelId) && !/^@[\w-]{3,30}$/.test(channelId)) {
+      return null;
+    }
+    return channelId;
+  };
+
+  /**
+   * Sanitize and validate numeric input
+   * @param {any} value - Value to validate
+   * @param {number} min - Minimum allowed value
+   * @param {number} max - Maximum allowed value
+   * @param {number} defaultValue - Default value if validation fails
+   * @returns {number} Validated number
+   */
+  const validateNumber = (value, min = -Infinity, max = Infinity, defaultValue = 0) => {
+    const num = Number(value);
+    if (Number.isNaN(num) || !Number.isFinite(num)) return defaultValue;
+    return Math.max(min, Math.min(max, num));
   };
 
   /**
@@ -749,8 +936,118 @@
     U.waitForElement = U.waitForElement || waitForElement;
     U.storage = U.storage || storage;
     U.sanitizeHTML = U.sanitizeHTML || sanitizeHTML;
+    U.escapeHTMLAttribute = U.escapeHTMLAttribute || escapeHTMLAttribute;
+    U.safeMerge = U.safeMerge || safeMerge;
+    U.validateVideoId = U.validateVideoId || validateVideoId;
+    U.validatePlaylistId = U.validatePlaylistId || validatePlaylistId;
+    U.validateChannelId = U.validateChannelId || validateChannelId;
+    U.validateNumber = U.validateNumber || validateNumber;
     U.isValidURL = U.isValidURL || isValidURL;
     U.logger = U.logger || createLogger();
     U.retryWithBackoff = U.retryWithBackoff || retryWithBackoff;
+    // Provide lightweight channel stats helpers if not defined by other modules.
+    U.channelStatsHelpers = U.channelStatsHelpers || null;
+    // Wrap global timer functions to auto-register with cleanupManager for safe cleanup.
+    try {
+      const w = window;
+      if (w && !w.__ytp_timers_wrapped) {
+        const origSetTimeout = w.setTimeout.bind(w);
+        const origSetInterval = w.setInterval.bind(w);
+        const origRaf = w.requestAnimationFrame ? w.requestAnimationFrame.bind(w) : null;
+
+        w.setTimeout = function (fn, ms, ...args) {
+          const id = origSetTimeout(fn, ms, ...args);
+          try {
+            U.cleanupManager.registerTimeout(id);
+          } catch {}
+          return id;
+        };
+
+        w.setInterval = function (fn, ms, ...args) {
+          const id = origSetInterval(fn, ms, ...args);
+          try {
+            U.cleanupManager.registerInterval(id);
+          } catch {}
+          return id;
+        };
+
+        if (origRaf) {
+          w.requestAnimationFrame = function (cb) {
+            const id = origRaf(cb);
+            try {
+              U.cleanupManager.registerAnimationFrame(id);
+            } catch {}
+            return id;
+          };
+        }
+
+        w.__ytp_timers_wrapped = true;
+      }
+    } catch (e) {
+      logError('utils', 'timer wrapper failed', e);
+    }
+    if (!window.YouTubePlusChannelStatsHelpers) {
+      window.YouTubePlusChannelStatsHelpers = {
+        async fetchWithRetry(fetchFn, maxRetries = 2, logger = console) {
+          let attempt = 0;
+          while (attempt <= maxRetries) {
+            try {
+              // Allow fetchFn to be an async function returning parsed JSON
+              const res = await fetchFn();
+              return res;
+            } catch (err) {
+              attempt += 1;
+              if (attempt > maxRetries) {
+                logger &&
+                  logger.warn &&
+                  logger.warn('[ChannelStatsHelpers] fetch failed after retries', err);
+                return null;
+              }
+              // backoff
+              await new Promise(r => setTimeout(r, 300 * attempt));
+            }
+          }
+          return null;
+        },
+        cacheStats(mapLike, channelId, stats) {
+          try {
+            if (!mapLike || typeof mapLike.set !== 'function') return;
+            mapLike.set(channelId, stats);
+          } catch {}
+        },
+        getCachedStats(mapLike, channelId, cacheDuration = 60000) {
+          try {
+            if (!mapLike || typeof mapLike.get !== 'function') return null;
+            const s = mapLike.get(channelId);
+            if (!s) return null;
+            if (s.timestamp && Date.now() - s.timestamp > cacheDuration) return null;
+            return s;
+          } catch {
+            return null;
+          }
+        },
+        extractSubscriberCountFromPage() {
+          try {
+            const el =
+              document.querySelector('yt-formatted-string#subscriber-count') ||
+              document.querySelector('[id*="subscriber-count"]');
+            if (!el) return 0;
+            const txt = el.textContent || '';
+            const digits = txt.replace(/[^0-9]/g, '');
+            return digits ? parseInt(digits, 10) : 0;
+          } catch {
+            return 0;
+          }
+        },
+        createFallbackStats(followerCount = 0) {
+          return {
+            followerCount: followerCount || 0,
+            bottomOdos: [0, 0],
+            error: true,
+            timestamp: Date.now(),
+          };
+        },
+      };
+    }
   }
 })();

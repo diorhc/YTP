@@ -9,7 +9,7 @@
 // @name:fr             YouTube +
 // @name:ko             YouTube +
 // @namespace           by
-// @version             2.3
+// @version             2.3.1
 // @author              diorhc
 // @description         Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:en      Tabview YouTube and Download and others features ↴

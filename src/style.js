@@ -39,6 +39,16 @@ ytd-alert-with-button-renderer {align-items: center !important; justify-content:
 ytd-guide-section-renderer:has([title="YouTube Premium"]),
 ytd-guide-renderer #footer {display: none !important;}
 ytd-guide-section-renderer, ytd-guide-collapsible-section-entry-renderer {border: none !important;}
+/* Shared glass-dropdown styles used by settings components */
+.glass-dropdown{position:relative;display:inline-block;min-width:110px}
+.glass-dropdown__toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:6px 8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));color:inherit;border:1px solid rgba(255,255,255,0.06);backdrop-filter:blur(8px) saturate(120%);-webkit-backdrop-filter:blur(8px) saturate(120%);cursor:pointer}
+.glass-dropdown__toggle:focus{outline:2px solid rgba(255,255,255,0.06)}
+.glass-dropdown__label{font-size:12px}
+.glass-dropdown__chev{opacity:0.9}
+.glass-dropdown__list{position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:20000;display:none;margin:0;padding:6px;border-radius:10px;list-style:none;background:var(--yt-header-bg);border:1px solid rgba(255,255,255,0.06);box-shadow:0 8px 30px rgba(0,0,0,0.5);backdrop-filter:blur(10px) saturate(130%);-webkit-backdrop-filter:blur(10px) saturate(130%);max-height:220px;overflow:auto}
+.glass-dropdown__item{padding:8px 10px;border-radius:6px;margin:4px 0;cursor:pointer;color:inherit;font-size:13px}
+.glass-dropdown__item:hover{background:rgba(255,255,255,0.04)}
+.glass-dropdown__item[aria-selected="true"]{background:linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));box-shadow:inset 0 0 0 1px rgba(255,255,255,0.02)}
 `;
 
     const ID = 'ytp-zen-features-style';

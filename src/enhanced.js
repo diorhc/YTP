@@ -2,6 +2,33 @@
 (function () {
   'use strict';
 
+  // DOM Cache Helper - reduces repeated queries
+  const getCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
+  /**
+   * Query single element with optional caching
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Context element
+   * @returns {Element|null}
+   */
+  const $ = (sel, ctx) =>
+    getCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
+  /**
+   * Query all elements with optional caching
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Context element
+   * @returns {Element[]}
+   */
+  const $$ = (sel, ctx) =>
+    getCache()?.querySelectorAll(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
+  /**
+   * Get element by ID with optional caching
+   * @param {string} id - Element ID
+   * @returns {Element|null}
+   */
+  const byId = id => getCache()?.getElementById(id) || document.getElementById(id);
+
+  /* eslint-disable no-undef */ // $, $$, byId are defined above but used throughout
+
   // Use centralized i18n when available
   const _globalI18n =
     typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
@@ -62,7 +89,7 @@
    * @returns {void}
    */
   const addStyles = () => {
-    if (document.getElementById('custom-styles')) return;
+    if (byId('custom-styles')) return;
 
     const style = document.createElement('style');
     style.id = 'custom-styles';
@@ -128,7 +155,7 @@
   const setupScrollListener = () => {
     try {
       // Clean up old listeners first
-      document.querySelectorAll('.tab-content-cld').forEach(tab => {
+      $$('.tab-content-cld').forEach(tab => {
         if (tab._topButtonScrollHandler) {
           tab.removeEventListener('scroll', tab._topButtonScrollHandler);
           delete tab._topButtonScrollHandler;
@@ -144,10 +171,8 @@
         window.YouTubePlusScrollManager?.removeAllListeners?.(tab);
       });
 
-      const activeTab = document.querySelector(
-        '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
-      );
-      const button = document.getElementById('right-tabs-top-button');
+      const activeTab = $('#right-tabs .tab-content-cld:not(.tab-content-hidden)');
+      const button = byId('right-tabs-top-button');
 
       if (activeTab && button) {
         // Use ScrollManager if available for better performance
@@ -187,8 +212,8 @@
    */
   const createButton = () => {
     try {
-      const rightTabs = document.querySelector('#right-tabs');
-      if (!rightTabs || document.getElementById('right-tabs-top-button')) return;
+      const rightTabs = $('#right-tabs');
+      if (!rightTabs || byId('right-tabs-top-button')) return;
       if (!config.enabled) return;
 
       const button = document.createElement('button');
@@ -236,7 +261,7 @@
    */
   const createUniversalButton = () => {
     try {
-      if (document.getElementById('universal-top-button')) return;
+      if (byId('universal-top-button')) return;
       if (!config.enabled) return;
 
       const button = document.createElement('button');
@@ -298,8 +323,8 @@
    */
   const createPlaylistPanelButton = () => {
     try {
-      const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
-      if (!playlistPanel || document.getElementById('playlist-panel-top-button')) return;
+      const playlistPanel = $('ytd-playlist-panel-renderer');
+      if (!playlistPanel || byId('playlist-panel-top-button')) return;
       if (!config.enabled) return;
 
       const button = document.createElement('button');
@@ -310,7 +335,7 @@
       button.innerHTML =
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
 
-      const scrollContainer = playlistPanel.querySelector('#items');
+      const scrollContainer = $('#items', playlistPanel);
       if (!scrollContainer) return;
 
       const scrollToTop = () => {
@@ -359,6 +384,87 @@
       const scrollHandler = debounceFunc(() => handleScroll(scrollContainer, button), 100);
       scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
       handleScroll(scrollContainer, button);
+
+      // Hide the button when the playlist panel is collapsed/hidden.
+      // Use ResizeObserver + MutationObserver to detect layout/attribute changes.
+      const updateVisibility = () => {
+        try {
+          // If panel not connected or explicitly hidden, hide the button
+          if (!playlistPanel.isConnected || playlistPanel.hidden) {
+            button.style.display = 'none';
+            return;
+          }
+
+          const cs = window.getComputedStyle(playlistPanel);
+          if (cs.display === 'none' || cs.visibility === 'hidden' || Number(cs.opacity) === 0) {
+            button.style.display = 'none';
+            return;
+          }
+
+          // If bounding box is too small (collapsed), hide button
+          const rect = playlistPanel.getBoundingClientRect();
+          if (!rect || rect.width < 40 || rect.height < 40) {
+            button.style.display = 'none';
+            return;
+          }
+
+          // If items container cannot scroll or has no height, hide button
+          if (
+            !scrollContainer ||
+            scrollContainer.offsetHeight === 0 ||
+            scrollContainer.scrollHeight === 0
+          ) {
+            button.style.display = 'none';
+            return;
+          }
+
+          // Otherwise keep normal display and let handleScroll control visibility class
+          button.style.display = '';
+        } catch {
+          // On error, prefer hiding to avoid stray UI
+          try {
+            button.style.display = 'none';
+          } catch {}
+        }
+      };
+
+      // Observe size changes
+      let ro = null;
+      try {
+        if (typeof ResizeObserver !== 'undefined') {
+          ro = new ResizeObserver(updateVisibility);
+          ro.observe(playlistPanel);
+          if (scrollContainer) ro.observe(scrollContainer);
+        }
+      } catch {
+        ro = null;
+      }
+
+      // Observe attribute/class changes
+      const mo = new MutationObserver(updateVisibility);
+      try {
+        mo.observe(playlistPanel, {
+          attributes: true,
+          attributeFilter: ['class', 'style', 'hidden'],
+        });
+      } catch {}
+
+      // Initial visibility pass
+      updateVisibility();
+
+      // Register cleanup with YouTubeUtils.cleanupManager when available
+      try {
+        if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+          YouTubeUtils.cleanupManager.register(() => {
+            try {
+              if (ro) ro.disconnect();
+            } catch {}
+            try {
+              mo.disconnect();
+            } catch {}
+          });
+        }
+      } catch {}
     } catch (error) {
       console.error('[YouTube+][Enhanced] Error creating playlist panel button:', error);
     }
@@ -449,9 +555,7 @@
       const pathname = urlObj.pathname || '';
       if (pathname.startsWith('/shorts/')) return pathname.slice(8);
       if (pathname.startsWith('/clip/')) {
-        const meta = document.querySelector(
-          "meta[itemprop='videoId'], meta[itemprop='identifier']"
-        );
+        const meta = $("meta[itemprop='videoId'], meta[itemprop='identifier']");
         return meta?.getAttribute('content') || null;
       }
       return urlObj.searchParams.get('v');
@@ -462,11 +566,9 @@
 
   const getButtonsContainer = () => {
     return (
-      document.querySelector(
-        'ytd-menu-renderer.ytd-watch-metadata > div#top-level-buttons-computed'
-      ) ||
-      document.querySelector('ytd-menu-renderer.ytd-video-primary-info-renderer > div') ||
-      document.querySelector('#menu-container #top-level-buttons-computed') ||
+      $('ytd-menu-renderer.ytd-watch-metadata > div#top-level-buttons-computed') ||
+      $('ytd-menu-renderer.ytd-video-primary-info-renderer > div') ||
+      $('#menu-container #top-level-buttons-computed') ||
       null
     );
   };
@@ -477,33 +579,27 @@
    */
   const getDislikeButtonShorts = () => {
     // Try to find the active reel first
-    const activeReel = document.querySelector('ytd-reel-video-renderer[is-active]');
+    const activeReel = $('ytd-reel-video-renderer[is-active]');
     if (activeReel) {
       const btn =
-        activeReel.querySelector('dislike-button-view-model') ||
-        activeReel
-          .querySelector('like-button-view-model')
+        $('dislike-button-view-model', activeReel) ||
+        $('like-button-view-model', activeReel)
           ?.parentElement?.querySelector('[aria-label*="islike"]')
           ?.closest('button')?.parentElement ||
-        activeReel.querySelector('#dislike-button');
+        $('#dislike-button', activeReel);
       if (btn) return btn;
     }
 
     // Fallback: find in the shorts player container
-    const shortsContainer = document.querySelector('ytd-shorts');
+    const shortsContainer = $('ytd-shorts');
     if (shortsContainer) {
       const btn =
-        shortsContainer.querySelector('dislike-button-view-model') ||
-        shortsContainer.querySelector('#dislike-button');
+        $('dislike-button-view-model', shortsContainer) || $('#dislike-button', shortsContainer);
       if (btn) return btn;
     }
 
     // Last resort: global search
-    return (
-      document.querySelector('dislike-button-view-model') ||
-      document.querySelector('#dislike-button') ||
-      null
-    );
+    return $('dislike-button-view-model') || $('#dislike-button') || null;
   };
 
   /**
@@ -708,7 +804,7 @@
         dislikeObserver = null;
       }
       // Remove all created dislike text spans
-      document.querySelectorAll('#ytp-plus-dislike-text').forEach(el => {
+      $$('#ytp-plus-dislike-text').forEach(el => {
         try {
           if (el.parentNode) el.parentNode.removeChild(el);
         } catch {}
@@ -744,7 +840,7 @@
         }
       });
 
-      const rightTabs = document.querySelector('#right-tabs');
+      const rightTabs = $('#right-tabs');
       if (rightTabs) {
         observer.observe(rightTabs, {
           attributes: true,
@@ -821,7 +917,7 @@
       // Check for right tabs (watch page)
       const checkForTabs = () => {
         try {
-          if (document.querySelector('#right-tabs')) {
+          if ($('#right-tabs')) {
             createButton();
             observeTabChanges();
           } else {
@@ -835,8 +931,8 @@
       // Check for playlist panel
       const checkForPlaylistPanel = () => {
         try {
-          const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
-          if (playlistPanel && !document.getElementById('playlist-panel-top-button')) {
+          const playlistPanel = $('ytd-playlist-panel-renderer');
+          if (playlistPanel && !byId('playlist-panel-top-button')) {
             createPlaylistPanelButton();
           }
         } catch (error) {
@@ -847,7 +943,7 @@
       // Check page type and create appropriate button
       const checkPageType = () => {
         try {
-          if (needsUniversalButton() && !document.getElementById('universal-top-button')) {
+          if (needsUniversalButton() && !byId('universal-top-button')) {
             createUniversalButton();
           }
           checkForPlaylistPanel();
@@ -1005,7 +1101,7 @@
     if (now - state.lastCheck < CONFIG.debounceMs) return;
     state.lastCheck = now;
 
-    const elements = document.querySelectorAll(CONFIG.selectors);
+    const elements = $$(CONFIG.selectors);
     if (elements.length) fastRemove(elements);
   };
 
@@ -1070,7 +1166,7 @@
 
     YouTubeUtils.cleanupManager.registerObserver(state.observer);
 
-    const target = document.querySelector('#movie_player') || document.body;
+    const target = $('#movie_player') || document.body;
     state.observer.observe(target, {
       childList: true,
       subtree: true,
@@ -1096,8 +1192,8 @@
 
   // Streamlined settings UI
   const addSettingsUI = () => {
-    const section = document.querySelector('.ytp-plus-settings-section[data-section="advanced"]');
-    if (!section || section.querySelector('.endscreen-settings')) return;
+    const section = $('.ytp-plus-settings-section[data-section="advanced"]');
+    if (!section || $('.endscreen-settings', section)) return;
 
     const container = document.createElement('div');
     container.className = 'ytp-plus-settings-item endscreen-settings';
@@ -1313,7 +1409,7 @@
     try {
       if (window.YouTubeUtils && YouTubeUtils.StyleManager) {
         YouTubeUtils.StyleManager.add('ytp-resume-overlay-styles', resumeOverlayStyles);
-      } else if (!document.getElementById('ytp-resume-overlay-styles')) {
+      } else if (!byId('ytp-resume-overlay-styles')) {
         const s = document.createElement('style');
         s.id = 'ytp-resume-overlay-styles';
         s.textContent = resumeOverlayStyles;
@@ -1511,7 +1607,7 @@
     };
 
     // If saved time exists and is > 5s, show overlay
-    if (saved && saved > 5 && !document.getElementById(OVERLAY_ID)) {
+    if (saved && saved > 5 && !byId(OVERLAY_ID)) {
       const cancelTimeout = createOverlay(
         saved,
         () => {
@@ -1530,7 +1626,7 @@
 
       // Tag overlay with current video id so future init calls won't immediately remove it
       try {
-        const overlayEl = document.getElementById(OVERLAY_ID);
+        const overlayEl = byId(OVERLAY_ID);
         if (overlayEl && vid) overlayEl.dataset.vid = vid;
       } catch {}
 
@@ -1592,7 +1688,7 @@
     // Only run on watch pages
     if (window.location.pathname !== '/watch') {
       // Remove overlay if we navigate away from watch page
-      const existingOverlay = document.getElementById(OVERLAY_ID);
+      const existingOverlay = byId(OVERLAY_ID);
       if (existingOverlay) {
         existingOverlay.remove();
       }
@@ -1776,8 +1872,7 @@
   /**
    * @return {{ getProgressState: () => { current: number, duration, number }, pauseVideo: () => void, seekTo: (number) => void, isLifaAdPlaying: () => boolean }} player
    */
-  const getPlayer = () =>
-    /** @type {PlayerElement | null} */ (document.querySelector('#movie_player'));
+  const getPlayer = () => /** @type {PlayerElement | null} */ ($('#movie_player'));
 
   const isAdPlaying = () => !!document.querySelector('.ad-interrupting');
 
@@ -1789,7 +1884,7 @@
     } else {
       // Desktop: try YouTube's client-side routing first, with fallback
       try {
-        const playlistPanel = document.querySelector('ytd-playlist-panel-renderer #items');
+        const playlistPanel = $('ytd-playlist-panel-renderer #items');
         if (playlistPanel) {
           const redirector = document.createElement('a');
           redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
@@ -1843,7 +1938,12 @@
     if (parent === null) {
       const grid = queryHTMLElement('ytd-rich-grid-renderer, ytm-rich-grid-renderer');
       if (!grid) {
-        console.warn('[Play All] Could not find grid container');
+        try {
+          const sel = 'ytd-rich-grid-renderer, ytm-rich-grid-renderer';
+          window.YouTubeUtils && YouTubeUtils.logger && YouTubeUtils.logger.debug
+            ? YouTubeUtils.logger.debug('[Play All] Grid container not found', sel)
+            : console.warn('[Play All] Grid container not found', sel);
+        } catch {}
         return;
       }
 
@@ -2107,7 +2207,7 @@
         };
 
         const markFailure = () => {
-          const emulator = document.querySelector('.ytp-playlist-emulator');
+          const emulator = $('.ytp-playlist-emulator');
           if (emulator instanceof HTMLElement) {
             emulator.setAttribute('data-failed', 'rejected');
           }
@@ -2163,7 +2263,7 @@
     };
 
     const processItems = items => {
-      const itemsContainer = document.querySelector('.ytp-playlist-emulator .items');
+      const itemsContainer = $('.ytp-playlist-emulator .items');
       const params = new URLSearchParams(window.location.search);
       const list = params.get('list');
 
@@ -2194,11 +2294,11 @@
     };
 
     const playNextEmulationItem = () => {
-      document.querySelector(`.ytp-playlist-emulator .items .item[data-current] + .item`)?.click();
+      $(`.ytp-playlist-emulator .items .item[data-current] + .item`)?.click();
     };
 
     const markCurrentItem = videoId => {
-      const existing = document.querySelector(`.ytp-playlist-emulator .items .item[data-current]`);
+      const existing = $(`.ytp-playlist-emulator .items .item[data-current]`);
       if (existing) {
         existing.removeAttribute('data-current');
       }
@@ -2243,7 +2343,7 @@
         return;
       }
 
-      const existingEmulator = document.querySelector('.ytp-playlist-emulator');
+      const existingEmulator = $('.ytp-playlist-emulator');
       if (existingEmulator) {
         if (list === existingEmulator.getAttribute('data-list')) {
           markCurrentItem(params.get('v'));
@@ -2496,7 +2596,7 @@
               playlistId: params.get('list'),
             },
           };
-          const listContainer = document.querySelector('ytd-playlist-panel-renderer #items');
+          const listContainer = $('ytd-playlist-panel-renderer #items');
           if (listContainer instanceof HTMLElement) {
             listContainer.append(redirector);
           } else {
@@ -2514,7 +2614,7 @@
         return;
       }
 
-      const playlistContainer = document.querySelector('#secondary ytd-playlist-panel-renderer');
+      const playlistContainer = $('#secondary ytd-playlist-panel-renderer');
       if (playlistContainer === null) {
         return;
       }
@@ -2611,7 +2711,7 @@
       if (header && header.tagName === 'A') {
         const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
         anchorHeader.innerHTML += ` <span class="ytp-badge ytp-random-badge">${ytpRandom} <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`;
-        anchorHeader.href = 'javascript:void(0)';
+        anchorHeader.href = '#';
         const badge = anchorHeader.querySelector('.ytp-random-badge');
         if (badge) {
           badge.addEventListener('click', event => {
@@ -2835,7 +2935,7 @@ function createZoomUI() {
   }
 
   // styles (minimal)
-  if (!document.getElementById('ytp-zoom-styles')) {
+  if (!byId('ytp-zoom-styles')) {
     const s = document.createElement('style');
     s.id = 'ytp-zoom-styles';
     s.textContent = `

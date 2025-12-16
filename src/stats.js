@@ -2,6 +2,31 @@
 (function () {
   'use strict';
 
+  // DOM Cache Helper - reduces repeated queries
+  const getCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
+  /**
+   * Query single element with optional caching
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Context element
+   * @returns {Element|null}
+   */
+  const $ = (sel, ctx) =>
+    getCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
+  /**
+   * Query all elements with optional caching
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Context element
+   * @returns {Element[]}
+   */
+  const $$ = (sel, ctx) =>
+    getCache()?.querySelectorAll(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
+  /**
+   * Get element by ID with optional caching
+   * @param {string} id - Element ID
+   * @returns {Element|null}
+   */
+  const byId = id => getCache()?.getElementById(id) || document.getElementById(id);
+
   // Do not run this module inside YouTube Studio (studio.youtube.com)
   const isStudioPage = () => {
     try {
@@ -180,7 +205,7 @@
   };
 
   function addStyles() {
-    if (!document.querySelector('#youtube-enhancer-styles')) {
+    if (!byId('youtube-enhancer-styles')) {
       // ✅ Use StyleManager instead of createElement('style')
       YouTubeUtils.StyleManager.add('youtube-enhancer-styles', styles);
     }
@@ -453,7 +478,7 @@
    * Refresh stats menu after checking tabs
    */
   function refreshStatsMenu() {
-    const existingMenu = document.querySelector('.stats-menu-container');
+    const existingMenu = $('.stats-menu-container');
     if (existingMenu) {
       existingMenu.remove();
       createStatsMenu();
@@ -592,16 +617,16 @@
 
     // Try to insert into masthead area (requested: "style-scope ytd-masthead").
     // Prefer element matching 'ytd-masthead.style-scope' if present, otherwise fallback to 'ytd-masthead'.
-    let masthead = document.querySelector('ytd-masthead.style-scope');
-    if (!masthead) masthead = document.querySelector('ytd-masthead');
+    let masthead = $('ytd-masthead.style-scope');
+    if (!masthead) masthead = $('ytd-masthead');
 
-    if (!masthead || document.querySelector('.videoStats')) return;
+    if (!masthead || $('.videoStats')) return;
 
     const statsIcon = createStatsIcon();
 
     // Preferred target: element with id="end" and class containing 'style-scope' inside masthead
-    let endElem = masthead.querySelector('#end.style-scope.ytd-masthead');
-    if (!endElem) endElem = masthead.querySelector('#end');
+    let endElem = $('#end.style-scope.ytd-masthead', masthead);
+    if (!endElem) endElem = $('#end', masthead);
 
     if (endElem) {
       // Insert as first child of #end so it appears at the beginning
@@ -870,7 +895,7 @@
       const fallbackHelpers = {
         extractViews() {
           try {
-            const el = document.querySelector('yt-view-count-renderer, #count .view-count');
+            const el = $('yt-view-count-renderer, #count .view-count');
             const text = el && el.textContent ? el.textContent.trim() : '';
             const match = text.replace(/[^0-9,\.]/g, '').replace(/,/g, '');
             return match ? { views: Number(match) || null } : {};
@@ -912,7 +937,7 @@
         },
         extractSubscribers() {
           try {
-            const el = document.querySelector('#owner-sub-count, #subscriber-count');
+            const el = $('#owner-sub-count, #subscriber-count');
             const text = el && el.textContent ? el.textContent.trim() : '';
             return text ? { subscribers: text } : {};
           } catch {
@@ -921,9 +946,7 @@
         },
         extractThumbnail() {
           try {
-            const meta =
-              document.querySelector('link[rel="image_src"]') ||
-              document.querySelector('meta[property="og:image"]');
+            const meta = $('link[rel="image_src"]') || $('meta[property="og:image"]');
             const url = meta && (meta.href || meta.content) ? meta.href || meta.content : null;
             return url ? { thumbnail: url } : {};
           } catch {
@@ -932,9 +955,7 @@
         },
         extractTitle() {
           try {
-            const el =
-              document.querySelector('h1.title yt-formatted-string') ||
-              document.querySelector('h1');
+            const el = $('h1.title yt-formatted-string') || $('h1');
             const text = el && el.textContent ? el.textContent.trim() : '';
             return text ? { title: text } : {};
           } catch {
@@ -1500,7 +1521,7 @@
     }
 
     // Remove existing overlays (cache NodeList to avoid repeated lookups)
-    const existingOverlays = document.querySelectorAll('.stats-modal-overlay');
+    const existingOverlays = $$('.stats-modal-overlay');
     for (let i = 0; i < existingOverlays.length; i++) {
       try {
         existingOverlays[i].remove();
@@ -1618,7 +1639,7 @@
 
     if (countryCode) {
       const flagUrl = `https://cdn.jsdelivr.net/gh/lipis/flag-icons@7.3.2/flags/4x3/${countryCode.toLowerCase()}.svg`;
-      return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views"><img src="${flagUrl}" alt="${countryCode}" width="32" height="24" style="border-radius:4px;" onerror="this.style.display='none';this.parentElement.innerHTML='${globeIcon}'"/></div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryCode}</div></div></div>`;
+      return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views" data-fallback-icon="globe"><img class="country-flag" src="${flagUrl}" alt="${countryCode}" width="32" height="24" style="border-radius:4px;"/></div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryCode}</div></div></div>`;
     }
     return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views">${globeIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryValue}</div></div></div>`;
   }
@@ -1793,6 +1814,32 @@
     } else {
       container.innerHTML = `${titleHtml}${gridHtml}`;
     }
+
+    // Set up error handlers for country flag images
+    setupFlagImageErrorHandlers(container);
+  }
+
+  /**
+   * Setup error handlers for country flag images to prevent XSS
+   * @param {HTMLElement} container - Container element
+   */
+  function setupFlagImageErrorHandlers(container) {
+    const flagImages = $$('.country-flag', container);
+    const globeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
+
+    flagImages.forEach(img => {
+      img.addEventListener(
+        'error',
+        function () {
+          const iconContainer = this.parentElement;
+          if (iconContainer && iconContainer.dataset.fallbackIcon === 'globe') {
+            this.style.display = 'none';
+            iconContainer.innerHTML = globeIcon;
+          }
+        },
+        { once: true }
+      );
+    });
   }
 
   /**
@@ -1854,7 +1901,7 @@
 
   function createStatsMenu() {
     if (!statsButtonEnabled) return undefined;
-    if (document.querySelector('.stats-menu-container')) {
+    if ($('.stats-menu-container')) {
       return undefined;
     }
 
@@ -2016,10 +2063,8 @@
   }
 
   function addSettingsUI() {
-    const section = document.querySelector(
-      '.ytp-plus-settings-section[data-section="experimental"]'
-    );
-    if (!section || section.querySelector('.stats-button-settings-item')) return;
+    const section = $('.ytp-plus-settings-section[data-section="experimental"]');
+    if (!section || $('.stats-button-settings-item', section)) return;
 
     const item = document.createElement('div');
     item.className = 'ytp-plus-settings-item stats-button-settings-item';
@@ -2038,7 +2083,7 @@
       statsButtonEnabled = input.checked;
       localStorage.setItem(SETTINGS_KEY, statsButtonEnabled ? 'true' : 'false');
       // Remove all stats buttons and menus
-      document.querySelectorAll('.videoStats,.stats-menu-container').forEach(el => el.remove());
+      $$('.videoStats,.stats-menu-container').forEach(el => el.remove());
       if (statsButtonEnabled) {
         checkAndInsertIcon();
         checkAndAddMenu();
@@ -3855,7 +3900,7 @@
     window.YouTubeStats = {
       init,
       cleanup,
-      version: '2.3',
+      version: '2.3.1',
     };
   }
 

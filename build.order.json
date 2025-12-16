@@ -1,8 +1,10 @@
 [
   "utils.js",
+  "security-utils.js",
   "basic.js",
   "error-boundary.js",
   "performance.js",
+  "dom-cache.js",
   "main.js",
   "i18n.js",
   "settings-helpers.js",

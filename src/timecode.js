@@ -2,6 +2,31 @@
 (function () {
   'use strict';
 
+  // DOM Cache Helper - reduces repeated queries
+  const getCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
+  /**
+   * Query single element with optional caching
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Context element
+   * @returns {Element|null}
+   */
+  const $ = (sel, ctx) =>
+    getCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
+  /**
+   * Query all elements with optional caching
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Context element
+   * @returns {Element[]}
+   */
+  const $$ = (sel, ctx) =>
+    getCache()?.querySelectorAll(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
+  /**
+   * Get element by ID with optional caching
+   * @param {string} id - Element ID
+   * @returns {Element|null}
+   */
+  const byId = id => getCache()?.getElementById(id) || document.getElementById(id);
+
   // Early exit for embeds to prevent duplicate panels - ✅ Use cached querySelector
   if (window.location.hostname !== 'www.youtube.com' || window.frameElement) {
     return;
@@ -11,85 +36,13 @@
   if (window._timecodeModuleInitialized) return;
   window._timecodeModuleInitialized = true;
 
-  // Localization
-  const i18n = {
-    en: {
-      timecodes: 'Timecodes',
-      noTimecodesFound: 'No timecodes found',
-      clickToAdd: 'Click + to add current time',
-      reload: 'Reload timecodes',
-      close: 'Close',
-      add: '+ Add',
-      export: 'Export',
-      tracking: 'Tracking',
-      track: 'Track',
-      cancel: 'Cancel',
-      save: 'Save',
-      timePlaceholder: 'Time (e.g., 1:30)',
-      labelPlaceholder: 'Label (optional)',
-      enableTimecode: 'Enable Timecode Panel',
-      keyboardShortcut: 'Keyboard Shortcut',
-      enableDescription: 'Enable video timecode/chapter panel with quick navigation',
-      shortcutDescription: 'Customize keyboard combination to toggle Timecode Panel',
-      foundTimecodes: 'Found timecodes: {count}',
-      cannotDeleteChapter: 'Cannot delete YouTube chapters',
-      invalidTimeFormat: 'Invalid time format',
-      timecodeDeleted: 'Timecode deleted',
-      timecodeUpdated: 'Timecode updated',
-      timecodeAdded: 'Timecode added',
-      noTimecodesToExport: 'No timecodes to export',
-      timecodesCopied: 'Timecodes copied to clipboard',
-      edit: 'Edit',
-      delete: 'Delete',
-      copied: 'Copied!',
-      confirmDelete: 'Delete timecode "{label}"?',
-      reloadError: 'Error reloading timecodes',
-      cannotEditChapter: 'Cannot edit YouTube chapters',
-    },
-    ru: {
-      timecodes: 'Таймкоды',
-      noTimecodesFound: 'Таймкоды не найдены',
-      clickToAdd: 'Нажмите + чтобы добавить текущее время',
-      reload: 'Обновить таймкоды',
-      close: 'Закрыть',
-      add: '+ Добавить',
-      export: 'Экспорт',
-      tracking: 'Отслеживание',
-      track: 'Отслеживать',
-      cancel: 'Отмена',
-      save: 'Сохранить',
-      timePlaceholder: 'Время (например, 1:30)',
-      labelPlaceholder: 'Метка (необязательно)',
-      enableTimecode: 'Включить панель таймкодов',
-      keyboardShortcut: 'Горячая клавиша',
-      enableDescription: 'Включить панель таймкодов/глав с быстрым переходом',
-      shortcutDescription: 'Настройте комбинацию клавиш для переключения панели таймкодов',
-      foundTimecodes: 'Найдено таймкодов: {count}',
-      cannotDeleteChapter: 'Нельзя удалить главы YouTube',
-      invalidTimeFormat: 'Неверный формат времени',
-      timecodeDeleted: 'Таймкод удалён',
-      timecodeUpdated: 'Таймкод обновлён',
-      timecodeAdded: 'Таймкод добавлен',
-      noTimecodesToExport: 'Нет таймкодов для экспорта',
-      timecodesCopied: 'Таймкоды скопированы в буфер обмена',
-      edit: 'Редактировать',
-      delete: 'Удалить',
-      copied: 'Скопировано!',
-      confirmDelete: 'Удалить таймкод "{label}"?',
-      reloadError: 'Ошибка при обновлении таймкодов',
-      cannotEditChapter: 'Нельзя редактировать главы YouTube',
-    },
-  };
-
-  // Detect language
-  const getLanguage = () => {
-    const htmlLang = document.documentElement.lang || 'en';
-    if (htmlLang.startsWith('ru')) return 'ru';
-    return 'en';
-  };
-
-  const lang = getLanguage();
-  // Translation helper that prefers central i18n (embedded) when available.
+  /**
+   * Translation helper - uses centralized i18n system
+   * Falls back to key if translation not available
+   * @param {string} key - Translation key
+   * @param {Object} params - Interpolation parameters
+   * @returns {string} Translated string
+   */
   const t = (key, params = {}) => {
     try {
       if (typeof window !== 'undefined') {
@@ -101,14 +54,9 @@
         }
       }
     } catch {
-      // ignore and fall back
+      // Fallback to key if central i18n unavailable
     }
-
-    const str = (i18n[lang] && i18n[lang][key]) || i18n.en[key] || key;
-    if (!params || Object.keys(params).length === 0) return str;
-    let result = str;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
-    return result;
+    return key;
   };
 
   // Configuration
@@ -274,6 +222,12 @@
    * @param {number} top - Top position
    * @returns {void}
    */
+  /**
+   * Save panel position to configuration and localStorage
+   * @param {number} left - X coordinate in pixels
+   * @param {number} top - Y coordinate in pixels
+   * @returns {void}
+   */
   const savePanelPosition = (left, top) => {
     try {
       if (typeof left !== 'number' || typeof top !== 'number' || isNaN(left) || isNaN(top)) {
@@ -287,6 +241,11 @@
     }
   };
 
+  /**
+   * Apply saved panel position to a panel element
+   * @param {HTMLElement} panel - The panel element to position
+   * @returns {void}
+   */
   const applySavedPanelPosition = panel => {
     if (!panel || !config.panelPosition) return;
 
@@ -302,11 +261,22 @@
     });
   };
 
+  /**
+   * Display a notification message to the user
+   * @param {string} message - The message to display
+   * @param {number} [duration=2000] - Duration in milliseconds
+   * @param {string} [type='info'] - Notification type (info, success, warning, error)
+   * @returns {void}
+   */
   const showNotification = (message, duration = 2000, type = 'info') => {
     YouTubeUtils.NotificationManager.show(message, { duration, type });
   };
 
-  // Time utilities
+  /**
+   * Format seconds into HH:MM:SS or MM:SS time string
+   * @param {number} seconds - Number of seconds to format
+   * @returns {string} Formatted time string
+   */
   const formatTime = seconds => {
     if (isNaN(seconds)) return '00:00';
     seconds = Math.round(seconds);
@@ -537,12 +507,21 @@
     'ytd-engagement-panel-section-list-renderer[target-id="engagement-panel-macro-markers-description-chapters"] #expand',
   ];
 
+  /**
+   * Sleep/delay utility using Promises
+   * @param {number} [ms=250] - Milliseconds to wait
+   * @returns {Promise<void>}
+   */
   const sleep = (ms = 250) => new Promise(resolve => setTimeout(resolve, ms));
 
+  /**
+   * Collect and concatenate text from video description using multiple selectors
+   * @returns {string} Concatenated description text
+   */
   const collectDescriptionText = () => {
     const snippets = [];
     DESCRIPTION_SELECTORS.forEach(selector => {
-      document.querySelectorAll(selector).forEach(node => {
+      $$(selector).forEach(node => {
         const text = node?.textContent?.trim();
         if (text) {
           snippets.push(text);
@@ -552,9 +531,41 @@
     return snippets.join('\n');
   };
 
+  // Collect visible comments text (top-level few comments) to search for timecodes
+  const COMMENT_SELECTORS = [
+    'ytd-comment-thread-renderer #content-text',
+    'ytd-comment-renderer #content-text',
+    'ytd-comment-thread-renderer yt-formatted-string#content-text',
+    'ytd-comment-renderer yt-formatted-string#content-text',
+    '#comments ytd-comment-thread-renderer #content-text',
+  ];
+
+  /**
+   * Collect text from visible comments to search for timecodes
+   * @param {number} [maxComments=30] - Maximum number of comments to collect
+   * @returns {string} Concatenated comments text
+   */
+  const collectCommentsText = (maxComments = 30) => {
+    try {
+      const snippets = [];
+      for (const sel of COMMENT_SELECTORS) {
+        $$(sel).forEach(node => {
+          if (snippets.length >= maxComments) return;
+          const text = node?.textContent?.trim();
+          if (text) snippets.push(text);
+        });
+        if (snippets.length >= maxComments) break;
+      }
+      return snippets.join('\n');
+    } catch (error) {
+      YouTubeUtils.logError('TimecodePanel', 'collectCommentsText failed', error);
+      return '';
+    }
+  };
+
   const expandDescriptionIfNeeded = async () => {
     for (const selector of DESCRIPTION_EXPANDERS) {
-      const button = document.querySelector(selector);
+      const button = $(selector);
       if (!button) continue;
 
       const ariaExpanded = button.getAttribute('aria-expanded');
@@ -574,7 +585,7 @@
       }
     }
 
-    const inlineExpander = document.querySelector('ytd-text-inline-expander[collapsed]');
+    const inlineExpander = $('ytd-text-inline-expander[collapsed]');
     if (inlineExpander) {
       try {
         inlineExpander.removeAttribute('collapsed');
@@ -665,6 +676,21 @@
       }
     });
 
+    // If no timecodes from description/chapters, try scanning visible comments
+    if (uniqueMap.size === 0) {
+      try {
+        const commentsText = collectCommentsText();
+        if (commentsText) {
+          const extractedComments = extractTimecodes(commentsText);
+          extractedComments.forEach(tc => {
+            if (tc.time >= 0) uniqueMap.set(tc.time.toString(), tc);
+          });
+        }
+      } catch (error) {
+        YouTubeUtils.logError('TimecodePanel', 'Comment scanning failed', error);
+      }
+    }
+
     const result = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
     const hadExistingItems = state.dom.list?.childElementCount > 0;
 
@@ -684,9 +710,13 @@
     return result;
   };
 
+  /**
+   * Reload timecodes by re-detecting them from the current video
+   * @param {HTMLElement|null} [buttonOverride=null] - Optional reload button element
+   * @returns {Promise<void>}
+   */
   const reloadTimecodes = async (buttonOverride = null) => {
-    const button =
-      buttonOverride || state.dom.reloadButton || document.getElementById('timecode-reload');
+    const button = buttonOverride || state.dom.reloadButton || byId('timecode-reload');
 
     if (state.isReloading || !config.enabled) return;
 
@@ -717,6 +747,10 @@
     }
   };
 
+  /**
+   * Extract chapter markers from YouTube's native chapter system
+   * @returns {Array<{time: number, label: string, isChapter: boolean}>} Array of chapter objects
+   */
   const getYouTubeChapters = () => {
     // Расширенный поиск глав/эпизодов
     const selectors = [
@@ -727,7 +761,7 @@
       '#structured-description ytd-horizontal-card-list-renderer ytd-macro-markers-list-item-renderer',
     ];
 
-    const items = document.querySelectorAll(selectors.join(', '));
+    const items = $$(selectors.join(', '));
     const chapters = new Map();
 
     items.forEach(item => {
@@ -790,10 +824,17 @@
   // Settings panel
   const addTimecodePanelSettings = () => {
     // ✅ Use cached querySelector
-    const advancedSection = YouTubeUtils.querySelector(
-      '.ytp-plus-settings-section[data-section="advanced"]'
-    );
-    if (!advancedSection || YouTubeUtils.querySelector('.timecode-settings-item')) return;
+    const advancedSection = YouTubeUtils.querySelector
+      ? YouTubeUtils.querySelector('.ytp-plus-settings-section[data-section="advanced"]')
+      : $('.ytp-plus-settings-section[data-section="advanced"]');
+    if (
+      !advancedSection ||
+      (YouTubeUtils.querySelector
+        ? YouTubeUtils.querySelector('.timecode-settings-item')
+        : $('.timecode-settings-item'))
+    ) {
+      return;
+    }
 
     const { ctrlKey, altKey, shiftKey } = config.shortcut;
     const modifierValue =
@@ -826,7 +867,8 @@
           <div class="ytp-plus-settings-item-description">${t('shortcutDescription')}</div>
         </div>
         <div style="display: flex; align-items: center; gap: 8px;">
-          <select id="timecode-modifier-combo" style="background: rgba(34, 34, 34, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
+          <!-- Hidden native select kept for programmatic compatibility -->
+          <select id="timecode-modifier-combo" style="display:none;">
             ${[
               'none',
               'ctrl',
@@ -850,12 +892,147 @@
               )
               .join('')}
           </select>
-          <span>+</span>
-          <input type="text" id="timecode-key" value="${config.shortcut.key}" maxlength="1" style="width: 30px; text-align: center; background: rgba(34, 34, 34, 0.6); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
+
+          <div class="glass-dropdown" id="timecode-modifier-dropdown" tabindex="0" role="listbox" aria-expanded="false">
+            <button class="glass-dropdown__toggle" type="button" aria-haspopup="listbox">
+              <span class="glass-dropdown__label">${
+                modifierValue === 'none'
+                  ? 'None'
+                  : modifierValue
+                      .split('+')
+                      .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+                      .join('+')
+              }</span>
+              <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="glass-dropdown__list" role="presentation">
+              ${[
+                'none',
+                'ctrl',
+                'alt',
+                'shift',
+                'ctrl+alt',
+                'ctrl+shift',
+                'alt+shift',
+                'ctrl+alt+shift',
+              ]
+                .map(v => {
+                  const label =
+                    v === 'none'
+                      ? 'None'
+                      : v
+                          .split('+')
+                          .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+                          .join('+');
+                  const sel = v === modifierValue ? ' aria-selected="true"' : '';
+                  return `<li class="glass-dropdown__item" data-value="${v}" role="option"${sel}>${label}</li>`;
+                })
+                .join('')}
+            </ul>
+          </div>
+
+          <span style="color:inherit;opacity:0.8;">+</span>
+          <input type="text" id="timecode-key" value="${config.shortcut.key}" maxlength="1" style="width: 30px; text-align: center; background: rgba(34, 34, 34, var(--yt-header-bg-opacity)); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
         </div>
       `;
 
     advancedSection.append(enableDiv, shortcutDiv);
+
+    // Initialize custom glass dropdown interactions
+    const initGlassDropdown = () => {
+      const hiddenSelect = byId('timecode-modifier-combo');
+      const dropdown = byId('timecode-modifier-dropdown');
+      if (!hiddenSelect || !dropdown) return;
+
+      const toggle = $('.glass-dropdown__toggle', dropdown);
+      const list = $('.glass-dropdown__list', dropdown);
+      const label = $('.glass-dropdown__label', dropdown);
+
+      let items = Array.from($$('.glass-dropdown__item', list));
+      let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
+      if (idx < 0) idx = 0;
+
+      const closeList = () => {
+        dropdown.setAttribute('aria-expanded', 'false');
+        list.style.display = 'none';
+      };
+
+      const openList = () => {
+        dropdown.setAttribute('aria-expanded', 'true');
+        list.style.display = 'block';
+        items = Array.from($$('.glass-dropdown__item', list));
+      };
+
+      // Set initial state
+      closeList();
+
+      toggle.addEventListener('click', () => {
+        const expanded = dropdown.getAttribute('aria-expanded') === 'true';
+        if (expanded) closeList();
+        else openList();
+      });
+
+      // Click outside to close
+      document.addEventListener('click', e => {
+        if (!dropdown.contains(e.target)) closeList();
+      });
+
+      // Item selection
+      list.addEventListener('click', e => {
+        const it = e.target.closest('.glass-dropdown__item');
+        if (!it) return;
+        const val = it.dataset.value;
+        hiddenSelect.value = val;
+        // update aria-selected
+        list
+          .querySelectorAll('.glass-dropdown__item')
+          .forEach(li => li.removeAttribute('aria-selected'));
+        it.setAttribute('aria-selected', 'true');
+        idx = items.indexOf(it);
+        label.textContent = it.textContent;
+        // trigger change to reuse existing save logic
+        hiddenSelect.dispatchEvent(new Event('change', { bubbles: true }));
+        closeList();
+      });
+
+      // keyboard support with arrow navigation
+      dropdown.addEventListener('keydown', e => {
+        const expanded = dropdown.getAttribute('aria-expanded') === 'true';
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (!expanded) openList();
+          idx = Math.min(idx + 1, items.length - 1);
+          items.forEach(it => it.removeAttribute('aria-selected'));
+          items[idx].setAttribute('aria-selected', 'true');
+          items[idx].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (!expanded) openList();
+          idx = Math.max(idx - 1, 0);
+          items.forEach(it => it.removeAttribute('aria-selected'));
+          items[idx].setAttribute('aria-selected', 'true');
+          items[idx].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (!expanded) {
+            openList();
+            return;
+          }
+          const it = items[idx];
+          if (it) {
+            hiddenSelect.value = it.dataset.value;
+            hiddenSelect.dispatchEvent(new Event('change', { bubbles: true }));
+            label.textContent = it.textContent;
+            closeList();
+          }
+        } else if (e.key === 'Escape') {
+          closeList();
+        }
+      });
+    };
+
+    // Defer init to ensure elements are in DOM
+    setTimeout(initGlassDropdown, 0);
 
     // Event listeners
     advancedSection.addEventListener('change', e => {
@@ -868,7 +1045,7 @@
       }
     });
 
-    document.getElementById('timecode-modifier-combo')?.addEventListener('change', e => {
+    byId('timecode-modifier-combo')?.addEventListener('change', e => {
       const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
       const value = target.value;
       config.shortcut.ctrlKey = value.includes('ctrl');
@@ -877,7 +1054,7 @@
       saveSettings();
     });
 
-    document.getElementById('timecode-key')?.addEventListener('input', e => {
+    byId('timecode-key')?.addEventListener('input', e => {
       const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
       if (target.value) {
         config.shortcut.key = target.value.toUpperCase();
@@ -888,7 +1065,7 @@
 
   // CSS
   const insertTimecodeStyles = () => {
-    if (document.getElementById('timecode-panel-styles')) return;
+    if (byId('timecode-panel-styles')) return;
 
     // ✅ Use StyleManager instead of createElement('style')
     const styles = `
@@ -953,7 +1130,7 @@
     if (state.dom.panel) return state.dom.panel;
 
     // Remove any existing panels (for redundancy)
-    document.querySelectorAll('#timecode-panel').forEach(p => p.remove());
+    $$('#timecode-panel').forEach(p => p.remove());
 
     const panel = document.createElement('div');
     panel.id = 'timecode-panel';
@@ -1044,7 +1221,7 @@
       toggleTimecodePanel(false);
     } else if (target.id === 'timecode-add-btn') {
       // ✅ Use cached querySelector
-      const video = YouTubeUtils.querySelector('video');
+      const video = YouTubeUtils.querySelector ? YouTubeUtils.querySelector('video') : $('video');
       if (video) showTimecodeForm(video.currentTime);
     } else if (target.id === 'timecode-track-toggle') {
       config.autoTrackPlayback = !config.autoTrackPlayback;
@@ -1062,7 +1239,7 @@
     } else if (target.classList.contains('timecode-action')) {
       e.stopPropagation();
       const action = target.dataset.action;
-      const index = parseInt(target.closest('.timecode-item').dataset.index);
+      const index = parseInt(target.closest('.timecode-item').dataset.index, 10);
 
       if (action === 'edit') {
         editTimecode(index);

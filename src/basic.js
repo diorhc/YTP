@@ -1138,11 +1138,11 @@ if (typeof window !== 'undefined') {
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.3] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.3.1] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.3',
+    version: '2.3.1',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1173,7 +1173,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.3 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.3.1 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1242,7 +1242,21 @@ if (typeof window !== 'undefined') {
       try {
         const saved = localStorage.getItem(this.settings.storageKey);
         if (saved) {
-          Object.assign(this.settings, JSON.parse(saved));
+          const parsed = JSON.parse(saved);
+          // Use safeMerge to prevent prototype pollution
+          if (window.YouTubeUtils && window.YouTubeUtils.safeMerge) {
+            window.YouTubeUtils.safeMerge(this.settings, parsed);
+          } else {
+            // Fallback: manual safe copy
+            for (const key in parsed) {
+              if (
+                Object.prototype.hasOwnProperty.call(parsed, key) &&
+                !['__proto__', 'constructor', 'prototype'].includes(key)
+              ) {
+                this.settings[key] = parsed[key];
+              }
+            }
+          }
           return;
         }
 

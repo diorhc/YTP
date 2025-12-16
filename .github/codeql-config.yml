@@ -1,0 +1,31 @@
+name: "YouTube+ Security Configuration"
+
+# Paths to exclude from analysis
+paths-ignore:
+  - node_modules/**
+  - dist/**
+  - coverage/**
+  - test/**
+  - youtube.user.js
+  - youtube.user.unoptimized.js
+  - "**/*.min.js"
+
+# Paths to include
+paths:
+  - src/**
+
+# Specific security checks to enable
+packs:
+  - codeql/javascript-queries
+
+# Query filters
+query-filters:
+  - exclude:
+      id: js/useless-expression
+      
+  # Allow console.warn and console.error (as per ESLint config)
+  - exclude:
+      id: js/use-of-console-log
+
+# Custom query locations (if any)
+# qlpacks: []

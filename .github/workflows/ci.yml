@@ -47,13 +47,8 @@ jobs:
         run: npm audit --audit-level=moderate
         continue-on-error: true
 
-      - name: Run unit tests
-        run: npm run test:unit
-        env:
-          NODE_OPTIONS: --max_old_space_size=4096
-
       - name: Run unit tests with coverage
-        run: npm run test:unit:coverage
+        run: npm run test:coverage
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 

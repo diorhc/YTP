@@ -2,37 +2,12 @@
 (function () {
   'use strict';
 
-  // Internationalization
-  const i18n = {
-    en: {
-      pipTitle: 'Picture-in-Picture',
-      pipDescription: 'Add Picture-in-Picture functionality with keyboard shortcut',
-      pipShortcutTitle: 'PiP Keyboard Shortcut',
-      pipShortcutDescription: 'Customize keyboard combination to toggle PiP mode',
-      none: 'None',
-      ctrl: 'Ctrl',
-      alt: 'Alt',
-      shift: 'Shift',
-    },
-    ru: {
-      pipTitle: 'Картинка в картинке',
-      pipDescription: 'Добавляет функцию «Картинка в картинке» с клавишной комбинацией',
-      pipShortcutTitle: 'Клавишная комбинация PiP',
-      pipShortcutDescription: 'Настройка клавиатурной комбинации для переключения режима PiP',
-      none: 'Нет',
-      ctrl: 'Ctrl',
-      alt: 'Alt',
-      shift: 'Shift',
-    },
-  };
-
-  function getLanguage() {
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  }
-
-  // Translation function: prefer central i18n if present, otherwise fall back
-  // to module-local translations (keeps existing en/ru behavior).
+  /**
+   * Translation helper - uses centralized i18n system
+   * @param {string} key - Translation key
+   * @param {Object} params - Interpolation parameters
+   * @returns {string} Translated string
+   */
   function t(key, params = {}) {
     try {
       if (typeof window !== 'undefined') {
@@ -44,15 +19,9 @@
         }
       }
     } catch {
-      // ignore and fall back
+      // Fallback to key if central i18n unavailable
     }
-
-    const lang = getLanguage();
-    const str = (i18n[lang] && i18n[lang][key]) || i18n.en[key] || key;
-    if (!params || Object.keys(params).length === 0) return str;
-    let result = str;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
-    return result;
+    return key;
   }
 
   /**
@@ -334,7 +303,8 @@
           <div class="ytp-plus-settings-item-description">${t('pipShortcutDescription')}</div>
         </div>
         <div class="pip-shortcut-editor">
-          <select id="pip-modifier-combo">
+          <!-- hidden native select kept for compatibility -->
+          <select id="pip-modifier-combo" style="display:none;">
             ${[
               'none',
               'ctrl',
@@ -362,11 +332,139 @@
               )
               .join('')}
           </select>
+
+          <div class="glass-dropdown" id="pip-modifier-dropdown" tabindex="0" role="listbox" aria-expanded="false">
+            <button class="glass-dropdown__toggle" type="button" aria-haspopup="listbox">
+              <span class="glass-dropdown__label">${
+                modifierValue === 'none'
+                  ? t('none')
+                  : modifierValue
+                      .replace(/\+/g, '+')
+                      .split('+')
+                      .map(k => t(k.toLowerCase()))
+                      .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+                      .join('+')
+              }</span>
+              <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <ul class="glass-dropdown__list" role="presentation">
+              ${[
+                'none',
+                'ctrl',
+                'alt',
+                'shift',
+                'ctrl+alt',
+                'ctrl+shift',
+                'alt+shift',
+                'ctrl+alt+shift',
+              ]
+                .map(v => {
+                  const label =
+                    v === 'none'
+                      ? t('none')
+                      : v
+                          .replace(/\+/g, '+')
+                          .split('+')
+                          .map(k => t(k.toLowerCase()))
+                          .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+                          .join('+');
+                  const sel = v === modifierValue ? ' aria-selected="true"' : '';
+                  return `<li class="glass-dropdown__item" data-value="${v}" role="option"${sel}>${label}</li>`;
+                })
+                .join('')}
+            </ul>
+          </div>
+
           <span>+</span>
           <input type="text" id="pip-key" value="${pipSettings.shortcut.key}" maxlength="1" style="width: 30px; text-align: center;">
         </div>
       `;
     advancedSection.appendChild(shortcutItem);
+
+    // Initialize glass dropdown interactions for PiP selector
+    const initPipDropdown = () => {
+      const hidden = document.getElementById('pip-modifier-combo');
+      const dropdown = document.getElementById('pip-modifier-dropdown');
+      if (!hidden || !dropdown) return;
+
+      const toggle = dropdown.querySelector('.glass-dropdown__toggle');
+      const list = dropdown.querySelector('.glass-dropdown__list');
+      const label = dropdown.querySelector('.glass-dropdown__label');
+      let items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+      let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
+      if (idx < 0) idx = 0;
+
+      const openList = () => {
+        dropdown.setAttribute('aria-expanded', 'true');
+        list.style.display = 'block';
+        items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+      };
+      const closeList = () => {
+        dropdown.setAttribute('aria-expanded', 'false');
+        list.style.display = 'none';
+      };
+
+      toggle.addEventListener('click', () => {
+        const expanded = dropdown.getAttribute('aria-expanded') === 'true';
+        if (expanded) closeList();
+        else openList();
+      });
+
+      document.addEventListener('click', e => {
+        if (!dropdown.contains(e.target)) closeList();
+      });
+
+      // Arrow-key navigation and selection
+      dropdown.addEventListener('keydown', e => {
+        const expanded = dropdown.getAttribute('aria-expanded') === 'true';
+        if (e.key === 'ArrowDown') {
+          e.preventDefault();
+          if (!expanded) openList();
+          idx = Math.min(idx + 1, items.length - 1);
+          items.forEach(it => it.removeAttribute('aria-selected'));
+          items[idx].setAttribute('aria-selected', 'true');
+          items[idx].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'ArrowUp') {
+          e.preventDefault();
+          if (!expanded) openList();
+          idx = Math.max(idx - 1, 0);
+          items.forEach(it => it.removeAttribute('aria-selected'));
+          items[idx].setAttribute('aria-selected', 'true');
+          items[idx].scrollIntoView({ block: 'nearest' });
+        } else if (e.key === 'Enter' || e.key === ' ') {
+          e.preventDefault();
+          if (!expanded) {
+            openList();
+            return;
+          }
+          const it = items[idx];
+          if (it) {
+            hidden.value = it.dataset.value;
+            hidden.dispatchEvent(new Event('change', { bubbles: true }));
+            label.textContent = it.textContent;
+            closeList();
+          }
+        } else if (e.key === 'Escape') {
+          closeList();
+        }
+      });
+
+      list.addEventListener('click', e => {
+        const it = e.target.closest('.glass-dropdown__item');
+        if (!it) return;
+        const val = it.dataset.value;
+        hidden.value = val;
+        list
+          .querySelectorAll('.glass-dropdown__item')
+          .forEach(li => li.removeAttribute('aria-selected'));
+        it.setAttribute('aria-selected', 'true');
+        label.textContent = it.textContent;
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+        closeList();
+      });
+    };
+
+    setTimeout(initPipDropdown, 0);
 
     // Event listeners
     document.getElementById('pip-enable-checkbox').addEventListener('change', e => {
