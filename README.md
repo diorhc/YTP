@@ -2,20 +2,17 @@
 ![Youtube Music](https://i.imgur.com/LOC8X6P.png)
 
 <!-- GREASYFORK_INSTALLS:START -->
-
-
-<div style="text-align:center">
-  <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-407-blue" style="transform:scale(1.15);transform-origin:center;" />
-  </a>
-  <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="version" src="https://img.shields.io/badge/version-2.3.1-blue" style="transform:scale(1.15);transform-origin:center;" />
-  </a>
-  <a href="https://greasyfork.org/ru/scripts/537017-youtube" style="display:inline-block;margin:0 15px;">
-    <img alt="Install Script" src="https://img.shields.io/badge/GreasyFork-Install-brightgreen" style="transform:scale(1.15);transform-origin:center;" />
+<p align="center">
+  <a href="https://greasyfork.org/ru/scripts/537017-youtube">
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-439-blue?style=flat-square" height="25" />
+  </a>&nbsp;&nbsp;
+  <a href="https://greasyfork.org/ru/scripts/537017-youtube">
+    <img alt="version" src="https://img.shields.io/badge/version-2.3.2-blue?style=flat-square" height="25" />
+  </a>&nbsp;&nbsp;
+  <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
+    <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
   </a>
 </div>
-
 
 <!-- GREASYFORK_INSTALLS:END -->
 

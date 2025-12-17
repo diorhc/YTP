@@ -195,36 +195,51 @@ async function tryScrapeHtml(url) {
 async function updateReadme(readmePath, installCount, version, targetUrl) {
   let content = await fs.readFile(readmePath, 'utf8');
 
-  // Create badges as an HTML block so we can scale and center them
-  const downloadsBadgeUrl = `https://img.shields.io/badge/downloads-${installCount}-blue`;
+  // Create badges as an HTML block matching README style:
+  // - flat-square style
+  // - fixed height (25)
+  // - spacing with non-breaking spaces
+  const downloadsBadgeUrl = `https://img.shields.io/badge/downloads-${installCount}-blue?style=flat-square`;
   const versionBadgeUrl = `https://img.shields.io/badge/version-${encodeURIComponent(
     version
-  )}-blue`;
-  const installBadgeUrl = `https://img.shields.io/badge/GreasyFork-Install-brightgreen`;
+  )}-blue?style=flat-square`;
 
-  // Slightly scale badges and center them. Use inline HTML to ensure centering
-  // and size control on GitHub README.
-  const badgesLine = `
-<div style="text-align:center">
-  <a href="${targetUrl}" style="display:inline-block;margin:0 15px;">
-    <img alt="downloads" src="${downloadsBadgeUrl}" style="transform:scale(1.15);transform-origin:center;" />
-  </a>
-  <a href="${targetUrl}" style="display:inline-block;margin:0 15px;">
-    <img alt="version" src="${versionBadgeUrl}" style="transform:scale(1.15);transform-origin:center;" />
-  </a>
-  <a href="${targetUrl}" style="display:inline-block;margin:0 15px;">
-    <img alt="Install Script" src="${installBadgeUrl}" style="transform:scale(1.15);transform-origin:center;" />
-  </a>
-</div>
-`;
+  // Determine Release/Install link: if README already had a Release link in the markers, reuse it
+  const defaultReleaseHref =
+    'https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js';
+  let releaseHref = defaultReleaseHref;
 
-  // Markers for badge section
   const downloadsStart = '<!-- GREASYFORK_INSTALLS:START -->';
   const downloadsEnd = '<!-- GREASYFORK_INSTALLS:END -->';
-
-  // Check if markers exist
   const hasMarkers = content.includes(downloadsStart) && content.includes(downloadsEnd);
+  if (hasMarkers) {
+    const badgeRe = new RegExp(`${downloadsStart}[\s\S]*?${downloadsEnd}`, 'm');
+    const match = content.match(badgeRe);
+    if (match && match[0]) {
+      const block = match[0];
+      const hrefs = [...block.matchAll(/<a\s+href="([^"]+)"/g)].map(m => m[1]);
+      if (hrefs.length >= 3 && hrefs[2]) releaseHref = hrefs[2];
+    }
+  }
 
+  const releaseBadgeUrl = `https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square`;
+
+  // Build badges HTML to match existing README (height 25, &nbsp;&nbsp; separators)
+  const badgesLine = `
+<p align="center">
+  <a href="${targetUrl}">
+    <img alt="downloads" src="${downloadsBadgeUrl}" height="25" />
+  </a>&nbsp;&nbsp;
+  <a href="${targetUrl}">
+    <img alt="version" src="${versionBadgeUrl}" height="25" />
+  </a>&nbsp;&nbsp;
+  <a href="${releaseHref}">
+    <img alt="Release" src="${releaseBadgeUrl}" height="25" />
+  </a>
+</p>
+`;
+
+  // Check if markers exist and update or insert accordingly
   if (hasMarkers) {
     // Update existing badges between markers
     const badgeRe = new RegExp(`${downloadsStart}[\\s\\S]*?${downloadsEnd}`, 'm');

@@ -1138,11 +1138,11 @@ if (typeof window !== 'undefined') {
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.3.1] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.3.2] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.3.1',
+    version: '2.3.2',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1173,7 +1173,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.3.1 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.3.2 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',

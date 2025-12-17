@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 /**
  * performance-monitoring.js
  * Runtime performance monitoring utilities
@@ -187,32 +186,31 @@ const performanceMonitoring = `
      */
     printReport() {
       const report = this.getReport();
-      console.group('📊 YouTube Plus Performance Report');
-      console.log('%cCache Performance', 'font-weight: bold; color: #4CAF50');
-      console.log('  Hit Ratio:', report.cacheHitRatio, '(' + report.insights.cacheEfficiency + ')');
-      console.log('  DOM Queries:', report.metrics.domQueries);
-      console.log('  Cache Hits:', report.metrics.cacheHits);
-      console.log('  Cache Misses:', report.metrics.cacheMisses);
-      
-      console.log('%nResource Usage', 'font-weight: bold; color: #2196F3');
-      console.log('  Event Listeners:', report.metrics.eventListeners);
-      console.log('  Observers:', report.metrics.observers);
-      console.log('  Timers:', report.metrics.timers);
-      
-      console.log('%nTiming Metrics', 'font-weight: bold; color: #FF9800');
-      console.log('  Avg DOM Operation:', report.avgDOMTime, '(' + report.insights.domPerformance + ')');
-      console.log('  Avg Navigation:', report.avgNavigationTime);
-      
+      console.warn('📊 YouTube Plus Performance Report');
+      console.warn('Cache Performance');
+      console.warn('  Hit Ratio: ' + report.cacheHitRatio + ' (' + report.insights.cacheEfficiency + ')');
+      console.warn('  DOM Queries: ' + report.metrics.domQueries);
+      console.warn('  Cache Hits: ' + report.metrics.cacheHits);
+      console.warn('  Cache Misses: ' + report.metrics.cacheMisses);
+
+      console.warn('Resource Usage');
+      console.warn('  Event Listeners: ' + report.metrics.eventListeners);
+      console.warn('  Observers: ' + report.metrics.observers);
+      console.warn('  Timers: ' + report.metrics.timers);
+
+      console.warn('Timing Metrics');
+      console.warn('  Avg DOM Operation: ' + report.avgDOMTime + ' (' + report.insights.domPerformance + ')');
+      console.warn('  Avg Navigation: ' + report.avgNavigationTime);
+
       if (Object.keys(report.moduleLoadTimes).length > 0) {
-        console.log('%nModule Load Times', 'font-weight: bold; color: #9C27B0');
+        console.warn('Module Load Times');
         Object.entries(report.moduleLoadTimes).forEach(([modName, time]) => {
-          console.log('  ' + modName + ':', time + 'ms');
+          console.warn('  ' + modName + ': ' + time + 'ms');
         });
       }
-      
-      console.log('%nGenerated:', 'font-weight: bold');
-      console.log('  ' + report.timestamp);
-      console.groupEnd();
+
+      console.warn('Generated:');
+      console.warn('  ' + report.timestamp);
       return report;
     },
 
@@ -233,7 +231,7 @@ const performanceMonitoring = `
       this.timings.moduleLoad.clear();
       this.timings.domOperations = [];
       this.timings.navigationTime = [];
-      console.log('🔄 Performance metrics reset');
+      console.warn('🔄 Performance metrics reset');
     },
 
     /**
@@ -257,10 +255,10 @@ const performanceMonitoring = `
      * @returns {number} Interval ID for clearing
      */
     startWatching(interval = 5000) {
-      console.log('👀 Performance watching started (interval: ' + interval + 'ms)');
+      console.warn('👀 Performance watching started (interval: ' + interval + 'ms)');
       return setInterval(() => {
         const summary = this.getSummary();
-        console.log('📊 Performance: ' + summary.status + ' | Cache: ' + summary.cacheRatio + ' | DOM: ' + summary.avgDOMTime + ' | Queries: ' + summary.totalQueries);
+        console.warn('📊 Performance: ' + summary.status + ' | Cache: ' + summary.cacheRatio + ' | DOM: ' + summary.avgDOMTime + ' | Queries: ' + summary.totalQueries);
       }, interval);
     },
 
@@ -280,43 +278,60 @@ const performanceMonitoring = `
     window.YouTubePlusPerformanceMonitor = PerformanceMonitor;
     
     // Add console command for easy access
-    console.log('%c📊 Performance Monitoring Active', 'color: #4CAF50; font-weight: bold; font-size: 14px');
-    console.log('%cAvailable commands:', 'color: #2196F3; font-weight: bold');
-    console.log('%c  • YouTubePlusPerformanceMonitor.printReport()', 'color: #666');
-    console.log('%c  • YouTubePlusPerformanceMonitor.getSummary()', 'color: #666');
-    console.log('%c  • YouTubePlusPerformanceMonitor.exportJSON()', 'color: #666');
-    console.log('%c  • YouTubePlusPerformanceMonitor.reset()', 'color: #666');
-    console.log('%c  • YouTubePlusPerformanceMonitor.startWatching(interval)', 'color: #666');
-    console.log('%c  • YouTubePlusPerformanceMonitor.getTopSlowOperations(count)', 'color: #666');
+    console.warn('📊 Performance Monitoring Active');
+    console.warn('Available commands:');
+    console.warn('  • YouTubePlusPerformanceMonitor.printReport()');
+    console.warn('  • YouTubePlusPerformanceMonitor.getSummary()');
+    console.warn('  • YouTubePlusPerformanceMonitor.exportJSON()');
+    console.warn('  • YouTubePlusPerformanceMonitor.reset()');
+    console.warn('  • YouTubePlusPerformanceMonitor.startWatching(interval)');
+    console.warn('  • YouTubePlusPerformanceMonitor.getTopSlowOperations(count)');
   }
 
   return PerformanceMonitor;
 })();
 `;
 
-console.log('📊 Performance Monitoring Module Generated\n');
-console.log('Features:');
-console.log('  ✓ DOM query tracking with cache hit/miss ratio');
-console.log('  ✓ Event listener counting');
-console.log('  ✓ Observer and timer tracking');
-console.log('  ✓ Module load time measurement');
-console.log('  ✓ DOM operation timing with circular buffer optimization');
-console.log('  ✓ Navigation performance tracking');
-console.log('  ✓ Real-time performance reports with insights');
-console.log('  ✓ Performance watching with auto-updates');
-console.log('  ✓ Top slowest operations analysis');
-console.log('  ✓ Batch tracking for improved performance');
-console.log('\nPerformance Optimizations:');
-console.log('  • Circular buffer for operation history (prevents shift() overhead)');
-console.log('  • For loops instead of reduce() for better V8 optimization');
-console.log('  • Batch tracking to reduce function call overhead');
-console.log('  • Cached calculations in getReport()');
-console.log('\nUsage in browser console:');
-console.log('  YouTubePlusPerformanceMonitor.printReport()');
-console.log('  YouTubePlusPerformanceMonitor.getSummary()');
-console.log('  YouTubePlusPerformanceMonitor.startWatching(5000)');
-console.log('  YouTubePlusPerformanceMonitor.getTopSlowOperations(10)');
-console.log('  YouTubePlusPerformanceMonitor.exportJSON()');
-console.log('  YouTubePlusPerformanceMonitor.reset()');
+// These messages are useful during build/dev (Node), but spam the
+// in-page console when this file is bundled into a userscript. Only
+// print them when not running in a browser context.
+if (typeof window === 'undefined') {
+  console.warn('📊 Performance Monitoring Module Generated\n');
+  console.warn('Features:');
+  console.warn('  ✓ DOM query tracking with cache hit/miss ratio');
+  console.warn('  ✓ Event listener counting');
+  console.warn('  ✓ Observer and timer tracking');
+  console.warn('  ✓ Module load time measurement');
+  console.warn('  ✓ DOM operation timing with circular buffer optimization');
+  console.warn('  ✓ Navigation performance tracking');
+  console.warn('  ✓ Real-time performance reports with insights');
+  console.warn('  ✓ Performance watching with auto-updates');
+  console.warn('  ✓ Top slowest operations analysis');
+  console.warn('  ✓ Batch tracking for improved performance');
+  console.warn('\nPerformance Optimizations:');
+  console.warn('  • Circular buffer for operation history (prevents shift() overhead)');
+  console.warn('  • For loops instead of reduce() for better V8 optimization');
+  console.warn('  • Batch tracking to reduce function call overhead');
+  console.warn('  • Cached calculations in getReport()');
+  console.warn('\nUsage in browser console:');
+  console.warn('  YouTubePlusPerformanceMonitor.printReport()');
+  console.warn('  YouTubePlusPerformanceMonitor.getSummary()');
+  console.warn('  YouTubePlusPerformanceMonitor.startWatching(5000)');
+  console.warn('  YouTubePlusPerformanceMonitor.getTopSlowOperations(10)');
+  console.warn('  YouTubePlusPerformanceMonitor.exportJSON()');
+  console.warn('  YouTubePlusPerformanceMonitor.reset()');
+}
 
-module.exports = performanceMonitoring;
+// Safely export for Node/CommonJS while avoiding errors when this file
+// is executed in a browser/userscript context where `module` is undefined.
+if (typeof module !== 'undefined' && module && typeof module.exports !== 'undefined') {
+  module.exports = performanceMonitoring;
+} else if (typeof window !== 'undefined') {
+  // Expose raw source to `window` so callers can inject it into the page
+  // without relying on bundler/CommonJS behavior.
+  try {
+    window.YouTubePlusPerformanceMonitoringSource = performanceMonitoring;
+  } catch {
+    // Defensive: in some sandboxed environments `window` may be read-only.
+  }
+}

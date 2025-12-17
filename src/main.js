@@ -85,21 +85,34 @@ if (typeof window !== 'undefined') {
 const nextBrowserTick = createNextBrowserTick(
   (typeof window !== 'undefined' && window.nextBrowserTick) || undefined
 );
+
 if (
   typeof window !== 'undefined' &&
   (!window.nextBrowserTick || window.nextBrowserTick.version < 2)
 ) {
   window.nextBrowserTick = nextBrowserTick;
 }
+
+// -----------------------------------------------------------------------------------------------------------------------------
+
+/**
+ * Main execution script for YouTube tab view
+ * @param {string} _communicationKey - Unique key for cross-context communication (reserved for future use)
+ */
 const executionScript = _communicationKey => {
   /** @const {boolean} Debug flag for attachment/detachment events */
   const DEBUG_5084 = false;
 
-  /** @const {boolean} Debug flag for tab operations - set to true to debug tab issues */
-  const DEBUG_5085 = true; // Temporarily enabled for debugging TabView
+  /** @const {boolean} Debug flag for tab operations - controlled by environment */
+  const DEBUG_5085 =
+    typeof process !== 'undefined' && process.env && process.env.NODE_ENV === 'development'
+      ? true
+      : false;
+
+  /** @const {boolean} Debug navigation factory */
+  const DEBUG_handleNavigateFactory = false;
 
   /** @const {boolean} Auto-switch to comments tab when available */
-  const DEBUG_handleNavigateFactory = false;
   const TAB_AUTO_SWITCH_TO_COMMENTS = false;
 
   // Configuration validation
@@ -115,200 +128,10 @@ const executionScript = _communicationKey => {
     ATTRIBUTE_RESET_VALUE < 0 ||
     ATTRIBUTE_RESET_VALUE >= MAX_ATTRIBUTE_VALUE
   ) {
-    console.warn('[YouTube+] Invalid configuration constants; using defaults');
+    console.error(
+      '[YouTube+] Invalid configuration: MAX_ATTRIBUTE_VALUE and ATTRIBUTE_RESET_VALUE must be valid positive numbers'
+    );
   }
-  let _tabInfoEl = null;
-  let _tabCommentsEl = null;
-  let _textInlineExpanders = null;
-  let cacheCleanupInterval = null;
-
-  const refreshCachedSelectors = () => {
-    try {
-      _tabInfoEl = getTabInfo() || null;
-      _tabCommentsEl = getTabComments() || null;
-      _textInlineExpanders = getTextInlineExpanders() || null;
-    } catch {
-      // Running in a non-DOM context or early during load - ignore
-      _tabInfoEl = null;
-      _tabCommentsEl = null;
-      _textInlineExpanders = null;
-    }
-  };
-
-  // Getter helpers that lazily refresh cache when needed
-  const getTabInfo = () => {
-    if (_tabInfoEl && _tabInfoEl.isConnected) return _tabInfoEl;
-    _tabInfoEl = $('#tab-info');
-    return _tabInfoEl;
-  };
-
-  const getTabComments = () => {
-    if (_tabCommentsEl && _tabCommentsEl.isConnected) return _tabCommentsEl;
-    _tabCommentsEl = $('#tab-comments');
-    return _tabCommentsEl;
-  };
-
-  const getTextInlineExpanders = () => {
-    if (_textInlineExpanders && _textInlineExpanders.length) return _textInlineExpanders;
-    _textInlineExpanders = $$('ytd-text-inline-expander');
-    return _textInlineExpanders;
-  };
-
-  /**
-   * Get cached text inline expanders optionally filtered by a parent element
-   * @param {Element|null} parent
-   * @returns {Element[]|NodeList}
-   */
-  const getTextInlineExpandersIn = parent => {
-    const list = getTextInlineExpanders();
-    if (!parent) return list;
-    const out = [];
-    for (let i = 0; i < list.length; i++) {
-      const el = list[i];
-      if (parent.contains(el)) out.push(el);
-    }
-    return out;
-  };
-
-  const getFirstTextInlineExpanderIn = parent => {
-    const arr = getTextInlineExpandersIn(parent);
-    return arr && arr.length ? arr[0] : null;
-  };
-
-  // DOM Cache helpers (use global YouTubeDOMCache if available)
-  const getDOMCache = () => (typeof window !== 'undefined' ? window.YouTubeDOMCache : null);
-  const $ = (sel, ctx) =>
-    getDOMCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
-  const $$ = (sel, ctx) =>
-    getDOMCache()?.querySelectorAll(sel, ctx) ||
-    Array.from((ctx || document).querySelectorAll(sel));
-  const byId = id => getDOMCache()?.getElementById(id) || document.getElementById(id);
-
-  // Expose simple DOM helper aliases globally so other injected modules
-  // or content scripts that run in different scopes can access them.
-  try {
-    if (typeof window !== 'undefined') {
-      // Don't overwrite existing globals if present
-      if (!window.$) window.$ = $;
-      if (!window.$$) window.$$ = $$;
-      if (!window.byId) window.byId = byId;
-    }
-  } catch (e) {
-    // Defensive: do not throw if window is not writable in some contexts
-    console.warn('[YouTube+] Failed to expose DOM helpers globally:', e);
-  }
-
-  // Initialize cache now and refresh on common navigation/DOM events
-
-  // MutationObserver: keep `_textInlineExpanders` and other cached selectors
-  // fresh when the DOM changes (elements added/removed). Uses debounce
-  // to avoid excessive refresh calls during rapid mutations.
-  const _cachedSelectorsToWatch = ['ytd-text-inline-expander', '#tab-info', '#tab-comments'];
-
-  const shouldRefreshForMutation = mutation => {
-    if (!mutation) return false;
-    // check added nodes
-    for (const node of mutation.addedNodes || []) {
-      if (!(node instanceof Element)) continue;
-      for (const sel of _cachedSelectorsToWatch) {
-        try {
-          if (node.matches && node.matches(sel)) return true;
-        } catch {
-          // ignore invalid selector match errors
-        }
-        if (node.querySelector && node.querySelector(sel)) return true;
-      }
-    }
-    // check removed nodes
-    for (const node of mutation.removedNodes || []) {
-      if (!(node instanceof Element)) continue;
-      for (const sel of _cachedSelectorsToWatch) {
-        try {
-          if (node.matches && node.matches(sel)) return true;
-        } catch {}
-        // removed nodes may contain children matching selector
-        if (node.querySelector && node.querySelector(sel)) return true;
-      }
-    }
-    // attribute changes on relevant parents could also affect cached state
-    if (mutation.type === 'attributes') {
-      return _cachedSelectorsToWatch.some(s => {
-        try {
-          return mutation.target && mutation.target.matches && mutation.target.matches(s);
-        } catch {
-          return false;
-        }
-      });
-    }
-    return false;
-  };
-
-  let _moTimer = null;
-  const _moDebounceDelay = 150;
-  const _moCallback = mutationsList => {
-    let need = false;
-    for (const m of mutationsList) {
-      if (shouldRefreshForMutation(m)) {
-        need = true;
-        break;
-      }
-    }
-    if (!need) return;
-    if (_moTimer) clearTimeout(_moTimer);
-    _moTimer = setTimeout(() => {
-      try {
-        refreshCachedSelectors();
-      } catch (e) {
-        console.warn('[YouTube+] refreshCachedSelectors failed in MO:', e);
-      }
-      _moTimer = null;
-    }, _moDebounceDelay);
-  };
-
-  let _cachedMO = null;
-  if (typeof MutationObserver !== 'undefined' && typeof document !== 'undefined') {
-    try {
-      _cachedMO = new MutationObserver(_moCallback);
-      const root = document.documentElement || document.body || document;
-      _cachedMO.observe(root, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['hidden', 'style'],
-      });
-      try {
-        window.YouTubeUtils &&
-          window.YouTubeUtils.cleanupManager &&
-          window.YouTubeUtils.cleanupManager.registerObserver(_cachedMO, root);
-      } catch {}
-    } catch (e) {
-      console.warn('[YouTube+] Failed to initialize MutationObserver for cached selectors:', e);
-      _cachedMO = null;
-    }
-  }
-
-  // Ensure cleanup on page unload
-  if (typeof window !== 'undefined') {
-    window.addEventListener('beforeunload', () => {
-      if (_moTimer) clearTimeout(_moTimer);
-      if (_cachedMO) {
-        try {
-          _cachedMO.disconnect();
-        } catch {}
-      }
-      try {
-        if (cacheCleanupInterval) clearInterval(cacheCleanupInterval);
-      } catch {}
-    });
-    window.addEventListener('DOMContentLoaded', refreshCachedSelectors);
-    // YouTube SPA navigation events (best-effort); keep cache fresh
-    window.addEventListener('yt-navigate-start', refreshCachedSelectors);
-    window.addEventListener('yt-navigate-finish', refreshCachedSelectors);
-    window.addEventListener('yt-page-data-updated', refreshCachedSelectors);
-  }
-
-  // initial population
-  refreshCachedSelectors();
 
   // Reuse utility functions from parent scope (renamed to avoid conflicts)
   const identityFnLocal = value => value;
@@ -411,32 +234,36 @@ const executionScript = _communicationKey => {
 
     /**
      * Clear expired cache entries and enforce size limit
+     * Optimized version with reduced iterations
      */
     const clearExpiredCache = () => {
       const now = Date.now();
+      const toDelete = [];
 
-      // Remove expired entries
-      for (const [key, value] of selectorCache.entries()) {
+      // Collect expired entries in single pass
+      for (const [key, value] of selectorCache) {
         if (now - value.timestamp > CACHE_TTL) {
-          selectorCache.delete(key);
+          toDelete.push(key);
         }
       }
 
-      // Enforce max size by removing oldest entries
+      // Delete expired entries
+      toDelete.forEach(key => selectorCache.delete(key));
+
+      // Enforce max size limit if still over capacity
       if (selectorCache.size > CACHE_MAX_SIZE) {
         const entriesToRemove = selectorCache.size - CACHE_MAX_SIZE;
-        const iterator = selectorCache.keys();
+        const keys = Array.from(selectorCache.keys());
+
+        // Remove oldest entries (first ones in iteration order)
         for (let i = 0; i < entriesToRemove; i++) {
-          const key = iterator.next().value;
-          if (key !== undefined) {
-            selectorCache.delete(key);
-          }
+          selectorCache.delete(keys[i]);
         }
       }
     };
 
     // Periodically clear expired cache
-    cacheCleanupInterval = setInterval(clearExpiredCache, CACHE_TTL);
+    const cacheCleanupInterval = setInterval(clearExpiredCache, CACHE_TTL);
 
     // Ensure cleanup on page unload
     if (typeof window !== 'undefined') {
@@ -553,25 +380,28 @@ const executionScript = _communicationKey => {
      */
     Element.prototype.setAttribute111 = function (p, v) {
       if (!p || typeof p !== 'string') {
-        console.warn('[YouTube+] setAttribute111: invalid attribute name', p);
+        if (DEBUG_5085) {
+          console.warn('[YouTube+] setAttribute111: invalid attribute name', p);
+        }
         return false;
       }
+
       try {
-        const valueStr = v === null || v === undefined ? '' : `${v}`;
-        const currentValue = this.getAttribute000(p);
+        const valueStr = v == null ? '' : String(v);
+        const currentValue = this.getAttribute000?.(p);
+
+        // Skip if value hasn't changed
         if (currentValue === valueStr) return true;
-        this.setAttribute000(p, valueStr);
+
+        // Use getAttribute000 method if available, fallback to setAttribute
+        const setAttr = this.setAttribute000 || this.setAttribute;
+        setAttr.call(this, p, valueStr);
         return true;
       } catch (error) {
-        console.warn('[YouTube+] setAttribute111 failed:', error, 'attr:', p, 'value:', v);
-        // Fallback: try direct setAttribute
-        try {
-          this.setAttribute(p, v === null || v === undefined ? '' : `${v}`);
-          return true;
-        } catch (fallbackError) {
-          console.error('[YouTube+] setAttribute111 fallback also failed:', fallbackError);
-          return false;
+        if (DEBUG_5085) {
+          console.warn('[YouTube+] setAttribute111 failed:', { attr: p, value: v, error });
         }
+        return false;
       }
     };
 
@@ -660,6 +490,52 @@ const executionScript = _communicationKey => {
         inPageRearrange = false;
         console.error('[YouTube+] assignChildren111 failed:', error);
       }
+    };
+
+    /**
+     * Helper function to temporarily swap secondary-inner IDs to prevent conflicts
+     * This prevents issues when YouTube's code queries for #secondary-inner during tab operations
+     * @param {Function} cb - Callback function to execute with swapped IDs
+     * @returns {*} Result from callback
+     */
+    let secondaryInnerHold = 0;
+
+    const secondaryInnerFn = cb => {
+      if (secondaryInnerHold) {
+        // Already inside a secondaryInner operation, just increment and execute
+        secondaryInnerHold++;
+        try {
+          return cb();
+        } finally {
+          secondaryInnerHold--;
+        }
+      }
+
+      // Get the elements
+      const ea = document.querySelector('#secondary-inner');
+      const eb = document.querySelector('secondary-wrapper#secondary-inner-wrapper');
+
+      if (ea && eb) {
+        secondaryInnerHold++;
+        const oldIdA = ea.id;
+        const oldIdB = eb.id;
+
+        // Temporarily swap IDs
+        ea.id = 'secondary-inner-';
+        eb.id = 'secondary-inner';
+
+        try {
+          return cb();
+        } finally {
+          // Restore original IDs
+          ea.id = oldIdA;
+          eb.id = oldIdB;
+          secondaryInnerHold--;
+        }
+      }
+
+      // No elements to swap, just execute callback
+      return cb();
     };
 
     // ==============================================================================================================================================================================================================================================================================
@@ -773,7 +649,7 @@ const executionScript = _communicationKey => {
         function r(removeListener) {
           o();
           if (removeListener) {
-            document.removeEventListener('DOMContentLoaded', r, !1);
+            e.removeEventListener('DOMContentLoaded', r, !1);
           }
         }
         (new a(resolveCallback => {
@@ -806,7 +682,7 @@ const executionScript = _communicationKey => {
           }).then(o),
           a.resolve().then(() => {
             if (document.readyState === 'loading') {
-              document.addEventListener('DOMContentLoaded', r, !1);
+              e.addEventListener('DOMContentLoaded', r, !1);
             } else {
               r();
             }
@@ -1278,7 +1154,7 @@ const executionScript = _communicationKey => {
       if (elements.flexy && attributeChangedSet.has('external.ytlstm')) {
         elements.flexy.setAttribute(
           'tyt-external-ytlstm',
-          $('[data-ytlstm-theater-mode]') ? '1' : '0'
+          document.querySelector('[data-ytlstm-theater-mode]') ? '1' : '0'
         );
       }
       if (changeOnRoot) {
@@ -1318,14 +1194,6 @@ const executionScript = _communicationKey => {
 
     pluginDetectObserver.observe(document.documentElement, { attributes: true });
     if (document.body) pluginDetectObserver.observe(document.body, { attributes: true });
-    try {
-      window.YouTubeUtils &&
-        window.YouTubeUtils.cleanupManager &&
-        window.YouTubeUtils.cleanupManager.registerObserver(
-          pluginDetectObserver,
-          document.documentElement
-        );
-    } catch {}
     navigateFinishedPromise.then(() => {
       pluginDetectObserver.observe(document.documentElement, { attributes: true });
       if (document.body) pluginDetectObserver.observe(document.body, { attributes: true });
@@ -1336,6 +1204,16 @@ const executionScript = _communicationKey => {
      * @param {*} _s - Parameter (unused but kept for compatibility)
      */
     const funcCanCollapse = function (_s) {
+      // Call original YouTube function first to ensure expand/collapse works
+      try {
+        if (typeof this.calculateCanCollapse498 === 'function') {
+          this.calculateCanCollapse498(_s);
+        }
+      } catch (e) {
+        console.warn('[YouTube+] calculateCanCollapse498 failed:', e);
+      }
+
+      // Then handle playlist state
       const { playlist: playlistElm, flexy: ytdFlexyElm } = elements;
       let doAttributeChange = 0;
       if (playlistElm && ytdFlexyElm) {
@@ -1396,28 +1274,12 @@ const executionScript = _communicationKey => {
         .then(aoChatAttrChangeFn)
         .catch(err => handlePromiseError(err, 'aoChatAttrChange'));
     });
-    try {
-      window.YouTubeUtils &&
-        window.YouTubeUtils.cleanupManager &&
-        window.YouTubeUtils.cleanupManager.registerObserver(
-          aoChat,
-          elements.chat || document.documentElement
-        );
-    } catch {}
 
     const aoPlayList = new MutationObserver(() => {
       Promise.resolve(lockSet['aoPlayListAttrAsyncLock'])
         .then(aoPlayListAttrChangeFn)
         .catch(err => handlePromiseError(err, 'aoPlayListAttrChange'));
     });
-    try {
-      window.YouTubeUtils &&
-        window.YouTubeUtils.cleanupManager &&
-        window.YouTubeUtils.cleanupManager.registerObserver(
-          aoPlayList,
-          elements.playlist || document.documentElement
-        );
-    } catch {}
 
     const aoComment = new MutationObserver(async mutations => {
       const commentsArea = elements.comments;
@@ -1480,21 +1342,12 @@ const executionScript = _communicationKey => {
 
         if (commentsArea.closest('#tab-comments')) {
           const shouldTabVisible = !commentsArea.closest('[hidden]');
-          $('[tyt-tab-content="#tab-comments"]').classList.toggle(
-            'tab-btn-hidden',
-            !shouldTabVisible
-          );
+          document
+            .querySelector('[tyt-tab-content="#tab-comments"]')
+            .classList.toggle('tab-btn-hidden', !shouldTabVisible);
         }
       }
     });
-    try {
-      window.YouTubeUtils &&
-        window.YouTubeUtils.cleanupManager &&
-        window.YouTubeUtils.cleanupManager.registerObserver(
-          aoComment,
-          elements.comments || document.documentElement
-        );
-    } catch {}
 
     const ioComment = new IntersectionObserver(
       entries => {
@@ -1523,11 +1376,6 @@ const executionScript = _communicationKey => {
         rootMargin: '32px', // enlarging viewport for getting intersection earlier
       }
     );
-    try {
-      window.YouTubeUtils &&
-        window.YouTubeUtils.cleanupManager &&
-        window.YouTubeUtils.cleanupManager.registerObserver(ioComment);
-    } catch {}
 
     let bFixForResizedTabLater = false;
     let lastRoRightTabsWidth = 0;
@@ -1546,14 +1394,6 @@ const executionScript = _communicationKey => {
         }
       }
     });
-    try {
-      window.YouTubeUtils &&
-        window.YouTubeUtils.cleanupManager &&
-        window.YouTubeUtils.cleanupManager.registerObserver(
-          roRightTabs,
-          elements.rightTabs || document.documentElement
-        );
-    } catch {}
 
     /**
      * Get attribute value with safe fallback
@@ -1615,9 +1455,9 @@ const executionScript = _communicationKey => {
      * @returns {NodeListOf<Element>} Tab link elements
      */
     const findTabLinks = () => {
-      let links = $$('#material-tabs a[tyt-tab-content]');
+      let links = document.querySelectorAll('#material-tabs a[tyt-tab-content]');
       if (links.length === 0) {
-        links = $$('#right-tabs a[tyt-tab-content]');
+        links = document.querySelectorAll('#right-tabs a[tyt-tab-content]');
       }
       return links;
     };
@@ -1663,7 +1503,7 @@ const executionScript = _communicationKey => {
         // Convert string selector to element
         if (typeof activeLink === 'string') {
           const selector = `a[tyt-tab-content="${activeLink}"]`;
-          activeLink = $(selector) || null;
+          activeLink = document.querySelector(selector) || null;
           if (!activeLink) {
             console.warn(`[YouTube+] switchToTab: could not find tab with selector "${selector}"`);
           }
@@ -1692,7 +1532,7 @@ const executionScript = _communicationKey => {
               continue;
             }
 
-            const content = $(contentSelector);
+            const content = document.querySelector(contentSelector);
             if (!content) {
               console.warn(
                 `[YouTube+] switchToTab: content not found for selector "${contentSelector}"`
@@ -1728,14 +1568,6 @@ const executionScript = _communicationKey => {
         if (switchingTo) {
           lastTab = switchingTo;
           lastPanel = switchingTo;
-          try {
-            if (typeof localStorage !== 'undefined') {
-              if (switchingTo) localStorage.setItem('ytplus.lastTab', switchingTo);
-              else localStorage.removeItem('ytplus.lastTab');
-            }
-          } catch {
-            // ignore storage errors (private mode, quota, etc.)
-          }
         }
 
         // Clean up tyt-chat attribute if empty
@@ -1824,7 +1656,7 @@ const executionScript = _communicationKey => {
      * @returns {HTMLButtonElement|null} Theater button or null
      */
     function getTheaterButton() {
-      return $('ytd-watch-flexy #ytd-player button.ytp-size-button');
+      return document.querySelector('ytd-watch-flexy #ytd-player button.ytp-size-button');
     }
 
     /**
@@ -1853,7 +1685,7 @@ const executionScript = _communicationKey => {
      * @returns {Element|null} Element with most children or null
      */
     function getSuitableElement(selector) {
-      const matchedElements = $$(selector);
+      const matchedElements = document.querySelectorAll(selector);
       let bestIndex = -1;
       let maxDepth = -1;
 
@@ -1904,7 +1736,9 @@ const executionScript = _communicationKey => {
      * Try to expand chat by clicking button
      */
     function tryExpandUsingButton() {
-      let button = $('ytd-live-chat-frame#chat[collapsed] > .ytd-live-chat-frame#show-hide-button');
+      let button = document.querySelector(
+        'ytd-live-chat-frame#chat[collapsed] > .ytd-live-chat-frame#show-hide-button'
+      );
       if (button) {
         button =
           button.querySelector000('div.yt-spec-touch-feedback-shape') ||
@@ -1960,7 +1794,7 @@ const executionScript = _communicationKey => {
      * Try to collapse chat by clicking button
      */
     function tryCollapseUsingButton() {
-      let button = $(
+      let button = document.querySelector(
         'ytd-live-chat-frame#chat:not([collapsed]) > .ytd-live-chat-frame#show-hide-button'
       );
       if (button) {
@@ -2095,7 +1929,7 @@ const executionScript = _communicationKey => {
              */
     function ytBtnCloseEngagementPanels() {
       const actions = [];
-      for (const panelElm of $$(
+      for (const panelElm of document.querySelectorAll(
         `ytd-watch-flexy[tyt-tab] #panels.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility]:not([hidden])`
       )) {
         if (
@@ -2131,10 +1965,16 @@ const executionScript = _communicationKey => {
       }
     }
 
+    /**
+     * Update chat location with ID conflict prevention
+     * Wraps YouTube's update methods in secondaryInnerFn to prevent ID conflicts
+     */
     const updateChatLocation498 = function () {
       if (this.is !== 'ytd-watch-grid') {
-        this.updatePageMediaQueries();
-        this.schedulePlayerSizeUpdate_();
+        secondaryInnerFn(() => {
+          this.updatePageMediaQueries();
+          this.schedulePlayerSizeUpdate_();
+        });
       }
     };
 
@@ -2228,7 +2068,8 @@ const executionScript = _communicationKey => {
     const infoFix = lockId => {
       if (lockId !== null && lockGet['infoFixLock'] !== lockId) return;
       const { infoExpander } = elements;
-      const infoContainer = (infoExpander ? infoExpander.parentNode : null) || getTabInfo();
+      const infoContainer =
+        (infoExpander ? infoExpander.parentNode : null) || document.querySelector('#tab-info');
       const ytdFlexyElm = elements.flexy;
       if (!infoContainer || !ytdFlexyElm) return;
       if (infoExpander) {
@@ -2239,7 +2080,7 @@ const executionScript = _communicationKey => {
       }
 
       const requireElements = [
-        ...$$(
+        ...document.querySelectorAll(
           'ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *'
         ),
       ]
@@ -2250,7 +2091,7 @@ const executionScript = _communicationKey => {
           const { is } = elmParam;
           let elm = elmParam;
           while (elm instanceof HTMLElement_) {
-            const q = $$(is, elm).filter(e => insp(e).data);
+            const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
             if (q.length >= 1) return q[0];
             elm = elm.parentNode;
           }
@@ -2266,7 +2107,7 @@ const executionScript = _communicationKey => {
         };
       });
 
-      let noscript_ = $('noscript#aythl');
+      let noscript_ = document.querySelector('noscript#aythl');
       if (!noscript_) {
         noscript_ = document.createElement('noscript');
         noscript_.id = 'aythl';
@@ -2441,13 +2282,15 @@ const executionScript = _communicationKey => {
     const layoutFix = lockId => {
       if (lockGet['layoutFixLock'] !== lockId) return;
 
-      const secondaryWrapper = $(
+      const secondaryWrapper = document.querySelector(
         '#secondary-inner.style-scope.ytd-watch-flexy > secondary-wrapper'
       );
       if (secondaryWrapper) {
         const secondaryInner = secondaryWrapper.parentNode;
 
-        const chatContainer = $('#columns.style-scope.ytd-watch-flexy [tyt-chat-container]');
+        const chatContainer = document.querySelector(
+          '#columns.style-scope.ytd-watch-flexy [tyt-chat-container]'
+        );
         if (
           secondaryInner.firstChild !== secondaryInner.lastChild ||
           (chatContainer && !chatContainer.closest('secondary-wrapper'))
@@ -2541,7 +2384,7 @@ const executionScript = _communicationKey => {
       let newVisiblePanels = [];
       let newHiddenPanels = [];
       let allVisiblePanels = [];
-      for (const panelElm of $$('[tyt-egm-panel][target-id][visibility]')) {
+      for (const panelElm of document.querySelectorAll('[tyt-egm-panel][target-id][visibility]')) {
         const visibility = panelElm.getAttribute000('visibility');
 
         if (visibility === 'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN' || panelElm.closest('[hidden]')) {
@@ -2591,7 +2434,7 @@ const executionScript = _communicationKey => {
     };
 
     const checkElementExist = (css, exclude) => {
-      for (const p of $$(css)) {
+      for (const p of document.querySelectorAll(css)) {
         if (!p.closest(exclude)) return p;
       }
       return null;
@@ -2628,8 +2471,8 @@ const executionScript = _communicationKey => {
        * @returns {{lc: string, commentRendererElm: HTMLElement}|null} Comment data or null
        */
       function findLinkedCommentByBadge() {
-        const badgeElement = $(
-          '#tab-comments ytd-comments ytd-comment-renderer > #linked-comment-badge span:not(:empty)'
+        const badgeElement = document.querySelector(
+          `#tab-comments ytd-comments ytd-comment-renderer > #linked-comment-badge span:not(:empty)`
         );
         if (!badgeElement) return null;
 
@@ -2651,7 +2494,7 @@ const executionScript = _communicationKey => {
        * @returns {{lc: string, commentRendererElm: HTMLElement}|null} Comment data or null
        */
       function findCommentById(commentId) {
-        const anchor = $(
+        const anchor = document.querySelector(
           `#tab-comments ytd-comments ytd-comment-renderer #header-author a[href*="lc=${commentId}"]`
         );
         if (!anchor) return null;
@@ -2918,11 +2761,15 @@ const executionScript = _communicationKey => {
       };
 
       const shouldUseMiniPlayer = () => {
-        const isSubTypeExist = $('ytd-page-manager#page-manager > ytd-browse[page-subtype]');
+        const isSubTypeExist = document.querySelector(
+          'ytd-page-manager#page-manager > ytd-browse[page-subtype]'
+        );
 
         if (isSubTypeExist) return true;
 
-        const movie_player = $$('#movie_player').filter(e => !e.closest('[hidden]'))[0];
+        const movie_player = [...document.querySelectorAll('#movie_player')].filter(
+          e => !e.closest('[hidden]')
+        )[0];
         if (movie_player) {
           const media = qsOne(movie_player, 'video[class], audio[class]');
           if (
@@ -3005,7 +2852,7 @@ const executionScript = _communicationKey => {
         document.removeEventListener('yt-navigate-finish', f, false);
         if (t38 !== u38) return;
         setTimeout(() => {
-          const currentAbout = $$('ytd-about-channel-renderer').filter(
+          const currentAbout = [...document.querySelectorAll('ytd-about-channel-renderer')].filter(
             e => !e.closest('[hidden]')
           )[0];
           let okay = false;
@@ -3025,11 +2872,11 @@ const executionScript = _communicationKey => {
             okay = true;
           }
           if (okay) {
-            const descriptionModel = $$('yt-description-preview-view-model').filter(
-              e => !e.closest('[hidden]')
-            )[0];
+            const descriptionModel = [
+              ...document.querySelectorAll('yt-description-preview-view-model'),
+            ].filter(e => !e.closest('[hidden]'))[0];
             if (descriptionModel) {
-              const button = $$('button', descriptionModel).filter(
+              const button = [...descriptionModel.querySelectorAll('button')].filter(
                 e => !e.closest('[hidden]') && `${e.textContent}`.trim().length > 0
               )[0];
               if (button) {
@@ -3058,7 +2905,7 @@ const executionScript = _communicationKey => {
 
           // console.log('tabview-script-handleNavigate')
 
-          const ytdAppElm = $('ytd-app');
+          const ytdAppElm = document.querySelector('ytd-app');
           const ytdAppCnt = insp(ytdAppElm);
 
           let watchEndpoint = null;
@@ -3207,9 +3054,9 @@ const executionScript = _communicationKey => {
        */
       const findMediaElement = () => {
         return (
-          $('.video-stream.html5-main-video') ||
-          $('#movie_player video, #movie_player audio') ||
-          $('body video[src], body audio[src]')
+          document.querySelector('.video-stream.html5-main-video') ||
+          document.querySelector('#movie_player video, #movie_player audio') ||
+          document.querySelector('body video[src], body audio[src]')
         );
       };
 
@@ -3282,7 +3129,7 @@ const executionScript = _communicationKey => {
        * @returns {YtdAppInfo} ytd-app data
        */
       const getYtdApp = () => {
-        const element = $('ytd-app');
+        const element = document.querySelector('ytd-app');
         const controller = insp(element);
         return { element, controller };
       };
@@ -3310,7 +3157,7 @@ const executionScript = _communicationKey => {
        * @returns {HTMLElement|null} Found element
        */
       const queryMediaElement = selector => {
-        return selector ? $(selector) : null;
+        return selector ? document.querySelector(selector) : null;
       };
 
       /**
@@ -3319,7 +3166,7 @@ const executionScript = _communicationKey => {
        * @returns {NodeList|Array} Found elements
        */
       const queryMediaElements = selector => {
-        return selector ? $$(selector) : [];
+        return selector ? document.querySelectorAll(selector) : [];
       };
 
       return {
@@ -3477,7 +3324,7 @@ const executionScript = _communicationKey => {
       const mainInfo = getMainInfo();
       if (!mainInfo) return;
       // console.log(21886,2)
-      const inlineExpanderElm = getFirstTextInlineExpanderIn(mainInfo);
+      const inlineExpanderElm = mainInfo.querySelector('ytd-text-inline-expander');
       const inlineExpanderCnt = insp(inlineExpanderElm);
       fixInlineExpanderMethods(inlineExpanderCnt);
 
@@ -3495,40 +3342,6 @@ const executionScript = _communicationKey => {
       // }
     };
 
-    // Install a delegated hover handler for `#upload-info` to avoid per-element pointerenter/pointerleave
-    // (pointerenter does not bubble; we use pointerover/pointerout delegation and map to the plugin handlers).
-    let _hoverDelegationInstalled = false;
-    const installHoverDelegation = () => {
-      if (typeof document === 'undefined' || _hoverDelegationInstalled) return;
-      _hoverDelegationInstalled = true;
-      const selector = '#primary.ytd-watch-flexy ytd-watch-metadata #upload-info';
-
-      const onOver = evt => {
-        try {
-          const target = evt && evt.target ? evt.target : null;
-          const el = target && target.closest ? target.closest(selector) : null;
-          if (!el) return;
-          if (plugin && plugin.fullChannelNameOnHover && plugin.fullChannelNameOnHover.activated) {
-            plugin.fullChannelNameOnHover.mouseEnterFn(evt);
-          }
-        } catch {}
-      };
-
-      const onOut = evt => {
-        try {
-          const target = evt && evt.target ? evt.target : null;
-          const el = target && target.closest ? target.closest(selector) : null;
-          if (!el) return;
-          if (plugin && plugin.fullChannelNameOnHover && plugin.fullChannelNameOnHover.activated) {
-            plugin.fullChannelNameOnHover.mouseLeaveFn(evt);
-          }
-        } catch {}
-      };
-
-      document.addEventListener('pointerover', onOver, { passive: true, capture: false });
-      document.addEventListener('pointerout', onOut, { passive: true, capture: false });
-    };
-
     const plugin = {
       minibrowser: {
         activated: false,
@@ -3544,7 +3357,7 @@ const executionScript = _communicationKey => {
 
           this.activated = true;
 
-          const ytdAppElm = $('ytd-app');
+          const ytdAppElm = document.querySelector('ytd-app');
           const ytdAppCnt = insp(ytdAppElm);
 
           if (!ytdAppCnt) return;
@@ -3584,7 +3397,7 @@ const executionScript = _communicationKey => {
               }
               break;
             case 'ytd-expandable-video-description-body-renderer':
-              const inlineExpanderElm = getFirstTextInlineExpanderIn(mainInfo);
+              const inlineExpanderElm = mainInfo.querySelector('ytd-text-inline-expander');
               const inlineExpanderCnt = insp(inlineExpanderElm);
               if (inlineExpanderCnt && inlineExpanderCnt.isExpanded === false) {
                 setExpand(inlineExpanderCnt, true);
@@ -3630,8 +3443,8 @@ const executionScript = _communicationKey => {
             }
             try {
               mainInfo.incAttribute111('attr-8ifv7');
-            } catch {
-              console.warn('[YouTube+] mainInfo.incAttribute111 failed');
+            } catch (e) {
+              console.warn('[YouTube+] mainInfo.incAttribute111 failed', e);
             }
           }
         },
@@ -3664,14 +3477,24 @@ const executionScript = _communicationKey => {
         },
         moFn(lockId) {
           if (lockGet['fullChannelNameOnHoverAttrAsyncLock'] !== lockId) return;
-          // Use delegated hover handlers instead of per-element pointerenter/pointerleave
-          try {
-            installHoverDelegation();
-          } catch {}
+
+          const uploadInfo = document.querySelector(
+            '#primary.ytd-watch-flexy ytd-watch-metadata #upload-info'
+          );
+          if (!uploadInfo) return;
+
+          const evtOpt = { passive: true, capture: false };
+          uploadInfo.removeEventListener('pointerenter', this.mouseEnterFn, evtOpt);
+          uploadInfo.removeEventListener('pointerleave', this.mouseLeaveFn, evtOpt);
+
+          uploadInfo.addEventListener('pointerenter', this.mouseEnterFn, evtOpt);
+          uploadInfo.addEventListener('pointerleave', this.mouseLeaveFn, evtOpt);
         },
         async onNavigateFinish() {
           await this.promiseReady.then();
-          const uploadInfo = $('#primary.ytd-watch-flexy ytd-watch-metadata #upload-info');
+          const uploadInfo = document.querySelector(
+            '#primary.ytd-watch-flexy ytd-watch-metadata #upload-info'
+          );
           if (!uploadInfo) return;
           if (uploadInfo && uploadInfo instanceof Element && uploadInfo.isConnected) {
             try {
@@ -3755,7 +3578,7 @@ const executionScript = _communicationKey => {
     const makeInitAttached = tag => {
       const inPageRearrange_ = inPageRearrange;
       inPageRearrange = false;
-      for (const elm of $$(`${tag}`)) {
+      for (const elm of document.querySelectorAll(`${tag}`)) {
         const cnt = insp(elm) || 0;
         if (typeof cnt.attached498 === 'function' && !elm[__attachedSymbol__]) {
           Promise.resolve(elm).then(eventMap[`${tag}::attached`]).catch(console.warn);
@@ -3766,7 +3589,9 @@ const executionScript = _communicationKey => {
 
     const getGeneralChatElement = async () => {
       for (let i = 2; i-- > 0; ) {
-        const t = $('#columns.style-scope.ytd-watch-flexy ytd-live-chat-frame#chat');
+        const t = document.querySelector(
+          '#columns.style-scope.ytd-watch-flexy ytd-live-chat-frame#chat'
+        );
         if (t instanceof Element) return t;
         if (i > 0) {
           // try later
@@ -3781,11 +3606,11 @@ const executionScript = _communicationKey => {
     };
 
     const nsTemplateObtain = () => {
-      let nsTemplate = $('ytd-watch-flexy noscript[ns-template]');
+      let nsTemplate = document.querySelector('ytd-watch-flexy noscript[ns-template]');
       if (!nsTemplate) {
         nsTemplate = document.createElement('noscript');
         nsTemplate.setAttribute('ns-template', '');
-        $('ytd-watch-flexy').appendChild(nsTemplate);
+        document.querySelector('ytd-watch-flexy').appendChild(nsTemplate);
       }
       return nsTemplate;
     };
@@ -3877,7 +3702,7 @@ const executionScript = _communicationKey => {
         // youtube components shall handle the resize issue. can skip some checkings.
 
         bFixForResizedTabLater = false;
-        for (const element of $$('[io-intersected]')) {
+        for (const element of document.querySelectorAll('[io-intersected]')) {
           const cnt = insp(element);
           if (element instanceof HTMLElement_ && typeof cnt.calculateCanCollapse === 'function') {
             try {
@@ -3891,7 +3716,7 @@ const executionScript = _communicationKey => {
         if (!isResize && lastTab === '#tab-info') {
           // #tab-info is now shown.
           // to fix the sizing issue (description info cards in tab info)
-          for (const element of $$(
+          for (const element of document.querySelectorAll(
             '#tab-info ytd-video-description-infocards-section-renderer, #tab-info yt-chip-cloud-renderer, #tab-info ytd-horizontal-card-list-renderer, #tab-info yt-horizontal-list-renderer'
           )) {
             const cnt = insp(element);
@@ -3905,7 +3730,7 @@ const executionScript = _communicationKey => {
           }
           // to fix expand/collapse sizing issue (inline-expander in tab info)
           // for example, expand button is required but not shown as it was rendered in the hidden state
-          for (const element of getTextInlineExpandersIn(getTabInfo())) {
+          for (const element of document.querySelectorAll('#tab-info ytd-text-inline-expander')) {
             const cnt = insp(element);
             if (element instanceof HTMLElement_ && typeof cnt.resize === 'function') {
               cnt.resize(false); // reflow due to offsetWidth calling
@@ -3915,9 +3740,9 @@ const executionScript = _communicationKey => {
         }
 
         if (!isResize && typeof lastTab === 'string' && lastTab.startsWith('#tab-')) {
-          const tabContent = $('.tab-content-cld:not(.tab-content-hidden)');
+          const tabContent = document.querySelector('.tab-content-cld:not(.tab-content-hidden)');
           if (tabContent) {
-            const renderers = $$('yt-chip-cloud-renderer', tabContent);
+            const renderers = tabContent.querySelectorAll('yt-chip-cloud-renderer');
             for (const renderer of renderers) {
               const cnt = insp(renderer);
               if (typeof cnt.notifyResize === 'function') {
@@ -4194,7 +4019,7 @@ const executionScript = _communicationKey => {
 
         // if(!elements.comments || elements.comments.isConnected === false) return;
         if (hostElement && !hostElement.closest('#right-tabs')) {
-          getTabComments() && getTabComments().assignChildren111(null, hostElement, null);
+          document.querySelector('#tab-comments').assignChildren111(null, hostElement, null);
         } else {
           const shouldTabVisible =
             elements.comments &&
@@ -4311,12 +4136,17 @@ const executionScript = _communicationKey => {
         // hostElement.__connectedFlg__ = 5;
         if (!hostElement || !hostElement.classList.contains('ytd-item-section-renderer')) return;
         // console.log(12991, 'ytd-comments-header-renderer::attached')
-        const targetElement = $('[tyt-comments-area] ytd-comments-header-renderer');
+        const targetElement = document.querySelector(
+          '[tyt-comments-area] ytd-comments-header-renderer'
+        );
         if (hostElement === targetElement) {
           hostElement.setAttribute111('tyt-comments-header-field', '');
         } else {
           const { parentNode } = hostElement;
-          if (parentNode instanceof HTMLElement_ && $('[tyt-comments-header-field]', parentNode)) {
+          if (
+            parentNode instanceof HTMLElement_ &&
+            parentNode.querySelector('[tyt-comments-header-field]')
+          ) {
             hostElement.setAttribute111('tyt-comments-header-field', '');
           }
         }
@@ -4338,8 +4168,11 @@ const executionScript = _communicationKey => {
         if (hostElement.hasAttribute000('field-of-cm-count')) {
           hostElement.removeAttribute000('field-of-cm-count');
 
-          const cmCount = $('#tyt-cm-count');
-          if (cmCount && !$('#tab-comments ytd-comments-header-renderer[field-of-cm-count]')) {
+          const cmCount = document.querySelector('#tyt-cm-count');
+          if (
+            cmCount &&
+            !document.querySelector('#tab-comments ytd-comments-header-renderer[field-of-cm-count]')
+          ) {
             cmCount.textContent = '';
           }
         }
@@ -4364,13 +4197,13 @@ const executionScript = _communicationKey => {
         if (
           cnt &&
           hostElement.closest('#tab-comments') &&
-          $('#tab-comments ytd-comments-header-renderer') === hostElement
+          document.querySelector('#tab-comments ytd-comments-header-renderer') === hostElement
         ) {
           b = true;
         } else if (
           hostElement instanceof HTMLElement_ &&
           hostElement.parentNode instanceof HTMLElement_ &&
-          $('[tyt-comments-header-field]', hostElement.parentNode)
+          hostElement.parentNode.querySelector('[tyt-comments-header-field]')
         ) {
           b = true;
         }
@@ -4417,7 +4250,9 @@ const executionScript = _communicationKey => {
       },
 
       'ytd-comments-header-renderer::deferredCounterUpdate': () => {
-        const nodes = $$('#tab-comments ytd-comments-header-renderer[class]');
+        const nodes = document.querySelectorAll(
+          '#tab-comments ytd-comments-header-renderer[class]'
+        );
         if (nodes.length === 1) {
           const hostElement = nodes[0];
           const cnt = insp(hostElement);
@@ -4453,7 +4288,7 @@ const executionScript = _communicationKey => {
               ez = z[0][0];
             }
           }
-          const cmCount = $('#tyt-cm-count');
+          const cmCount = document.querySelector('#tyt-cm-count');
           if (ez) {
             hostElement.setAttribute111('field-of-cm-count', '');
             cmCount && (cmCount.textContent = ez.trim());
@@ -4490,40 +4325,7 @@ const executionScript = _communicationKey => {
         }
         if (!cProto.calculateCanCollapse498 && typeof cProto.calculateCanCollapse === 'function') {
           cProto.calculateCanCollapse498 = cProto.calculateCanCollapse;
-          // Wrap the original calculateCanCollapse with context-aware logic.
-          // Some ytd-expander instances (comments) rely on the original
-          // calculateCanCollapse behavior. Previously we replaced it
-          // unconditionally which broke expand/collapse for comment entries.
-          cProto.calculateCanCollapse = function (_s) {
-            try {
-              const host = this && this.hostElement ? this.hostElement : null;
-              // If this expander instance belongs to the comments area, delegate
-              // to the original implementation to avoid interfering with comment
-              // expand/collapse behavior.
-              if (
-                host instanceof HTMLElement &&
-                host.closest &&
-                (host.closest('[tyt-comments-area]') ||
-                  host.closest('#tab-comments') ||
-                  host.closest('ytd-comment-renderer'))
-              ) {
-                return cProto.calculateCanCollapse498.call(this, _s);
-              }
-            } catch {
-              // ignore and fallback to our logic below
-            }
-
-            try {
-              return funcCanCollapse.call(this, _s);
-            } catch {
-              // Fallback to original implementation if ours fails
-              try {
-                return cProto.calculateCanCollapse498.call(this, _s);
-              } catch (err) {
-                console.warn('[YouTube+] calculateCanCollapse wrapper failed:', err);
-              }
-            }
-          };
+          cProto.calculateCanCollapse = funcCanCollapse;
         }
 
         if (!cProto.childrenChanged498 && typeof cProto.childrenChanged === 'function') {
@@ -4637,10 +4439,10 @@ const executionScript = _communicationKey => {
           //   console.log(591499)
           // }).observe(infoExpanderBack, {childList: true, subtree: true})
 
-          const inlineExpanderElm = getFirstTextInlineExpanderIn(infoExpander);
+          const inlineExpanderElm = infoExpander.querySelector('ytd-text-inline-expander');
           if (inlineExpanderElm) {
             const mo = new MutationObserver(() => {
-              const p = getFirstTextInlineExpanderIn(getTabInfo());
+              const p = document.querySelector('#tab-info ytd-text-inline-expander');
               sessionStorage.__$$tmp_UseAutoExpandInfoDesc$$__ =
                 p && p.hasAttribute('is-expanded') ? '1' : '';
               if (p) fixInlineExpanderContent();
@@ -4656,14 +4458,13 @@ const executionScript = _communicationKey => {
           }
 
           if (infoExpander && !infoExpander.closest('#right-tabs')) {
-            getTabInfo() && getTabInfo().assignChildren111(null, infoExpander, null);
-          } else if ($('[tyt-tab-content="#tab-info"]')) {
+            document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
+          } else if (document.querySelector('[tyt-tab-content="#tab-info"]')) {
             const shouldTabVisible =
               elements.infoExpander && elements.infoExpander.closest('#tab-info');
-            $('[tyt-tab-content="#tab-info"]').classList.toggle(
-              'tab-btn-hidden',
-              !shouldTabVisible
-            );
+            document
+              .querySelector('[tyt-tab-content="#tab-info"]')
+              .classList.toggle('tab-btn-hidden', !shouldTabVisible);
           }
 
           Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn); // required when the page is switched from channel to watch
@@ -4700,7 +4501,7 @@ const executionScript = _communicationKey => {
           // }
         } else if (!hostElement.closest('#tab-info')) {
           const bodyRenderer = hostElement;
-          let bodyRendererNew = $(
+          let bodyRendererNew = document.querySelector(
             'ytd-expandable-video-description-body-renderer[tyt-info-renderer]'
           );
           if (!bodyRendererNew) {
@@ -4715,7 +4516,7 @@ const executionScript = _communicationKey => {
           const cnt = insp(bodyRendererNew);
           cnt.data = { ...insp(bodyRenderer).data };
 
-          const inlineExpanderElm = getFirstTextInlineExpanderIn(bodyRendererNew);
+          const inlineExpanderElm = bodyRendererNew.querySelector('ytd-text-inline-expander');
           const inlineExpanderCnt = insp(inlineExpanderElm);
           fixInlineExpanderMethods(inlineExpanderCnt);
 
@@ -5011,7 +4812,7 @@ const executionScript = _communicationKey => {
 
           const chatContainer = chatElem ? chatElem.closest('#chat-container') || chatElem : null;
           if (chatContainer && !chatContainer.hasAttribute000('tyt-chat-container')) {
-            for (const p of $$('[tyt-chat-container]')) {
+            for (const p of document.querySelectorAll('[tyt-chat-container]')) {
               p.removeAttribute000('[tyt-chat-container]');
             }
             chatContainer.setAttribute111('tyt-chat-container', '');
@@ -5390,7 +5191,7 @@ const executionScript = _communicationKey => {
 
         const { related } = elements;
         if (related && related.isConnected && !related.closest('#right-tabs #tab-videos')) {
-          $('#tab-videos').assignChildren111(null, related, null);
+          document.querySelector('#tab-videos').assignChildren111(null, related, null);
         }
         const { infoExpander } = elements;
         if (
@@ -5398,7 +5199,7 @@ const executionScript = _communicationKey => {
           infoExpander.isConnected &&
           !infoExpander.closest('#right-tabs #tab-info')
         ) {
-          getTabInfo() && getTabInfo().assignChildren111(null, infoExpander, null);
+          document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
         } else {
           // if (infoExpander && ytdFlexyElm && shouldFixInfo) {
           //   shouldFixInfo = false;
@@ -5410,8 +5211,8 @@ const executionScript = _communicationKey => {
         if (commentsArea) {
           const { isConnected } = commentsArea;
           if (isConnected && !commentsArea.closest('#right-tabs #tab-comments')) {
-            const tab = getTabComments();
-            tab && tab.assignChildren111(null, commentsArea, null);
+            const tab = document.querySelector('#tab-comments');
+            tab.assignChildren111(null, commentsArea, null);
           } else {
             // if (!isConnected || tab.classList.contains('tab-content-hidden')) removeKeepCommentsScroller();
           }
@@ -5419,15 +5220,17 @@ const executionScript = _communicationKey => {
       },
 
       'yt-navigate-finish': _evt => {
-        const ytdAppElm = $('ytd-page-manager#page-manager.style-scope.ytd-app');
+        const ytdAppElm = document.querySelector(
+          'ytd-page-manager#page-manager.style-scope.ytd-app'
+        );
         const ytdAppCnt = insp(ytdAppElm);
         pageType = ytdAppCnt ? (ytdAppCnt.data || 0).page : null;
 
-        if (!$('ytd-watch-flexy #player')) return;
+        if (!document.querySelector('ytd-watch-flexy #player')) return;
         // shouldFixInfo = true;
         // console.log('yt-navigate-finish')
-        const flexyArr = $$('ytd-watch-flexy').filter(
-          e => !e.closest('[hidden]') && $('#player', e)
+        const flexyArr = [...document.querySelectorAll('ytd-watch-flexy')].filter(
+          e => !e.closest('[hidden]') && e.querySelector('#player')
         );
         if (flexyArr.length === 1) {
           // const lockId = lockSet['yt-navigate-finish-videos'];
@@ -5469,7 +5272,7 @@ const executionScript = _communicationKey => {
             return;
           }
 
-          let rightTabs = $('#right-tabs');
+          let rightTabs = document.querySelector('#right-tabs');
           if (!rightTabs && related) {
             getLangForPage();
             const docTmp = document.createElement('template');
@@ -5501,7 +5304,7 @@ const executionScript = _communicationKey => {
             rightTabs = newElm;
 
             // Hide comments tab initially
-            const commentsTab = $('[tyt-tab-content="#tab-comments"]', rightTabs);
+            const commentsTab = rightTabs.querySelector('[tyt-tab-content="#tab-comments"]');
             if (commentsTab) {
               commentsTab.classList.add('tab-btn-hidden');
             }
@@ -5509,7 +5312,9 @@ const executionScript = _communicationKey => {
             // Create secondary wrapper
             const secondaryWrapper = document.createElement('secondary-wrapper');
             secondaryWrapper.classList.add('tabview-secondary-wrapper');
-            const secondaryInner = $('#secondary-inner.style-scope.ytd-watch-flexy');
+            const secondaryInner = document.querySelector(
+              '#secondary-inner.style-scope.ytd-watch-flexy'
+            );
 
             if (secondaryInner) {
               inPageRearrange = true;
@@ -5519,7 +5324,7 @@ const executionScript = _communicationKey => {
             }
 
             // Attach click handler to material tabs
-            const materialTabs = $('#material-tabs', rightTabs);
+            const materialTabs = rightTabs.querySelector('#material-tabs');
             if (materialTabs) {
               // Remove any existing handler first
               materialTabs.removeEventListener('click', eventMap['tabs-btn-click'], true);
@@ -5533,7 +5338,7 @@ const executionScript = _communicationKey => {
                 );
 
               // Also attach to individual buttons as fallback
-              const tabButtons = $$('.tab-btn[tyt-tab-content]', materialTabs);
+              const tabButtons = materialTabs.querySelectorAll('.tab-btn[tyt-tab-content]');
               window.YouTubeUtils &&
                 YouTubeUtils.logger &&
                 YouTubeUtils.logger.debug &&
@@ -5568,7 +5373,7 @@ const executionScript = _communicationKey => {
               YouTubeUtils.logger.debug('[YouTube+] rightTabs already exists, checking handlers');
 
             // Ensure handler is attached even if tabs already exist
-            const materialTabs = $('#material-tabs', rightTabs);
+            const materialTabs = rightTabs.querySelector('#material-tabs');
             if (materialTabs) {
               materialTabs.removeEventListener('click', eventMap['tabs-btn-click'], true);
               materialTabs.addEventListener('click', eventMap['tabs-btn-click'], true);
@@ -5591,20 +5396,7 @@ const executionScript = _communicationKey => {
               { rootMargin: '0px' }
             );
 
-            // Register observer for cleanup
-            if (
-              window.YouTubeUtils &&
-              YouTubeUtils.cleanupManager &&
-              typeof YouTubeUtils.cleanupManager.registerObserver === 'function'
-            ) {
-              try {
-                YouTubeUtils.cleanupManager.registerObserver(ioTabBtns);
-              } catch (e) {
-                console.warn('[YouTube+] Failed to register ioTabBtns with cleanupManager', e);
-              }
-            }
-
-            const tabButtons = $$('.tab-btn[tyt-tab-content]');
+            const tabButtons = document.querySelectorAll('.tab-btn[tyt-tab-content]');
             window.YouTubeUtils &&
               YouTubeUtils.logger &&
               YouTubeUtils.logger.debug &&
@@ -5620,7 +5412,7 @@ const executionScript = _communicationKey => {
             }
 
             if (!related.closest('#right-tabs')) {
-              const tabVideos = $('#tab-videos');
+              const tabVideos = document.querySelector('#tab-videos');
               if (tabVideos) {
                 tabVideos.assignChildren111(null, related, null);
               }
@@ -5628,7 +5420,7 @@ const executionScript = _communicationKey => {
 
             const { infoExpander } = elements;
             if (infoExpander && !infoExpander.closest('#right-tabs')) {
-              const tabInfo = getTabInfo();
+              const tabInfo = document.querySelector('#tab-info');
               if (tabInfo) {
                 tabInfo.assignChildren111(null, infoExpander, null);
               }
@@ -5636,7 +5428,7 @@ const executionScript = _communicationKey => {
 
             const commentsArea = elements.comments;
             if (commentsArea && !commentsArea.closest('#right-tabs')) {
-              const tabComments = getTabComments();
+              const tabComments = document.querySelector('#tab-comments');
               if (tabComments) {
                 tabComments.assignChildren111(null, commentsArea, null);
               }
@@ -5662,27 +5454,6 @@ const executionScript = _communicationKey => {
                 aoFlexy.observe(ytdFlexyElm, { attributes: true });
               } catch (observeError) {
                 console.error('[YouTube+] Failed to observe ytdFlexyElm:', observeError);
-              }
-
-              // Register aoFlexy associated with the observed element for safer cleanup
-              if (
-                window.YouTubeUtils &&
-                YouTubeUtils.cleanupManager &&
-                typeof YouTubeUtils.cleanupManager.registerObserverFor === 'function'
-              ) {
-                try {
-                  YouTubeUtils.cleanupManager.registerObserverFor(ytdFlexyElm, aoFlexy);
-                } catch (e) {
-                  console.warn('[YouTube+] Failed to register aoFlexy with cleanupManager', e);
-                }
-              } else if (
-                window.YouTubeUtils &&
-                YouTubeUtils.cleanupManager &&
-                typeof YouTubeUtils.cleanupManager.registerObserver === 'function'
-              ) {
-                try {
-                  YouTubeUtils.cleanupManager.registerObserver(aoFlexy);
-                } catch {}
               }
 
               Promise.resolve(lockSet['fixInitialTabStateLock'])
@@ -5722,7 +5493,7 @@ const executionScript = _communicationKey => {
 
       twoColumnChanged10: lockId => {
         if (lockId !== lockGet['twoColumnChanged10Lock']) return;
-        for (const continuation of $$(
+        for (const continuation of document.querySelectorAll(
           '#tab-videos ytd-watch-next-secondary-results-renderer ytd-continuation-item-renderer'
         )) {
           if (continuation.closest('[hidden]')) continue;
@@ -5759,11 +5530,14 @@ const executionScript = _communicationKey => {
             (q & (1 | 2 | 4 | 8 | 16 | 4096)) === (1 | 0 | 4 | 0 | 16 | 4096)
           ) {
             special = 3;
-          } else if ((q & (1 | 16)) === (1 | 16) && $('[data-ytlstm-theater-mode]')) {
+          } else if (
+            (q & (1 | 16)) === (1 | 16) &&
+            document.querySelector('[data-ytlstm-theater-mode]')
+          ) {
             special = 1;
           } else if (
             (q & (1 | 8 | 16)) === (1 | 8 | 16) &&
-            $('[is-two-columns_][theater][tyt-chat="+"]')
+            document.querySelector('[is-two-columns_][theater][tyt-chat="+"]')
           ) {
             special = 2;
           }
@@ -6098,33 +5872,7 @@ const executionScript = _communicationKey => {
         await delayPn(delayTime);
         if (lockGet['fixInitialTabStateLock'] !== lockId) return;
         // console.log('fixInitialTabStateFn 0c');
-        // Try to restore last active tab from localStorage (remember across reloads)
-        try {
-          if (typeof localStorage !== 'undefined') {
-            const persisted = localStorage.getItem('ytplus.lastTab');
-            if (persisted && typeof persisted === 'string') {
-              const persistedEl = $(`a[tyt-tab-content="${persisted}"]`) || null;
-              if (persistedEl) {
-                lastTab = persisted;
-                DEBUG_5085 &&
-                  window.YouTubeUtils &&
-                  YouTubeUtils.logger &&
-                  YouTubeUtils.logger.debug &&
-                  YouTubeUtils.logger.debug(
-                    '[YouTube+] Restoring last tab from storage:',
-                    persisted
-                  );
-                switchToTab(persisted);
-                return;
-              } else {
-                try {
-                  localStorage.removeItem('ytplus.lastTab');
-                } catch {}
-              }
-            }
-          }
-        } catch {}
-        const kTab = $('[tyt-tab]');
+        const kTab = document.querySelector('[tyt-tab]');
         const qTab =
           !kTab || kTab.getAttribute('tyt-tab') === ''
             ? checkElementExist('ytd-watch-flexy[is-two-columns_]', '[hidden]')
@@ -6162,7 +5910,7 @@ const executionScript = _communicationKey => {
                 YouTubeUtils.logger.debug &&
                 YouTubeUtils.logger.debug('fixInitialTabStateFn 1b');
             }
-            const btn0 = $('.tab-btn-visible'); // or default button
+            const btn0 = document.querySelector('.tab-btn-visible'); // or default button
             if (btn0) {
               switchToTab(btn0);
             } else {
@@ -6300,38 +6048,11 @@ const executionScript = _communicationKey => {
       }
     };
 
-    // Ensure tab display is corrected when entering/exiting fullscreen
-    try {
-      if (typeof window !== 'undefined' && typeof window.addEventListener === 'function') {
-        window.addEventListener(
-          'fullscreenchange',
-          () => {
-            try {
-              // trigger resize/fix handlers
-              Promise.resolve(0).then(eventMap['fixForTabDisplay']).catch(console.warn);
-
-              // attempt to restore last active tab after fullscreen toggle
-              if (typeof lastTab === 'string' && lastTab.startsWith('#tab-')) {
-                Promise.resolve()
-                  .then(() => switchToTab(lastTab))
-                  .catch(console.warn);
-              }
-            } catch (e) {
-              console.warn('[YouTube+] fullscreenchange handler failed:', e);
-            }
-          },
-          false
-        );
-      }
-    } catch {
-      /* ignore */
-    }
-
     const retrieveCE = async nodeName => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
         await customElements.whenDefined(nodeName);
-        const dummy = $(nodeName) || document.createElement(nodeName);
+        const dummy = document.querySelector(nodeName) || document.createElement(nodeName);
         const cProto = insp(dummy).constructor.prototype;
         return cProto;
       } catch (e) {
@@ -6376,7 +6097,7 @@ const executionScript = _communicationKey => {
     });
 
     const moEgmPanelReadyClearFn = () => {
-      if ($('[tyt-egm-panel-jclmd]') === null) {
+      if (document.querySelector('[tyt-egm-panel-jclmd]') === null) {
         moEgmPanelReady.takeRecords();
         moEgmPanelReady.disconnect();
       }
@@ -6430,6 +6151,10 @@ ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden y
 ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents{--comment-pre-load-display:none;}
 ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*:only-of-type,ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*:last-child{--comment-pre-load-display:block;}
 ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*{display:var(--comment-pre-load-display)!important;}
+ytd-watch-flexy #tab-comments:not(.tab-content-hidden){pointer-events:auto!important;}
+ytd-watch-flexy #tab-comments:not(.tab-content-hidden) *{pointer-events:auto!important;}
+ytd-watch-flexy #tab-comments:not(.tab-content-hidden) button,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-button-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) a,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) tp-yt-paper-button,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) [role="button"],ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-button-shape{pointer-events:auto!important;}
+ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-comment-action-buttons-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-button-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) #action-buttons,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-menu-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-dropdown-menu{pointer-events:auto!important;}
 #right-tabs #material-tabs{position:relative;display:flex;padding:0;border:1px solid var(--ytd-searchbox-legacy-border-color);overflow:hidden;}
 [tyt-tab] #right-tabs #material-tabs{border-radius:12px;}
 [tyt-tab^="#"] #right-tabs #material-tabs{border-radius:12px 12px 0 0;}
@@ -6458,8 +6183,7 @@ ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover svg{opa
 ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].tab-btn-hidden{display:none;}
 ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"],ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]:hover{--tyt-tab-btn-color:var(--yt-spec-icon-disabled);}
 ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"] span#tyt-cm-count:empty{display:none;}
-ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{display:inline-block;width:4em;text-align:left;font-size:inherit;color:currentColor;transform:scaleX(.8);}
-}
+ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{display:inline-block;width:4em;text-align:left;font-size:inherit;color:currentColor;transform:scaleX(.8);}}
 @supports (color:var(--tyt-cm-count-define)){
 ytd-watch-flexy{--tyt-x-loading-content-letter-spacing:2px;}
 html{--tabview-text-loading:"Loading";--tabview-text-fetching:"Fetching";--tabview-panel-loading:var(--tabview-text-loading);}
@@ -6468,8 +6192,7 @@ html:lang(ko){--tabview-text-loading:"로딩..";--tabview-text-fetching:"가져�
 html:lang(zh-Hant){--tabview-text-loading:"載入中";--tabview-text-fetching:"擷取中";}
 html:lang(zh-Hans){--tabview-text-loading:"加载中";--tabview-text-fetching:"抓取中";}
 html:lang(ru){--tabview-text-loading:"Загрузка";--tabview-text-fetching:"Получение";}
-ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{content:var(--tabview-text-loading);letter-spacing:var(--tyt-x-loading-content-letter-spacing);}
-}
+ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{content:var(--tabview-text-loading);letter-spacing:var(--tyt-x-loading-content-letter-spacing);}}
 @supports (color:var(--tabview-font-size-btn-define)){
 .font-size-right{display:inline-flex;flex-direction:column;position:absolute;right:0;top:0;bottom:0;width:16px;padding:4px 0;justify-content:space-evenly;align-content:space-evenly;pointer-events:none;}
 html body ytd-watch-flexy.style-scope .font-size-btn{user-select:none!important;}
@@ -6569,8 +6292,8 @@ ytd-watch-flexy[is-two-columns_]{contain:layout style;}
   body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] #chat[class] {pointer-events: auto;}
   .playlist-items.ytd-playlist-panel-renderer {background-color: transparent !important;}
   @supports (color: var(--tyt-fix-20251124)) { #below ytd-watch-metadata .ytTextCarouselItemViewModelImageType { height: 16px; width: 16px;}
-    #below ytd-watch-metadata yt-text-carousel-item-view-model { column-gap: 6px;}
-    #below ytd-watch-metadata ytd-watch-info-text#ytd-watch-info-text { font-size: inherit; line-height: inherit;}
+  #below ytd-watch-metadata yt-text-carousel-item-view-model { column-gap: 6px;}
+  #below ytd-watch-metadata ytd-watch-info-text#ytd-watch-info-text { font-size: inherit; line-height: inherit;}
   }
   `,
 };

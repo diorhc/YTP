@@ -1,33 +1,36 @@
+// Shared DOM helpers - defined at file scope for use across all IIFEs and functions
+const _getDOMCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
+
+/**
+ * Query single element with optional caching
+ * @param {string} sel - CSS selector
+ * @param {Element|Document} [ctx] - Context element
+ * @returns {Element|null}
+ */
+const $ = (sel, ctx) =>
+  _getDOMCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
+
+/**
+ * Query all elements with optional caching
+ * @param {string} sel - CSS selector
+ * @param {Element|Document} [ctx] - Context element
+ * @returns {Element[]}
+ */
+const $$ = (sel, ctx) =>
+  _getDOMCache()?.querySelectorAll(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
+
+/**
+ * Get element by ID with optional caching
+ * @param {string} id - Element ID
+ * @returns {Element|null}
+ */
+const byId = id => _getDOMCache()?.getElementById(id) || document.getElementById(id);
+
+// $, $$, byId are defined above and used throughout
+
 // Enhanced Tabviews
 (function () {
   'use strict';
-
-  // DOM Cache Helper - reduces repeated queries
-  const getCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
-  /**
-   * Query single element with optional caching
-   * @param {string} sel - CSS selector
-   * @param {Element|Document} [ctx] - Context element
-   * @returns {Element|null}
-   */
-  const $ = (sel, ctx) =>
-    getCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
-  /**
-   * Query all elements with optional caching
-   * @param {string} sel - CSS selector
-   * @param {Element|Document} [ctx] - Context element
-   * @returns {Element[]}
-   */
-  const $$ = (sel, ctx) =>
-    getCache()?.querySelectorAll(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
-  /**
-   * Get element by ID with optional caching
-   * @param {string} id - Element ID
-   * @returns {Element|null}
-   */
-  const byId = id => getCache()?.getElementById(id) || document.getElementById(id);
-
-  /* eslint-disable no-undef */ // $, $$, byId are defined above but used throughout
 
   // Use centralized i18n when available
   const _globalI18n =
@@ -1012,7 +1015,7 @@
     storageKey: 'youtube_endscreen_settings',
     // Added .teaser-carousel to cover variants named 'teaser-carousel'
     selectors:
-      '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.teaser-carousel,.ytp-cards-button,.iv-drawer,.video-annotations,.ytp-overlay-bottom-right',
+      '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.teaser-carousel,.ytp-cards-button,.iv-drawer,.iv-branding,.video-annotations,.ytp-cards-teaser-text',
     debounceMs: 32,
     batchSize: 20,
   };
@@ -1092,7 +1095,8 @@
     // ✅ Use StyleManager instead of createElement('style')
     const styles = `${CONFIG.selectors}{display:none!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;transform:scale(0)!important}`;
     YouTubeUtils.StyleManager.add('end-screen-remover', styles);
-    state.styleEl = true; // Mark as added
+    // store the style id so it can be removed via StyleManager.remove
+    state.styleEl = 'end-screen-remover';
   };
 
   const removeEndScreens = () => {
@@ -1177,7 +1181,11 @@
   const cleanup = () => {
     state.observer?.disconnect();
     state.observer = null;
-    state.styleEl?.remove();
+    if (state.styleEl) {
+      try {
+        YouTubeUtils.StyleManager.remove(state.styleEl);
+      } catch {}
+    }
     state.styleEl = null;
     state.isActive = false;
   };
@@ -2882,7 +2890,14 @@ const findVideoElement = () => {
 let _lastTransformApplied = '';
 let _isApplyingTransform = false;
 
-const applyZoomToVideo = (videoEl, zoom, panX = 0, panY = 0, skipTransformTracking = false) => {
+const applyZoomToVideo = (
+  videoEl,
+  zoom,
+  panX = 0,
+  panY = 0,
+  skipTransformTracking = false,
+  skipTransition = false
+) => {
   if (!videoEl) return;
   const container = videoEl.parentElement || videoEl;
   try {
@@ -2912,8 +2927,8 @@ const applyZoomToVideo = (videoEl, zoom, panX = 0, panY = 0, skipTransformTracki
     // Use will-change for GPU acceleration
     videoEl.style.willChange = zoom !== 1 ? 'transform' : 'auto';
 
-    // Smooth transition for better UX
-    videoEl.style.transition = 'transform .08s ease-out';
+    // Smooth transition for better UX (skip during fullscreen transitions to avoid flicker)
+    videoEl.style.transition = skipTransition ? 'none' : 'transform .08s ease-out';
 
     // Reset flag after a short delay
     if (!skipTransformTracking) {
@@ -2940,7 +2955,7 @@ function createZoomUI() {
     s.id = 'ytp-zoom-styles';
     s.textContent = `
       /* Compact control bar matching YouTube control style */
-      #ytp-zoom-control{position: absolute; right: 12px; bottom: 64px; z-index: 2200; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 24px; background: rgba(0,0,0,0.35); color: #fff; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.5); backdrop-filter: blur(6px);}
+      #ytp-zoom-control{position: absolute; left: 12px; bottom: 64px; z-index: 2200; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 24px; background: rgba(0,0,0,0.35); color: #fff; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.5); backdrop-filter: blur(6px);}
       #ytp-zoom-control input[type=range]{width: 120px; -webkit-appearance: none; background: transparent; height: 24px;}
       /* WebKit track */
       #ytp-zoom-control input[type=range]::-webkit-slider-runnable-track{height: 4px; background: rgba(255,255,255,0.12); border-radius: 3px;}
@@ -3538,7 +3553,8 @@ function createZoomUI() {
               }
 
               clampPan(current);
-              if (video) applyZoomToVideo(video, current, panX, panY);
+              // Apply zoom without transition during fullscreen to prevent flicker
+              if (video) applyZoomToVideo(video, current, panX, panY, false, true);
 
               // If we didn't find/replace video yet, retry a few times
               if (!swapped && (!video || attempts < FULLSCREEN_APPLY_RETRIES)) {
