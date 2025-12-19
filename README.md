@@ -6,7 +6,7 @@
 
 <p align="center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-439-blue?style=flat-square" height="25" />
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-472-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
     <img alt="version" src="https://img.shields.io/badge/version-2.3.2-blue?style=flat-square" height="25" />
