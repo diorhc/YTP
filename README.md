@@ -9,7 +9,7 @@
     <img alt="downloads" src="https://img.shields.io/badge/downloads-648-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="version" src="https://img.shields.io/badge/version-2.3.2-blue?style=flat-square" height="25" />
+    <img alt="version" src="https://img.shields.io/badge/version-2.3.3-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
     <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />

@@ -1,8 +1,8 @@
-// Performance monitoring for YouTube+ userscript
+// Performance monitoring for YouTube+ userscript (Enhanced)
 (function () {
   'use strict';
 
-  /* global Blob, URL */
+  /* global Blob, URL, PerformanceObserver */
 
   /**
    * Performance monitoring configuration
@@ -13,6 +13,7 @@
     storageKey: 'youtube_plus_performance',
     metricsRetention: 100, // Keep last 100 metrics
     enableConsoleOutput: false,
+    logLevel: 'info', // 'debug', 'info', 'warn', 'error'
   };
 
   /**
@@ -23,6 +24,14 @@
     marks: new Map(),
     measures: [],
     resources: [],
+    webVitals: {
+      LCP: null,
+      CLS: 0,
+      FID: null,
+      INP: null,
+      FCP: null,
+      TTFB: null,
+    },
   };
 
   /**
@@ -55,7 +64,7 @@
     try {
       const startTime = metrics.marks.get(startMark);
       if (!startTime) {
-        console.warn(`[YouTube+ Perf] Start mark "${startMark}" not found`);
+        // console.warn(`[YouTube+ Perf] Start mark "${startMark}" not found`);
         return 0;
       }
 
@@ -207,6 +216,7 @@
 
     return {
       metrics: allMetrics,
+      webVitals: { ...metrics.webVitals },
       totalMeasures: metrics.measures.length,
       totalMarks: metrics.marks.size,
       customMetrics: Object.fromEntries(metrics.timings),
@@ -287,6 +297,7 @@
       stats: getStats(undefined),
       measures: metrics.measures,
       customMetrics: Object.fromEntries(metrics.timings),
+      webVitals: metrics.webVitals,
     };
 
     return JSON.stringify(data, null, 2);
@@ -359,6 +370,14 @@
     metrics.marks.clear();
     metrics.measures = [];
     metrics.resources = [];
+    metrics.webVitals = {
+      LCP: null,
+      CLS: 0,
+      FID: null,
+      INP: null,
+      FCP: null,
+      TTFB: null,
+    };
 
     try {
       localStorage.removeItem(PerformanceConfig.storageKey);
@@ -418,6 +437,60 @@
   };
 
   /**
+   * Initialize Performance Observer for Web Vitals
+   */
+  const initPerformanceObserver = () => {
+    if (typeof PerformanceObserver === 'undefined') return;
+
+    try {
+      // Observe LCP
+      new PerformanceObserver(entryList => {
+        const entries = entryList.getEntries();
+        const lastEntry = entries[entries.length - 1];
+        metrics.webVitals.LCP = lastEntry.startTime;
+        if (PerformanceConfig.enableConsoleOutput) {
+          console.warn(`[YouTube+ Perf] LCP: ${lastEntry.startTime.toFixed(2)}ms`, lastEntry);
+        }
+      }).observe({ type: 'largest-contentful-paint', buffered: true });
+
+      // Observe CLS
+      new PerformanceObserver(entryList => {
+        for (const entry of entryList.getEntries()) {
+          if (!entry.hadRecentInput) {
+            metrics.webVitals.CLS += entry.value;
+          }
+        }
+        if (PerformanceConfig.enableConsoleOutput && PerformanceConfig.logLevel === 'debug') {
+          console.warn(`[YouTube+ Perf] CLS: ${metrics.webVitals.CLS.toFixed(4)}`);
+        }
+      }).observe({ type: 'layout-shift', buffered: true });
+
+      // Observe FID (First Input Delay)
+      new PerformanceObserver(entryList => {
+        const firstInput = entryList.getEntries()[0];
+        metrics.webVitals.FID = firstInput.processingStart - firstInput.startTime;
+        if (PerformanceConfig.enableConsoleOutput) {
+          console.warn(`[YouTube+ Perf] FID: ${metrics.webVitals.FID.toFixed(2)}ms`);
+        }
+      }).observe({ type: 'first-input', buffered: true });
+
+      // Observe INP (Interaction to Next Paint) - experimental
+      try {
+        new PerformanceObserver(entryList => {
+          const entries = entryList.getEntries();
+          // Simplified INP calculation (just taking max duration for now)
+          const maxDuration = Math.max(...entries.map(e => e.duration));
+          metrics.webVitals.INP = maxDuration;
+        }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
+      } catch (e) {
+        void e; // INP might not be supported; reference `e` to satisfy linters
+      }
+    } catch (e) {
+      console.warn('[YouTube+ Perf] Failed to init PerformanceObserver:', e);
+    }
+  };
+
+  /**
    * Log page load performance
    */
   const logPageLoadMetrics = () => {
@@ -442,6 +515,9 @@
     } else {
       window.addEventListener('load', logPageLoadMetrics, { once: true });
     }
+
+    // Initialize Web Vitals observers
+    initPerformanceObserver();
 
     /**
      * RAF Scheduler for batched animations

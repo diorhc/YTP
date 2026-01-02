@@ -126,6 +126,7 @@
   "minutesAgo": "{n}m ago",
   "updateAvailableMsg": "Update {version} available!",
   "upToDateMsg": "You're using the latest version ({version})",
+  "changelogHeader": "Changelog",
   "updateCheckFailed": "Update check failed: {msg}",
   "noUpdateInfo": "No update information available",
   "dismiss": "Dismiss",

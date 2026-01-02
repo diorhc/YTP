@@ -70,12 +70,26 @@
      * @type {Object}
      */
     selectors: {
-      ads: '#player-ads,.ytp-ad-module,.ad-showing,.ytp-ad-timed-pie-countdown-container,.ytp-ad-survey-questions',
+      ads: '#player-ads,.ytp-ad-module,.ad-showing,.ytp-ad-timed-pie-countdown-container,.ytp-ad-survey-questions,ytd-ad-slot-renderer',
       elements:
-        '#masthead-ad,ytd-merch-shelf-renderer,.yt-mealbar-promo-renderer,ytmusic-mealbar-promo-renderer,ytmusic-statement-banner-renderer,.ytp-featured-product',
+        '#masthead-ad,ytd-merch-shelf-renderer,.yt-mealbar-promo-renderer,ytmusic-mealbar-promo-renderer,ytmusic-statement-banner-renderer,.ytp-featured-product,ytd-ad-slot-renderer',
       video: 'video.html5-main-video',
-      removal: 'ytd-reel-video-renderer .ytd-ad-slot-renderer',
+      // Match both ad-slot renderers inside reels and standalone ad-slot-renderer nodes
+      removal: 'ytd-reel-video-renderer .ytd-ad-slot-renderer, ytd-ad-slot-renderer',
     },
+
+    // Known item wrapper selectors that should be removed when they only contain ads
+    wrappers: [
+      'ytd-rich-item-renderer',
+      'ytd-grid-video-renderer',
+      'ytd-compact-video-renderer',
+      'ytd-rich-grid-media',
+      'ytd-rich-shelf-renderer',
+      'ytd-rich-grid-row',
+      'ytd-video-renderer',
+      'ytd-playlist-renderer',
+      'ytd-reel-video-renderer',
+    ],
 
     /**
      * Settings management with localStorage persistence
@@ -187,15 +201,19 @@
         // Skip logic based on platform
         if (AdBlocker.state.isYouTubeMusic && video) {
           /** @type {HTMLVideoElement} */ (video).currentTime = video.duration || 999;
-        } else if (typeof player.getVideoData === 'function') {
-          const videoData = player.getVideoData();
-          if (videoData?.video_id) {
-            const currentTime = Math.floor(player.getCurrentTime?.() || 0);
+        } else if (video) {
+          // Safer ad skipping: speed up and seek to end
+          // This avoids reloading the player which can cause 403 errors
+          if (!isNaN(video.duration)) {
+            video.currentTime = video.duration;
+          }
 
-            // Use most efficient skip method
-            if (typeof player.loadVideoById === 'function') {
-              player.loadVideoById(videoData.video_id, currentTime);
-            }
+          // Click skip button if available
+          const skipButton = document.querySelector(
+            '.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .videoAdUiSkipButton'
+          );
+          if (skipButton) {
+            skipButton.click();
           }
         }
 
@@ -228,7 +246,61 @@
       // Use requestIdleCallback for non-blocking removal
       const remove = () => {
         const elements = document.querySelectorAll(AdBlocker.selectors.removal);
-        elements.forEach(el => el.closest('ytd-reel-video-renderer')?.remove());
+        elements.forEach(el => {
+          try {
+            // Prefer removing a known item wrapper (thumbnail card, reel item, etc.)
+            for (const w of AdBlocker.wrappers) {
+              const wrap = el.closest(w);
+              if (wrap) {
+                wrap.remove();
+                return;
+              }
+            }
+
+            // If ad is inside a reel item specifically, remove the reel container
+            const reel = el.closest('ytd-reel-video-renderer');
+            if (reel) {
+              reel.remove();
+              return;
+            }
+
+            // If standalone ad-slot-renderer or other ad container, remove the nearest reasonable container
+            const container =
+              el.closest('ytd-ad-slot-renderer') || el.closest('.ad-container') || el;
+            if (container && container.remove) container.remove();
+          } catch (e) {
+            if (AdBlocker.config.enableLogging) console.warn('[AdBlocker] removeElements error', e);
+          }
+        });
+
+        // Collapse any empty wrappers that might remain (e.g. rows with removed items)
+        try {
+          const rowCandidates = document.querySelectorAll(
+            'ytd-rich-grid-row, ytd-rich-grid-renderer, #contents > ytd-rich-item-renderer'
+          );
+          rowCandidates.forEach(row => {
+            try {
+              // If row has no meaningful visible children, remove it
+              const visibleChildren = Array.from(row.children).filter(c => {
+                if (!(c instanceof Element)) return false;
+                const style = window.getComputedStyle(c);
+                return (
+                  style &&
+                  style.display !== 'none' &&
+                  style.visibility !== 'hidden' &&
+                  c.offsetHeight > 0
+                );
+              });
+              if (visibleChildren.length === 0) {
+                row.remove();
+              }
+            } catch {
+              // Silently ignore individual row removal failures
+            }
+          });
+        } catch {
+          // Silently ignore errors in row cleanup
+        }
       };
 
       if (window.requestIdleCallback) {
@@ -323,6 +395,54 @@
         document.addEventListener('DOMContentLoaded', () => {
           settingsObserver.observe(document.body, { childList: true });
         });
+      }
+
+      // Observe DOM for dynamically inserted ad slots and remove them immediately
+      try {
+        const adSlotObserver = new MutationObserver(mutations => {
+          for (const m of mutations) {
+            for (const node of m.addedNodes) {
+              if (!(node instanceof Element)) continue;
+              try {
+                if (
+                  node.matches &&
+                  node.matches(
+                    'ytd-ad-slot-renderer, ytd-reel-video-renderer, .ad-showing, .ytp-ad-module'
+                  )
+                ) {
+                  AdBlocker.removeElements();
+                  return;
+                }
+                if (
+                  node.querySelector &&
+                  node.querySelector('ytd-ad-slot-renderer, .ad-showing, .ytp-ad-module')
+                ) {
+                  AdBlocker.removeElements();
+                  return;
+                }
+              } catch (e) {
+                if (AdBlocker.config.enableLogging) {
+                  console.warn('[AdBlocker] adSlotObserver node check', e);
+                }
+              }
+            }
+          }
+        });
+
+        if (document.body) {
+          adSlotObserver.observe(document.body, { childList: true, subtree: true });
+        } else {
+          document.addEventListener('DOMContentLoaded', () => {
+            adSlotObserver.observe(document.body, { childList: true, subtree: true });
+          });
+        }
+
+        // Register for cleanup
+        YouTubeUtils.cleanupManager.registerObserver(adSlotObserver);
+      } catch (e) {
+        if (AdBlocker.config.enableLogging) {
+          console.warn('[AdBlocker] Failed to create adSlotObserver', e);
+        }
       }
 
       // ✅ Register global click listener in cleanupManager

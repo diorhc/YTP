@@ -254,6 +254,7 @@
     const intervals = new Set();
     const timeouts = new Set();
     const animationFrames = new Set();
+    const callbacks = new Set();
     // Map elements -> Set of observers (WeakMap so entries are GC'd when element removed)
     const elementObservers = new WeakMap();
 
@@ -304,8 +305,20 @@
         animationFrames.add(id);
         return id;
       },
+      register(cb) {
+        if (typeof cb === 'function') callbacks.add(cb);
+      },
       cleanup() {
         try {
+          for (const cb of callbacks) {
+            try {
+              cb();
+            } catch (e) {
+              logError('cleanupManager', 'callback failed', e);
+            }
+          }
+          callbacks.clear();
+
           // Disconnect all registered observers
           for (const o of observers) {
             try {

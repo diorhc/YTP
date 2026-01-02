@@ -155,59 +155,68 @@ const byId = id => _getDOMCache()?.getElementById(id) || document.getElementById
    * Uses IntersectionObserver when possible for better performance
    * @returns {void}
    */
-  const setupScrollListener = () => {
-    try {
-      // Clean up old listeners first
-      $$('.tab-content-cld').forEach(tab => {
-        if (tab._topButtonScrollHandler) {
-          tab.removeEventListener('scroll', tab._topButtonScrollHandler);
-          delete tab._topButtonScrollHandler;
+  const setupScrollListener = (() => {
+    let timeout;
+    return () => {
+      if (timeout) clearTimeout(timeout);
+      timeout = setTimeout(() => {
+        try {
+          // Clean up old listeners first
+          $$('.tab-content-cld').forEach(tab => {
+            if (tab._topButtonScrollHandler) {
+              tab.removeEventListener('scroll', tab._topButtonScrollHandler);
+              delete tab._topButtonScrollHandler;
+            }
+
+            // Clean up IntersectionObserver if exists
+            if (tab._scrollObserver) {
+              tab._scrollObserver.disconnect();
+              delete tab._scrollObserver;
+            }
+
+            // Use ScrollManager if available
+            window.YouTubePlusScrollManager?.removeAllListeners?.(tab);
+          });
+
+          const activeTab = $('#right-tabs .tab-content-cld:not(.tab-content-hidden)');
+          const button = byId('right-tabs-top-button');
+
+          if (activeTab && button) {
+            // Use ScrollManager if available for better performance
+            if (window.YouTubePlusScrollManager) {
+              const cleanup = window.YouTubePlusScrollManager.addScrollListener(
+                activeTab,
+                () => handleScroll(activeTab, button),
+                { debounce: 100, runInitial: true }
+              );
+              activeTab._scrollCleanup = cleanup;
+            } else {
+              // Fallback to manual debouncing
+              const debounceFunc =
+                typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
+                  ? YouTubeUtils.debounce
+                  : (fn, delay) => {
+                      let timeoutId;
+                      return (...args) => {
+                        clearTimeout(timeoutId);
+                        timeoutId = setTimeout(() => fn(...args), delay);
+                      };
+                    };
+              const scrollHandler = debounceFunc(() => handleScroll(activeTab, button), 100);
+              activeTab._topButtonScrollHandler = scrollHandler;
+              activeTab.addEventListener('scroll', scrollHandler, {
+                passive: true,
+                capture: false,
+              });
+              handleScroll(activeTab, button);
+            }
+          }
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error in setupScrollListener:', error);
         }
-
-        // Clean up IntersectionObserver if exists
-        if (tab._scrollObserver) {
-          tab._scrollObserver.disconnect();
-          delete tab._scrollObserver;
-        }
-
-        // Use ScrollManager if available
-        window.YouTubePlusScrollManager?.removeAllListeners?.(tab);
-      });
-
-      const activeTab = $('#right-tabs .tab-content-cld:not(.tab-content-hidden)');
-      const button = byId('right-tabs-top-button');
-
-      if (activeTab && button) {
-        // Use ScrollManager if available for better performance
-        if (window.YouTubePlusScrollManager) {
-          const cleanup = window.YouTubePlusScrollManager.addScrollListener(
-            activeTab,
-            () => handleScroll(activeTab, button),
-            { debounce: 100, runInitial: true }
-          );
-          activeTab._scrollCleanup = cleanup;
-        } else {
-          // Fallback to manual debouncing
-          const debounceFunc =
-            typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
-              ? YouTubeUtils.debounce
-              : (fn, delay) => {
-                  let timeoutId;
-                  return (...args) => {
-                    clearTimeout(timeoutId);
-                    timeoutId = setTimeout(() => fn(...args), delay);
-                  };
-                };
-          const scrollHandler = debounceFunc(() => handleScroll(activeTab, button), 100);
-          activeTab._topButtonScrollHandler = scrollHandler;
-          activeTab.addEventListener('scroll', scrollHandler, { passive: true, capture: false });
-          handleScroll(activeTab, button);
-        }
-      }
-    } catch (error) {
-      console.error('[YouTube+][Enhanced] Error in setupScrollListener:', error);
-    }
-  };
+      }, 100);
+    };
+  })();
 
   /**
    * Creates and appends scroll-to-top button with error handling
@@ -229,9 +238,7 @@ const byId = id => _getDOMCache()?.getElementById(id) || document.getElementById
 
       button.addEventListener('click', () => {
         try {
-          const activeTab = document.querySelector(
-            '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
-          );
+          const activeTab = $('#right-tabs .tab-content-cld:not(.tab-content-hidden)');
           if (activeTab) {
             // Try smooth scroll, fallback to instant
             if ('scrollBehavior' in document.documentElement.style) {
@@ -3293,6 +3300,107 @@ function createZoomUI() {
   player.addEventListener('pointermove', pointerMove, { passive: false });
   player.addEventListener('pointerup', pointerUp, { passive: true });
   player.addEventListener('pointercancel', pointerUp, { passive: true });
+
+  // Touch event fallback for browsers that don't fully support Pointer Events
+  // Enables pinch-to-zoom and one-finger pan on touchscreens
+  let touchDragging = false;
+  let touchDragStartX = 0;
+  let touchDragStartY = 0;
+  let touchDragStartPanX = 0;
+  let touchDragStartPanY = 0;
+  let touchInitialDist = null;
+  let touchPinchStartZoom = null;
+
+  const getTouchDistance = (t1, t2) => Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
+
+  const touchStart = ev => {
+    try {
+      if (!video) return;
+      if (ev.touches.length === 1) {
+        // start pan only if zoomed in
+        const currentZoom = parseFloat(input.value) || readZoomPan().zoom || DEFAULT_ZOOM;
+        if (currentZoom > 1) {
+          touchDragging = true;
+          touchDragStartX = ev.touches[0].clientX;
+          touchDragStartY = ev.touches[0].clientY;
+          touchDragStartPanX = panX;
+          touchDragStartPanY = panY;
+          // prevent page scroll when panning video
+          ev.preventDefault();
+        }
+      } else if (ev.touches.length === 2) {
+        // pinch start
+        touchInitialDist = getTouchDistance(ev.touches[0], ev.touches[1]);
+        touchPinchStartZoom = parseFloat(input.value) || readZoomPan().zoom || DEFAULT_ZOOM;
+        // prevent default gestures (scroll/zoom) while pinching
+        try {
+          prevTouchAction = player.style.touchAction;
+          player.style.touchAction = 'none';
+        } catch {}
+        ev.preventDefault();
+      }
+    } catch (e) {
+      console.error('[YouTube+] touchStart error:', e);
+    }
+  };
+
+  const touchMove = ev => {
+    try {
+      if (!video) return;
+      if (ev.touches.length === 1 && touchDragging) {
+        const dx = ev.touches[0].clientX - touchDragStartX;
+        const dy = ev.touches[0].clientY - touchDragStartY;
+        panX = touchDragStartPanX + dx;
+        panY = touchDragStartPanY + dy;
+        clampPan();
+        applyZoomToVideo(video, parseFloat(input.value) || DEFAULT_ZOOM, panX, panY);
+        scheduleSavePan();
+        ev.preventDefault();
+        return;
+      }
+
+      if (ev.touches.length === 2 && touchInitialDist && touchPinchStartZoom != null) {
+        const dist = getTouchDistance(ev.touches[0], ev.touches[1]);
+        if (dist <= 0) return;
+        const ratio = dist / touchInitialDist;
+        const newZoom = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, touchPinchStartZoom * ratio));
+        setZoom(newZoom);
+        ev.preventDefault();
+      }
+    } catch (e) {
+      console.error('[YouTube+] touchMove error:', e);
+    }
+  };
+
+  const touchEnd = ev => {
+    try {
+      if (touchDragging && ev.touches.length === 0) {
+        touchDragging = false;
+      }
+      if (ev.touches.length < 2) {
+        touchInitialDist = null;
+        touchPinchStartZoom = null;
+        if (prevTouchAction != null) {
+          try {
+            player.style.touchAction = prevTouchAction;
+          } catch {}
+          prevTouchAction = null;
+        }
+      }
+    } catch (e) {
+      console.error('[YouTube+] touchEnd error:', e);
+    }
+  };
+
+  try {
+    // Use non-passive handlers so we can preventDefault when needed
+    player.addEventListener('touchstart', touchStart, { passive: false });
+    player.addEventListener('touchmove', touchMove, { passive: false });
+    player.addEventListener('touchend', touchEnd, { passive: true });
+    player.addEventListener('touchcancel', touchEnd, { passive: true });
+  } catch (e) {
+    console.error('[YouTube+] Failed to attach touch handlers:', e);
+  }
 
   // Fallback mouse handlers for more reliable dragging on desktop
   const mouseDownHandler = ev => {

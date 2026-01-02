@@ -51,7 +51,7 @@
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.3.2',
+    currentVersion: '2.3.1',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
@@ -59,6 +59,9 @@
     // NOTE: This will try to open the install URL (GM_openInTab / window.open / navigation).
     // Keep disabled by default for safety; enable only if you want auto-install behavior.
     autoInstallOnCheck: false,
+    // When false, hide the small SVG icon shown at the left of update notifications
+    // Set to `true` to show the icon again.
+    showNotificationIcon: false,
   };
 
   const windowRef = typeof window === 'undefined' ? null : window;
@@ -407,49 +410,107 @@
 
   // Enhanced update notification
   const showUpdateNotification = updateDetails => {
-    const notification = document.createElement('div');
-    notification.className = 'youtube-enhancer-notification update-notification';
-    // Use centralized notification container for consistent placement. Keep visual styles but remove fixed positioning.
-    notification.style.cssText = `
-    z-index: 10001; max-width: 350px;
-    background: linear-gradient(135deg, rgba(255, 69, 0, 0.95), rgba(255, 140, 0, 0.95));
-    color: white; padding: 16px 20px; border-radius: 12px;
-    box-shadow: 0 8px 32px rgba(255, 69, 0, 0.4); backdrop-filter: blur(16px);
-    border: 1px solid rgba(255, 255, 255, 0.2);
-  animation: slideInFromBottom 0.4s ease-out;
-    `;
-
-    notification.innerHTML = `
-        <div style="position: relative; display: flex; align-items: flex-start; gap: 12px;">
-          <div style="background: rgba(255, 255, 255, 0.2); border-radius: 8px; padding: 8px; flex-shrink: 0;">
+    // Optionally render notification icon (can be disabled via config)
+    const iconHtml = UPDATE_CONFIG.showNotificationIcon
+      ? `<div style="background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
+                        border-radius: 10px; padding: 10px; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.08);
+                        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 12c0 1-1 2-1 2s-1-1-1-2 1-2 1-2 1 1 1 2z"/>
               <path d="m21 12-5-5v3H8v4h8v3l5-5z"/>
             </svg>
-          </div>
+          </div>`
+      : '';
+    const notification = document.createElement('div');
+    notification.className = 'youtube-enhancer-notification update-notification';
+    // Use centralized notification container for consistent placement. Keep visual styles but remove fixed positioning.
+    notification.style.cssText = `
+    z-index: 10001; max-width: 360px;
+    background: rgba(255,255,255,0.04); padding: 16px 18px; border-radius: 14px;
+    color: rgba(255,255,255,0.95);
+    box-shadow: 0 8px 30px rgba(11, 15, 25, 0.45), inset 0 1px 0 rgba(255,255,255,0.02);
+    border: 1px solid rgba(255,255,255,0.08);
+    -webkit-backdrop-filter: blur(10px) saturate(120%);
+    backdrop-filter: blur(10px) saturate(120%);
+    animation: slideInFromBottom 0.4s ease-out;
+    `;
+
+    notification.innerHTML = `
+        <div style="position: relative; display: flex; align-items: flex-start; gap: 12px;">
+            ${iconHtml}
           <div style="flex: 1; min-width: 0;">
             <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">${t('updateAvailableTitle')}</div>
-            <div style="font-size: 13px; opacity: 0.9; margin-bottom: 12px;">
-              ${t('version')} ${updateDetails.version} • ${updateDetails.description || t('newFeatures')}
+            <div style="font-size: 13px; opacity: 0.9; margin-bottom: 8px;">
+              ${t('version')} ${updateDetails.version}
             </div>
+            ${
+              updateDetails.changelog || updateDetails.description
+                ? (function () {
+                    const header = t('changelogHeader');
+
+                    // Prefer fetched changelog, fall back to metadata description
+                    const raw =
+                      updateDetails.changelog && updateDetails.changelog.length > 0
+                        ? updateDetails.changelog
+                        : updateDetails.description || '';
+
+                    // Sanitize and normalize incoming text: convert HTML breaks to newlines,
+                    // strip tags and decode a few common entities.
+                    const sanitize = s =>
+                      String(s)
+                        .replace(/<br\s*\/?>/gi, '\n')
+                        .replace(/<\/p>/gi, '\n')
+                        .replace(/<[^>]+>/g, '')
+                        .replace(/&amp;/g, '&')
+                        .replace(/&lt;/g, '<')
+                        .replace(/&gt;/g, '>')
+                        .replace(/&quot;/g, '"')
+                        .replace(/&#039;/g, "'")
+                        .trim();
+
+                    const text = sanitize(raw);
+
+                    // Split into non-empty lines and render each as its own block so wrapping works.
+                    const lines = text
+                      .split(/\n+/)
+                      .map(l => l.trim())
+                      .filter(Boolean);
+                    const listHtml = lines
+                      .map(
+                        l =>
+                          `<div style="font-size:12px; opacity:0.85; margin-bottom:6px;">${l}</div>`
+                      )
+                      .join('');
+
+                    return (
+                      `<div style="font-size:12px; font-weight:600; opacity:0.95; margin-bottom:6px;">${header}</div>` +
+                      `<div style="font-size:12px; line-height:1.4; max-height:120px; overflow-y:auto; padding:8px; background: rgba(0,0,0,0.2); border-radius:6px; border:1px solid rgba(255,255,255,0.05); white-space:normal;">${listHtml}</div>`
+                    );
+                  })()
+                : `<div style="font-size: 12px; opacity: 0.85; margin-bottom: 12px;">${t('newFeatures')}</div>`
+            }
             <div style="display: flex; gap: 8px;">
               <button id="update-install-btn" style="
-                background: rgba(255, 255, 255, 0.9); color: #ff4500; border: none;
-                padding: 8px 16px; border-radius: 6px; cursor: pointer;
-                font-size: 13px; font-weight: 600; transition: all 0.2s ease;
+                background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
+                color: #ff5a1a; border: 1px solid rgba(255,90,30,0.12);
+                padding: 8px 16px; border-radius: 8px; cursor: pointer;
+                font-size: 13px; font-weight: 700; transition: transform 0.15s ease;
+                box-shadow: 0 6px 18px rgba(90,30,0,0.12);
+                backdrop-filter: blur(6px);
               ">${t('installUpdate')}</button>
               <button id="update-dismiss-btn" style="
-                background: rgba(255, 255, 255, 0.1); color: white;
-                border: 1px solid rgba(255, 255, 255, 0.3); padding: 8px 12px;
-                border-radius: 6px; cursor: pointer; font-size: 13px; transition: all 0.2s ease;
+                background: transparent; color: rgba(255,255,255,0.9);
+                border: 1px solid rgba(255,255,255,0.06); padding: 8px 12px;
+                border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.12s ease;
               ">${t('later')}</button>
             </div>
           </div>
           <button id="update-close-btn" aria-label="${t('dismiss')}" style="
-            position: absolute; top: -6px; right: -6px; width: 24px; height: 24px;
+            position: absolute; top: -8px; right: -8px; width: 28px; height: 28px;
             border-radius: 50%; border: none; cursor: pointer; display: flex;
             align-items: center; justify-content: center; font-size: 16px; line-height: 1;
-            background: rgba(255, 255, 255, 0.15); color: white; transition: background 0.2s ease;
+            background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.85); transition: background 0.18s ease;
+            border: 1px solid rgba(255,255,255,0.06);
           ">&times;</button>
         </div>
         <style>
@@ -647,6 +708,103 @@
   };
 
   /**
+   * Fetch changelog for a specific version from GreasyFork
+   * @param {string} version - Version to fetch changelog for
+   * @returns {Promise<string>} Changelog text
+   */
+  const fetchChangelog = async version => {
+    try {
+      const lang = getLanguage();
+      const url = `https://greasyfork.org/${lang}/scripts/537017-youtube/versions`;
+
+      const fetchPage = async requestUrl => {
+        if (typeof GM_xmlhttpRequest !== 'undefined') {
+          return new Promise((resolve, reject) => {
+            const timeoutId = setTimeout(() => reject(new Error('Changelog fetch timeout')), 10000);
+            GM_xmlhttpRequest({
+              method: 'GET',
+              url: requestUrl,
+              timeout: 10000,
+              headers: { Accept: 'text/html' },
+              onload: response => {
+                clearTimeout(timeoutId);
+                if (response.status >= 200 && response.status < 300) resolve(response.responseText);
+                else reject(new Error(`HTTP ${response.status}`));
+              },
+              onerror: _e => {
+                clearTimeout(timeoutId);
+                reject(new Error('Network error'));
+              },
+              ontimeout: () => {
+                clearTimeout(timeoutId);
+                reject(new Error('Timeout'));
+              },
+            });
+          });
+        }
+
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        try {
+          const res = await fetch(requestUrl, {
+            method: 'GET',
+            cache: 'no-cache',
+            signal: controller.signal,
+            headers: { Accept: 'text/html' },
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          return await res.text();
+        } finally {
+          clearTimeout(timeoutId);
+        }
+      };
+
+      const html = await fetchPage(url);
+
+      // Parse changelog from HTML
+      // Look for version link followed by changelog span
+      // Structure: <a ...>v2.3.3</a> ... <span class="version-changelog">...</span>
+      const escapedVersion = version.replace(/\./g, '\\.');
+      // Match anchor tag content that contains the version number (handling prefixes like 'v', 'вер. ', etc.)
+      const versionRegex = new RegExp(
+        `>[^<]*?${escapedVersion}</a>[\\s\\S]*?class="version-changelog"[^>]*>([\\s\\S]*?)</span>`,
+        'i'
+      );
+
+      const match = html.match(versionRegex);
+
+      if (match && match[1]) {
+        let changelog = match[1].trim();
+
+        // Convert HTML breaks/paragraphs to newlines and strip tags
+        changelog = changelog
+          .replace(/<br\s*\/?>/gi, '\n')
+          .replace(/<\/p>/gi, '\n')
+          .replace(/<[^>]+>/g, '')
+          .replace(/&amp;/g, '&')
+          .replace(/&lt;/g, '<')
+          .replace(/&gt;/g, '>')
+          .replace(/&quot;/g, '"')
+          .replace(/&#039;/g, "'");
+
+        // Clean up whitespace
+        changelog = changelog
+          .split('\n')
+          .map(line => line.trim())
+          .filter(line => line.length > 0)
+          .join('\n');
+
+        return changelog || '';
+      }
+
+      return '';
+    } catch (error) {
+      console.warn('[YouTube+][Update] Failed to fetch changelog:', error.message);
+      return '';
+    }
+  };
+
+  /**
    * Retrieve update details trying primary metadata endpoint first and
    * falling back to the auto-install .user.js URL when necessary.
    * @returns {Promise<Object>} Parsed updateDetails object
@@ -669,6 +827,20 @@
           console.warn('[YouTube+][Update] Fallback metadata fetch failed:', fallbackErr.message);
         }
       }
+    }
+
+    // Fetch changelog from GreasyFork versions page and store separately
+    if (details.version) {
+      try {
+        const changelog = await fetchChangelog(details.version);
+        // Keep original metadata description but expose fetched changelog on a separate property
+        details.changelog = typeof changelog === 'string' && changelog.length > 0 ? changelog : '';
+      } catch (changelogErr) {
+        console.warn('[YouTube+][Update] Failed to fetch changelog:', changelogErr.message);
+        details.changelog = '';
+      }
+    } else {
+      details.changelog = '';
     }
 
     return details;
@@ -835,8 +1007,10 @@
     updateContainer.className = 'update-settings-container';
     updateContainer.style.cssText = `
         padding: 16px; margin-top: 20px; border-radius: 12px;
-        background: linear-gradient(135deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
-        border: 1px solid var(--yt-glass-border); backdrop-filter: blur(8px);
+        background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+        -webkit-backdrop-filter: blur(10px) saturate(120%);
+        backdrop-filter: blur(10px) saturate(120%);
+        box-shadow: 0 6px 20px rgba(6, 10, 20, 0.45);
       `;
 
     const lastCheckTime = utils.formatTimeAgo(updateState.lastCheck);

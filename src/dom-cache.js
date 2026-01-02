@@ -1,4 +1,4 @@
-// DOM Query Cache System - Performance Optimization
+// DOM Query Cache System - Performance Optimization (Enhanced)
 (function () {
   'use strict';
 
@@ -12,12 +12,34 @@
       this.cache = new Map();
       /** @type {Map<string, NodeList|Element[]>} */
       this.multiCache = new Map();
-      this.maxAge = 2000; // Cache TTL: 2 seconds
+      this.maxAge = 5000; // Cache TTL: 5 seconds
+      this.nullMaxAge = 250; // Cache TTL for null/empty results: 250ms
+      this.maxSize = 500; // Max cache entries
       this.cleanupInterval = null;
       this.enabled = true;
 
+      // Statistics
+      this.stats = { hits: 0, misses: 0, evictions: 0 };
+
+      this.contextUids = new WeakMap();
+      this.uidCounter = 0;
+
+      // Shared MutationObserver for waitForElement
+      this.observerCallbacks = new Set();
+      this.sharedObserver = null;
+
       // Start periodic cleanup
       this.startCleanup();
+    }
+
+    getContextUid(ctx) {
+      if (ctx === document) return 'doc';
+      let uid = this.contextUids.get(ctx);
+      if (!uid) {
+        uid = ++this.uidCounter;
+        this.contextUids.set(ctx, uid);
+      }
+      return uid;
     }
 
     /**
@@ -32,15 +54,35 @@
         return context.querySelector(selector);
       }
 
-      const cacheKey = `${selector}::${context === document ? 'doc' : 'ctx'}`;
+      const cacheKey = `${selector}::${this.getContextUid(context)}`;
       const cached = this.cache.get(cacheKey);
       const now = Date.now();
 
+      // Determine TTL based on cached value
+      const ttl = cached && cached.element ? this.maxAge : this.nullMaxAge;
+
       // Return cached result if valid and element still in DOM
-      if (cached && now - cached.timestamp < this.maxAge) {
-        if (cached.element && this.isElementInDOM(cached.element)) {
-          return cached.element;
+      if (cached && now - cached.timestamp < ttl) {
+        if (cached.element) {
+          if (this.isElementInDOM(cached.element)) {
+            this.stats.hits++;
+            return cached.element;
+          }
+        } else {
+          // Return cached null
+          this.stats.hits++;
+          return null;
         }
+      }
+
+      // Track miss
+      this.stats.misses++;
+
+      // LRU eviction if cache too large
+      if (this.cache.size >= this.maxSize) {
+        const firstKey = this.cache.keys().next().value;
+        this.cache.delete(firstKey);
+        this.stats.evictions++;
       }
 
       // Query and cache
@@ -61,7 +103,7 @@
         return context.querySelectorAll(selector);
       }
 
-      const cacheKey = `ALL::${selector}::${context === document ? 'doc' : 'ctx'}`;
+      const cacheKey = `ALL::${selector}::${this.getContextUid(context)}`;
       const cached = this.multiCache.get(cacheKey);
 
       if (cached && this.areElementsValid(cached)) {
@@ -71,8 +113,9 @@
       const elements = Array.from(context.querySelectorAll(selector));
       this.multiCache.set(cacheKey, elements);
 
-      // Auto-cleanup after maxAge
-      setTimeout(() => this.multiCache.delete(cacheKey), this.maxAge);
+      // Auto-cleanup after maxAge or nullMaxAge
+      const ttl = elements.length > 0 ? this.maxAge : this.nullMaxAge;
+      setTimeout(() => this.multiCache.delete(cacheKey), ttl);
 
       return elements;
     }
@@ -152,8 +195,11 @@
     startCleanup() {
       if (this.cleanupInterval) return;
 
-      this.cleanupInterval = setInterval(() => {
+      // Use requestIdleCallback if available for cleanup to avoid blocking main thread
+      const cleanupFn = () => {
         const now = Date.now();
+        let deletedCount = 0;
+        const maxDeletesPerRun = 50; // Limit work per frame
 
         // Cleanup single element cache
         for (const [key, value] of this.cache.entries()) {
@@ -162,10 +208,18 @@
             (value.element && !this.isElementInDOM(value.element))
           ) {
             this.cache.delete(key);
+            deletedCount++;
+            if (deletedCount >= maxDeletesPerRun) break;
           }
         }
+      };
 
-        // MultiCache has its own TTL-based cleanup
+      this.cleanupInterval = setInterval(() => {
+        if (typeof requestIdleCallback !== 'undefined') {
+          requestIdleCallback(cleanupFn, { timeout: 1000 });
+        } else {
+          cleanupFn();
+        }
       }, 5000); // Run every 5 seconds
     }
 
@@ -179,6 +233,11 @@
       }
       this.cache.clear();
       this.multiCache.clear();
+      if (this.sharedObserver) {
+        this.sharedObserver.disconnect();
+        this.sharedObserver = null;
+      }
+      this.observerCallbacks.clear();
     }
 
     /**
@@ -191,6 +250,26 @@
         multiSize: this.multiCache.size,
         enabled: this.enabled,
       };
+    }
+
+    /**
+     * Initialize shared observer for waitForElement
+     */
+    initSharedObserver() {
+      if (this.sharedObserver) return;
+
+      this.sharedObserver = new MutationObserver(mutations => {
+        if (this.observerCallbacks.size === 0) return;
+
+        for (const callback of this.observerCallbacks) {
+          callback(mutations);
+        }
+      });
+
+      this.sharedObserver.observe(document.body || document.documentElement, {
+        childList: true,
+        subtree: true,
+      });
     }
   }
 
@@ -295,8 +374,12 @@
     });
   }
 
+  // Create global instances
+  const globalCache = new DOMCache();
+  const scopedCache = new ScopedDOMCache();
+
   /**
-   * Wait for element to appear in DOM
+   * Wait for element to appear in DOM (Optimized)
    * @param {string} selector - CSS selector
    * @param {number} [timeout=5000] - Timeout in milliseconds
    * @param {Element} [context=document] - Context element
@@ -310,29 +393,50 @@
         return;
       }
 
-      const observer = new MutationObserver(() => {
-        const element = context.querySelector(selector);
-        if (element) {
+      // Use shared observer if context is document/body
+      const useShared = context === document || context === document.body;
+
+      if (useShared) {
+        globalCache.initSharedObserver();
+
+        const checkCallback = () => {
+          const element = context.querySelector(selector);
+          if (element) {
+            globalCache.observerCallbacks.delete(checkCallback);
+            resolve(element);
+            return true;
+          }
+          return false;
+        };
+
+        globalCache.observerCallbacks.add(checkCallback);
+
+        setTimeout(() => {
+          globalCache.observerCallbacks.delete(checkCallback);
+          resolve(null);
+        }, timeout);
+      } else {
+        // Fallback to local observer for specific contexts
+        const observer = new MutationObserver(() => {
+          const element = context.querySelector(selector);
+          if (element) {
+            observer.disconnect();
+            resolve(element);
+          }
+        });
+
+        observer.observe(context, {
+          childList: true,
+          subtree: true,
+        });
+
+        setTimeout(() => {
           observer.disconnect();
-          resolve(element);
-        }
-      });
-
-      observer.observe(context, {
-        childList: true,
-        subtree: true,
-      });
-
-      setTimeout(() => {
-        observer.disconnect();
-        resolve(null);
-      }, timeout);
+          resolve(null);
+        }, timeout);
+      }
     });
   }
-
-  // Create global instances
-  const globalCache = new DOMCache();
-  const scopedCache = new ScopedDOMCache();
 
   // Export to global namespace
   if (typeof window !== 'undefined') {
