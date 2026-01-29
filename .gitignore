@@ -9,7 +9,10 @@ dist/
 youtube.user.js
 *.user.js
 youtube.user.unoptimized.js
-bundle=size-report.json
+youtube.user.js.map
+bundle-size-report.json
+eslint-report.json
+innerHTML-usage.txt
 
 # IDE and editors
 .vscode/

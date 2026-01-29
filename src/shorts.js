@@ -2,31 +2,17 @@
 (function () {
   'use strict';
 
-  // Use centralized i18n for shorts module
-  const _globalI18n_shorts =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const t = (key, params = {}) => {
-    try {
-      if (_globalI18n_shorts && typeof _globalI18n_shorts.t === 'function') {
-        return _globalI18n_shorts.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fallback
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    // Fallback for initialization phase
+    if (!key) return '';
+    let result = String(key);
+    for (const [k, v] of Object.entries(params || {})) {
+      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     }
-    if (!key || typeof key !== 'string') return '';
-    let text = key;
-    if (Object.keys(params).length === 0) return key;
-    for (const [paramKey, val] of Object.entries(params)) {
-      text = text.split(`{${paramKey}}`).join(String(val));
-    }
-    return text;
+    return result;
   };
 
   // Configuration - Using lazy getters for translations to avoid early loading

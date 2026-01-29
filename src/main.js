@@ -227,8 +227,8 @@ const executionScript = () => {
         if (err) throw err;
         return r;
       } else {
-        const ea = document.querySelector('#secondary-inner');
-        const eb = document.querySelector('secondary-wrapper#secondary-inner-wrapper');
+        const ea = qs('#secondary-inner');
+        const eb = qs('secondary-wrapper#secondary-inner-wrapper');
         if (ea && eb) {
           secondaryInnerHold++;
           let err, r;
@@ -784,7 +784,16 @@ const executionScript = () => {
     const infoExpanderElementProvidedPromise = new PromiseExternal();
 
     const pluginsDetected = {};
+    let pluginDetectDebounceTimer = null;
     const pluginDetectObserver = new MutationObserver(mutations => {
+      if (pluginDetectDebounceTimer) return;
+      pluginDetectDebounceTimer = setTimeout(() => {
+        pluginDetectDebounceTimer = null;
+        processPluginDetectMutations(mutations);
+      }, 50);
+    });
+
+    const processPluginDetectMutations = mutations => {
       let changeOnRoot = false;
       const newPlugins = [];
       const attributeChangedSet = new Set();
@@ -807,7 +816,7 @@ const executionScript = () => {
       if (elements.flexy && attributeChangedSet.has('external.ytlstm')) {
         elements.flexy.setAttribute(
           'tyt-external-ytlstm',
-          document.querySelector('[data-ytlstm-theater-mode]') ? '1' : '0'
+          qs('[data-ytlstm-theater-mode]') ? '1' : '0'
         );
       }
       if (changeOnRoot) {
@@ -822,7 +831,7 @@ const executionScript = () => {
           console.warn(`No Plugin Activator for ${detected}`);
         }
       }
-    });
+    };
 
     pluginDetectObserver.observe(document.documentElement, { attributes: true });
     if (document.body) pluginDetectObserver.observe(document.body, { attributes: true });
@@ -1053,7 +1062,7 @@ const executionScript = () => {
     let cachedTabContents = new Map();
     const switchToTab = activeLink => {
       if (typeof activeLink === 'string') {
-        activeLink = document.querySelector(`a[tyt-tab-content="${activeLink}"]`) || null;
+        activeLink = qs(`a[tyt-tab-content="${activeLink}"]`) || null;
       }
 
       const ytdFlexyElm = elements.flexy;
@@ -1069,7 +1078,7 @@ const executionScript = () => {
       for (const link of links) {
         let content = cachedTabContents.get(link);
         if (!content || !content.isConnected) {
-          content = document.querySelector(link.getAttribute000('tyt-tab-content'));
+          content = qs(link.getAttribute000('tyt-tab-content'));
           if (content) cachedTabContents.set(link, content);
         }
         if (link && content) {
@@ -1155,9 +1164,7 @@ const executionScript = () => {
 
     function ytBtnCancelTheater() {
       if (isTheater()) {
-        const sizeBtn = document.querySelector(
-          'ytd-watch-flexy #ytd-player button.ytp-size-button'
-        );
+        const sizeBtn = qs('ytd-watch-flexy #ytd-player button.ytp-size-button');
         if (sizeBtn) sizeBtn.click();
       }
     }
@@ -1195,7 +1202,7 @@ const executionScript = () => {
           cnt.collapsed = false;
         }
       }
-      let button = document.querySelector(
+      let button = qs(
         'ytd-live-chat-frame#chat[collapsed] > .ytd-live-chat-frame#show-hide-button'
       );
       if (button) {
@@ -1225,7 +1232,7 @@ const executionScript = () => {
           cnt.collapsed = true;
         }
       }
-      let button = document.querySelector(
+      let button = qs(
         'ytd-live-chat-frame#chat:not([collapsed]) > .ytd-live-chat-frame#show-hide-button'
       );
       if (button) {
@@ -1437,8 +1444,7 @@ const executionScript = () => {
       if (lockId !== null && lockGet['infoFixLock'] !== lockId) return;
       // console.log('((infoFix))')
       const infoExpander = elements.infoExpander;
-      const infoContainer =
-        (infoExpander ? infoExpander.parentNode : null) || document.querySelector('#tab-info');
+      const infoContainer = (infoExpander ? infoExpander.parentNode : null) || qs('#tab-info');
       const ytdFlexyElm = elements.flexy;
       if (!infoContainer || !ytdFlexyElm) return;
       // console.log(386, infoExpander, infoExpander.matches('#tab-info > [class]'))
@@ -1483,7 +1489,7 @@ const executionScript = () => {
         };
       });
 
-      let noscript_ = document.querySelector('noscript#aythl');
+      let noscript_ = qs('noscript#aythl');
       if (!noscript_) {
         noscript_ = document.createElement('noscript');
         noscript_.id = 'aythl';
@@ -2079,9 +2085,7 @@ const executionScript = () => {
       };
 
       const shouldUseMiniPlayer = () => {
-        const isSubTypeExist = document.querySelector(
-          'ytd-page-manager#page-manager > ytd-browse[page-subtype]'
-        );
+        const isSubTypeExist = qs('ytd-page-manager#page-manager > ytd-browse[page-subtype]');
 
         if (isSubTypeExist) return true;
 
@@ -2442,16 +2446,25 @@ const executionScript = () => {
     const fixInlineExpanderDisplay = inlineExpanderCnt => {
       try {
         inlineExpanderCnt.updateIsAttributedExpanded();
-      } catch {}
+      } catch (e) {
+        // Optional method - may not exist
+        DEBUG_5084 && console.debug('[main] updateIsAttributedExpanded not available', e);
+      }
       try {
         inlineExpanderCnt.updateIsFormattedExpanded();
-      } catch {}
+      } catch (e) {
+        DEBUG_5084 && console.debug('[main] updateIsFormattedExpanded not available', e);
+      }
       try {
         inlineExpanderCnt.updateTextOnSnippetTypeChange();
-      } catch {}
+      } catch (e) {
+        DEBUG_5084 && console.debug('[main] updateTextOnSnippetTypeChange not available', e);
+      }
       try {
         inlineExpanderCnt.updateStyles();
-      } catch {}
+      } catch (e) {
+        DEBUG_5084 && console.debug('[main] updateStyles not available', e);
+      }
     };
 
     const setExpand = cnt => {
@@ -4289,6 +4302,16 @@ const executionScript = () => {
       },
 
       'yt-navigate-finish': _evt => {
+        // Performance: the global document-subtree observer is expensive on home/feed/playlist.
+        // Toggle it based on whether the watch player is present.
+        if (typeof shouldActivateMoOverall === 'function') {
+          if (shouldActivateMoOverall()) {
+            activateMoOverall();
+          } else {
+            deactivateMoOverall();
+          }
+        }
+
         const ytdAppElm = document.querySelector(
           'ytd-page-manager#page-manager.style-scope.ytd-app'
         );
@@ -4968,7 +4991,30 @@ const executionScript = () => {
       }
     });
 
-    moOverall.observe(document, { subtree: true, childList: true });
+    // Performance: observing the entire document subtree is expensive on home/feed/playlist.
+    // Enable it only when the watch player exists.
+    let moOverallActive = false;
+    const shouldActivateMoOverall = () => {
+      try {
+        return !!document.querySelector('ytd-watch-flexy #player');
+      } catch {
+        return false;
+      }
+    };
+    const activateMoOverall = () => {
+      if (moOverallActive) return;
+      moOverall.observe(document, { subtree: true, childList: true });
+      moOverallActive = true;
+    };
+    const deactivateMoOverall = () => {
+      if (!moOverallActive) return;
+      moOverall.disconnect();
+      moOverallActive = false;
+    };
+
+    if (shouldActivateMoOverall()) {
+      activateMoOverall();
+    }
 
     const moEgmPanelReady = new MutationObserver(mutations => {
       for (const mutation of mutations) {
@@ -5309,5 +5355,46 @@ ytd-watch-flexy[is-two-columns_]{contain:layout style;}
   } else {
     style.textContent = cssContent;
     document.documentElement.appendChild(style);
+  }
+
+  // Initialize lazy loading for non-critical features
+  if (typeof window !== 'undefined' && window.YouTubePlusLazyLoader) {
+    const { register, loadOnIdle } = window.YouTubePlusLazyLoader;
+
+    // Register non-critical features for lazy loading
+    register(
+      'quality-selector-enhancements',
+      () => {
+        console.log('[YouTube+] Quality selector enhancements loaded');
+      },
+      { priority: 5, delay: 2000 }
+    );
+
+    register(
+      'download-modal',
+      () => {
+        console.log('[YouTube+] Download modal loaded');
+      },
+      { priority: 3, delay: 0 }
+    );
+
+    register(
+      'statistics-overlay',
+      () => {
+        console.log('[YouTube+] Statistics overlay loaded');
+      },
+      { priority: 4, delay: 1000 }
+    );
+
+    register(
+      'av-toggle-visibility',
+      () => {
+        console.log('[YouTube+] AV toggle visibility loaded');
+      },
+      { priority: 6, delay: 1500 }
+    );
+
+    // Load all non-critical features during browser idle time
+    loadOnIdle(3000);
   }
 })();

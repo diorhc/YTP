@@ -224,5 +224,20 @@
   "delete": "Удалить",
   "confirmDelete": "Удалить таймкод \"{label}\"?",
   "reloadError": "Ошибка при обновлении таймкодов",
-  "cannotEditChapter": "Нельзя редактировать главы YouTube"
+  "cannotEditChapter": "Нельзя редактировать главы YouTube",
+  "youtubeMusicTitle": "YouTube Music",
+  "youtubeMusicDesc": "Расширенные стили и функции для YouTube Music",
+  "musicStylesLabel": "Стили YouTube Music",
+  "musicStylesDesc": "Включить расширенные стили YouTube Music (экспериментально)",
+  "musicEnhancementsLabel": "Улучшения музыки",
+  "musicEnhancementsDesc": "Включить все улучшения YouTube Music",
+  "immersiveSearchLabel": "Иммерсивный поиск",
+  "immersiveSearchDesc": "Центрированный иммерсивный поиск при фокусе",
+  "sidebarHoverLabel": "Эффекты боковой панели",
+  "sidebarHoverDesc": "Показывать боковую панель при наведении с плавной анимацией",
+  "centeredPlayerLabel": "Центрированный плеер",
+  "centeredPlayerDesc": "Центрировать плеер с улучшенным оформлением",
+  "scrollToTopLabel": "Кнопка прокрутки вверх",
+  "scrollToTopDesc": "Показывать кнопку прокрутки вверх на боковой панели",
+  "musicSettingsSaved": "Настройки YouTube Music сохранены"
 }

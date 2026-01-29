@@ -3,6 +3,8 @@
  * Extracted from createSettingsModal to reduce complexity
  */
 
+/* global GM_setValue */
+
 /**
  * Initialize download sites settings
  * @param {Object} settings - Settings object
@@ -453,6 +455,69 @@ const handleSidebarNavigation = (navItem, modal) => {
   if (targetSection) targetSection.classList.remove('hidden');
 };
 
+/**
+ * Handle YouTube Music settings toggle
+ * @param {HTMLElement} target - Checkbox element
+ * @param {string} setting - Setting key
+ * @param {Function} showNotification - Function to show notification
+ * @param {Function} t - Translation function
+ */
+const handleMusicSettingToggle = (target, setting, showNotification, t) => {
+  try {
+    // Load current music settings
+    const musicSettings = { enableMusic: true };
+    try {
+      const stored = localStorage.getItem('youtube-plus-music-settings');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed.enableMusic === 'boolean') {
+          musicSettings.enableMusic = parsed.enableMusic;
+        }
+      }
+    } catch {}
+
+    if (setting !== 'enableMusic') return;
+
+    musicSettings.enableMusic = /** @type {HTMLInputElement} */ (target).checked;
+
+    // Save to localStorage
+    localStorage.setItem('youtube-plus-music-settings', JSON.stringify(musicSettings));
+
+    // Save to userscript-global storage so youtube.com and music.youtube.com share settings.
+    try {
+      if (typeof GM_setValue !== 'undefined') {
+        GM_setValue('youtube-plus-music-settings', JSON.stringify(musicSettings));
+      }
+    } catch {}
+
+    // Apply changes if YouTubeMusic module is available
+    if (typeof window !== 'undefined' && window.YouTubeMusic) {
+      if (window.YouTubeMusic.saveSettings) {
+        window.YouTubeMusic.saveSettings(musicSettings);
+      }
+      if (window.YouTubeMusic.applySettingsChanges) {
+        window.YouTubeMusic.applySettingsChanges();
+      }
+    }
+
+    // Show notification
+    if (showNotification && t) {
+      showNotification(t('musicSettingsSaved'));
+    }
+  } catch (err) {
+    console.warn('[YouTube+] handleMusicSettingToggle failed:', err);
+  }
+};
+
+/**
+ * Check if a setting is a YouTube Music setting
+ * @param {string} setting - Setting key
+ * @returns {boolean} True if it's a music setting
+ */
+const isMusicSetting = setting => {
+  return setting === 'enableMusic';
+};
+
 // Export handlers
 if (typeof window !== 'undefined') {
   window.YouTubePlusModalHandlers = {
@@ -463,5 +528,7 @@ if (typeof window !== 'undefined') {
     handleY2MateReset,
     handleSidebarNavigation,
     applySettingLive,
+    handleMusicSettingToggle,
+    isMusicSetting,
   };
 }

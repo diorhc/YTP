@@ -224,5 +224,20 @@
   "delete": "削除",
   "confirmDelete": "タイムコード \"{label}\" を削除しますか？",
   "reloadError": "タイムコードの再読み込み中にエラーが発生しました",
-  "cannotEditChapter": "YouTubeチャプターは編集できません"
+  "cannotEditChapter": "YouTubeチャプターは編集できません",
+  "youtubeMusicTitle": "YouTube Music",
+  "youtubeMusicDesc": "YouTube Music向けの拡張スタイルと機能",
+  "musicStylesLabel": "YouTube Musicスタイル",
+  "musicStylesDesc": "拡張YouTube Musicスタイルを有効にする（実験的）",
+  "musicEnhancementsLabel": "音楽機能強化",
+  "musicEnhancementsDesc": "すべてのYouTube Music機能強化を有効にする",
+  "immersiveSearchLabel": "没入型検索",
+  "immersiveSearchDesc": "フォーカス時の中央配置没入型検索体験",
+  "sidebarHoverLabel": "サイドバーホバー効果",
+  "sidebarHoverDesc": "スムーズなアニメーションでホバー時にサイドバーを表示",
+  "centeredPlayerLabel": "中央配置プレーヤー",
+  "centeredPlayerDesc": "拡張スタイルでプレーヤーを中央に配置",
+  "scrollToTopLabel": "トップへスクロールボタン",
+  "scrollToTopDesc": "サイドパネルにトップへスクロールボタンを表示",
+  "musicSettingsSaved": "YouTube Music設定が保存されました"
 }

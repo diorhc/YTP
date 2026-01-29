@@ -224,5 +224,20 @@
   "delete": "Sil",
   "confirmDelete": "\"{label}\" zaman kodunu sil?",
   "reloadError": "Zaman kodları yenilenirken hata",
-  "cannotEditChapter": "YouTube bölümleri düzenlenemez"
+  "cannotEditChapter": "YouTube bölümleri düzenlenemez",
+  "youtubeMusicTitle": "YouTube Music",
+  "youtubeMusicDesc": "YouTube Music için gelişmiş stiller ve özellikler",
+  "musicStylesLabel": "YouTube Music Stilleri",
+  "musicStylesDesc": "Gelişmiş YouTube Music stillerini etkinleştir (deneysel)",
+  "musicEnhancementsLabel": "Müzik Geliştirmeleri",
+  "musicEnhancementsDesc": "Tüm YouTube Music geliştirmelerini etkinleştir",
+  "immersiveSearchLabel": "Sürükleyici Arama",
+  "immersiveSearchDesc": "Odaklanıldığında ortalanmış sürükleyici arama deneyimi",
+  "sidebarHoverLabel": "Kenar Çubuğu Üzerine Gelme Efektleri",
+  "sidebarHoverDesc": "Üzerine gelindiğinde yumuşak animasyonlarla kenar çubuğunu göster",
+  "centeredPlayerLabel": "Ortalanmış Oynatıcı Düzeni",
+  "centeredPlayerDesc": "Gelişmiş stil ile oynatıcıyı ortala",
+  "scrollToTopLabel": "Yukarı Kaydır Düğmesi",
+  "scrollToTopDesc": "Yan panelde yukarı kaydır düğmesini göster",
+  "musicSettingsSaved": "YouTube Music ayarları kaydedildi"
 }

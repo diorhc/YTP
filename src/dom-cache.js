@@ -27,6 +27,7 @@
       // Shared MutationObserver for waitForElement
       this.observerCallbacks = new Set();
       this.sharedObserver = null;
+      this.sharedObserverPending = false;
 
       // Start periodic cleanup
       this.startCleanup();
@@ -258,11 +259,26 @@
     initSharedObserver() {
       if (this.sharedObserver) return;
 
-      this.sharedObserver = new MutationObserver(mutations => {
+      this.sharedObserver = new MutationObserver(() => {
         if (this.observerCallbacks.size === 0) return;
+        if (this.sharedObserverPending) return;
 
-        for (const callback of this.observerCallbacks) {
-          callback(mutations);
+        this.sharedObserverPending = true;
+        const flush = () => {
+          this.sharedObserverPending = false;
+          for (const callback of this.observerCallbacks) {
+            try {
+              callback();
+            } catch {
+              // Ignore callback errors to avoid breaking other observers
+            }
+          }
+        };
+
+        if (typeof requestAnimationFrame === 'function') {
+          requestAnimationFrame(flush);
+        } else {
+          setTimeout(flush, 0);
         }
       });
 
@@ -390,6 +406,32 @@
       const existing = context.querySelector(selector);
       if (existing) {
         resolve(existing);
+        return;
+      }
+
+      const isPlaylistPage =
+        typeof window !== 'undefined' &&
+        window.location &&
+        typeof window.location.pathname === 'string' &&
+        window.location.pathname === '/playlist';
+
+      // On heavy playlist pages (WL/LL), MutationObserver(subtree) can become very expensive.
+      // Prefer lightweight polling here to avoid reacting to the large volume of DOM mutations.
+      if (isPlaylistPage && (context === document || context === document.body)) {
+        const interval = 250;
+        const start = Date.now();
+        const timerId = setInterval(() => {
+          const element = context.querySelector(selector);
+          if (element) {
+            clearInterval(timerId);
+            resolve(element);
+            return;
+          }
+          if (Date.now() - start >= timeout) {
+            clearInterval(timerId);
+            resolve(null);
+          }
+        }, interval);
         return;
       }
 

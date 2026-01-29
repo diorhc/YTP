@@ -1,28 +1,16 @@
 (function () {
   'use strict';
 
-  // Use centralized i18n where available to avoid duplicate translation objects
-  const _globalI18n =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const t = (key, params = {}) => {
-    try {
-      if (_globalI18n && typeof _globalI18n.t === 'function') {
-        return _globalI18n.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fall through
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    // Fallback for initialization phase
+    if (!key) return '';
+    let result = String(key);
+    for (const [k, v] of Object.entries(params || {})) {
+      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     }
-    if (!key || typeof key !== 'string') return '';
-    if (Object.keys(params).length === 0) return key;
-    let result = key;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
     return result;
   };
 
@@ -1285,9 +1273,33 @@
     addOrUpdateThumbnailImage();
   }
 
+  // Throttle/debounce processing to avoid expensive full-page rescans on every DOM mutation.
+  let processAllTimerId = null;
+  let lastProcessAllTime = 0;
+  const MIN_PROCESS_ALL_INTERVAL = 350;
+
+  function scheduleProcessAll(minDelay = 0) {
+    if (processAllTimerId) return;
+    const now = Date.now();
+    const dueIn = Math.max(
+      minDelay,
+      Math.max(0, MIN_PROCESS_ALL_INTERVAL - (now - lastProcessAllTime))
+    );
+
+    processAllTimerId = setTimeout(() => {
+      processAllTimerId = null;
+      lastProcessAllTime = Date.now();
+      try {
+        processAll();
+      } catch (e) {
+        console.error('[YouTube+][Thumbnail]', 'processAll failed:', e);
+      }
+    }, dueIn);
+  }
+
   function setupMutationObserver() {
     const observer = new MutationObserver(() => {
-      setTimeout(processAll, 50);
+      scheduleProcessAll(120);
     });
 
     // ✅ Safe observe with document.body check
@@ -1317,7 +1329,7 @@
       setTimeout(() => {
         if (location.href !== currentUrl) {
           currentUrl = location.href;
-          setTimeout(addOrUpdateThumbnailImage, 500);
+          scheduleProcessAll(250);
         }
       }, 100);
     };
@@ -1327,7 +1339,7 @@
       setTimeout(() => {
         if (location.href !== currentUrl) {
           currentUrl = location.href;
-          setTimeout(addOrUpdateThumbnailImage, 500);
+          scheduleProcessAll(250);
         }
       }, 100);
     };
@@ -1336,17 +1348,18 @@
       setTimeout(() => {
         if (location.href !== currentUrl) {
           currentUrl = location.href;
-          setTimeout(addOrUpdateThumbnailImage, 500);
+          scheduleProcessAll(250);
         }
       }, 100);
     });
 
-    setInterval(() => {
+    // YouTube is a SPA; use the navigation event instead of tight polling.
+    window.addEventListener('yt-navigate-finish', () => {
       if (location.href !== currentUrl) {
         currentUrl = location.href;
-        setTimeout(addOrUpdateThumbnailImage, 300);
       }
-    }, 500);
+      scheduleProcessAll(120);
+    });
   }
 
   function initialize() {
@@ -1362,10 +1375,17 @@
   function init() {
     setupUrlChangeDetection();
     setupMutationObserver();
-    processAll();
-    setTimeout(processAll, 500);
-    setTimeout(processAll, 1000);
-    setTimeout(processAll, 2000);
+
+    // Defer heavy work off the critical path.
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => scheduleProcessAll(0), { timeout: 2000 });
+    } else {
+      scheduleProcessAll(400);
+    }
+
+    // A couple of spaced retries for late-loaded nodes.
+    setTimeout(() => scheduleProcessAll(0), 900);
+    setTimeout(() => scheduleProcessAll(0), 1800);
   }
 
   initialize();

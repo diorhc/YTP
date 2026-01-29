@@ -3,7 +3,6 @@
 
 <!-- GREASYFORK_INSTALLS:START -->
 
-
 <p align="center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
     <img alt="downloads" src="https://img.shields.io/badge/downloads-983-blue?style=flat-square" height="25" />
@@ -16,7 +15,6 @@
   </a>
 </p>
 
-
 <!-- GREASYFORK_INSTALLS:END -->
 
 ## YouTube + — Convenient Set of YouTube Enhancements
@@ -25,23 +23,24 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 
 ## Features
 
-- 🔹 Enable Picture-in-Picture (PIP) — via hotkey.
-- 🔹 Add/copy timecodes to videos (convenient for notes and editing) — via hotkey.
-- 🔹 Download videos through external services (Y2Mate - can be changed and edited to your own) and integration with my project [by YTDL](https://github.com/diorhc/YTDL), now with direct download from YouTube.
-- 🔹 Download audio and subtitles.
-- 🔹 Take a screenshot of the current frame and save it locally.
-- 🔹 Support for zoom in the player.
-- 🔹 "Statistics" button on video page — quick access to views/subscribers/engagement.
-- 🔹 Channel statistics: quick overview of key metrics in one click.
-- 🔹 Hotkeys in Shorts (e.g., Shift+/ for hotkey reference).
-- 🔹 Search and quickly remove videos from "Liked" and "Watch Later".
-- 🔹 Hide end screens and cards for clean viewing.
-- 🔹 Comment manager: bulk operations, filters, and search.
-- 🔹 Download thumbnails: shorts, regular videos, and channel banners.
-- 🔹 Remembers viewing time — continue from where you left off or start over.
-- 🔹 Report bugs and suggest new features.
-- 🔹 Full immersion (immersive animations)
-- 🔹 Full support for 🇬🇧, 🇷🇺, 🇰🇷, 🇫🇷, 🇳🇱, 🇨🇳, 🇹🇼, 🇯🇵, 🇹🇷 languages
+- Enable Picture-in-Picture (PIP) — via hotkey.
+- Add/copy timecodes to videos (convenient for notes and editing) — via hotkey.
+- Download videos through external services (Y2Mate - can be changed and edited to your own) and integration with my project [by YTDL](https://github.com/diorhc/YTDL), now with direct download from YouTube.
+- Download audio and subtitles.
+- Take a screenshot of the current frame and save it locally.
+- Support for zoom in the player.
+- "Statistics" button on video page — quick access to views/subscribers/engagement.
+- Channel statistics: quick overview of key metrics in one click.
+- Hotkeys in Shorts (e.g., Shift+/ for hotkey reference).
+- Search and quickly remove videos from "Liked" and "Watch Later".
+- Hide end screens and cards for clean viewing.
+- Comment manager: bulk operations, filters, and search.
+- Download thumbnails: shorts, regular videos, and channel banners.
+- Remembers viewing time — continue from where you left off or start over.
+- Report bugs and suggest new features.
+- YouTube Music: enhanced player (optional).
+- Full immersion (immersive animations).
+- Partial support for all languages.
 
 ## Installation
 
@@ -65,11 +64,11 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 
 ## Contacts and Credits
 
-- Tabview: [𝖢𝖸 𝖥𝗎𝗇𝗀](https://greasyfork.org/en/users/371179-CY-Fung/)
-- Experimental: [exyezed](https://greasyfork.org/en/users/1382928-exyezed/)
+- Tabview: [𝖢𝖸 𝖥𝗎𝗇𝗀](https://github.com/cyfung1031)
+- Experimental: [exyezed](https://github.com/exyezed)
 
 ## Based on and modified/improved
 
---- If you want, I can add: write your ideas in the comments or in YouTube comments
+Please add your ideas in [issues](https://github.com/diorhc/YTP/issues) or report them via the script settings - I would appreciate your feedback!
 
 ![Animation demo](https://i.imgur.com/k7ZDZSr.gif)

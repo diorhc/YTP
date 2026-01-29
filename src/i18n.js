@@ -1,8 +1,9 @@
 ﻿/**
- * YouTube+ Internationalization (i18n) System - v3.1
+ * YouTube+ Internationalization (i18n) System - v3.2
  * Unified i18n system with integrated loader
+ * Supports all major YouTube interface languages
  * @module i18n
- * @version 3.1
+ * @version 3.2
  */
 
 (function () {
@@ -24,9 +25,33 @@
     jsdelivr: `https://cdn.jsdelivr.net/gh/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}@${GITHUB_CONFIG.branch}/${GITHUB_CONFIG.basePath}`,
   };
 
-  const AVAILABLE_LANGUAGES = ['en', 'ru', 'kr', 'fr', 'du', 'cn', 'tw', 'jp', 'tr'];
+  // Translation files shipped with the project (and embedded by embed-translations.js).
+  // Any other YouTube UI language will map to the closest language below (usually English).
+  const AVAILABLE_LANGUAGES = [
+    'en',
+    'ru',
+    'kr',
+    'fr',
+    'du',
+    'cn',
+    'tw',
+    'jp',
+    'tr',
+    'es',
+    'pt',
+    'de',
+    'it',
+    'pl',
+    'uk',
+    'ar',
+    'hi',
+    'id',
+    'vi',
+  ];
 
+  // Complete language names mapping for all YouTube supported languages
   const LANGUAGE_NAMES = {
+    // Primary supported languages
     en: 'English',
     ru: 'Русский',
     kr: '한국어',
@@ -36,6 +61,216 @@
     tw: '繁體中文',
     jp: '日本語',
     tr: 'Türkçe',
+    // European languages
+    es: 'Español',
+    pt: 'Português',
+    de: 'Deutsch',
+    it: 'Italiano',
+    pl: 'Polski',
+    uk: 'Українська',
+    sv: 'Svenska',
+    no: 'Norsk',
+    da: 'Dansk',
+    fi: 'Suomi',
+    cs: 'Čeština',
+    sk: 'Slovenčina',
+    hu: 'Magyar',
+    ro: 'Română',
+    bg: 'Български',
+    hr: 'Hrvatski',
+    sr: 'Српски',
+    sl: 'Slovenščina',
+    el: 'Ελληνικά',
+    lt: 'Lietuvių',
+    lv: 'Latviešu',
+    et: 'Eesti',
+    mk: 'Македонски',
+    sq: 'Shqip',
+    bs: 'Bosanski',
+    is: 'Íslenska',
+    ca: 'Català',
+    eu: 'Euskara',
+    gl: 'Galego',
+    // Middle Eastern & African languages
+    ar: 'العربية',
+    he: 'עברית',
+    fa: 'فارسی',
+    sw: 'Kiswahili',
+    zu: 'isiZulu',
+    af: 'Afrikaans',
+    am: 'አማርኛ',
+    // Asian languages
+    hi: 'हिन्दी',
+    th: 'ไทย',
+    vi: 'Tiếng Việt',
+    id: 'Bahasa Indonesia',
+    ms: 'Bahasa Melayu',
+    bn: 'বাংলা',
+    ta: 'தமிழ்',
+    te: 'తెలుగు',
+    mr: 'मराठी',
+    gu: 'ગુજરાતી',
+    kn: 'ಕನ್ನಡ',
+    ml: 'മലയാളം',
+    pa: 'ਪੰਜਾਬੀ',
+    fil: 'Filipino',
+    km: 'ភាសាខ្មែរ',
+    lo: 'ລາວ',
+    my: 'မြန်မာ',
+    ne: 'नेपाली',
+    si: 'සිංහල',
+    // Central Asian & Caucasus languages
+    az: 'Azərbaycanca',
+    be: 'Беларуская',
+    hy: 'Հայերեն',
+    ka: 'ქართული',
+    kk: 'Қазақ',
+    ky: 'Кыргызча',
+    mn: 'Монгол',
+    tg: 'Тоҷикӣ',
+    uz: 'Oʻzbekcha',
+  };
+
+  // Language fallback mapping - maps YouTube locale variants to shipped translation files
+  const LANGUAGE_FALLBACKS = {
+    // Spanish variants
+    es: 'es',
+    'es-es': 'es',
+    'es-mx': 'es',
+    'es-419': 'es',
+    // Portuguese variants
+    pt: 'pt',
+    'pt-br': 'pt',
+    'pt-pt': 'pt',
+    // German variants
+    de: 'de',
+    'de-de': 'de',
+    'de-at': 'de',
+    'de-ch': 'de',
+    // Italian
+    it: 'it',
+    // Polish
+    pl: 'pl',
+    // Ukrainian - fallback to Russian
+    uk: 'uk',
+    'uk-ua': 'uk',
+    // Arabic variants
+    ar: 'ar',
+    'ar-sa': 'ar',
+    'ar-ae': 'ar',
+    'ar-eg': 'ar',
+    // Hindi
+    hi: 'hi',
+    'hi-in': 'hi',
+    // Thai
+    th: 'en',
+    'th-th': 'en',
+    // Vietnamese
+    vi: 'vi',
+    'vi-vn': 'vi',
+    // Indonesian/Malay
+    id: 'id',
+    'id-id': 'id',
+    ms: 'en',
+    'ms-my': 'en',
+    // Scandinavian languages
+    sv: 'en',
+    'sv-se': 'en',
+    no: 'en',
+    'nb-no': 'en',
+    'nn-no': 'en',
+    da: 'en',
+    'da-dk': 'en',
+    fi: 'en',
+    'fi-fi': 'en',
+    // Central European languages
+    cs: 'en',
+    'cs-cz': 'en',
+    sk: 'en',
+    'sk-sk': 'en',
+    hu: 'en',
+    'hu-hu': 'en',
+    ro: 'en',
+    'ro-ro': 'en',
+    // Balkan languages
+    bg: 'ru',
+    'bg-bg': 'ru',
+    hr: 'en',
+    'hr-hr': 'en',
+    sr: 'ru',
+    'sr-rs': 'ru',
+    sl: 'en',
+    'sl-si': 'en',
+    // Greek
+    el: 'en',
+    'el-gr': 'en',
+    // Hebrew
+    he: 'en',
+    'he-il': 'en',
+    iw: 'en',
+    // Persian
+    fa: 'en',
+    'fa-ir': 'en',
+    // Indian languages
+    bn: 'en',
+    'bn-in': 'en',
+    ta: 'en',
+    'ta-in': 'en',
+    te: 'en',
+    'te-in': 'en',
+    mr: 'en',
+    'mr-in': 'en',
+    gu: 'en',
+    'gu-in': 'en',
+    kn: 'en',
+    'kn-in': 'en',
+    ml: 'en',
+    'ml-in': 'en',
+    pa: 'en',
+    'pa-in': 'en',
+    // Southeast Asian
+    fil: 'en',
+    'fil-ph': 'en',
+    tl: 'en',
+    km: 'en',
+    lo: 'en',
+    my: 'en',
+    ne: 'en',
+    si: 'en',
+    // African languages
+    sw: 'en',
+    'sw-ke': 'en',
+    zu: 'en',
+    af: 'en',
+    am: 'en',
+    // Central Asian
+    az: 'tr',
+    'az-az': 'tr',
+    be: 'ru',
+    'be-by': 'ru',
+    hy: 'ru',
+    ka: 'en',
+    kk: 'ru',
+    'kk-kz': 'ru',
+    ky: 'ru',
+    mn: 'ru',
+    tg: 'ru',
+    uz: 'ru',
+    // Baltic languages
+    lt: 'en',
+    'lt-lt': 'en',
+    lv: 'en',
+    'lv-lv': 'en',
+    et: 'en',
+    'et-ee': 'en',
+    // Others
+    mk: 'ru',
+    sq: 'en',
+    bs: 'en',
+    is: 'en',
+    ca: 'es',
+    eu: 'es',
+    gl: 'es',
   };
 
   const translationsCache = new Map();
@@ -135,6 +370,12 @@
   let translations = {};
 
   /**
+   * English fallback translations (loaded once).
+   * @type {Object}
+   */
+  let fallbackTranslationsEn = {};
+
+  /**
    * Translation cache
    * @type {Map<string, string>}
    */
@@ -152,52 +393,132 @@
    */
   let loadingPromise = null;
 
-  // Language mapping for common locale codes
+  // Language mapping for common locale codes - extended to support all YouTube languages
   const languageMap = {
-    ko: 'kr', // Korean
+    // Korean
+    ko: 'kr',
     'ko-kr': 'kr',
-    fr: 'fr', // French
+    // French
+    fr: 'fr',
     'fr-fr': 'fr',
-    nl: 'du', // Dutch
+    'fr-ca': 'fr',
+    'fr-be': 'fr',
+    'fr-ch': 'fr',
+    // Dutch
+    nl: 'du',
     'nl-nl': 'du',
     'nl-be': 'du',
-    zh: 'cn', // Chinese Simplified (default)
+    // Chinese
+    zh: 'cn',
     'zh-cn': 'cn',
     'zh-hans': 'cn',
-    'zh-tw': 'tw', // Chinese Traditional
+    'zh-sg': 'cn',
+    'zh-tw': 'tw',
     'zh-hk': 'tw',
     'zh-hant': 'tw',
-    ja: 'jp', // Japanese
+    // Japanese
+    ja: 'jp',
     'ja-jp': 'jp',
-    tr: 'tr', // Turkish
+    // Turkish
+    tr: 'tr',
     'tr-tr': 'tr',
+    // Russian
+    ru: 'ru',
+    'ru-ru': 'ru',
+    // English variants
+    en: 'en',
+    'en-us': 'en',
+    'en-gb': 'en',
+    'en-au': 'en',
+    'en-ca': 'en',
+    'en-in': 'en',
+    // For languages with fallbacks, use the fallback
+    ...Object.fromEntries(
+      Object.entries(LANGUAGE_FALLBACKS).map(([key, fallback]) => [key, fallback])
+    ),
   };
 
   /**
-   * Detect user's language preference
+   * Check if a language code maps to a primary supported language
+   * @param {string} langCode - Language code to check
+   * @returns {string} Mapped language code
+   */
+  function mapToSupportedLanguage(langCode) {
+    const lower = langCode.toLowerCase();
+
+    // Direct match in language map
+    if (languageMap[lower]) {
+      return languageMap[lower];
+    }
+
+    // Direct match in shipped translations
+    if (AVAILABLE_LANGUAGES.includes(lower)) {
+      return lower;
+    }
+
+    // Check first two characters
+    const shortCode = lower.substr(0, 2);
+    if (languageMap[shortCode]) {
+      return languageMap[shortCode];
+    }
+
+    if (AVAILABLE_LANGUAGES.includes(shortCode)) {
+      return shortCode;
+    }
+
+    // Check fallbacks
+    if (LANGUAGE_FALLBACKS[lower]) {
+      return LANGUAGE_FALLBACKS[lower];
+    }
+    if (LANGUAGE_FALLBACKS[shortCode]) {
+      return LANGUAGE_FALLBACKS[shortCode];
+    }
+
+    // Default to English
+    return 'en';
+  }
+
+  /**
+   * Detect user's language preference with extended support
    * @returns {string} Language code
    */
   function detectLanguage() {
     try {
-      // Try YouTube's language setting first
+      // Try YouTube's language setting first (from HTML lang attribute)
       const ytLang =
         document.documentElement.lang || document.querySelector('html')?.getAttribute('lang');
       if (ytLang) {
-        const mapped = languageMap[ytLang.toLowerCase()] || ytLang.toLowerCase().substr(0, 2);
-        if (AVAILABLE_LANGUAGES.includes(mapped)) {
-          return mapped;
-        }
-      }
-
-      // Fallback to browser language
-      const browserLang = navigator.language || navigator.userLanguage || 'en';
-      const mapped = languageMap[browserLang.toLowerCase()] || browserLang.split('-')[0];
-
-      if (AVAILABLE_LANGUAGES.includes(mapped)) {
+        const mapped = mapToSupportedLanguage(ytLang);
         return mapped;
       }
 
-      return 'en'; // Default fallback
+      // Try YouTube's hl parameter from URL
+      try {
+        const urlParams = new URLSearchParams(window.location.search);
+        const hlParam = urlParams.get('hl');
+        if (hlParam) {
+          const mapped = mapToSupportedLanguage(hlParam);
+          return mapped;
+        }
+      } catch {}
+
+      // Try to get YouTube's internal language setting
+      try {
+        const ytConfig = window.ytcfg || window.yt?.config_;
+        if (ytConfig && typeof ytConfig.get === 'function') {
+          const hl = ytConfig.get('HL') || ytConfig.get('GAPI_LOCALE');
+          if (hl) {
+            const mapped = mapToSupportedLanguage(hl);
+            return mapped;
+          }
+        }
+      } catch {}
+
+      // Fallback to browser language
+      const browserLang = navigator.language || navigator.userLanguage || 'en';
+      const mapped = mapToSupportedLanguage(browserLang);
+
+      return mapped;
     } catch (error) {
       console.error('[YouTube+][i18n]', 'Error detecting language:', error);
       return 'en';
@@ -224,6 +545,14 @@
             `Loading translations for ${currentLanguage}...`
           );
         translations = await loadTranslationsFromLoader(currentLanguage);
+        // Ensure we always have English fallback available (best-effort).
+        if (!fallbackTranslationsEn || Object.keys(fallbackTranslationsEn).length === 0) {
+          try {
+            fallbackTranslationsEn = await loadTranslationsFromLoader('en');
+          } catch {
+            fallbackTranslationsEn = {};
+          }
+        }
         translationCache.clear(); // Clear cache on new load
         window.YouTubeUtils &&
           YouTubeUtils.logger &&
@@ -265,13 +594,18 @@
     // Get translation
     let text = translations[key];
 
-    // Fallback to key if not found
+    // Fallback to English if current language misses the key
     if (!text) {
-      // Only warn if translations have been loaded and key is still missing
-      if (Object.keys(translations).length > 0) {
-        console.warn('[YouTube+][i18n]', `Missing translation for key: ${key}`);
+      const enText = fallbackTranslationsEn ? fallbackTranslationsEn[key] : undefined;
+      if (enText) {
+        text = enText;
+      } else {
+        // Only warn if translations have been loaded and key is still missing everywhere
+        if (Object.keys(translations).length > 0) {
+          console.warn('[YouTube+][i18n]', `Missing translation for key: ${key}`);
+        }
+        text = key;
       }
-      text = key;
     }
 
     // Replace parameters

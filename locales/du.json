@@ -224,5 +224,20 @@
   "delete": "Verwijderen",
   "confirmDelete": "Timecode \"{label}\" verwijderen?",
   "reloadError": "Fout bij opnieuw laden timecodes",
-  "cannotEditChapter": "Kan YouTube-hoofdstukken niet bewerken"
+  "cannotEditChapter": "Kan YouTube-hoofdstukken niet bewerken",
+  "youtubeMusicTitle": "YouTube Music",
+  "youtubeMusicDesc": "Verbeterde stijlen en functies voor YouTube Music",
+  "musicStylesLabel": "YouTube Music Stijlen",
+  "musicStylesDesc": "Schakel verbeterde YouTube Music stijlen in (experimenteel)",
+  "musicEnhancementsLabel": "Muziek verbeteringen",
+  "musicEnhancementsDesc": "Schakel alle YouTube Music verbeteringen in",
+  "immersiveSearchLabel": "Meeslepende zoeken",
+  "immersiveSearchDesc": "Gecentreerde meeslepende zoekervaring bij focus",
+  "sidebarHoverLabel": "Zijbalk hover effecten",
+  "sidebarHoverDesc": "Toon zijbalk bij hover met vloeiende animaties",
+  "centeredPlayerLabel": "Gecentreerde speler lay-out",
+  "centeredPlayerDesc": "Centreer de speler met verbeterde stijl",
+  "scrollToTopLabel": "Scroll naar boven knop",
+  "scrollToTopDesc": "Toon scroll naar boven knop in zijpaneel",
+  "musicSettingsSaved": "YouTube Music instellingen opgeslagen"
 }

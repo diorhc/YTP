@@ -224,5 +224,20 @@
   "delete": "刪除",
   "confirmDelete": "刪除時間碼 \"{label}\"？",
   "reloadError": "重新載入時間碼時出錯",
-  "cannotEditChapter": "無法編輯 YouTube 章節"
+  "cannotEditChapter": "無法編輯 YouTube 章節",
+  "youtubeMusicTitle": "YouTube Music",
+  "youtubeMusicDesc": "YouTube Music 的增強樣式和功能",
+  "musicStylesLabel": "YouTube Music 樣式",
+  "musicStylesDesc": "啟用增強的 YouTube Music 樣式（實驗性）",
+  "musicEnhancementsLabel": "音樂增強",
+  "musicEnhancementsDesc": "啟用所有 YouTube Music 增強功能",
+  "immersiveSearchLabel": "沉浸式搜尋",
+  "immersiveSearchDesc": "聚焦時的置中沉浸式搜尋體驗",
+  "sidebarHoverLabel": "側邊欄懸停效果",
+  "sidebarHoverDesc": "懸停時顯示側邊欄，帶有平滑動畫",
+  "centeredPlayerLabel": "置中播放器佈局",
+  "centeredPlayerDesc": "使用增強樣式置中播放器",
+  "scrollToTopLabel": "返回頂部按鈕",
+  "scrollToTopDesc": "在側面板顯示返回頂部按鈕",
+  "musicSettingsSaved": "YouTube Music 設定已儲存"
 }

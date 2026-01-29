@@ -12,10 +12,84 @@
  * - SPA navigation support with debounced updates
  */
 
-/* global GM_addStyle */
+/* global GM_addStyle, GM_getValue, GM_addValueChangeListener */
 
 (function () {
   'use strict';
+
+  /**
+   * Read YouTube Music settings from localStorage with defaults.
+   * Kept in sync with defaults in settings UI.
+   */
+  function readMusicSettings() {
+    const defaults = {
+      enableMusic: true,
+    };
+
+    // Prefer userscript-global storage so youtube.com and music.youtube.com share the setting.
+    try {
+      if (typeof GM_getValue !== 'undefined') {
+        const stored = GM_getValue('youtube-plus-music-settings', null);
+        if (typeof stored === 'string' && stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && typeof parsed.enableMusic === 'boolean') {
+            return { enableMusic: parsed.enableMusic };
+          }
+        }
+      }
+    } catch {
+      // fall back to localStorage
+    }
+
+    try {
+      const stored = localStorage.getItem('youtube-plus-music-settings');
+      if (!stored) return defaults;
+      const parsed = JSON.parse(stored);
+      if (parsed && typeof parsed.enableMusic === 'boolean') {
+        return { enableMusic: parsed.enableMusic };
+      }
+      if (parsed && typeof parsed === 'object') {
+        const legacyEnabled = !!(
+          parsed.enableMusicStyles ||
+          parsed.enableMusicEnhancements ||
+          parsed.enableImmersiveSearch ||
+          parsed.enableSidebarHover ||
+          parsed.enableCenteredPlayer ||
+          parsed.enableScrollToTop
+        );
+        return { enableMusic: legacyEnabled };
+      }
+      return defaults;
+    } catch {
+      return defaults;
+    }
+  }
+
+  function isMusicModuleEnabled(settings) {
+    return !!(settings && settings.enableMusic);
+  }
+
+  function isScrollToTopEnabled(settings) {
+    return !!(settings && settings.enableMusic && window.location.hostname === 'music.youtube.com');
+  }
+
+  /**
+   * Mutable settings snapshot for live-apply.
+   * @type {ReturnType<typeof readMusicSettings>}
+   */
+  let musicSettingsSnapshot = readMusicSettings();
+
+  /** @type {HTMLStyleElement|null} */
+  let musicStyleEl = null;
+
+  /** @type {MutationObserver|null} */
+  let observer = null;
+
+  /** @type {number|null} */
+  let healthCheckIntervalId = null;
+
+  /** @type {(() => void)|null} */
+  let detachNavigationListeners = null;
 
   /**
    * Enhanced styles for YouTube Music interface
@@ -33,15 +107,18 @@
         ytmusic-settings-button.style-scope.ytmusic-nav-bar, ytmusic-nav-bar ytmusic-settings-button.style-scope.ytmusic-nav-bar {position: absolute !important; left: 50% !important; top: 50% !important; transform: translate(-50%, -50%) !important; bottom: auto !important; margin: 0 !important; z-index: 1000 !important;}
         /* Center the search box in the top nav bar */
         ytmusic-search-box, ytmusic-nav-bar ytmusic-search-box, ytmusic-searchbox, ytmusic-nav-bar ytmusic-searchbox {position: absolute !important; left: 50% !important; top: 50% !important; transform: translate(-50%, -50%) !important; margin: 0 !important; max-width: 75% !important; width: auto !important; z-index: 900 !important;}
-        /* yt-Immersive search behaviour for YouTube Music: expand/center the search when focused */
-        ytmusic-search-box:has(input:focus), ytmusic-searchbox:has(input:focus), ytmusic-search-box:focus-within, ytmusic-searchbox:focus-within {position: fixed !important; left: 50% !important; top: 12vh !important; transform: translateX(-50%) !important; height: auto !important; max-width: 900px !important; width: min(90vw, 900px) !important; z-index: 1200 !important; display: block !important;}
-        @media only screen and (min-width: 1400px) {ytmusic-search-box:has(input:focus), ytmusic-searchbox:has(input:focus) {top: 10vh !important; max-width: 1000px !important; transform: translateX(-50%) scale(1.05) !important;}}
-        /* Highlight the input and add a soft glow */
-        ytmusic-search-box:has(input:focus) input, ytmusic-searchbox:has(input:focus) input, ytmusic-search-box:focus-within input, ytmusic-searchbox:focus-within input {background-color: #fffb !important; box-shadow: black 0 0 30px !important;}
-        @media (prefers-color-scheme: dark) {ytmusic-search-box:has(input:focus) input, ytmusic-searchbox:has(input:focus) input {background-color: #000b !important;}}
-        /* Blur/scale the main content when immersive search is active */
-        ytmusic-app-layout:has(ytmusic-search-box:has(input:focus)) #main-panel, ytmusic-app-layout:has(ytmusic-searchbox:has(input:focus)) #main-panel {filter: blur(18px) !important; transform: scale(1.03) !important;}
   `;
+
+  const immersiveSearchStyles = `
+      /* yt-Immersive search behaviour for YouTube Music: expand/center the search when focused */
+      ytmusic-search-box:has(input:focus), ytmusic-searchbox:has(input:focus), ytmusic-search-box:focus-within, ytmusic-searchbox:focus-within {position: fixed !important; left: 50% !important; top: 12vh !important; transform: translateX(-50%) !important; height: auto !important; max-width: 900px !important; width: min(90vw, 900px) !important; z-index: 1200 !important; display: block !important;}
+      @media only screen and (min-width: 1400px) {ytmusic-search-box:has(input:focus), ytmusic-searchbox:has(input:focus) {top: 10vh !important; max-width: 1000px !important; transform: translateX(-50%) scale(1.05) !important;}}
+      /* Highlight the input and add a soft glow */
+      ytmusic-search-box:has(input:focus) input, ytmusic-searchbox:has(input:focus) input, ytmusic-search-box:focus-within input, ytmusic-searchbox:focus-within input {background-color: #fffb !important; box-shadow: black 0 0 30px !important;}
+      @media (prefers-color-scheme: dark) {ytmusic-search-box:has(input:focus) input, ytmusic-searchbox:has(input:focus) input {background-color: #000b !important;}}
+      /* Blur/scale the main content when immersive search is active */
+      ytmusic-app-layout:has(ytmusic-search-box:has(input:focus)) #main-panel, ytmusic-app-layout:has(ytmusic-searchbox:has(input:focus)) #main-panel {filter: blur(18px) !important; transform: scale(1.03) !important;}
+    `;
 
   // Ховер эффекты для боковой панели
   const hoverStyles = `
@@ -140,33 +217,55 @@
    * @returns {void}
    */
   function applyStyles() {
-    // Проверяем, что мы на YouTube Music
-    if (window.location.hostname !== 'music.youtube.com') {
+    if (window.location.hostname !== 'music.youtube.com') return;
+
+    const s = musicSettingsSnapshot || readMusicSettings();
+    if (!s.enableMusic) return;
+
+    const styleParts = [
+      enhancedStyles,
+      immersiveSearchStyles,
+      hoverStyles,
+      playerSidebarStyles,
+      centeredPlayerStyles,
+      playerBarStyles,
+      centeredPlayerBarStyles,
+      miniPlayerStyles,
+      scrollToTopStyles,
+    ];
+
+    const allStyles = `\n${styleParts.join('\n')}\n`;
+
+    // Reuse single managed <style> for live updates.
+    if (musicStyleEl && musicStyleEl.isConnected) {
+      musicStyleEl.textContent = allStyles;
+      window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Styles updated');
       return;
     }
 
-    // Объединяем все стили
-    const allStyles = `
-            ${enhancedStyles}
-            ${hoverStyles}
-            ${playerSidebarStyles}
-            ${centeredPlayerStyles}
-            ${playerBarStyles}
-            ${centeredPlayerBarStyles}
-            ${miniPlayerStyles}
-            ${scrollToTopStyles}
-        `;
-
-    // Применяем стили
-    if (typeof GM_addStyle === 'undefined') {
-      const style = document.createElement('style');
-      style.textContent = allStyles;
-      document.head.appendChild(style);
-    } else {
-      GM_addStyle(allStyles);
+    try {
+      if (typeof GM_addStyle !== 'undefined') {
+        const el = GM_addStyle(allStyles);
+        if (el && el.tagName === 'STYLE') {
+          musicStyleEl = /** @type {HTMLStyleElement} */ (el);
+          try {
+            musicStyleEl.id = 'youtube-plus-music-styles';
+          } catch {}
+        }
+      }
+    } catch {
+      // ignore and fallback
     }
 
-    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Стили применены');
+    if (!musicStyleEl || !musicStyleEl.isConnected) {
+      const style = document.createElement('style');
+      style.id = 'youtube-plus-music-styles';
+      style.textContent = allStyles;
+      document.head.appendChild(style);
+      musicStyleEl = style;
+    }
+
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Styles applied');
   }
 
   /**
@@ -943,60 +1042,7 @@
     }
   }
 
-  // Применяем стили при загрузке
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      applyStyles();
-      checkAndCreateButton();
-    });
-  } else {
-    applyStyles();
-    checkAndCreateButton();
-  }
-
-  // Дополнительно применяем при смене состояния истории (для SPA)
-  const originalPushState = history.pushState;
-  const originalReplaceState = history.replaceState;
-
-  // Debounce navigation handler to avoid excessive calls
-  const debounce = getDebounce();
-  const handleNavigation = debounce(() => {
-    applyStyles();
-    // Reset button creation state on navigation
-    buttonCreationState.attempts = 0;
-    buttonCreationState.lastAttempt = 0;
-    checkAndCreateButton();
-  }, 150);
-
-  history.pushState = function (...args) {
-    originalPushState.call(this, ...args);
-    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Navigation: pushState');
-    handleNavigation();
-  };
-
-  history.replaceState = function (...args) {
-    originalReplaceState.call(this, ...args);
-    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Navigation: replaceState');
-    handleNavigation();
-  };
-
-  window.addEventListener('popstate', () => {
-    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Navigation: popstate');
-    handleNavigation();
-  });
-
-  // Listen for yt-navigate-finish event (YouTube's custom navigation event)
-  window.addEventListener('yt-navigate-finish', () => {
-    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Navigation: yt-navigate-finish');
-    handleNavigation();
-  });
-
-  /**
-   * Global observer for detecting side-panel appearance
-   * @type {MutationObserver|null}
-   * @private
-   */
-  let observer = null;
+  // Lazy init: do not inject styles/observers until settings enable it.
 
   /**
    * Create and configure the mutation observer
@@ -1139,77 +1185,230 @@
     }
   };
 
-  // Export module to global scope for module loader
-  if (typeof window !== 'undefined') {
-    window.YouTubeMusic = {
-      observeDocumentBodySafely,
-      checkAndCreateButton,
-      createScrollToTopButton,
-      version: '2.3',
-    };
-  }
-
-  // Initialize observer
-  observeDocumentBodySafely();
-
-  // Periodic health check for the button (every 30 seconds for better performance)
-  const healthCheckInterval = setInterval(() => {
+  function stopScrollToTopRuntime() {
     try {
-      // Skip health check if document is hidden (tab inactive)
-      if (document.hidden) return;
-
-      const button = document.getElementById('ytmusic-side-panel-top-button');
-
-      // If button exists but is orphaned, clean it up
-      if (button && (!button._scrollCleanup || !document.body.contains(button))) {
-        window.YouTubeUtils?.logger?.debug?.(
-          '[YouTube+][Music]',
-          'Health check: removing unhealthy button'
-        );
-        button.remove();
-        checkAndCreateButton();
+      if (healthCheckIntervalId != null) {
+        clearInterval(healthCheckIntervalId);
+        healthCheckIntervalId = null;
       }
-
-      // If no button exists but we have a scrollable container, create one
-      if (!button) {
-        const sidePanel = document.querySelector('#side-panel');
-        if (sidePanel) {
-          checkAndCreateButton();
-        }
-      }
-    } catch (error) {
-      console.error('[YouTube+][Music] Health check error:', error);
-    }
-  }, 30000);
-
-  // Cleanup on page unload
-  window.addEventListener('beforeunload', () => {
-    try {
-      clearInterval(healthCheckInterval);
 
       if (observer) {
         observer.disconnect();
         observer = null;
       }
 
+      if (detachNavigationListeners) {
+        try {
+          detachNavigationListeners();
+        } catch {}
+        detachNavigationListeners = null;
+      }
+
       const button = document.getElementById('ytmusic-side-panel-top-button');
       if (button?._scrollCleanup) {
         try {
           button._scrollCleanup();
-        } catch (cleanupError) {
-          console.error('[YouTube+][Music] Button cleanup error:', cleanupError);
-        }
+        } catch {}
       }
+      if (button?._positionCleanup) {
+        try {
+          button._positionCleanup();
+        } catch {}
+      }
+      if (button) button.remove();
+    } catch (e) {
+      console.error('[YouTube+][Music] stopScrollToTopRuntime error:', e);
+    }
+  }
 
+  function startScrollToTopRuntime() {
+    if (!isScrollToTopEnabled(musicSettingsSnapshot)) return;
+
+    // Already running
+    if (observer || healthCheckIntervalId != null || detachNavigationListeners) return;
+
+    // Ensure styles (button relies on CSS)
+    applyStyles();
+
+    // Create button on load
+    if (document.readyState === 'loading') {
+      document.addEventListener(
+        'DOMContentLoaded',
+        () => {
+          checkAndCreateButton();
+        },
+        { once: true }
+      );
+    } else {
+      checkAndCreateButton();
+    }
+
+    // Navigation hooks (non-invasive: no history monkeypatch)
+    const debounce = getDebounce();
+    const onNavigate = debounce(() => {
+      if (!isScrollToTopEnabled(musicSettingsSnapshot)) return;
+      applyStyles();
+      buttonCreationState.attempts = 0;
+      buttonCreationState.lastAttempt = 0;
+      checkAndCreateButton();
+    }, 150);
+
+    const popstateHandler = () => onNavigate();
+    const ytNavigateHandler = () => onNavigate();
+
+    window.addEventListener('popstate', popstateHandler);
+    window.addEventListener('yt-navigate-finish', ytNavigateHandler);
+
+    detachNavigationListeners = () => {
+      window.removeEventListener('popstate', popstateHandler);
+      window.removeEventListener('yt-navigate-finish', ytNavigateHandler);
+    };
+
+    // Start observer
+    observeDocumentBodySafely();
+
+    // Periodic health check
+    healthCheckIntervalId = setInterval(() => {
+      try {
+        if (!isScrollToTopEnabled(musicSettingsSnapshot)) return;
+        if (document.hidden) return;
+
+        const button = document.getElementById('ytmusic-side-panel-top-button');
+
+        if (button && (!button._scrollCleanup || !document.body.contains(button))) {
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][Music]',
+            'Health check: removing unhealthy button'
+          );
+          button.remove();
+          checkAndCreateButton();
+        }
+
+        if (!button) {
+          const sidePanel = document.querySelector('#side-panel');
+          if (sidePanel) checkAndCreateButton();
+        }
+      } catch (error) {
+        console.error('[YouTube+][Music] Health check error:', error);
+      }
+    }, 30000);
+  }
+
+  function startIfEnabled() {
+    // Never start outside YouTube Music.
+    if (window.location.hostname !== 'music.youtube.com') return;
+
+    musicSettingsSnapshot = readMusicSettings();
+    if (!isMusicModuleEnabled(musicSettingsSnapshot)) return;
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', applyStyles, { once: true });
+    } else {
+      applyStyles();
+    }
+
+    if (isScrollToTopEnabled(musicSettingsSnapshot)) {
+      startScrollToTopRuntime();
+    }
+  }
+
+  function applySettingsChanges() {
+    // Re-read persisted settings and (re)apply.
+    musicSettingsSnapshot = readMusicSettings();
+
+    // If disabled, tear everything down immediately, regardless of hostname.
+    if (!isMusicModuleEnabled(musicSettingsSnapshot)) {
+      stopScrollToTopRuntime();
+      if (musicStyleEl && musicStyleEl.isConnected) musicStyleEl.remove();
+      // Defensive: remove any stray YouTube Music style tags we may have added earlier.
+      try {
+        document
+          .querySelectorAll('#youtube-plus-music-styles')
+          .forEach(el => el !== musicStyleEl && el.remove());
+      } catch {}
+      musicStyleEl = null;
+      return;
+    }
+
+    if (window.location.hostname !== 'music.youtube.com') return;
+
+    // Styles
+    applyStyles();
+
+    // Scroll-to-top runtime
+    if (isScrollToTopEnabled(musicSettingsSnapshot)) {
+      if (!observer) startScrollToTopRuntime();
+    } else {
+      stopScrollToTopRuntime();
+    }
+  }
+
+  function saveSettings(s) {
+    // Caller already saves to localStorage; keep an in-memory snapshot.
+    if (s && typeof s === 'object') {
+      musicSettingsSnapshot = { ...musicSettingsSnapshot, ...s };
+    } else {
+      musicSettingsSnapshot = readMusicSettings();
+    }
+  }
+
+  // Export module to global scope for settings live-apply
+  if (typeof window !== 'undefined') {
+    window.YouTubeMusic = {
+      observeDocumentBodySafely,
+      checkAndCreateButton,
+      createScrollToTopButton,
+      saveSettings,
+      applySettingsChanges,
+      version: '2.3',
+    };
+  }
+
+  // Cleanup on page unload
+  window.addEventListener('beforeunload', () => {
+    try {
+      stopScrollToTopRuntime();
+      if (musicStyleEl && musicStyleEl.isConnected) musicStyleEl.remove();
+      musicStyleEl = null;
       window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Cleanup completed');
     } catch (error) {
       console.error('[YouTube+][Music] Cleanup error:', error);
     }
   });
 
-  window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Module loaded', {
+  // Start only if enabled; otherwise remain dormant.
+  startIfEnabled();
+
+  // Cross-subdomain live sync: react to changes made on youtube.com settings UI.
+  try {
+    if (typeof GM_addValueChangeListener !== 'undefined') {
+      GM_addValueChangeListener('youtube-plus-music-settings', (_name, _oldValue, newValue) => {
+        try {
+          if (typeof newValue === 'string' && newValue) {
+            const parsed = JSON.parse(newValue);
+            if (parsed && typeof parsed.enableMusic === 'boolean') {
+              musicSettingsSnapshot = { enableMusic: parsed.enableMusic };
+            } else {
+              musicSettingsSnapshot = readMusicSettings();
+            }
+          } else {
+            musicSettingsSnapshot = readMusicSettings();
+          }
+        } catch {
+          musicSettingsSnapshot = readMusicSettings();
+        }
+
+        // Apply immediately (will teardown if disabled).
+        applySettingsChanges();
+      });
+    }
+  } catch {}
+
+  window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Module loaded (lazy)', {
     version: '2.3',
-    features: ['scroll-to-top', 'enhanced-styles', 'immersive-search', 'health-check'],
     hostname: window.location.hostname,
+    enabled:
+      window.location.hostname === 'music.youtube.com' &&
+      isMusicModuleEnabled(musicSettingsSnapshot),
   });
 })();

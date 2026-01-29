@@ -13,19 +13,34 @@
    * @returns {string} Translated string
    */
   const t = (key, params = {}) => {
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    // Embedded English fallback (prevents showing raw keys during early init)
     try {
-      if (typeof window !== 'undefined') {
-        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
-          return window.YouTubePlusI18n.t(key, params);
+      const embeddedEn = window.YouTubePlusEmbeddedTranslations?.en;
+      if (embeddedEn && embeddedEn[key]) {
+        let text = embeddedEn[key];
+        if (params && Object.keys(params).length > 0) {
+          Object.keys(params).forEach(param => {
+            text = text.replace(new RegExp(`\\{${param}\\}`, 'g'), params[param]);
+          });
         }
-        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
-          return window.YouTubeUtils.t(key, params);
-        }
+        return text;
       }
-    } catch {
-      // Fallback to key if central i18n unavailable
-    }
-    return key;
+    } catch {}
+    // Fallback for initialization phase
+    return key || '';
+  };
+
+  // This module is designed for the playlist panel on /watch pages.
+  // On /playlist pages (e.g. WL/LL), the DOM is massive and dynamic; repeatedly
+  // polling/observing for a non-existent panel can cause noticeable lag.
+  const shouldRunOnThisPage = () => {
+    return (
+      window.location.hostname.endsWith('youtube.com') &&
+      window.location.hostname !== 'music.youtube.com' &&
+      window.location.pathname === '/watch'
+    );
   };
 
   // Utility functions for performance optimization
@@ -158,28 +173,14 @@
   const addSearchUI = () => {
     if (!config.enabled) return;
 
+    if (!shouldRunOnThisPage()) return;
+
     const playlistId = getCurrentPlaylistId();
     if (!playlistId) return;
 
     // Find playlist panel (works both on /watch and on playlist pages)
     const playlistPanel = document.querySelector('ytd-playlist-panel-renderer');
     if (!playlistPanel) {
-      // Use MutationObserver instead of setTimeout for better performance
-      const observer = new MutationObserver((_mutations, obs) => {
-        const panel = document.querySelector('ytd-playlist-panel-renderer');
-        if (panel) {
-          obs.disconnect();
-          addSearchUI();
-        }
-      });
-
-      observer.observe(document.body, {
-        childList: true,
-        subtree: true,
-      });
-
-      // Timeout fallback to prevent infinite observation
-      setTimeout(() => observer.disconnect(), 5000);
       return;
     }
 
@@ -532,6 +533,10 @@
 
   // Handle navigation changes with debouncing
   const handleNavigation = debounce(() => {
+    if (!shouldRunOnThisPage()) {
+      cleanup();
+      return;
+    }
     // Check if we're still on a playlist page
     const newPlaylistId = getCurrentPlaylistId();
 

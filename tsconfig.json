@@ -1,44 +1,31 @@
 {
   "compilerOptions": {
-    // Enable JavaScript sources but keep type checking opt-in via // @ts-check when ready
     "allowJs": true,
-    "checkJs": false, // ✅ Disabled for gradual adoption - enable per-file with @ts-check
+    "checkJs": false,
     "noEmit": true,
-
-    // Module resolution
     "moduleResolution": "node",
     "module": "ES2020",
     "target": "ES2020",
     "lib": ["ES2020", "DOM"],
-
-    // Type checking options (gradually enable strict mode)
     "strict": false,
     "noImplicitAny": false,
-    "strictNullChecks": false, // ⚠️ Disabled for now - too many errors, enable gradually
+    "strictNullChecks": false,
     "strictFunctionTypes": true,
     "strictPropertyInitialization": false,
     "noImplicitThis": true,
     "alwaysStrict": true,
-
-    // Additional checks (enabled but not blocking)
     "noUnusedLocals": true,
     "noUnusedParameters": true,
     "noImplicitReturns": true,
     "noFallthroughCasesInSwitch": true,
-
-    // Advanced options
     "skipLibCheck": true,
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-
-    // JSDoc options
     "maxNodeModuleJsDepth": 1,
     "allowUnreachableCode": false,
     "allowUnusedLabels": false,
-
-    // Output
     "declaration": false,
     "sourceMap": false
   },

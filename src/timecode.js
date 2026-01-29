@@ -38,25 +38,15 @@
 
   /**
    * Translation helper - uses centralized i18n system
-   * Falls back to key if translation not available
    * @param {string} key - Translation key
    * @param {Object} params - Interpolation parameters
    * @returns {string} Translated string
    */
   const t = (key, params = {}) => {
-    try {
-      if (typeof window !== 'undefined') {
-        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
-          return window.YouTubePlusI18n.t(key, params);
-        }
-        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
-          return window.YouTubeUtils.t(key, params);
-        }
-      }
-    } catch {
-      // Fallback to key if central i18n unavailable
-    }
-    return key;
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    // Fallback for initialization phase
+    return key || '';
   };
 
   // Configuration
@@ -1765,26 +1755,6 @@
     };
 
     document.addEventListener('yt-navigate-finish', handleNavigationChange);
-
-    // Also watch for URL changes using MutationObserver as a fallback
-    const observer = new MutationObserver(() => {
-      const newVideoId = new URLSearchParams(window.location.search).get('v');
-      if (newVideoId !== currentVideoId) {
-        handleNavigationChange();
-      }
-    });
-
-    // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(observer);
-
-    // ✅ Safe observe with document.body check
-    if (document.body) {
-      observer.observe(document.body, { subtree: true, childList: true });
-    } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        observer.observe(document.body, { subtree: true, childList: true });
-      });
-    }
   };
 
   // Keyboard shortcuts
@@ -1840,46 +1810,72 @@
     setupNavigation();
 
     // Settings modal observer
-    const observer = new MutationObserver(mutations => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
-            setTimeout(addTimecodePanelSettings, 100);
-            return;
-          }
+    let activeSettingsModal = null;
+    let modalObserver = null;
+
+    const disconnectModalObserver = () => {
+      try {
+        modalObserver?.disconnect?.();
+      } catch {}
+      modalObserver = null;
+      activeSettingsModal = null;
+    };
+
+    const attachModalObserver = modalEl => {
+      if (!modalEl || !(modalEl instanceof Element)) return;
+      if (modalObserver) return;
+
+      activeSettingsModal = modalEl;
+      modalObserver = new MutationObserver(() => {
+        if (
+          document.querySelector(
+            '.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)'
+          ) &&
+          !document.querySelector('.timecode-settings-item')
+        ) {
+          setTimeout(addTimecodePanelSettings, 50);
         }
-      }
+      });
 
-      if (
-        document.querySelector(
-          '.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)'
-        ) &&
-        !document.querySelector('.timecode-settings-item')
-      ) {
-        setTimeout(addTimecodePanelSettings, 50);
-      }
-    });
-
-    // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(observer);
-
-    // ✅ Safe observe with document.body check
-    if (document.body) {
-      observer.observe(document.body, {
+      YouTubeUtils.cleanupManager.registerObserver(modalObserver);
+      modalObserver.observe(modalEl, {
         childList: true,
         subtree: true,
         attributes: true,
         attributeFilter: ['class'],
       });
+    };
+
+    const bodyObserver = new MutationObserver(mutations => {
+      for (const mutation of mutations) {
+        for (const node of mutation.addedNodes) {
+          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
+            attachModalObserver(node);
+            setTimeout(addTimecodePanelSettings, 100);
+          }
+        }
+
+        for (const node of mutation.removedNodes) {
+          if (node === activeSettingsModal) {
+            disconnectModalObserver();
+          }
+        }
+      }
+    });
+
+    // ✅ Register observer in cleanupManager
+    YouTubeUtils.cleanupManager.registerObserver(bodyObserver);
+
+    // Observe only direct additions/removals on body (avoid subtree/attribute scans)
+    const startBodyObserver = () => {
+      if (!document.body) return;
+      bodyObserver.observe(document.body, { childList: true, subtree: false });
+    };
+
+    if (document.body) {
+      startBodyObserver();
     } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        observer.observe(document.body, {
-          childList: true,
-          subtree: true,
-          attributes: true,
-          attributeFilter: ['class'],
-        });
-      });
+      document.addEventListener('DOMContentLoaded', startBodyObserver, { once: true });
     }
 
     // ✅ Register global click listener in cleanupManager

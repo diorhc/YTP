@@ -2,47 +2,23 @@
 (function () {
   'use strict';
 
-  // Use centralized i18n where available to avoid duplicate translation objects
-  const _globalI18n =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const t = (key, params = {}) => {
-    try {
-      if (_globalI18n && typeof _globalI18n.t === 'function') {
-        return _globalI18n.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fall through
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    // Fallback for initialization phase
+    if (!key) return '';
+    let result = String(key);
+    for (const [k, v] of Object.entries(params || {})) {
+      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     }
-    if (!key || typeof key !== 'string') return '';
-    if (Object.keys(params).length === 0) return key;
-    let result = key;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
     return result;
   };
 
   // Language helper delegating to global i18n when available
   const getLanguage = () => {
-    try {
-      if (_globalI18n && typeof _globalI18n.getLanguage === 'function') {
-        return _globalI18n.getLanguage();
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.getLanguage === 'function'
-      ) {
-        return window.YouTubeUtils.getLanguage();
-      }
-    } catch {
-      // fallback
-    }
+    if (window.YouTubePlusI18n?.getLanguage) return window.YouTubePlusI18n.getLanguage();
+    if (window.YouTubeUtils?.getLanguage) return window.YouTubeUtils.getLanguage();
     const lang = document.documentElement.lang || navigator.language || 'en';
     return lang.startsWith('ru') ? 'ru' : 'en';
   };
@@ -51,7 +27,7 @@
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.3.1',
+    currentVersion: '2.3.4',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
@@ -763,7 +739,7 @@
 
       // Parse changelog from HTML
       // Look for version link followed by changelog span
-      // Structure: <a ...>v2.3.3</a> ... <span class="version-changelog">...</span>
+      // Structure: <a ...>v2.3.4</a> ... <span class="version-changelog">...</span>
       const escapedVersion = version.replace(/\./g, '\\.');
       // Match anchor tag content that contains the version number (handling prefixes like 'v', 'вер. ', etc.)
       const versionRegex = new RegExp(

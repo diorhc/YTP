@@ -6,36 +6,24 @@ const YouTubeUtils = (() => {
   const Storage = window.YouTubePlusStorage || {};
   const Performance = window.YouTubePlusPerformance || {};
 
-  // Use centralized i18n if available to avoid duplicated translation objects
-  const _globalI18n =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
-
   /**
    * Translation function with fallback support
+   * Uses centralized i18n from YouTubePlusI18n
    * @param {string} key - Translation key
    * @param {Object} params - Parameters for interpolation
    * @returns {string} Translated string
    */
   const t = (key, params = {}) => {
-    try {
-      if (_globalI18n && typeof _globalI18n.t === 'function') {
-        return _globalI18n.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fall through to default
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t && window.YouTubeUtils.t !== t) {
+      return window.YouTubeUtils.t(key, params);
     }
-    // Minimal fallback: return key or formatted params substitution
-    if (!key || typeof key !== 'string') return '';
-    if (Object.keys(params).length === 0) return key;
-    let result = key;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
+    // Fallback for initialization phase
+    if (!key) return '';
+    let result = String(key);
+    for (const [k, v] of Object.entries(params || {})) {
+      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+    }
     return result;
   };
 
@@ -1138,11 +1126,11 @@ if (typeof window !== 'undefined') {
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.3.3] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.3.4] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.3.3',
+    version: '2.3.4',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1173,7 +1161,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.3.3 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.3.4 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1587,6 +1575,17 @@ if (typeof window !== 'undefined') {
             this.settings,
             markDirty,
             this.saveSettings.bind(this)
+          );
+          return;
+        }
+
+        // YouTube Music settings - handle separately
+        if (handlers.isMusicSetting && handlers.isMusicSetting(setting)) {
+          handlers.handleMusicSettingToggle(
+            target,
+            setting,
+            this.showNotification.bind(this),
+            translate
           );
           return;
         }

@@ -224,5 +224,20 @@
   "delete": "삭제",
   "confirmDelete": "타임코드 \"{label}\"를 삭제하시겠습니까?",
   "reloadError": "타임코드 새로고침 오류",
-  "cannotEditChapter": "YouTube 챕터는 편집할 수 없습니다"
+  "cannotEditChapter": "YouTube 챕터는 편집할 수 없습니다",
+  "youtubeMusicTitle": "YouTube Music",
+  "youtubeMusicDesc": "YouTube Music을 위한 향상된 스타일 및 기능",
+  "musicStylesLabel": "YouTube Music 스타일",
+  "musicStylesDesc": "향상된 YouTube Music 스타일 활성화 (실험적)",
+  "musicEnhancementsLabel": "음악 개선",
+  "musicEnhancementsDesc": "모든 YouTube Music 개선 활성화",
+  "immersiveSearchLabel": "몰입형 검색",
+  "immersiveSearchDesc": "포커스 시 중앙 몰입형 검색 경험",
+  "sidebarHoverLabel": "사이드바 호버 효과",
+  "sidebarHoverDesc": "부드러운 애니메이션과 함께 호버 시 사이드바 표시",
+  "centeredPlayerLabel": "중앙 플레이어 레이아웃",
+  "centeredPlayerDesc": "향상된 스타일로 플레이어 중앙 배치",
+  "scrollToTopLabel": "맨 위로 스크롤 버튼",
+  "scrollToTopDesc": "사이드 패널에 맨 위로 스크롤 버튼 표시",
+  "musicSettingsSaved": "YouTube Music 설정 저장됨"
 }

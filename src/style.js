@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   try {
     const host = typeof location === 'undefined' ? '' : location.hostname;
     if (!host) return;
@@ -49,6 +49,17 @@ ytd-guide-section-renderer, ytd-guide-collapsible-section-entry-renderer {border
 .glass-dropdown__item{padding:8px 10px;border-radius:6px;margin:4px 0;cursor:pointer;color:inherit;font-size:13px}
 .glass-dropdown__item:hover{background:rgba(255,255,255,0.04)}
 .glass-dropdown__item[aria-selected="true"]{background:linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));box-shadow:inset 0 0 0 1px rgba(255,255,255,0.02)}
+/* Fix new feed layout */
+ytd-rich-item-renderer[rendered-from-rich-grid] { @media only screen and (min-width: 1400px) { --ytd-rich-grid-items-per-row: 4 !important; @media only screen and (min-width: 1700px) { --ytd-rich-grid-items-per-row: 5 !important; @media only screen and (min-width: 2180px) { --ytd-rich-grid-items-per-row: 6 !important;}}}}
+ytd-rich-item-renderer[is-in-first-column=""] { margin-left: calc(var(--ytd-rich-grid-item-margin) / 2) !important;}
+#contents { padding-left: calc(var(--ytd-rich-grid-item-margin) / 2 + var(--ytd-rich-grid-gutter-margin)) !important;}
+/* Better captions */
+.caption-window { backdrop-filter: blur(10px) brightness(70%) !important; border-radius: 1em !important; padding: 1em !important; box-shadow: #0008 0 0 20px !important; width: fit-content !important;}
+.ytp-caption-segment { background: none !important;}
+/* New player blur */
+.ytp-left-controls { .ytp-play-button, .ytp-volume-area, .ytp-time-display.notranslate > span, .ytp-chapter-container > button, .ytp-prev-button, .ytp-next-button { backdrop-filter: blur(5px) !important; background-color: #0004 !important;}}
+.ytp-right-controls, .ytp-time-wrapper { backdrop-filter: blur(5px) !important; background-color: #0004 !important;}
+.ytp-popup { backdrop-filter: blur(10px) !important; background-color: #0007 !important;}
 `;
 
     const ID = 'ytp-zen-features-style';

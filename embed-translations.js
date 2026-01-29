@@ -28,7 +28,27 @@ const buildFiles = [
 ];
 
 // Read all locale files
-const locales = ['en', 'ru', 'kr', 'fr', 'du', 'cn', 'tw', 'jp', 'tr'];
+const locales = [
+  'en',
+  'ru',
+  'kr',
+  'fr',
+  'du',
+  'cn',
+  'tw',
+  'jp',
+  'tr',
+  'de',
+  'es',
+  'ar',
+  'hi',
+  'id',
+  'it',
+  'pl',
+  'pt',
+  'uk',
+  'vi',
+];
 const translations = {};
 
 console.log('📦 Embedding translations into build...\n');

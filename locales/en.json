@@ -224,5 +224,20 @@
   "delete": "Delete",
   "confirmDelete": "Delete timecode \"{label}\"?",
   "reloadError": "Error reloading timecodes",
-  "cannotEditChapter": "Cannot edit YouTube chapters"
+  "cannotEditChapter": "Cannot edit YouTube chapters",
+  "youtubeMusicTitle": "YouTube Music",
+  "youtubeMusicDesc": "Enhanced styles and features for YouTube Music",
+  "musicStylesLabel": "YouTube Music Styles",
+  "musicStylesDesc": "Enable enhanced YouTube Music styles (experimental)",
+  "musicEnhancementsLabel": "Music Enhancements",
+  "musicEnhancementsDesc": "Enable all YouTube Music enhancements",
+  "immersiveSearchLabel": "Immersive Search",
+  "immersiveSearchDesc": "Centered immersive search experience when focused",
+  "sidebarHoverLabel": "Sidebar Hover Effects",
+  "sidebarHoverDesc": "Show sidebar on hover with smooth animations",
+  "centeredPlayerLabel": "Centered Player Layout",
+  "centeredPlayerDesc": "Center the player with enhanced styling",
+  "scrollToTopLabel": "Scroll to Top Button",
+  "scrollToTopDesc": "Show scroll to top button in side panel",
+  "musicSettingsSaved": "YouTube Music settings saved"
 }

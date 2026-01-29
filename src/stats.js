@@ -44,28 +44,16 @@
 
   if (isStudioPage()) return;
 
-  // Use centralized i18n where available to avoid duplicate translation objects
-  const _globalI18n =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const t = (key, params = {}) => {
-    try {
-      if (_globalI18n && typeof _globalI18n.t === 'function') {
-        return _globalI18n.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fall through
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    // Fallback for initialization phase
+    if (!key) return '';
+    let result = String(key);
+    for (const [k, v] of Object.entries(params || {})) {
+      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     }
-    if (!key || typeof key !== 'string') return '';
-    if (Object.keys(params).length === 0) return key;
-    let result = key;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
     return result;
   };
 
@@ -1155,9 +1143,11 @@
     const cards = buildStatCards(pageStats);
     const gridHtml = `<div class="stats-grid">${cards.join('')}</div>`;
 
-    // Get title
+    // Get title and escape for XSS prevention
     const title = (pageStats && pageStats.title) || document.title || '';
-    const titleHtml = title ? `<div class="stats-thumb-title-centered">${title}</div>` : '';
+    const escapeHtml = window.YouTubeSecurityUtils?.escapeHtml || (s => s);
+    const safeTitle = escapeHtml(title);
+    const titleHtml = safeTitle ? `<div class="stats-thumb-title-centered">${safeTitle}</div>` : '';
 
     // Get thumbnail and extras
     const thumbUrl = getThumbnailUrl(id, pageStats);
@@ -1744,7 +1734,10 @@
     const fields = extractVideoFields(stats, id);
     const { liveViewer, title, thumbUrl } = fields;
 
-    const titleHtml = title ? `<div class="stats-thumb-title-centered">${title}</div>` : '';
+    // Escape title for XSS prevention
+    const escapeHtml = window.YouTubeSecurityUtils?.escapeHtml || (s => s);
+    const safeTitle = escapeHtml(title);
+    const titleHtml = safeTitle ? `<div class="stats-thumb-title-centered">${safeTitle}</div>` : '';
     const defs = getVideoStatDefinitions(fields);
 
     // Build individual cards but group likes+dislikes into a single grid cell so
@@ -2110,10 +2103,10 @@
 
   // ✅ Safe observe with document.body check
   if (document.body) {
-    settingsObserver.observe(document.body, { childList: true, subtree: true });
+    settingsObserver.observe(document.body, { childList: true });
   } else {
     document.addEventListener('DOMContentLoaded', () => {
-      settingsObserver.observe(document.body, { childList: true, subtree: true });
+      settingsObserver.observe(document.body, { childList: true });
     });
   }
 
@@ -2171,26 +2164,6 @@
     }
   }
 
-  const observer = new MutationObserver(mutations => {
-    for (const mutation of mutations) {
-      if (mutation.type === 'childList') {
-        if (statsButtonEnabled) {
-          checkAndInsertIcon();
-          checkAndAddMenu();
-        }
-      }
-    }
-  });
-
-  // ✅ Safe observe with document.body check
-  if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
-  } else {
-    document.addEventListener('DOMContentLoaded', () => {
-      observer.observe(document.body, { childList: true, subtree: true });
-    });
-  }
-
   if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', init);
   } else {
@@ -2239,28 +2212,16 @@
 
   if (isStudioPageCount()) return;
 
-  // Use centralized i18n to avoid duplication
-  const _globalI18n_stats =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const t = (key, params = {}) => {
-    try {
-      if (_globalI18n_stats && typeof _globalI18n_stats.t === 'function') {
-        return _globalI18n_stats.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fallback
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    // Fallback for initialization phase
+    if (!key) return '';
+    let result = String(key);
+    for (const [k, v] of Object.entries(params || {})) {
+      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     }
-    if (!key || typeof key !== 'string') return '';
-    if (Object.keys(params).length === 0) return key;
-    let result = key;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
     return result;
   };
 
@@ -2410,7 +2371,9 @@
   })(history.replaceState);
 
   window.addEventListener('popstate', checkUrlChange);
-  setInterval(checkUrlChange, 1000);
+
+  // YouTube SPA navigation
+  window.addEventListener('yt-navigate-finish', checkUrlChange, { passive: true });
 
   function init() {
     try {
@@ -2526,6 +2489,16 @@
     displayLabel.style.fontWeight = 'bold';
     displaySection.appendChild(displayLabel);
 
+    // Use event delegation for all checkboxes
+    displaySection.addEventListener('change', e => {
+      const checkbox = e.target;
+      if (checkbox.type === 'checkbox' && checkbox.id.startsWith('show-')) {
+        const option = checkbox.id.replace('show-', '');
+        localStorage.setItem(`show-${option}`, String(checkbox.checked));
+        updateDisplayState();
+      }
+    });
+
     OPTIONS.forEach(option => {
       const checkboxContainer = document.createElement('div');
       checkboxContainer.style.display = 'flex';
@@ -2536,7 +2509,6 @@
       checkbox.type = 'checkbox';
       checkbox.id = `show-${option}`;
       checkbox.checked = localStorage.getItem(`show-${option}`) !== 'false';
-      // ✅ Применяем стиль как в настройках
       checkbox.className = 'ytp-plus-settings-checkbox';
 
       const checkboxLabel = document.createElement('label');
@@ -2546,11 +2518,6 @@
       checkboxLabel.style.color = 'white';
       checkboxLabel.style.fontSize = '14px';
       checkboxLabel.style.marginLeft = '8px';
-
-      checkbox.addEventListener('change', () => {
-        localStorage.setItem(`show-${option}`, String(checkbox.checked));
-        updateDisplayState();
-      });
 
       checkboxContainer.appendChild(checkbox);
       checkboxContainer.appendChild(checkboxLabel);
@@ -2563,6 +2530,76 @@
   function createControlsSection() {
     const controlsSection = document.createElement('div');
     controlsSection.style.flex = '1';
+
+    // Use event delegation for all sliders and selects
+    controlsSection.addEventListener('input', e => {
+      const target = e.target;
+
+      // Handle font size slider
+      if (target.classList.contains('font-size-slider')) {
+        const input = /** @type {HTMLInputElement} */ (target);
+        const fontSizeValue = controlsSection.querySelector('.font-size-value');
+        if (fontSizeValue) fontSizeValue.textContent = `${input.value}px`;
+        localStorage.setItem('youtubeEnhancerFontSize', input.value);
+        if (state.overlay) {
+          state.overlay
+            .querySelectorAll('.subscribers-number,.views-number,.videos-number')
+            .forEach(el => {
+              el.style.fontSize = `${input.value}px`;
+            });
+        }
+      }
+
+      // Handle interval slider
+      if (target.classList.contains('interval-slider')) {
+        const input = /** @type {HTMLInputElement} */ (target);
+        const newInterval = parseInt(input.value, 10) * 1000;
+        const intervalValue = controlsSection.querySelector('.interval-value');
+        if (intervalValue) intervalValue.textContent = `${input.value}s`;
+        state.updateInterval = newInterval;
+        localStorage.setItem('youtubeEnhancerInterval', String(newInterval));
+
+        if (state.intervalId) {
+          clearInterval(state.intervalId);
+          state.intervalId = setInterval(() => {
+            updateOverlayContent(state.overlay, state.currentChannelName);
+          }, newInterval);
+          YouTubeUtils.cleanupManager.registerInterval(state.intervalId);
+        }
+      }
+
+      // Handle opacity slider
+      if (target.classList.contains('opacity-slider')) {
+        const input = /** @type {HTMLInputElement} */ (target);
+        const newOpacity = parseInt(input.value, 10) / 100;
+        const opacityValue = controlsSection.querySelector('.opacity-value');
+        if (opacityValue) opacityValue.textContent = `${input.value}%`;
+        state.overlayOpacity = newOpacity;
+        localStorage.setItem('youtubeEnhancerOpacity', String(newOpacity));
+
+        if (state.overlay) {
+          state.overlay.style.backgroundColor = `rgba(0, 0, 0, ${newOpacity})`;
+        }
+      }
+    });
+
+    // Handle select changes
+    controlsSection.addEventListener('change', e => {
+      const target = e.target;
+
+      // Handle font family selector
+      if (target.classList.contains('font-family-select')) {
+        const select = /** @type {HTMLSelectElement} */ (target);
+        localStorage.setItem('youtubeEnhancerFontFamily', select.value);
+        if (state.overlay) {
+          state.overlay
+            .querySelectorAll('.subscribers-number,.views-number,.videos-number')
+            .forEach(el => {
+              el.style.fontFamily = select.value;
+            });
+        }
+      }
+    });
 
     // Font family selector
     const fontLabel = document.createElement('label');
@@ -2591,20 +2628,6 @@
       fontSelect.appendChild(opt);
     });
 
-    fontSelect.addEventListener('change', e => {
-      const { target } = e;
-      const select = /** @type {EventTarget & HTMLSelectElement} */ (target);
-      localStorage.setItem('youtubeEnhancerFontFamily', select.value);
-      if (state.overlay) {
-        // Only update .subscribers-number, .views-number, .videos-number
-        state.overlay
-          .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-          .forEach(el => {
-            el.style.fontFamily = select.value;
-          });
-      }
-    });
-
     // Font size slider
     const fontSizeLabel = document.createElement('label');
     fontSizeLabel.textContent = t('fontSize');
@@ -2627,22 +2650,7 @@
     fontSizeValue.style.fontSize = '14px';
     fontSizeValue.style.marginBottom = '15px';
 
-    fontSizeSlider.addEventListener('input', e => {
-      const { target } = e;
-      const input = /** @type {EventTarget & HTMLInputElement} */ (target);
-      fontSizeValue.textContent = `${input.value}px`;
-      localStorage.setItem('youtubeEnhancerFontSize', input.value);
-      if (state.overlay) {
-        // Only update .subscribers-number, .views-number, .videos-number
-        state.overlay
-          .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-          .forEach(el => {
-            el.style.fontSize = `${input.value}px`;
-          });
-      }
-    });
-
-    // ...existing code...
+    // Update interval slider
     const intervalLabel = document.createElement('label');
     intervalLabel.textContent = t('updateInterval');
     intervalLabel.style.display = 'block';
@@ -2664,25 +2672,7 @@
     intervalValue.style.marginBottom = '15px';
     intervalValue.style.fontSize = '14px';
 
-    intervalSlider.addEventListener('input', e => {
-      const { target } = e;
-      const input = /** @type {EventTarget & HTMLInputElement} */ (target);
-      const newInterval = parseInt(input.value, 10) * 1000;
-      intervalValue.textContent = `${input.value}s`;
-      state.updateInterval = newInterval;
-      localStorage.setItem('youtubeEnhancerInterval', String(newInterval));
-
-      if (state.intervalId) {
-        clearInterval(state.intervalId);
-        state.intervalId = setInterval(() => {
-          updateOverlayContent(state.overlay, state.currentChannelName);
-        }, newInterval);
-
-        // ✅ Register interval in cleanupManager
-        YouTubeUtils.cleanupManager.registerInterval(state.intervalId);
-      }
-    });
-
+    // Opacity slider
     const opacityLabel = document.createElement('label');
     opacityLabel.textContent = t('backgroundOpacity');
     opacityLabel.style.display = 'block';
@@ -2702,19 +2692,6 @@
     opacityValue.className = 'opacity-value';
     opacityValue.textContent = `${opacitySlider.value}%`;
     opacityValue.style.fontSize = '14px';
-
-    opacitySlider.addEventListener('input', e => {
-      const { target } = e;
-      const input = /** @type {EventTarget & HTMLInputElement} */ (target);
-      const newOpacity = parseInt(input.value, 10) / 100;
-      opacityValue.textContent = `${input.value}%`;
-      state.overlayOpacity = newOpacity;
-      localStorage.setItem('youtubeEnhancerOpacity', String(newOpacity));
-
-      if (state.overlay) {
-        state.overlay.style.backgroundColor = `rgba(0, 0, 0, ${newOpacity})`;
-      }
-    });
 
     controlsSection.appendChild(fontLabel);
     controlsSection.appendChild(fontSelect);
@@ -3492,9 +3469,9 @@
    * @returns {void}
    */
   function updateAllStatElements(overlay, channelId, stats) {
-    updateStatElement(overlay, channelId, 'subscribers', stats.followerCount, 'Subscribers');
-    updateStatElement(overlay, channelId, 'views', stats.bottomOdos[0], 'Views');
-    updateStatElement(overlay, channelId, 'videos', stats.bottomOdos[1], 'Videos');
+    updateStatElement(overlay, channelId, 'subscribers', stats.followerCount, t('subscribers'));
+    updateStatElement(overlay, channelId, 'views', stats.bottomOdos[0], t('views'));
+    updateStatElement(overlay, channelId, 'videos', stats.bottomOdos[1], t('videos'));
   }
 
   /**
@@ -3900,7 +3877,7 @@
     window.YouTubeStats = {
       init,
       cleanup,
-      version: '2.3.1',
+      version: '2.3.4',
     };
   }
 

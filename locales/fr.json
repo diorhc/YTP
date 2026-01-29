@@ -224,5 +224,20 @@
   "delete": "Supprimer",
   "confirmDelete": "Supprimer le timecode \"{label}\"?",
   "reloadError": "Erreur lors du rechargement des timecodes",
-  "cannotEditChapter": "Impossible de modifier les chapitres YouTube"
+  "cannotEditChapter": "Impossible de modifier les chapitres YouTube",
+  "youtubeMusicTitle": "YouTube Music",
+  "youtubeMusicDesc": "Styles et fonctionnalités améliorés pour YouTube Music",
+  "musicStylesLabel": "Styles YouTube Music",
+  "musicStylesDesc": "Activer les styles YouTube Music améliorés (expérimental)",
+  "musicEnhancementsLabel": "Améliorations musicales",
+  "musicEnhancementsDesc": "Activer toutes les améliorations YouTube Music",
+  "immersiveSearchLabel": "Recherche immersive",
+  "immersiveSearchDesc": "Expérience de recherche immersive centrée au focus",
+  "sidebarHoverLabel": "Effets de survol de la barre latérale",
+  "sidebarHoverDesc": "Afficher la barre latérale au survol avec animations fluides",
+  "centeredPlayerLabel": "Lecteur centré",
+  "centeredPlayerDesc": "Centrer le lecteur avec un style amélioré",
+  "scrollToTopLabel": "Bouton retour en haut",
+  "scrollToTopDesc": "Afficher le bouton retour en haut dans le panneau latéral",
+  "musicSettingsSaved": "Paramètres YouTube Music enregistrés"
 }

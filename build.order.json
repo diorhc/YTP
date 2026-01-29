@@ -5,6 +5,8 @@
   "error-boundary.js",
   "performance.js",
   "dom-cache.js",
+  "event-delegation.js",
+  "lazy-loader.js",
   "main.js",
   "i18n.js",
   "settings-helpers.js",
