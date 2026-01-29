@@ -8,6 +8,15 @@
 // @name:zh-TW          YouTube +
 // @name:fr             YouTube +
 // @name:ko             YouTube +
+// @name:ar             YouTube +
+// @name:es             YouTube +
+// @name:id             YouTube +
+// @name:it             YouTube +
+// @name:pl             YouTube +
+// @name:uk             YouTube +
+// @name:vi             YouTube +
+// @name:hi             YouTube +
+// @name:pt             YouTube +
 // @namespace           by
 // @version             2.3.4
 // @author              diorhc
@@ -20,6 +29,15 @@
 // @description:ko      Tabview YouTube 및 다운로드 및 기타 기능 ↴
 // @description:ja      タブビューYouTubeとダウンロードおよびその他の機能 ↴
 // @description:tr      Sekmeli Görünüm YouTube ve İndir ve diğer özellikler ↴
+// @description:ar      Tabview YouTube and download and other features ↴
+// @description:es      Vista de pestañas de YouTube, descarga y otras funciones ↴
+// @description:id      Tampilan tab YouTube, unduh, dan fitur lainnya ↴
+// @description:it      Vista a schede per YouTube, download e altre funzionalità ↴
+// @description:pl      Widok kart YouTube, pobieranie i inne funkcje ↴
+// @description:uk      Перегляд вкладок YouTube, завантаження та інші функції ↴
+// @description:vi      Chế độ tab cho YouTube, tải xuống và các tính năng khác ↴
+// @description:hi      YouTube टैब व्यू, डाउनलोड और अन्य सुविधाएँ ↴
+// @description:pt      Visualização em abas do YouTube, download e outros recursos ↴
 // @match               https://*.youtube.com/*
 // @match               https://music.youtube.com/*
 // @match               *://myactivity.google.com/*
