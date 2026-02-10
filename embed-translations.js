@@ -14,7 +14,6 @@
  */
 
 /* Allow console usage in this build/tool script. These logs are for developer output. */
-/* eslint-disable no-console */
 
 const fs = require('fs');
 const path = require('path');
