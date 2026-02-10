@@ -106,13 +106,14 @@ function createAboutIcon() {
  * @returns {string} Settings item HTML
  */
 function createSettingsItem(label, description, setting, checked) {
+  const inputId = `ytp-plus-setting-${setting}`;
   return `
     <div class="ytp-plus-settings-item">
       <div>
-        <label class="ytp-plus-settings-item-label">${label}</label>
+        <label class="ytp-plus-settings-item-label" for="${inputId}">${label}</label>
         <div class="ytp-plus-settings-item-description">${description}</div>
       </div>
-      <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="${setting}" ${checked ? 'checked' : ''}>
+      <input type="checkbox" id="${inputId}" class="ytp-plus-settings-checkbox" data-setting="${setting}" ${checked ? 'checked' : ''}>
     </div>
   `;
 }
@@ -125,15 +126,16 @@ function createSettingsItem(label, description, setting, checked) {
  */
 function createDownloadSiteOption(site, _t) {
   const { key, name, description, checked, hasControls, controls } = site;
+  const inputId = `download-site-${key}`;
 
   return `
     <div class="download-site-option">
       <div class="download-site-header">
-        <div>
+        <label for="${inputId}" class="download-site-label">
           <div class="download-site-name">${name}</div>
           <div class="download-site-desc">${description}</div>
-        </div>
-        <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="downloadSite_${key}" ${checked ? 'checked' : ''}>
+        </label>
+        <input type="checkbox" id="${inputId}" class="ytp-plus-settings-checkbox" data-setting="downloadSite_${key}" ${checked ? 'checked' : ''}>
       </div>
       ${hasControls ? `<div class="download-site-controls" style="display:${checked ? 'block' : 'none'};">${controls}</div>` : ''}
     </div>
@@ -141,25 +143,23 @@ function createDownloadSiteOption(site, _t) {
 }
 
 /**
- * Creates Y2Mate customization controls
- * @param {Object} customization - Y2Mate customization settings
+ * Creates External Downloader customization controls
+ * @param {Object} customization - External downloader customization settings
  * @param {Function} t - Translation function
  * @returns {string} Controls HTML
  */
-function createY2MateControls(customization, t) {
-  const name = customization?.name || 'Y2Mate';
-  const url = customization?.url || 'https://www.y2mate.com/youtube/{videoId}';
+function createExternalDownloaderControls(customization, t) {
+  const name = customization?.name || 'SSYouTube';
+  const url = customization?.url || 'https://ssyoutube.com/watch?v={videoId}';
 
   return `
     <input type="text" placeholder="${t('siteName')}" value="${name}" 
-        data-site="y2mate" data-field="name" class="download-site-input" 
-        style="width:100%;margin-top:6px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:12px;">
+        data-site="externalDownloader" data-field="name" class="download-site-input">
     <input type="text" placeholder="${t('urlTemplate')}" value="${url}" 
-      data-site="y2mate" data-field="url" class="download-site-input" 
-      style="width:100%;margin-top:4px;padding:6px;background:rgba(0,0,0,0.3);border:1px solid rgba(255,255,255,0.1);border-radius:4px;color:white;font-size:11px;">
+      data-site="externalDownloader" data-field="url" class="download-site-input small">
     <div class="download-site-cta">
-      <button class="glass-button" id="download-y2mate-save" style="padding:6px 10px;font-size:12px;">${t('saveButton')}</button>
-      <button class="glass-button" id="download-y2mate-reset" style="padding:6px 10px;font-size:12px;background:rgba(255,0,0,0.12);">${t('resetButton')}</button>
+      <button class="glass-button" id="download-externalDownloader-save">${t('saveButton')}</button>
+      <button class="glass-button danger" id="download-externalDownloader-reset">${t('resetButton')}</button>
     </div>
   `;
 }
@@ -170,8 +170,8 @@ function createY2MateControls(customization, t) {
  */
 function createYTDLControls() {
   return `
-    <div style="display:flex;gap:8px;align-items:center;width:100%;">
-      <button class="glass-button" id="open-ytdl-github" style="margin:0;padding:10px 14px;font-size:13px;flex:1;display:inline-flex;align-items:center;justify-content:center;gap:8px;">
+    <div class="download-site-cta one-btn">
+      <button class="glass-button" id="open-ytdl-github">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
           <polyline points="15,3 21,3 21,9"/>
@@ -194,12 +194,15 @@ function createDownloadSubmenu(settings, t) {
 
   const sites = [
     {
-      key: 'y2mate',
-      name: settings.downloadSiteCustomization?.y2mate?.name || 'Y2Mate',
+      key: 'externalDownloader',
+      name: settings.downloadSiteCustomization?.externalDownloader?.name || 'SSYouTube',
       description: t('customDownloader'),
-      checked: settings.downloadSites?.y2mate,
+      checked: settings.downloadSites?.externalDownloader,
       hasControls: true,
-      controls: createY2MateControls(settings.downloadSiteCustomization?.y2mate, t),
+      controls: createExternalDownloaderControls(
+        settings.downloadSiteCustomization?.externalDownloader,
+        t
+      ),
     },
     {
       key: 'ytdl',
@@ -219,9 +222,99 @@ function createDownloadSubmenu(settings, t) {
   ];
 
   return `
-    <div class="download-submenu" style="display:${display};margin-left:12px;margin-bottom:12px;">
-      <div class="glass-card" style="display:flex;flex-direction:column;gap:8px;">
+    <div class="download-submenu" data-submenu="download" style="display:${display};">
+      <div class="glass-card download-submenu-container">
         ${sites.map(site => createDownloadSiteOption(site, t)).join('')}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Small translation helper with fallback.
+ * @param {Function} t - Translation function
+ * @param {string} key - Translation key
+ * @param {string} fallback - Fallback text if key is missing
+ * @returns {string}
+ */
+function tr(t, key, fallback) {
+  try {
+    const v = t(key);
+    if (typeof v === 'string' && v && v !== key) return v;
+  } catch {}
+  return fallback;
+}
+
+/**
+ * Creates the styles submenu (style.js feature flags)
+ * @param {Object} settings - Settings object
+ * @param {Function} t - Translation function
+ * @returns {string}
+ */
+function createStyleSubmenu(settings, t) {
+  const display = settings.enableZenStyles ? 'block' : 'none';
+
+  const rows = [
+    {
+      label: tr(t, 'zenStyleThumbnailHoverLabel', 'Thumbnail hover preview'),
+      desc: tr(t, 'zenStyleThumbnailHoverDesc', 'Enlarge inline preview player on hover'),
+      key: 'zenStyles.thumbnailHover',
+      value: settings.zenStyles?.thumbnailHover,
+    },
+    {
+      label: tr(t, 'zenStyleImmersiveSearchLabel', 'Immersive search'),
+      desc: tr(t, 'zenStyleImmersiveSearchDesc', 'Centered searchbox experience when focused'),
+      key: 'zenStyles.immersiveSearch',
+      value: settings.zenStyles?.immersiveSearch,
+    },
+    {
+      label: tr(t, 'zenStyleHideVoiceSearchLabel', 'Hide Voice Search'),
+      desc: tr(t, 'zenStyleHideVoiceSearchDesc', 'Remove microphone button from the header'),
+      key: 'zenStyles.hideVoiceSearch',
+      value: settings.zenStyles?.hideVoiceSearch,
+    },
+    {
+      label: tr(t, 'zenStyleTransparentHeaderLabel', 'Transparent Header'),
+      desc: tr(t, 'zenStyleTransparentHeaderDesc', 'Make the top header transparent'),
+      key: 'zenStyles.transparentHeader',
+      value: settings.zenStyles?.transparentHeader,
+    },
+    {
+      label: tr(t, 'zenStyleHideSideGuideLabel', 'Hide Side Guide'),
+      desc: tr(t, 'zenStyleHideSideGuideDesc', 'Completely hide the sidebar guide'),
+      key: 'zenStyles.hideSideGuide',
+      value: settings.zenStyles?.hideSideGuide,
+    },
+    {
+      label: tr(t, 'zenStyleCleanSideGuideLabel', 'Clean Side Guide'),
+      desc: tr(t, 'zenStyleCleanSideGuideDesc', 'Remove Premium/Sports/Settings from sidebar'),
+      key: 'zenStyles.cleanSideGuide',
+      value: settings.zenStyles?.cleanSideGuide,
+    },
+    {
+      label: tr(t, 'zenStyleFixFeedLayoutLabel', 'Fix Feed Layout'),
+      desc: tr(t, 'zenStyleFixFeedLayoutDesc', 'Improve video grid layout on home page'),
+      key: 'zenStyles.fixFeedLayout',
+      value: settings.zenStyles?.fixFeedLayout,
+    },
+    {
+      label: tr(t, 'zenStyleBetterCaptionsLabel', 'Better Captions'),
+      desc: tr(t, 'zenStyleBetterCaptionsDesc', 'Enhanced subtitle styling with blur backdrop'),
+      key: 'zenStyles.betterCaptions',
+      value: settings.zenStyles?.betterCaptions,
+    },
+    {
+      label: tr(t, 'zenStylePlayerBlurLabel', 'Player Controls Blur'),
+      desc: tr(t, 'zenStylePlayerBlurDesc', 'Add blur effect to player controls'),
+      key: 'zenStyles.playerBlur',
+      value: settings.zenStyles?.playerBlur,
+    },
+  ];
+
+  return `
+    <div class="style-submenu" data-submenu="style" style="display:${display};">
+      <div class="glass-card style-submenu-container">
+        ${rows.map(r => createSettingsItem(r.label, r.desc, r.key, r.value)).join('')}
       </div>
     </div>
   `;
@@ -234,11 +327,71 @@ function createDownloadSubmenu(settings, t) {
  * @returns {string} Basic section HTML
  */
 function createBasicSettingsSection(settings, t) {
+  const downloadEnabled = !!settings.enableDownload;
+  const styleEnabled = settings.enableZenStyles !== false;
   return `
     <div class="ytp-plus-settings-section" data-section="basic">
+      <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
+        <div>
+          <label class="ytp-plus-settings-item-label" for="ytp-plus-setting-enableZenStyles">${tr(
+            t,
+            'zenStylesTitle',
+            'Zen styles'
+          )}</label>
+          <div class="ytp-plus-settings-item-description">${tr(
+            t,
+            'zenStylesDesc',
+            'Optional UI tweaks and cosmetic improvements'
+          )}</div>
+        </div>
+        <div class="ytp-plus-settings-item-actions">
+          <button
+            type="button"
+            class="ytp-plus-submenu-toggle"
+            data-submenu="style"
+            aria-label="Toggle styles submenu"
+            aria-expanded="${styleEnabled ? 'true' : 'false'}"
+            ${styleEnabled ? '' : 'disabled'}
+            style="display:${styleEnabled ? 'inline-flex' : 'none'};"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <input type="checkbox" id="ytp-plus-setting-enableZenStyles" class="ytp-plus-settings-checkbox" data-setting="enableZenStyles" ${
+            styleEnabled ? 'checked' : ''
+          }>
+        </div>
+      </div>
+      ${createStyleSubmenu(settings, t)}
       ${createSettingsItem(t('speedControl'), t('speedControlDesc'), 'enableSpeedControl', settings.enableSpeedControl)}
       ${createSettingsItem(t('screenshotButton'), t('screenshotButtonDesc'), 'enableScreenshot', settings.enableScreenshot)}
-      ${createSettingsItem(t('downloadButton'), t('downloadButtonDesc'), 'enableDownload', settings.enableDownload)}
+      <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
+        <div>
+          <label class="ytp-plus-settings-item-label" for="ytp-plus-setting-enableDownload">${t(
+            'downloadButton'
+          )}</label>
+          <div class="ytp-plus-settings-item-description">${t('downloadButtonDesc')}</div>
+        </div>
+        <div class="ytp-plus-settings-item-actions">
+          <button
+            type="button"
+            class="ytp-plus-submenu-toggle"
+            data-submenu="download"
+            aria-label="Toggle download submenu"
+            aria-expanded="${downloadEnabled ? 'true' : 'false'}"
+            ${downloadEnabled ? '' : 'disabled'}
+            style="display:${downloadEnabled ? 'inline-flex' : 'none'};"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <input type="checkbox" id="ytp-plus-setting-enableDownload" class="ytp-plus-settings-checkbox" data-setting="enableDownload" ${
+            settings.enableDownload ? 'checked' : ''
+          }>
+        </div>
+      </div>
       ${createDownloadSubmenu(settings, t)}
     </div>
   `;
@@ -264,14 +417,47 @@ function createAboutSection() {
  * @returns {Object} YouTube Music settings
  */
 function getMusicSettings() {
+  const defaults = {
+    enableMusic: true,
+    immersiveSearchStyles: true,
+    hoverStyles: true,
+    playerSidebarStyles: true,
+    centeredPlayerStyles: true,
+    playerBarStyles: true,
+    centeredPlayerBarStyles: true,
+    miniPlayerStyles: true,
+    scrollToTopStyles: true,
+  };
+
   // Prefer userscript-global storage so youtube.com and music.youtube.com share the setting.
   try {
     if (typeof GM_getValue !== 'undefined') {
       const stored = GM_getValue('youtube-plus-music-settings', null);
       if (typeof stored === 'string' && stored) {
         const parsed = JSON.parse(stored);
-        if (parsed && typeof parsed.enableMusic === 'boolean') {
-          return { enableMusic: parsed.enableMusic };
+        if (parsed && typeof parsed === 'object') {
+          const merged = { ...defaults };
+          if (typeof parsed.enableMusic === 'boolean') merged.enableMusic = parsed.enableMusic;
+          for (const key of Object.keys(defaults)) {
+            if (key === 'enableMusic') continue;
+            if (typeof parsed[key] === 'boolean') merged[key] = parsed[key];
+          }
+
+          // Legacy flags mapping
+          if (typeof parsed.enableImmersiveSearch === 'boolean') {
+            merged.immersiveSearchStyles = parsed.enableImmersiveSearch;
+          }
+          if (typeof parsed.enableSidebarHover === 'boolean') {
+            merged.hoverStyles = parsed.enableSidebarHover;
+          }
+          if (typeof parsed.enableCenteredPlayer === 'boolean') {
+            merged.centeredPlayerStyles = parsed.enableCenteredPlayer;
+          }
+          if (typeof parsed.enableScrollToTop === 'boolean') {
+            merged.scrollToTopStyles = parsed.enableScrollToTop;
+          }
+
+          return merged;
         }
       }
     }
@@ -281,11 +467,29 @@ function getMusicSettings() {
     const stored = localStorage.getItem('youtube-plus-music-settings');
     if (stored) {
       const parsed = JSON.parse(stored);
-      if (parsed && typeof parsed.enableMusic === 'boolean') {
-        return { enableMusic: parsed.enableMusic };
-      }
-      // Backward-compat: enable if any legacy flags are enabled
       if (parsed && typeof parsed === 'object') {
+        const merged = { ...defaults };
+        if (typeof parsed.enableMusic === 'boolean') merged.enableMusic = parsed.enableMusic;
+        for (const key of Object.keys(defaults)) {
+          if (key === 'enableMusic') continue;
+          if (typeof parsed[key] === 'boolean') merged[key] = parsed[key];
+        }
+
+        // Legacy flags mapping
+        if (typeof parsed.enableImmersiveSearch === 'boolean') {
+          merged.immersiveSearchStyles = parsed.enableImmersiveSearch;
+        }
+        if (typeof parsed.enableSidebarHover === 'boolean') {
+          merged.hoverStyles = parsed.enableSidebarHover;
+        }
+        if (typeof parsed.enableCenteredPlayer === 'boolean') {
+          merged.centeredPlayerStyles = parsed.enableCenteredPlayer;
+        }
+        if (typeof parsed.enableScrollToTop === 'boolean') {
+          merged.scrollToTopStyles = parsed.enableScrollToTop;
+        }
+
+        // Backward-compat: enable if any legacy flags are enabled
         const legacyEnabled = !!(
           parsed.enableMusicStyles ||
           parsed.enableMusicEnhancements ||
@@ -294,15 +498,190 @@ function getMusicSettings() {
           parsed.enableCenteredPlayer ||
           parsed.enableScrollToTop
         );
-        return { enableMusic: legacyEnabled };
+        if (legacyEnabled && typeof parsed.enableMusic !== 'boolean') merged.enableMusic = true;
+        return merged;
       }
     }
   } catch (e) {
     console.warn('[YouTube+] Failed to load music settings:', e);
   }
-  return {
-    enableMusic: true,
+  return defaults;
+}
+
+/**
+ * Creates the advanced settings section.
+ * Note: other modules may append additional items to this section.
+ * @param {Object} settings - Settings object
+ * @param {Function} t - Translation function
+ * @returns {string} Advanced section HTML
+ */
+function createAdvancedSettingsSection(settings, t) {
+  const musicSettings = getMusicSettings();
+  const musicEnabled = !!musicSettings.enableMusic;
+  const enhancedEnabled = settings.enableEnhanced !== false;
+
+  // Enhanced features settings with defaults
+  const enhancedSettings = {
+    enablePlayAll: settings.enablePlayAll !== false,
+    enableResumeTime: settings.enableResumeTime !== false,
+    enableZoom: settings.enableZoom !== false,
+    enableThumbnail: settings.enableThumbnail !== false,
+    enablePlaylistSearch: settings.enablePlaylistSearch !== false,
+    enableScrollToTopButton: settings.enableScrollToTopButton !== false,
   };
+
+  return `
+    <div class="ytp-plus-settings-section hidden" data-section="advanced">
+      <div class="ytp-plus-settings-group">
+        <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
+          <div>
+            <label class="ytp-plus-settings-item-label">${tr(t, 'enhancedFeaturesTitle', 'Enhanced Features')}</label>
+            <div class="ytp-plus-settings-item-description">${tr(t, 'enhancedFeaturesDesc', 'Additional productivity features and UI enhancements')}</div>
+          </div>
+          <div class="ytp-plus-settings-item-actions">
+            <button
+              type="button"
+              class="ytp-plus-submenu-toggle"
+              data-submenu="enhanced"
+              aria-label="Toggle enhanced features submenu"
+              aria-expanded="${enhancedEnabled ? 'true' : 'false'}"
+              ${enhancedEnabled ? '' : 'disabled'}
+              style="display:${enhancedEnabled ? 'inline-flex' : 'none'};"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableEnhanced" ${
+              enhancedEnabled ? 'checked' : ''
+            }>
+          </div>
+        </div>
+
+        <div class="enhanced-submenu" data-submenu="enhanced" style="display:${
+          enhancedEnabled ? 'block' : 'none'
+        };margin-left:12px;margin-bottom:12px;">
+          <div class="glass-card" style="display:flex;flex-direction:column;gap:8px;">
+            <div class="endscreen-settings-slot"></div>
+            ${createSettingsItem(
+              tr(t, 'enablePlayAllLabel', 'Play All Button'),
+              tr(t, 'enablePlayAllDesc', 'Add Play All button to playlists and channel pages'),
+              'enablePlayAll',
+              enhancedSettings.enablePlayAll
+            )}
+            ${createSettingsItem(
+              tr(t, 'enableResumeTimeLabel', 'Resume Playback'),
+              tr(t, 'enableResumeTimeDesc', 'Remember video position and offer to resume'),
+              'enableResumeTime',
+              enhancedSettings.enableResumeTime
+            )}
+            ${createSettingsItem(
+              tr(t, 'enableZoomLabel', 'Video Zoom'),
+              tr(t, 'enableZoomDesc', 'Enable zoom and pan controls for video player'),
+              'enableZoom',
+              enhancedSettings.enableZoom
+            )}
+            ${createSettingsItem(
+              tr(t, 'thumbnailPreview', 'Thumbnail Preview'),
+              tr(
+                t,
+                'thumbnailPreviewDesc',
+                'Add a button to thumbnails/avatars/banners to open the original image'
+              ),
+              'enableThumbnail',
+              enhancedSettings.enableThumbnail
+            )}
+            ${createSettingsItem(
+              tr(t, 'enablePlaylistSearchLabel', 'Playlist Search'),
+              tr(t, 'enablePlaylistSearchDesc', 'Add search functionality to playlist panels'),
+              'enablePlaylistSearch',
+              enhancedSettings.enablePlaylistSearch
+            )}
+            ${createSettingsItem(
+              tr(t, 'scrollToTopButtonLabel', 'Scroll to Top'),
+              tr(t, 'scrollToTopButtonDesc', 'Show scroll-to-top button on pages'),
+              'enableScrollToTopButton',
+              enhancedSettings.enableScrollToTopButton
+            )}
+          </div>
+        </div>
+
+        <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
+          <div>
+            <label class="ytp-plus-settings-item-label">${t('youtubeMusicTitle')}</label>
+            <div class="ytp-plus-settings-item-description">${t('youtubeMusicDesc')}</div>
+          </div>
+          <div class="ytp-plus-settings-item-actions">
+            <button
+              type="button"
+              class="ytp-plus-submenu-toggle"
+              data-submenu="music"
+              aria-label="Toggle YouTube Music submenu"
+              aria-expanded="${musicEnabled ? 'true' : 'false'}"
+              ${musicEnabled ? '' : 'disabled'}
+              style="display:${musicEnabled ? 'inline-flex' : 'none'};"
+            >
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"></polyline>
+              </svg>
+            </button>
+            <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableMusic" ${
+              musicSettings.enableMusic ? 'checked' : ''
+            }>
+          </div>
+        </div>
+
+        <div class="music-submenu" data-submenu="music" style="display:${
+          musicEnabled ? 'block' : 'none'
+        };margin-left:12px;margin-bottom:12px;">
+          <div class="glass-card" style="display:flex;flex-direction:column;gap:8px;">
+            ${createSettingsItem(
+              t('immersiveSearchLabel'),
+              t('immersiveSearchDesc'),
+              'immersiveSearchStyles',
+              musicSettings.immersiveSearchStyles
+            )}
+            ${createSettingsItem(
+              t('sidebarHoverLabel'),
+              t('sidebarHoverDesc'),
+              'hoverStyles',
+              musicSettings.hoverStyles
+            )}
+            ${createSettingsItem(
+              t('playerSidebarStylesLabel'),
+              t('playerSidebarStylesDesc'),
+              'playerSidebarStyles',
+              musicSettings.playerSidebarStyles
+            )}
+            ${createSettingsItem(
+              t('centeredPlayerLabel'),
+              t('centeredPlayerDesc'),
+              'centeredPlayerStyles',
+              musicSettings.centeredPlayerStyles
+            )}
+            ${createSettingsItem(
+              t('playerBarStylesLabel'),
+              t('playerBarStylesDesc'),
+              'playerBarStyles',
+              musicSettings.playerBarStyles
+            )}
+            ${createSettingsItem(
+              t('centeredPlayerBarStylesLabel'),
+              t('centeredPlayerBarStylesDesc'),
+              'centeredPlayerBarStyles',
+              musicSettings.centeredPlayerBarStyles
+            )}
+            ${createSettingsItem(
+              t('miniPlayerStylesLabel'),
+              t('miniPlayerStylesDesc'),
+              'miniPlayerStyles',
+              musicSettings.miniPlayerStyles
+            )}
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
 }
 
 /**
@@ -311,20 +690,9 @@ function getMusicSettings() {
  * @param {Function} t - Translation function
  * @returns {string} Experimental section HTML
  */
-function createExperimentalSettingsSection(settings, t) {
-  const musicSettings = getMusicSettings();
-
+function createExperimentalSettingsSection(_settings, _t) {
   return `
-    <div class="ytp-plus-settings-section hidden" data-section="experimental">
-      <div class="ytp-plus-settings-group">
-        ${createSettingsItem(
-          t('musicEnhancementsLabel'),
-          t('musicEnhancementsDesc'),
-          'enableMusic',
-          musicSettings.enableMusic
-        )}
-      </div>
-    </div>
+    <div class="ytp-plus-settings-section hidden" data-section="experimental"></div>
   `;
 }
 
@@ -346,7 +714,7 @@ function createMainContent(settings, t) {
       </div>              
       <div class="ytp-plus-settings-content">                
         ${createBasicSettingsSection(settings, t)}
-        <div class="ytp-plus-settings-section hidden" data-section="advanced"></div>
+        ${createAdvancedSettingsSection(settings, t)}
         ${createExperimentalSettingsSection(settings, t)}
         <div class="ytp-plus-settings-section hidden" data-section="report"></div>
         ${createAboutSection()}
@@ -366,6 +734,7 @@ if (typeof window !== 'undefined') {
     createSettingsItem,
     createDownloadSiteOption,
     createBasicSettingsSection,
+    createAdvancedSettingsSection,
     createExperimentalSettingsSection,
     getMusicSettings,
   };

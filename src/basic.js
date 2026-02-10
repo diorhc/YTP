@@ -1126,11 +1126,11 @@ if (typeof window !== 'undefined') {
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.3.4] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.4] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.3.4',
+    version: '2.4',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1161,7 +1161,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.3.4 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.4 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1192,18 +1192,42 @@ if (typeof window !== 'undefined') {
       enableSpeedControl: true,
       enableScreenshot: true,
       enableDownload: true,
+
+      // Basic: optional UI/style tweaks (style.js)
+      enableZenStyles: true,
+      zenStyles: {
+        thumbnailHover: true,
+        immersiveSearch: true,
+        hideVoiceSearch: true,
+        transparentHeader: true,
+        hideSideGuide: false,
+        cleanSideGuide: false,
+        fixFeedLayout: true,
+        betterCaptions: true,
+        playerBlur: true,
+      },
+
+      // Enhanced features (advanced tab)
+      enableEnhanced: true,
+      enablePlayAll: true,
+      enableResumeTime: true,
+      enableZoom: true,
+      enableThumbnail: true,
+      enablePlaylistSearch: true,
+      enableScrollToTopButton: true,
+
       // Состояние сайтов внутри сабменю кнопки Download (ytdl всегда включён)
       downloadSites: {
         direct: true,
-        y2mate: true,
+        externalDownloader: true,
         ytdl: true,
       },
       // Настройки кастомизации download сайтов
       downloadSiteCustomization: {
-        y2mate:
+        externalDownloader:
           typeof window !== 'undefined' && window.YouTubePlusConstants
-            ? window.YouTubePlusConstants.DOWNLOAD_SITES.Y2MATE
-            : { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+            ? window.YouTubePlusConstants.DOWNLOAD_SITES.EXTERNAL_DOWNLOADER
+            : { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
       },
       storageKey: 'youtube_plus_settings',
       // runtime setting: hide left side guide/footer when true
@@ -1362,6 +1386,17 @@ if (typeof window !== 'undefined') {
       localStorage.setItem(this.settings.storageKey, JSON.stringify(this.settings));
       this.updatePageBasedOnSettings();
       this.refreshDownloadButton();
+
+      // Expose and broadcast updated settings so other modules can react live.
+      try {
+        window.youtubePlus = window.youtubePlus || {};
+        window.youtubePlus.settings = this.settings;
+        window.dispatchEvent(
+          new CustomEvent('youtube-plus-settings-updated', {
+            detail: this.settings,
+          })
+        );
+      } catch {}
     },
 
     updatePageBasedOnSettings() {
@@ -1430,8 +1465,8 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-button{background:transparent;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:var(--yt-space-sm);margin-right:var(--yt-space-sm);border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background-color .2s,transform .2s;}
         .ytp-plus-settings-button svg{width:24px;height:24px;}
         .ytp-plus-settings-button:hover{background:var(--yt-hover-bg);transform:rotate(30deg);color:var(--yt-text-secondary);}
-        .ytp-plus-settings-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:100000;backdrop-filter:blur(8px) saturate(140%);-webkit-backdrop-filter:blur(8px) saturate(140%);animation:ytEnhanceFadeIn .25s ease-out;}
-        .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:20px;width:760px;max-width:94%;max-height:60vh;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.45);animation:ytEnhanceScaleIn .28s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-glass-border);will-change:transform,opacity;display:flex;flex-direction:row}
+        .ytp-plus-settings-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:100000;backdrop-filter:blur(8px) saturate(140%);-webkit-backdrop-filter:blur(8px) saturate(140%);animation:ytEnhanceFadeIn .25s ease-out;contain:layout style paint;}
+        .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:20px;width:760px;max-width:94%;max-height:60vh;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.45);animation:ytEnhanceScaleIn .28s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-glass-border);will-change:transform,opacity;display:flex;flex-direction:row;contain:layout style paint;}
         .ytp-plus-settings-sidebar{width:240px;background:var(--yt-header-bg);border-right:1px solid var(--yt-glass-border);display:flex;flex-direction:column;backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
         .ytp-plus-settings-sidebar-header{padding:var(--yt-space-md) var(--yt-space-lg);border-bottom:1px solid var(--yt-glass-border);display:flex;justify-content:space-between;align-items:center;}
         .ytp-plus-settings-title{font-size:18px;font-weight:500;margin:0;color:var(--yt-text-primary);}
@@ -1450,20 +1485,27 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-content{flex:1;padding:var(--yt-space-md) var(--yt-space-lg);overflow-y:auto;}
         .ytp-plus-settings-section{margin-bottom:var(--yt-space-lg);}
         .ytp-plus-settings-section-title{font-size:16px;font-weight:500;margin-bottom:var(--yt-space-md);color:var(--yt-text-primary);}
-        .ytp-plus-settings-section.hidden{display:none;}
+        .ytp-plus-settings-section.hidden{display:none !important;}
         .ytp-plus-settings-item{display:flex;align-items:center;margin-bottom:var(--yt-space-md);padding:14px 18px;background:transparent;transition:all .25s cubic-bezier(.4,0,.2,1);border-radius:var(--yt-radius-md);}
         .ytp-plus-settings-item:hover{background:var(--yt-hover-bg);transform:translateX(6px);box-shadow:0 2px 8px rgba(0,0,0,.1);}
+        .ytp-plus-settings-item-actions{display:flex;align-items:center;gap:10px;margin-left:auto;}
+        .ytp-plus-submenu-toggle{width:26px;height:26px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:transparent;border:1px solid var(--yt-glass-border);color:var(--yt-text-primary);cursor:pointer;opacity:.9;transition:transform .15s ease,background-color .15s ease,opacity .15s ease;}
+        .ytp-plus-submenu-toggle:hover{background:var(--yt-hover-bg);transform:scale(1.06);}
+        .ytp-plus-submenu-toggle:disabled{opacity:.35;cursor:not-allowed;transform:none;}
+        .ytp-plus-submenu-toggle svg{width:16px;height:16px;transition:transform .15s ease;}
+        .ytp-plus-submenu-toggle[aria-expanded="false"] svg{transform:rotate(-90deg);}
+        .ytp-plus-submenu-toggle[aria-expanded="true"] svg{transform:rotate(0deg);}
         .ytp-plus-settings-item-label{flex:1;font-size:14px;color:var(--yt-text-primary);}
         .ytp-plus-settings-item-description{font-size:12px;color:var(--yt-text-secondary);margin-top:4px;}
-        .ytp-plus-settings-checkbox{appearance:none;-webkit-appearance:none;-moz-appearance:none;width:15px;height:15px;margin-left:auto;border:1px solid var(--yt-glass-border);border-radius:50%;background:transparent;display:inline-flex;align-items:center;justify-content:center;transition:all 250ms cubic-bezier(.4,0,.23,1);cursor:pointer;position:relative;flex-shrink:0;color:#fff;}
+        .ytp-plus-settings-checkbox{appearance:none;-webkit-appearance:none;-moz-appearance:none;width:20px;height:20px;min-width:20px;min-height:20px;margin-left:auto;border:2px solid var(--yt-glass-border);border-radius:50%;background:transparent;display:inline-flex;align-items:center;justify-content:center;transition:all 250ms cubic-bezier(.4,0,.23,1);cursor:pointer;position:relative;flex-shrink:0;color:#fff;box-sizing:border-box;}
         html:not([dark]) .ytp-plus-settings-checkbox{border-color:rgba(0,0,0,.25);color:#222;}
         .ytp-plus-settings-checkbox:focus-visible{outline:2px solid var(--yt-accent);outline-offset:2px;}
         .ytp-plus-settings-checkbox:hover{background:var(--yt-hover-bg);transform:scale(1.1);}
-        .ytp-plus-settings-checkbox::before{content:"";width:4px;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(45deg);top:4px;left:3px;transition:width 100ms ease 50ms,opacity 50ms;transform-origin:0% 0%;opacity:0;}
-        .ytp-plus-settings-checkbox::after{content:"";width:0;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(305deg);top:9px;left:6px;transition:width 100ms ease,opacity 50ms;transform-origin:0% 0%;opacity:0;}
-        .ytp-plus-settings-checkbox:checked{transform:rotate(0deg) scale(1.2);}
-        .ytp-plus-settings-checkbox:checked::before{width:8px;opacity:1;background:#fff;transition:width 150ms ease 100ms,opacity 150ms ease 100ms;}
-        .ytp-plus-settings-checkbox:checked::after{width:15px;opacity:1;background:#fff;transition:width 150ms ease 250ms,opacity 150ms ease 250ms;}
+        .ytp-plus-settings-checkbox::before{content:"";width:5px;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(45deg);top:6px;left:3px;transition:width 100ms ease 50ms,opacity 50ms;transform-origin:0% 0%;opacity:0;}
+        .ytp-plus-settings-checkbox::after{content:"";width:0;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(305deg);top:11px;left:7px;transition:width 100ms ease,opacity 50ms;transform-origin:0% 0%;opacity:0;}
+        .ytp-plus-settings-checkbox:checked{transform:rotate(0deg) scale(1.15);}
+        .ytp-plus-settings-checkbox:checked::before{width:9px;opacity:1;background:#fff;transition:width 150ms ease 100ms,opacity 150ms ease 100ms;}
+        .ytp-plus-settings-checkbox:checked::after{width:16px;opacity:1;background:#fff;transition:width 150ms ease 250ms,opacity 150ms ease 250ms;}
         .ytp-plus-footer{padding:var(--yt-space-md) var(--yt-space-lg);border-top:1px solid var(--yt-glass-border);display:flex;justify-content:flex-end;background:transparent;}
         .ytp-plus-button{padding:var(--yt-space-sm) var(--yt-space-md);border-radius:18px;border:none;font-size:14px;font-weight:500;cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1);}
         .ytp-plus-button-primary{background:transparent;border:1px solid var(--yt-glass-border);color:var(--yt-text-primary);}
@@ -1490,14 +1532,25 @@ if (typeof window !== 'undefined') {
         .glass-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--yt-modal-bg);display:flex;align-items:center;justify-content:center;z-index:99999;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);}
         .glass-button{background:var(--yt-button-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);padding:var(--yt-space-sm) var(--yt-space-md);color:var(--yt-text-primary);cursor:pointer;transition:all .2s ease;backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
         .glass-button:hover{background:var(--yt-hover-bg);transform:translateY(-1px);box-shadow:var(--yt-shadow);}
-        .download-site-option{display:flex;flex-direction:column;align-items:stretch;gap:8px;}
-        .download-site-header{display:flex;flex-direction:row;align-items:center;justify-content:space-between;width:100%;gap:8px;}
-        .download-site-controls{width:100%;margin-top:6px;}
-        .download-site-cta{display:flex;flex-direction:row;gap:8px;margin-top:6px;}
-        .download-site-cta .glass-button{width:100%;}
+        .download-submenu{margin:4px 0 12px 12px;}
+        .download-submenu-container{display:flex;flex-direction:column;gap:8px;}
+        .style-submenu{margin:4px 0 12px 12px;}
+        .style-submenu-container{display:flex;flex-direction:column;gap:8px;}
+        .download-site-option{display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:10px;border-radius:var(--yt-radius-md);transition:background .2s;}
+        .download-site-option:hover{background:var(--yt-hover-bg);}
+        .download-site-header{display:flex;flex-direction:row;align-items:center;justify-content:space-between;width:100%;gap:12px;}
+        .download-site-label{flex:1;cursor:pointer;display:flex;flex-direction:column;}
+        .download-site-controls{width:100%;margin-top:4px;padding-top:10px;border-top:1px solid var(--yt-glass-border);}
+        .download-site-input{width:95%;margin-top:8px;padding:8px;background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-sm);color:var(--yt-text-primary);font-size:13px;transition:all .2s;}
+        .download-site-input:focus{border-color:var(--yt-accent);background:var(--yt-hover-bg);}
+        .download-site-input.small{margin-top:6px;font-size:12px;}
+        .download-site-cta{display:flex;flex-direction:row;gap:8px;margin-top:10px;}
+        .download-site-cta .glass-button{flex:1;justify-content:center;font-size:13px;padding:8px 12px;}
+        .download-site-cta .glass-button.danger{background:rgba(255,59,59,0.15);border-color:rgba(255,59,59,0.3);}
+        .download-site-cta .glass-button.danger:hover{background:rgba(255,59,59,0.25);}
         .download-site-option .ytp-plus-settings-checkbox{margin:0;}
-        .download-site-name{font-weight:600;color:var(--yt-text-primary);}
-        .download-site-desc{font-size:12px;color:var(--yt-text-secondary);margin-top:2px;}
+        .download-site-name{font-weight:500;font-size:15px;color:var(--yt-text-primary);}
+        .download-site-desc{font-size:12px;color:var(--yt-text-secondary);margin-top:2px;opacity:0.8;}
         /* Ensure custom YouTube searchbox input backgrounds are transparent to match theme */
         .ytSearchboxComponentInputBox { background: transparent !important; }
         /* Fix native select/option contrast inside settings modal */
@@ -1505,9 +1558,18 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-panel select option {background: var(--yt-panel-bg) !important; color: var(--yt-text-primary) !important;}
         /* Improve select appearance and ensure options are legible */
         .ytp-plus-settings-panel select {-webkit-appearance: menulist !important; appearance: menulist !important; padding: 6px 8px !important; border-radius: 6px !important; border: 1px solid var(--yt-glass-border) !important;}
+        /* Shared glass-dropdown styles used by settings components */
+        .glass-dropdown{position:relative;display:inline-block;min-width:110px}
+        .glass-dropdown__toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:6px 8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));color:inherit;border:1px solid rgba(255,255,255,0.06);backdrop-filter:blur(8px) saturate(120%);-webkit-backdrop-filter:blur(8px) saturate(120%);cursor:pointer}
+        .glass-dropdown__toggle:focus{outline:2px solid rgba(255,255,255,0.06)}
+        .glass-dropdown__label{font-size:12px}
+        .glass-dropdown__chev{opacity:0.9}
+        .glass-dropdown__list{position:absolute;left:0;right:0;top:calc(100% + 8px);z-index:20000;display:none;margin:0;padding:6px;border-radius:10px;list-style:none;background:var(--yt-header-bg);border:1px solid rgba(255,255,255,0.06);box-shadow:0 8px 30px rgba(0,0,0,0.5);backdrop-filter:blur(10px) saturate(130%);-webkit-backdrop-filter:blur(10px) saturate(130%);max-height:220px;overflow:auto}
+        .glass-dropdown__item{padding:8px 10px;border-radius:6px;margin:4px 0;cursor:pointer;color:inherit;font-size:13px}
+        .glass-dropdown__item:hover{background:rgba(255,255,255,0.04)}
+        .glass-dropdown__item[aria-selected="true"]{background:linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));box-shadow:inset 0 0 0 1px rgba(255,255,255,0.02)}
         `;
 
-      // ✅ Use StyleManager instead of createElement('style')
       if (!document.getElementById('yt-enhancer-styles')) {
         YouTubeUtils.StyleManager.add('yt-enhancer-main', styles);
       }
@@ -1560,58 +1622,6 @@ if (typeof window !== 'undefined') {
         return;
       }
 
-      // Checkbox handling
-      if (target.classList.contains('ytp-plus-settings-checkbox')) {
-        const { dataset } = /** @type {HTMLElement} */ (target);
-        const { setting } = dataset;
-        if (!setting) return;
-
-        // Download site checkboxes
-        if (setting.startsWith('downloadSite_')) {
-          const key = setting.replace('downloadSite_', '');
-          handlers.handleDownloadSiteToggle(
-            target,
-            key,
-            this.settings,
-            markDirty,
-            this.saveSettings.bind(this)
-          );
-          return;
-        }
-
-        // YouTube Music settings - handle separately
-        if (handlers.isMusicSetting && handlers.isMusicSetting(setting)) {
-          handlers.handleMusicSettingToggle(
-            target,
-            setting,
-            this.showNotification.bind(this),
-            translate
-          );
-          return;
-        }
-
-        // Simple settings
-        handlers.handleSimpleSettingToggle(
-          target,
-          setting,
-          this.settings,
-          context,
-          markDirty,
-          this.saveSettings.bind(this),
-          modal
-        );
-        return;
-      }
-
-      // Download site input fields
-      if (target.classList.contains('download-site-input')) {
-        const { dataset } = /** @type {HTMLElement} */ (target);
-        const { site, field } = dataset;
-        if (!site || !field) return;
-        handlers.handleDownloadSiteInput(target, site, field, this.settings, markDirty, translate);
-        return;
-      }
-
       // Save button
       if (target.id === 'ytp-plus-save-settings' || target.id === 'ytp-plus-save-settings-icon') {
         this.saveSettings();
@@ -1620,9 +1630,9 @@ if (typeof window !== 'undefined') {
         return;
       }
 
-      // Y2Mate save
-      if (target.id === 'download-y2mate-save') {
-        handlers.handleY2MateSave(
+      // External downloader save
+      if (target.id === 'download-externalDownloader-save') {
+        handlers.handleExternalDownloaderSave(
           target,
           this.settings,
           this.saveSettings.bind(this),
@@ -1632,9 +1642,9 @@ if (typeof window !== 'undefined') {
         return;
       }
 
-      // Y2Mate reset
-      if (target.id === 'download-y2mate-reset') {
-        handlers.handleY2MateReset(
+      // External downloader reset
+      if (target.id === 'download-externalDownloader-reset') {
+        handlers.handleExternalDownloaderReset(
           modal,
           this.settings,
           this.saveSettings.bind(this),
@@ -1677,6 +1687,58 @@ if (typeof window !== 'undefined') {
       const handleModalClick = e => {
         const { target } = /** @type {{ target: HTMLElement }} */ (e);
 
+        // Submenu toggle buttons (e.g., YouTube Music)
+        const submenuToggleBtn = target.closest('.ytp-plus-submenu-toggle');
+        if (submenuToggleBtn) {
+          try {
+            if (
+              submenuToggleBtn instanceof HTMLElement &&
+              submenuToggleBtn.tagName === 'BUTTON' &&
+              submenuToggleBtn.hasAttribute('disabled')
+            ) {
+              return;
+            }
+            const submenuKey = submenuToggleBtn.dataset?.submenu;
+            if (!submenuKey) return;
+            const panel = submenuToggleBtn.closest('.ytp-plus-settings-panel');
+            if (!panel) return;
+            const submenuSelector =
+              submenuKey === 'music'
+                ? `.music-submenu[data-submenu="${submenuKey}"]`
+                : submenuKey === 'download'
+                  ? `.download-submenu[data-submenu="${submenuKey}"]`
+                  : submenuKey === 'style'
+                    ? `.style-submenu[data-submenu="${submenuKey}"]`
+                    : submenuKey === 'pip'
+                      ? `.pip-submenu[data-submenu="${submenuKey}"]`
+                      : submenuKey === 'timecode'
+                        ? `.timecode-submenu[data-submenu="${submenuKey}"]`
+                        : submenuKey === 'enhanced'
+                          ? `.enhanced-submenu[data-submenu="${submenuKey}"]`
+                          : `[data-submenu="${submenuKey}"]`;
+            const submenuEl = panel.querySelector(submenuSelector);
+            if (!(submenuEl instanceof HTMLElement)) return;
+
+            const computedDisplay = window.getComputedStyle(submenuEl).display;
+            const currentlyHidden = computedDisplay === 'none' || submenuEl.hidden;
+            const nextHidden = !currentlyHidden;
+            submenuEl.style.display = nextHidden ? 'none' : '';
+            submenuToggleBtn.setAttribute('aria-expanded', nextHidden ? 'false' : 'true');
+
+            // Persist submenu expanded state to localStorage
+            try {
+              const submenuStates = JSON.parse(
+                localStorage.getItem('ytp-plus-submenu-states') || '{}'
+              );
+              submenuStates[submenuKey] = !nextHidden;
+              localStorage.setItem('ytp-plus-submenu-states', JSON.stringify(submenuStates));
+            } catch {
+              // Ignore storage errors
+            }
+          } catch {}
+          return;
+        }
+
         // Close modal
         if (target === modal) {
           modal.remove();
@@ -1708,6 +1770,46 @@ if (typeof window !== 'undefined') {
 
       modal.addEventListener('click', handleModalClick);
 
+      // Change event delegation for checkboxes
+      modal.addEventListener('change', e => {
+        const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
+        if (!target.classList.contains('ytp-plus-settings-checkbox')) return;
+
+        const { dataset } = /** @type {HTMLElement} */ (target);
+        const { setting } = dataset;
+        if (!setting) return;
+
+        // Download site checkboxes
+        if (setting.startsWith('downloadSite_')) {
+          const key = setting.replace('downloadSite_', '');
+          handlers.handleDownloadSiteToggle(
+            target,
+            key,
+            this.settings,
+            markDirty,
+            this.saveSettings.bind(this)
+          );
+          return;
+        }
+
+        // YouTube Music settings - handle separately
+        if (handlers.isMusicSetting && handlers.isMusicSetting(setting)) {
+          handlers.handleMusicSettingToggle(target, setting, this.showNotification.bind(this), t);
+          return;
+        }
+
+        // Simple settings
+        handlers.handleSimpleSettingToggle(
+          target,
+          setting,
+          this.settings,
+          context,
+          markDirty,
+          this.saveSettings.bind(this),
+          modal
+        );
+      });
+
       // Input event delegation
       modal.addEventListener('input', e => {
         const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
@@ -1736,6 +1838,63 @@ if (typeof window !== 'undefined') {
         YouTubeUtils.logError('Report', 'Failed to initialize report section', e);
       }
 
+      // Restore submenu expanded states from localStorage
+      try {
+        const submenuStates = JSON.parse(localStorage.getItem('ytp-plus-submenu-states') || '{}');
+        Object.entries(submenuStates).forEach(([key, expanded]) => {
+          const toggleBtn = modal.querySelector(`.ytp-plus-submenu-toggle[data-submenu="${key}"]`);
+          if (toggleBtn instanceof HTMLElement && !toggleBtn.hasAttribute('disabled')) {
+            const submenuSelector =
+              key === 'music'
+                ? `.music-submenu[data-submenu="${key}"]`
+                : key === 'download'
+                  ? `.download-submenu[data-submenu="${key}"]`
+                  : key === 'style'
+                    ? `.style-submenu[data-submenu="${key}"]`
+                    : key === 'pip'
+                      ? `.pip-submenu[data-submenu="${key}"]`
+                      : key === 'timecode'
+                        ? `.timecode-submenu[data-submenu="${key}"]`
+                        : key === 'enhanced'
+                          ? `.enhanced-submenu[data-submenu="${key}"]`
+                          : `[data-submenu="${key}"]`;
+            const submenuEl = modal.querySelector(submenuSelector);
+            if (submenuEl instanceof HTMLElement) {
+              const isExpanded = !!expanded;
+              submenuEl.style.display = isExpanded ? '' : 'none';
+              toggleBtn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
+            }
+          }
+        });
+      } catch {
+        // Ignore storage errors
+      }
+
+      // Restore active nav section from localStorage
+      try {
+        const savedSection = localStorage.getItem('ytp-plus-active-nav-section');
+        if (savedSection) {
+          const navItem = modal.querySelector(
+            `.ytp-plus-settings-nav-item[data-section="${savedSection}"]`
+          );
+          if (navItem) {
+            modal
+              .querySelectorAll('.ytp-plus-settings-nav-item')
+              .forEach(item => item.classList.remove('active'));
+            modal
+              .querySelectorAll('.ytp-plus-settings-section')
+              .forEach(s => s.classList.add('hidden'));
+            navItem.classList.add('active');
+            const targetSection = modal.querySelector(
+              `.ytp-plus-settings-section[data-section="${savedSection}"]`
+            );
+            if (targetSection) targetSection.classList.remove('hidden');
+          }
+        }
+      } catch {
+        // Ignore storage errors
+      }
+
       return modal;
     },
 
@@ -1743,10 +1902,17 @@ if (typeof window !== 'undefined') {
       const existingModal = this.getElement('.ytp-plus-settings-modal', false);
       if (existingModal) existingModal.remove();
       document.body.appendChild(this.createSettingsModal());
+      // Notify modules that settings modal is now in DOM
+      try {
+        document.dispatchEvent(
+          new CustomEvent('youtube-plus-settings-modal-opened', { bubbles: true })
+        );
+      } catch {
+        // ignore event dispatch errors
+      }
     },
 
     waitForElement(selector, timeout = 5000) {
-      // ✅ Use centralized utility
       return YouTubeUtils.waitForElement(selector, timeout);
     },
 
@@ -2108,10 +2274,41 @@ if (typeof window !== 'undefined') {
 
     setupVideoObserver() {
       if (this._speedInterval) clearInterval(this._speedInterval);
-      this._speedInterval = setInterval(() => this.applyCurrentSpeed(), 1000);
+      this._speedInterval = null;
 
-      // ✅ Register interval in cleanupManager
-      YouTubeUtils.cleanupManager.registerInterval(this._speedInterval);
+      // Event-driven speed control instead of polling every 1s
+      const applySpeed = () => this.applyCurrentSpeed();
+      const attachSpeedListeners = video => {
+        if (video._ytpSpeedListenerAttached) return;
+        video._ytpSpeedListenerAttached = true;
+        video.addEventListener('loadedmetadata', applySpeed);
+        video.addEventListener('playing', applySpeed);
+        video.addEventListener('ratechange', () => {
+          if (video.playbackRate !== this.speedControl.currentSpeed) {
+            video.playbackRate = this.speedControl.currentSpeed;
+          }
+        });
+        applySpeed();
+      };
+
+      // Attach to existing videos
+      document.querySelectorAll('video').forEach(attachSpeedListeners);
+
+      // Watch for new video elements
+      const videoObserver = new MutationObserver(mutations => {
+        for (const m of mutations) {
+          for (const node of m.addedNodes) {
+            if (node.nodeName === 'VIDEO') attachSpeedListeners(node);
+            if (node instanceof Element) {
+              node.querySelectorAll?.('video').forEach(attachSpeedListeners);
+            }
+          }
+        }
+      });
+      if (document.body) {
+        videoObserver.observe(document.body, { childList: true, subtree: true });
+      }
+      YouTubeUtils.cleanupManager.registerObserver(videoObserver);
     },
 
     setupNavigationObserver() {
@@ -2124,8 +2321,9 @@ if (typeof window !== 'undefined') {
         this.addSettingsButtonToHeader();
       });
 
-      // ✅ Register observer in cleanupManager
-      const observer = new MutationObserver(() => {
+      // Use popstate + pushState/replaceState override for SPA navigation fallback
+      // instead of expensive body subtree MutationObserver
+      const checkUrlChange = () => {
         if (lastUrl !== location.href) {
           lastUrl = location.href;
           if (location.href.includes('watch?v=')) {
@@ -2133,18 +2331,10 @@ if (typeof window !== 'undefined') {
           }
           this.addSettingsButtonToHeader();
         }
-      });
+      };
 
-      YouTubeUtils.cleanupManager.registerObserver(observer);
-
-      // ✅ Safe observe with document.body check
-      if (document.body) {
-        observer.observe(document.body, { childList: true, subtree: true });
-      } else {
-        document.addEventListener('DOMContentLoaded', () => {
-          observer.observe(document.body, { childList: true, subtree: true });
-        });
-      }
+      window.addEventListener('popstate', checkUrlChange);
+      document.addEventListener('yt-navigate-start', checkUrlChange);
     },
 
     showSpeedIndicator(speed) {

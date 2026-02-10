@@ -93,8 +93,11 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Build userscript
+      - name: Build userscript (optimized)
         run: npm run build:optimized
+
+      - name: Build userscript (minified)
+        run: npm run build:minify -- --out youtube.user.min.js
 
       - name: Get version from package.json
         id: package-version
@@ -115,12 +118,20 @@ jobs:
       - name: Verify build artifacts
         if: steps.check-tag.outputs.TAG_EXISTS == 'false'
         run: |
+          MISSING=0
           if [ ! -f "youtube.user.js" ]; then
             echo "✗ youtube.user.js not found"
+            MISSING=1
+          fi
+          if [ ! -f "youtube.user.min.js" ]; then
+            echo "✗ youtube.user.min.js not found"
+            MISSING=1
+          fi
+          if [ $MISSING -ne 0 ]; then
             exit 1
           fi
           echo "✓ Build artifacts verified"
-          ls -lh youtube.user.js
+          ls -lh youtube.user.js youtube.user.min.js
 
       - name: Create Release
         if: steps.check-tag.outputs.TAG_EXISTS == 'false'
@@ -134,6 +145,7 @@ jobs:
             Fix and optimized.
           files: |
             youtube.user.js
+            youtube.user.min.js
           draft: false
           prerelease: false
           generate_release_notes: true

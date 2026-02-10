@@ -23,6 +23,9 @@
   "comment.js",
   "report.js",
   "update.js",
-  "style.js",
-  "music.js"
+  "music.js",
+  "end.js",
+  "playall.js",
+  "time.js",
+  "zoom.js"
 ]

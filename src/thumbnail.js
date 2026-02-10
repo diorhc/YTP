@@ -1,6 +1,20 @@
 (function () {
   'use strict';
 
+  // DOM cache helpers with fallback
+  const qs = selector => {
+    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
+      return window.YouTubeDOMCache.get(selector);
+    }
+    return document.querySelector(selector);
+  };
+  const qsAll = selector => {
+    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.getAll === 'function') {
+      return window.YouTubeDOMCache.getAll(selector);
+    }
+    return document.querySelectorAll(selector);
+  };
+
   // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const t = (key, params = {}) => {
     if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
@@ -13,6 +27,31 @@
     }
     return result;
   };
+
+  const SETTINGS_KEY = 'youtube_plus_settings';
+  const DEFAULT_ENABLE_THUMBNAIL = true;
+
+  function loadEnableThumbnail() {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return DEFAULT_ENABLE_THUMBNAIL;
+      const parsed = JSON.parse(raw);
+      return parsed?.enableThumbnail !== false;
+    } catch {
+      return DEFAULT_ENABLE_THUMBNAIL;
+    }
+  }
+
+  let thumbnailFeatureEnabled = loadEnableThumbnail();
+  const isEnabled = () => thumbnailFeatureEnabled;
+
+  let started = false;
+  let startScheduled = false;
+  /** @type {MutationObserver|null} */
+  let mutationObserver = null;
+  /** @type {null | (() => void)} */
+  let urlChangeCleanup = null;
+  let thumbnailStylesInjected = false;
 
   /**
    * Extract video ID from thumbnail source with validation
@@ -227,7 +266,7 @@
 
     spinner.style.animation = 'spin 1s linear infinite';
 
-    if (!document.querySelector('#spinner-keyframes')) {
+    if (!qs('#spinner-keyframes')) {
       const style = document.createElement('style');
       style.id = 'spinner-keyframes';
       style.textContent = `
@@ -369,40 +408,40 @@
     }
   }
 
-  // Inject CSS styles via StyleManager (if available) to match base theme
-  (function addThumbnailStyles() {
+  function ensureThumbnailStyles() {
+    if (thumbnailStylesInjected) return;
     try {
       const css = `
-    :root { --thumbnail-btn-bg-light: rgba(255, 255, 255, 0.85); --thumbnail-btn-bg-dark: rgba(0, 0, 0, 0.7); --thumbnail-btn-hover-bg-light: rgba(255, 255, 255, 1); --thumbnail-btn-hover-bg-dark: rgba(0, 0, 0, 0.9); --thumbnail-btn-color-light: #222; --thumbnail-btn-color-dark: #fff; --thumbnail-modal-bg-light: rgba(255, 255, 255, 0.95); --thumbnail-modal-bg-dark: rgba(34, 34, 34, 0.85); --thumbnail-modal-title-light: #222; --thumbnail-modal-title-dark: #fff; --thumbnail-modal-btn-bg-light: rgba(0, 0, 0, 0.08); --thumbnail-modal-btn-bg-dark: rgba(255, 255, 255, 0.08); --thumbnail-modal-btn-hover-bg-light: rgba(0, 0, 0, 0.18); --thumbnail-modal-btn-hover-bg-dark: rgba(255, 255, 255, 0.18); --thumbnail-modal-btn-color-light: #222; --thumbnail-modal-btn-color-dark: #fff; --thumbnail-modal-btn-hover-color-light: #ff4444; --thumbnail-modal-btn-hover-color-dark: #ff4444; --thumbnail-glass-blur: blur(18px) saturate(180%); --thumbnail-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); --thumbnail-glass-border: rgba(255, 255, 255, 0.2); }
-    html[dark], body[dark] { --thumbnail-btn-bg: var(--thumbnail-btn-bg-dark); --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-dark); --thumbnail-btn-color: var(--thumbnail-btn-color-dark); --thumbnail-modal-bg: var(--thumbnail-modal-bg-dark); --thumbnail-modal-title: var(--thumbnail-modal-title-dark); --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-dark); --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-dark); --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-dark); --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-dark); }
-    html:not([dark]) { --thumbnail-btn-bg: var(--thumbnail-btn-bg-light); --thumbnail-btn-bg: var(--thumbnail-btn-bg-light); --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-light); --thumbnail-btn-color: var(--thumbnail-btn-color-light); --thumbnail-modal-bg: var(--thumbnail-modal-bg-light); --thumbnail-modal-title: var(--thumbnail-modal-title-light); --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-light); --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-light); --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-light); --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-light); }
-    .thumbnail-overlay-container { position: absolute; bottom: 8px; left: 8px; z-index: 9999; opacity: 0; transition: opacity 0.2s ease; }
-    .thumbnail-overlay-button { width: 28px; height: 28px; background: var(--thumbnail-btn-bg); border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--thumbnail-btn-color); position: relative; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
-    .thumbnail-overlay-button:hover { background: var(--thumbnail-btn-hover-bg); }
-    .thumbnail-dropdown { position: absolute; bottom: 100%; left: 0; background: var(--thumbnail-btn-hover-bg); border-radius: 8px; padding: 4px; margin-bottom: 4px; display: none; flex-direction: column; min-width: 140px; box-shadow: var(--thumbnail-glass-shadow); z-index: 10000; backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
-    .thumbnail-dropdown.show { display: flex !important; }
-    .thumbnail-dropdown-item { background: none; border: none; color: var(--thumbnail-btn-color); padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 12px; text-align: left; white-space: nowrap; transition: background-color 0.2s ease; }
-    .thumbnail-dropdown-item:hover { background: rgba(255,255,255,0.06); }
-    .thumbnailPreview-button { position: absolute; bottom: 10px; left: 5px; background-color: var(--thumbnail-btn-bg); color: var(--thumbnail-btn-color); border: none; border-radius: 6px; padding: 3px; font-size: 18px; cursor: pointer; z-index: 2000; opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
-    .thumbnailPreview-container { position: relative; }
-    .thumbnailPreview-container:hover .thumbnailPreview-button { opacity: 1; }
-    .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 100000; display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.22s cubic-bezier(.4,0,.2,1); backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%); }
-  .thumbnail-modal-content { background: var(--thumbnail-modal-bg); border-radius: 20px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); max-width: 78vw; max-height: 90vh; overflow: auto; position: relative; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.22s cubic-bezier(.4,0,.2,1); border: 1.5px solid var(--thumbnail-glass-border); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%);}
-    /* Wrapper to place content and action buttons side-by-side */
-    .thumbnail-modal-wrapper { display: flex; align-items: flex-start; gap: 12px; }
-    .thumbnail-modal-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
-  .thumbnail-modal-action-btn { width: 40px; height: 40px; border-radius: 50%; background: var(--thumbnail-modal-btn-bg); border: 1px solid rgba(0,0,0,0.08); display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.2); transition: transform 0.12s ease, background 0.12s ease; color: var(--thumbnail-modal-btn-color); }
-    .thumbnail-modal-action-btn:hover { transform: translateY(-2px); }
-    .thumbnail-modal-close { }
-    .thumbnail-modal-open { }
-    .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; box-shadow: var(--thumbnail-glass-shadow); background: #222; border: 1px solid var(--thumbnail-glass-border); }
-    .thumbnail-modal-options { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
-    .thumbnail-modal-option-btn { background: var(--thumbnail-modal-btn-bg); color: var(--thumbnail-modal-btn-color); border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s; margin-bottom: 6px; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
-    .thumbnail-modal-option-btn:hover { background: var(--thumbnail-modal-btn-hover-bg); color: var(--thumbnail-modal-btn-hover-color); }
-    .thumbnail-modal-title { font-size: 18px; font-weight: 600; color: var(--thumbnail-modal-title); margin-bottom: 10px; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-    @keyframes fadeInModal { from { opacity: 0; } to { opacity: 1; } }
-    @keyframes scaleInModal { from { transform: scale(0.95); } to { transform: scale(1); } }
-            `;
+        :root { --thumbnail-btn-bg-light: rgba(255, 255, 255, 0.85); --thumbnail-btn-bg-dark: rgba(0, 0, 0, 0.7); --thumbnail-btn-hover-bg-light: rgba(255, 255, 255, 1); --thumbnail-btn-hover-bg-dark: rgba(0, 0, 0, 0.9); --thumbnail-btn-color-light: #222; --thumbnail-btn-color-dark: #fff; --thumbnail-modal-bg-light: rgba(255, 255, 255, 0.95); --thumbnail-modal-bg-dark: rgba(34, 34, 34, 0.85); --thumbnail-modal-title-light: #222; --thumbnail-modal-title-dark: #fff; --thumbnail-modal-btn-bg-light: rgba(0, 0, 0, 0.08); --thumbnail-modal-btn-bg-dark: rgba(255, 255, 255, 0.08); --thumbnail-modal-btn-hover-bg-light: rgba(0, 0, 0, 0.18); --thumbnail-modal-btn-hover-bg-dark: rgba(255, 255, 255, 0.18); --thumbnail-modal-btn-color-light: #222; --thumbnail-modal-btn-color-dark: #fff; --thumbnail-modal-btn-hover-color-light: #ff4444; --thumbnail-modal-btn-hover-color-dark: #ff4444; --thumbnail-glass-blur: blur(18px) saturate(180%); --thumbnail-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); --thumbnail-glass-border: rgba(255, 255, 255, 0.2); }
+        html[dark], body[dark] { --thumbnail-btn-bg: var(--thumbnail-btn-bg-dark); --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-dark); --thumbnail-btn-color: var(--thumbnail-btn-color-dark); --thumbnail-modal-bg: var(--thumbnail-modal-bg-dark); --thumbnail-modal-title: var(--thumbnail-modal-title-dark); --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-dark); --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-dark); --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-dark); --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-dark); }
+        html:not([dark]) { --thumbnail-btn-bg: var(--thumbnail-btn-bg-light); --thumbnail-btn-bg: var(--thumbnail-btn-bg-light); --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-light); --thumbnail-btn-color: var(--thumbnail-btn-color-light); --thumbnail-modal-bg: var(--thumbnail-modal-bg-light); --thumbnail-modal-title: var(--thumbnail-modal-title-light); --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-light); --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-light); --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-light); --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-light); }
+        .thumbnail-overlay-container { position: absolute; bottom: 8px; left: 8px; z-index: 9999; opacity: 0; transition: opacity 0.2s ease; }
+        .thumbnail-overlay-button { width: 28px; height: 28px; background: var(--thumbnail-btn-bg); border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--thumbnail-btn-color); position: relative; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+        .thumbnail-overlay-button:hover { background: var(--thumbnail-btn-hover-bg); }
+        .thumbnail-dropdown { position: absolute; bottom: 100%; left: 0; background: var(--thumbnail-btn-hover-bg); border-radius: 8px; padding: 4px; margin-bottom: 4px; display: none; flex-direction: column; min-width: 140px; box-shadow: var(--thumbnail-glass-shadow); z-index: 10000; backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+        .thumbnail-dropdown.show { display: flex !important; }
+        .thumbnail-dropdown-item { background: none; border: none; color: var(--thumbnail-btn-color); padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 12px; text-align: left; white-space: nowrap; transition: background-color 0.2s ease; }
+        .thumbnail-dropdown-item:hover { background: rgba(255,255,255,0.06); }
+        .thumbnailPreview-button { position: absolute; bottom: 10px; left: 5px; background-color: var(--thumbnail-btn-bg); color: var(--thumbnail-btn-color); border: none; border-radius: 6px; padding: 3px; font-size: 18px; cursor: pointer; z-index: 2000; opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+        .thumbnailPreview-container { position: relative; }
+        .thumbnailPreview-container:hover .thumbnailPreview-button { opacity: 1; }
+        .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 100000; display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.22s cubic-bezier(.4,0,.2,1); backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%); }
+        .thumbnail-modal-content { background: var(--thumbnail-modal-bg); border-radius: 20px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); max-width: 78vw; max-height: 90vh; overflow: auto; position: relative; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.22s cubic-bezier(.4,0,.2,1); border: 1.5px solid var(--thumbnail-glass-border); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%);}
+        /* Wrapper to place content and action buttons side-by-side */
+        .thumbnail-modal-wrapper { display: flex; align-items: flex-start; gap: 12px; }
+        .thumbnail-modal-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
+        .thumbnail-modal-action-btn { width: 40px; height: 40px; border-radius: 50%; background: var(--thumbnail-modal-btn-bg); border: 1px solid rgba(0,0,0,0.08); display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.2); transition: transform 0.12s ease, background 0.12s ease; color: var(--thumbnail-modal-btn-color); }
+        .thumbnail-modal-action-btn:hover { transform: translateY(-2px); }
+        .thumbnail-modal-close { }
+        .thumbnail-modal-open { }
+        .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; box-shadow: var(--thumbnail-glass-shadow); background: #222; border: 1px solid var(--thumbnail-glass-border); }
+        .thumbnail-modal-options { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
+        .thumbnail-modal-option-btn { background: var(--thumbnail-modal-btn-bg); color: var(--thumbnail-modal-btn-color); border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s; margin-bottom: 6px; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+        .thumbnail-modal-option-btn:hover { background: var(--thumbnail-modal-btn-hover-bg); color: var(--thumbnail-modal-btn-hover-color); }
+        .thumbnail-modal-title { font-size: 18px; font-weight: 600; color: var(--thumbnail-modal-title); margin-bottom: 10px; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,0.15); }
+        @keyframes fadeInModal { from { opacity: 0; } to { opacity: 1; } }
+        @keyframes scaleInModal { from { transform: scale(0.95); } to { transform: scale(1); } }
+      `;
 
       if (
         window.YouTubeUtils &&
@@ -416,6 +455,7 @@
         s.textContent = css;
         (document.head || document.documentElement).appendChild(s);
       }
+      thumbnailStylesInjected = true;
     } catch {
       // fallback: inject minimal styles
       if (!document.getElementById('ytplus-thumbnail-styles')) {
@@ -424,8 +464,26 @@
         s.textContent = '.thumbnail-modal-img{max-width:72vw;max-height:70vh;}';
         (document.head || document.documentElement).appendChild(s);
       }
+      thumbnailStylesInjected = true;
     }
-  })();
+  }
+
+  function removeThumbnailStyles() {
+    try {
+      if (window.YouTubeUtils?.StyleManager?.remove) {
+        window.YouTubeUtils.StyleManager.remove('thumbnail-viewer-styles');
+      }
+    } catch {}
+
+    const el = document.getElementById('ytplus-thumbnail-styles');
+    if (el) {
+      try {
+        el.remove();
+      } catch {}
+    }
+
+    thumbnailStylesInjected = false;
+  }
 
   /**
    * Validate modal URL security
@@ -595,10 +653,11 @@
    */
   function showImageModal(url) {
     try {
+      if (!isEnabled()) return;
       if (!validateModalUrl(url)) return;
 
       // Remove existing modals
-      document.querySelectorAll('.thumbnail-modal-overlay').forEach(m => m.remove());
+      qsAll('.thumbnail-modal-overlay').forEach(m => m.remove());
 
       const overlay = document.createElement('div');
       overlay.className = 'thumbnail-modal-overlay';
@@ -668,7 +727,7 @@
    * Remove old thumbnail overlay
    */
   function removeOldOverlay() {
-    const oldOverlay = document.querySelector('#thumbnailPreview-player-overlay');
+    const oldOverlay = qs('#thumbnailPreview-player-overlay');
     if (oldOverlay) {
       oldOverlay.remove();
     }
@@ -688,7 +747,7 @@
    * @returns {HTMLElement|null} Player element or null
    */
   function findPlayerElement() {
-    return document.querySelector('#movie_player') || document.querySelector('ytd-player');
+    return qs('#movie_player') || qs('ytd-player');
   }
 
   /**
@@ -796,6 +855,7 @@
    * Add or update thumbnail image on watch page
    */
   function addOrUpdateThumbnailImage() {
+    if (!isEnabled()) return;
     if (!isWatchPage()) return;
 
     const newVideoId = getCurrentVideoId();
@@ -848,21 +908,21 @@
 
     overlay.appendChild(svg);
     overlay.style.cssText = `
-            position: absolute;
-            bottom: 8px;
-            left: 8px;
-            background: rgba(0, 0, 0, 0.3);
-            width: 28px;
-            height: 28px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
-            cursor: pointer;
-            z-index: 1000;
-            opacity: 0;
-            transition: all 0.2s ease;
-        `;
+        position: absolute;
+        bottom: 8px;
+        left: 8px;
+        background: rgba(0, 0, 0, 0.3);
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        cursor: pointer;
+        z-index: 1000;
+        opacity: 0;
+        transition: all 0.2s ease;
+      `;
 
     overlay.onmouseenter = () => {
       overlay.style.background = 'rgba(0, 0, 0, 0.7)';
@@ -973,6 +1033,7 @@
    * @returns {void}
    */
   function addThumbnailOverlay(container) {
+    if (!isEnabled()) return;
     if (container.querySelector('.thumb-overlay')) return;
 
     // Try regular video first
@@ -1021,22 +1082,22 @@
     overlay.appendChild(svg);
 
     overlay.style.cssText = `
-            position: absolute;
-            top: 50%;
-            left: 50%;
-            transform: translate(-50%, -50%);
-            background: rgba(0, 0, 0, 0.7);
-            width: 28px;
-            height: 28px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 50%;
-            cursor: pointer;
-            z-index: 1000;
-            opacity: 0;
-            transition: all 0.2s ease;
-        `;
+        position: absolute;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        background: rgba(0, 0, 0, 0.7);
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 50%;
+        cursor: pointer;
+        z-index: 1000;
+        opacity: 0;
+        transition: all 0.2s ease;
+      `;
 
     overlay.onmouseenter = () => {
       overlay.style.background = 'rgba(0, 0, 0, 0.9)';
@@ -1049,6 +1110,7 @@
   }
 
   function addAvatarOverlay(img) {
+    if (!isEnabled()) return;
     const container = img.parentElement;
     if (!container) return;
 
@@ -1144,21 +1206,21 @@
     overlay.appendChild(svg);
 
     overlay.style.cssText = `
-            position: absolute;
-            bottom: 8px;
-            left: 8px;
-            background: rgba(0, 0, 0, 0.7);
-            width: 28px;
-            height: 28px;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-            border-radius: 4px;
-            cursor: pointer;
-            z-index: 1000;
-            opacity: 0;
-            transition: all 0.2s ease;
-        `;
+        position: absolute;
+        bottom: 8px;
+        left: 8px;
+        background: rgba(0, 0, 0, 0.7);
+        width: 28px;
+        height: 28px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        border-radius: 4px;
+        cursor: pointer;
+        z-index: 1000;
+        opacity: 0;
+        transition: all 0.2s ease;
+      `;
 
     overlay.onmouseenter = () => {
       overlay.style.background = 'rgba(0, 0, 0, 0.9)';
@@ -1171,6 +1233,7 @@
   }
 
   function addBannerOverlay(img) {
+    if (!isEnabled()) return;
     const container = img.parentElement;
     if (container.querySelector('.banner-overlay')) return;
 
@@ -1209,7 +1272,7 @@
     ];
 
     avatarSelectors.forEach(selector => {
-      document.querySelectorAll(selector).forEach(img => {
+      qsAll(selector).forEach(img => {
         if (!img.src) return;
         if (!img.src.includes('yt')) return;
         if (img.closest('.avatar-overlay')) return;
@@ -1233,7 +1296,7 @@
     ];
 
     bannerSelectors.forEach(selector => {
-      document.querySelectorAll(selector).forEach(img => {
+      qsAll(selector).forEach(img => {
         if (!img.src) return;
         if (img.closest('.banner-overlay')) return;
 
@@ -1250,23 +1313,24 @@
 
   function processThumbnails() {
     // Cache NodeLists to avoid repeated DOM lookups and reduce GC churn
-    const n1 = document.querySelectorAll('yt-thumbnail-view-model');
+    const n1 = qsAll('yt-thumbnail-view-model');
     for (let i = 0; i < n1.length; i++) addThumbnailOverlay(n1[i]);
 
-    const n2 = document.querySelectorAll('.ytd-thumbnail');
+    const n2 = qsAll('.ytd-thumbnail');
     for (let i = 0; i < n2.length; i++) addThumbnailOverlay(n2[i]);
 
-    const n3 = document.querySelectorAll('ytm-shorts-lockup-view-model');
+    const n3 = qsAll('ytm-shorts-lockup-view-model');
     for (let i = 0; i < n3.length; i++) addThumbnailOverlay(n3[i]);
 
-    const n4 = document.querySelectorAll('.shortsLockupViewModelHost');
+    const n4 = qsAll('.shortsLockupViewModelHost');
     for (let i = 0; i < n4.length; i++) addThumbnailOverlay(n4[i]);
 
-    const n5 = document.querySelectorAll('[class*="shortsLockupViewModelHost"]');
+    const n5 = qsAll('[class*="shortsLockupViewModelHost"]');
     for (let i = 0; i < n5.length; i++) addThumbnailOverlay(n5[i]);
   }
 
   function processAll() {
+    if (!isEnabled()) return;
     processThumbnails();
     processAvatars();
     processBanners();
@@ -1290,6 +1354,7 @@
       processAllTimerId = null;
       lastProcessAllTime = Date.now();
       try {
+        if (!isEnabled()) return;
         processAll();
       } catch (e) {
         console.error('[YouTube+][Thumbnail]', 'processAll failed:', e);
@@ -1298,24 +1363,37 @@
   }
 
   function setupMutationObserver() {
-    const observer = new MutationObserver(() => {
+    if (mutationObserver) return;
+    mutationObserver = new MutationObserver(() => {
       scheduleProcessAll(120);
     });
 
-    // ✅ Safe observe with document.body check
-    if (document.body) {
-      observer.observe(document.body, {
+    // Scope to #content or #page-manager instead of full body for performance
+    const startObserving = () => {
+      if (!mutationObserver) return;
+      const target =
+        document.querySelector('#content') ||
+        document.querySelector('#page-manager') ||
+        document.body;
+      mutationObserver.observe(target, {
         childList: true,
         subtree: true,
       });
+    };
+
+    if (document.body) {
+      startObserving();
     } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        observer.observe(document.body, {
-          childList: true,
-          subtree: true,
-        });
-      });
+      document.addEventListener('DOMContentLoaded', startObserving);
     }
+  }
+
+  function teardownMutationObserver() {
+    if (!mutationObserver) return;
+    try {
+      mutationObserver.disconnect();
+    } catch {}
+    mutationObserver = null;
   }
 
   function setupUrlChangeDetection() {
@@ -1324,9 +1402,28 @@
     const originalPushState = history.pushState;
     const originalReplaceState = history.replaceState;
 
+    const popHandler = () => {
+      setTimeout(() => {
+        if (!isEnabled()) return;
+        if (location.href !== currentUrl) {
+          currentUrl = location.href;
+          scheduleProcessAll(250);
+        }
+      }, 100);
+    };
+
+    const ytNavigateHandler = () => {
+      if (!isEnabled()) return;
+      if (location.href !== currentUrl) {
+        currentUrl = location.href;
+      }
+      scheduleProcessAll(120);
+    };
+
     history.pushState = function (...args) {
       originalPushState.call(history, ...args);
       setTimeout(() => {
+        if (!isEnabled()) return;
         if (location.href !== currentUrl) {
           currentUrl = location.href;
           scheduleProcessAll(250);
@@ -1337,6 +1434,7 @@
     history.replaceState = function (...args) {
       originalReplaceState.call(history, ...args);
       setTimeout(() => {
+        if (!isEnabled()) return;
         if (location.href !== currentUrl) {
           currentUrl = location.href;
           scheduleProcessAll(250);
@@ -1344,36 +1442,69 @@
       }, 100);
     };
 
-    window.addEventListener('popstate', () => {
-      setTimeout(() => {
-        if (location.href !== currentUrl) {
-          currentUrl = location.href;
-          scheduleProcessAll(250);
-        }
-      }, 100);
-    });
-
+    window.addEventListener('popstate', popHandler);
     // YouTube is a SPA; use the navigation event instead of tight polling.
-    window.addEventListener('yt-navigate-finish', () => {
-      if (location.href !== currentUrl) {
-        currentUrl = location.href;
+    window.addEventListener('yt-navigate-finish', ytNavigateHandler);
+
+    return () => {
+      try {
+        history.pushState = originalPushState;
+        history.replaceState = originalReplaceState;
+      } catch {}
+      try {
+        window.removeEventListener('popstate', popHandler);
+        window.removeEventListener('yt-navigate-finish', ytNavigateHandler);
+      } catch {}
+    };
+  }
+
+  function removeInjectedUi() {
+    try {
+      qsAll('.thumbnail-modal-overlay').forEach(m => m.remove());
+    } catch {}
+    try {
+      qsAll('.thumb-overlay, .avatar-overlay, .banner-overlay').forEach(el => el.remove());
+    } catch {}
+    try {
+      const playerOverlay = qs('#thumbnailPreview-player-overlay');
+      if (playerOverlay) playerOverlay.remove();
+    } catch {}
+  }
+
+  function stop() {
+    if (!started) return;
+    started = false;
+
+    try {
+      if (processAllTimerId) {
+        clearTimeout(processAllTimerId);
+        processAllTimerId = null;
       }
-      scheduleProcessAll(120);
-    });
-  }
+    } catch {}
 
-  function initialize() {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => {
-        setTimeout(init, 100);
-      });
-    } else {
-      setTimeout(init, 100);
+    teardownMutationObserver();
+
+    if (urlChangeCleanup) {
+      try {
+        urlChangeCleanup();
+      } catch {}
+      urlChangeCleanup = null;
     }
+
+    removeInjectedUi();
+    removeThumbnailStyles();
   }
 
-  function init() {
-    setupUrlChangeDetection();
+  function start() {
+    if (started) return;
+    if (!isEnabled()) return;
+
+    started = true;
+    ensureThumbnailStyles();
+
+    if (!urlChangeCleanup) {
+      urlChangeCleanup = setupUrlChangeDetection();
+    }
     setupMutationObserver();
 
     // Defer heavy work off the critical path.
@@ -1388,5 +1519,41 @@
     setTimeout(() => scheduleProcessAll(0), 1800);
   }
 
-  initialize();
+  function startMaybe() {
+    if (started || startScheduled) return;
+    if (!isEnabled()) return;
+
+    startScheduled = true;
+    const run = () => {
+      startScheduled = false;
+      start();
+    };
+
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', () => setTimeout(run, 100), {
+        once: true,
+      });
+    } else {
+      setTimeout(run, 100);
+    }
+  }
+
+  function setEnabled(nextEnabled) {
+    thumbnailFeatureEnabled = nextEnabled !== false;
+    if (thumbnailFeatureEnabled) startMaybe();
+    else stop();
+  }
+
+  // Initial state
+  startMaybe();
+
+  // Live updates
+  window.addEventListener('youtube-plus-settings-updated', e => {
+    try {
+      const enabledFromEvent = e?.detail?.enableThumbnail;
+      setEnabled(enabledFromEvent !== false);
+    } catch {
+      setEnabled(loadEnableThumbnail());
+    }
+  });
 })();

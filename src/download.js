@@ -7,6 +7,37 @@
 (function () {
   'use strict';
 
+  const isRelevantRoute = () => {
+    try {
+      const path = location.pathname || '';
+      return path === '/watch' || path.startsWith('/shorts');
+    } catch {
+      return false;
+    }
+  };
+
+  const onDomReady = cb => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', cb, { once: true });
+    } else {
+      cb();
+    }
+  };
+
+  // DOM cache helpers with fallback
+  const $ = selector => {
+    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
+      return window.YouTubeDOMCache.get(selector);
+    }
+    return document.querySelector(selector);
+  };
+  const $$ = selector => {
+    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.getAll === 'function') {
+      return window.YouTubeDOMCache.getAll(selector);
+    }
+    return document.querySelectorAll(selector);
+  };
+
   // Check dependencies
   if (typeof YouTubeUtils === 'undefined') {
     console.error('[YouTube+ Download] YouTubeUtils not found!');
@@ -71,6 +102,27 @@
     subtitleSelect.appendChild(_ssDisplay);
     subtitleSelect.appendChild(_ssList);
 
+    _ssList.addEventListener('click', e => {
+      const item = e.target?.closest?.('[data-value]');
+      if (!item || !_ssList.contains(item)) return;
+      subtitleSelect.value = item.dataset.value;
+      _ssList.style.display = 'none';
+    });
+
+    _ssList.addEventListener('mouseover', e => {
+      const item = e.target?.closest?.('[data-value]');
+      if (!item || !_ssList.contains(item)) return;
+      item.style.background = 'rgba(255,255,255,0.02)';
+    });
+
+    _ssList.addEventListener('mouseout', e => {
+      const item = e.target?.closest?.('[data-value]');
+      if (!item || !_ssList.contains(item)) return;
+      const related = e.relatedTarget;
+      if (related && item.contains(related)) return;
+      item.style.background = 'transparent';
+    });
+
     subtitleSelect._options = [];
     subtitleSelect._value = '';
     subtitleSelect._disabled = false;
@@ -94,16 +146,6 @@
           cursor: 'pointer',
           borderBottom: '1px solid rgba(255,255,255,0.02)',
           color: '#fff',
-        });
-        item.addEventListener('click', () => {
-          subtitleSelect.value = item.dataset.value;
-          _ssList.style.display = 'none';
-        });
-        item.addEventListener('mouseenter', () => {
-          item.style.background = 'rgba(255,255,255,0.02)';
-        });
-        item.addEventListener('mouseleave', () => {
-          item.style.background = 'transparent';
         });
         _ssList.appendChild(item);
       });
@@ -247,9 +289,9 @@
   function getVideoTitle() {
     try {
       const titleElement =
-        document.querySelector('h1.ytd-video-primary-info-renderer yt-formatted-string') ||
-        document.querySelector('h1.title yt-formatted-string') ||
-        document.querySelector('ytd-watch-metadata h1');
+        $('h1.ytd-video-primary-info-renderer yt-formatted-string') ||
+        $('h1.title yt-formatted-string') ||
+        $('ytd-watch-metadata h1');
       return titleElement ? titleElement.textContent.trim() : 'video';
     } catch {
       return 'video';
@@ -1796,17 +1838,37 @@
   };
 
   /**
-   * Position dropdown below button
+   * Position dropdown below button (batched with RAF)
    * @param {HTMLElement} button - Button element
    * @param {HTMLElement} dropdown - Dropdown element
    */
-  const positionDropdown = (button, dropdown) => {
-    const rect = button.getBoundingClientRect();
-    const left = Math.max(8, rect.left + rect.width / 2 - 75);
-    const bottom = Math.max(8, window.innerHeight - rect.top + 12);
-    dropdown.style.left = `${left}px`;
-    dropdown.style.bottom = `${bottom}px`;
-  };
+  const positionDropdown = (() => {
+    let rafId = null;
+    let pendingButton = null;
+    let pendingDropdown = null;
+
+    const applyPosition = () => {
+      if (!pendingButton || !pendingDropdown) return;
+
+      const rect = pendingButton.getBoundingClientRect();
+      const left = Math.max(8, rect.left + rect.width / 2 - 75);
+      const bottom = Math.max(8, window.innerHeight - rect.top + 12);
+      pendingDropdown.style.left = `${left}px`;
+      pendingDropdown.style.bottom = `${bottom}px`;
+
+      rafId = null;
+      pendingButton = null;
+      pendingDropdown = null;
+    };
+
+    return (button, dropdown) => {
+      pendingButton = button;
+      pendingDropdown = dropdown;
+
+      if (rafId !== null) return; // Already scheduled
+      rafId = requestAnimationFrame(applyPosition);
+    };
+  })();
 
   /**
    * Download Site Actions - Handle different types of downloads
@@ -1907,10 +1969,10 @@
     return (customization, enabledSites, videoId, videoUrl) => {
       const baseSites = [
         {
-          key: 'y2mate',
-          name: customization?.y2mate?.name || 'Y2Mate',
+          key: 'externalDownloader',
+          name: customization?.externalDownloader?.name || 'SSYouTube',
           url: buildUrl(
-            customization?.y2mate?.url || `https://www.y2mate.com/youtube/{videoId}`,
+            customization?.externalDownloader?.url || `https://ssyoutube.com/watch?v={videoId}`,
             videoId,
             videoUrl
           ),
@@ -1960,17 +2022,36 @@
       opt.setAttribute('role', 'menuitem');
       opt.setAttribute('tabindex', '0');
 
-      opt.addEventListener('click', () =>
-        openDownloadSiteFn(site.url, site.isYTDL, site.isDirect, options, button)
-      );
-
-      opt.addEventListener('keydown', e => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          openDownloadSiteFn(site.url, site.isYTDL, site.isDirect, options, button);
-        }
-      });
+      opt.dataset.url = site.url;
+      opt.dataset.isYtdl = site.isYTDL ? 'true' : 'false';
+      opt.dataset.isDirect = site.isDirect ? 'true' : 'false';
 
       list.appendChild(opt);
+    });
+
+    const handleOptionActivate = item => {
+      if (!item) return;
+      openDownloadSiteFn(
+        item.dataset.url,
+        item.dataset.isYtdl === 'true',
+        item.dataset.isDirect === 'true',
+        options,
+        button
+      );
+    };
+
+    list.addEventListener('click', e => {
+      const item = e.target?.closest?.('.download-option-item');
+      if (!item || !list.contains(item)) return;
+      handleOptionActivate(item);
+    });
+
+    list.addEventListener('keydown', e => {
+      const item = e.target?.closest?.('.download-option-item');
+      if (!item || !list.contains(item)) return;
+      if (e.key === 'Enter' || e.key === ' ') {
+        handleOptionActivate(item);
+      }
     });
 
     options.appendChild(list);
@@ -1978,58 +2059,125 @@
   };
 
   /**
-   * Setup dropdown hover behavior
-   * @param {HTMLElement} button - Button element
-   * @param {HTMLElement} dropdown - Dropdown element
+   * Setup dropdown hover behavior with event delegation
+   * Uses WeakMap to store timers per button/dropdown pair
    */
-  const setupDropdownHoverBehavior = (button, dropdown) => {
-    let downloadHideTimer;
+  const setupDropdownHoverBehavior = (() => {
+    let initialized = false;
+    const dropdownTimers = new WeakMap();
 
-    const showDropdown = () => {
-      clearTimeout(downloadHideTimer);
+    const getTimer = element => dropdownTimers.get(element);
+    const setTimer = (element, timerId) => dropdownTimers.set(element, timerId);
+    const clearTimer = element => {
+      const timerId = getTimer(element);
+      if (timerId !== undefined) {
+        clearTimeout(timerId);
+        dropdownTimers.delete(element);
+      }
+    };
+
+    const showDropdown = (button, dropdown) => {
+      clearTimer(button);
+      clearTimer(dropdown);
       positionDropdown(button, dropdown);
       dropdown.classList.add('visible');
       button.setAttribute('aria-expanded', 'true');
     };
 
-    const hideDropdown = () => {
-      clearTimeout(downloadHideTimer);
-      downloadHideTimer = setTimeout(() => {
+    const hideDropdown = (button, dropdown) => {
+      clearTimer(button);
+      clearTimer(dropdown);
+      const timerId = setTimeout(() => {
         dropdown.classList.remove('visible');
         button.setAttribute('aria-expanded', 'false');
       }, 180);
+      setTimer(button, timerId);
     };
 
-    button.addEventListener('mouseenter', () => {
-      clearTimeout(downloadHideTimer);
-      showDropdown();
-    });
+    const initDelegation = () => {
+      if (initialized) return;
+      initialized = true;
 
-    button.addEventListener('mouseleave', () => {
-      clearTimeout(downloadHideTimer);
-      downloadHideTimer = setTimeout(hideDropdown, 180);
-    });
+      // Mouseenter/mouseleave delegation on document with capture phase
+      document.addEventListener(
+        'mouseenter',
+        e => {
+          const button = e.target?.closest?.('.ytp-download-button');
+          if (button) {
+            const dropdown = $('.download-options');
+            if (dropdown) {
+              clearTimer(button);
+              clearTimer(dropdown);
+              showDropdown(button, dropdown);
+            }
+            return;
+          }
 
-    dropdown.addEventListener('mouseenter', () => {
-      clearTimeout(downloadHideTimer);
-      showDropdown();
-    });
+          const dropdown = e.target?.closest?.('.download-options');
+          if (dropdown) {
+            const button = $('.ytp-download-button');
+            if (button) {
+              clearTimer(button);
+              clearTimer(dropdown);
+              showDropdown(button, dropdown);
+            }
+          }
+        },
+        true
+      );
 
-    dropdown.addEventListener('mouseleave', () => {
-      clearTimeout(downloadHideTimer);
-      downloadHideTimer = setTimeout(hideDropdown, 180);
-    });
+      document.addEventListener(
+        'mouseleave',
+        e => {
+          const button = e.target?.closest?.('.ytp-download-button');
+          if (button) {
+            const dropdown = $('.download-options');
+            if (dropdown) {
+              clearTimer(button);
+              clearTimer(dropdown);
+              const timerId = setTimeout(() => hideDropdown(button, dropdown), 180);
+              setTimer(button, timerId);
+            }
+            return;
+          }
 
-    button.addEventListener('keydown', e => {
-      if (e.key === 'Enter' || e.key === ' ') {
-        if (dropdown.classList.contains('visible')) {
-          hideDropdown();
-        } else {
-          showDropdown();
+          const dropdown = e.target?.closest?.('.download-options');
+          if (dropdown) {
+            const button = $('.ytp-download-button');
+            if (button) {
+              clearTimer(button);
+              clearTimer(dropdown);
+              const timerId = setTimeout(() => hideDropdown(button, dropdown), 180);
+              setTimer(dropdown, timerId);
+            }
+          }
+        },
+        true
+      );
+
+      // Keydown delegation for Enter/Space on button
+      document.addEventListener('keydown', e => {
+        const button = e.target?.closest?.('.ytp-download-button');
+        if (!button) return;
+
+        if (e.key === 'Enter' || e.key === ' ') {
+          const dropdown = $('.download-options');
+          if (!dropdown) return;
+
+          if (dropdown.classList.contains('visible')) {
+            hideDropdown(button, dropdown);
+          } else {
+            showDropdown(button, dropdown);
+          }
         }
-      }
-    });
-  };
+      });
+    };
+
+    // Return function that just initializes delegation once
+    return () => {
+      initDelegation();
+    };
+  })();
 
   /**
    * Download Button Manager - Handles download button creation and dropdown management
@@ -2064,10 +2212,14 @@
       const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : location.href;
 
       const customization = settings.downloadSiteCustomization || {
-        y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+        externalDownloader: { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
       };
 
-      const enabledSites = settings.downloadSites || { y2mate: true, ytdl: true, direct: true };
+      const enabledSites = settings.downloadSites || {
+        externalDownloader: true,
+        ytdl: true,
+        direct: true,
+      };
       const { downloadSites } = buildDownloadSites(customization, enabledSites, videoId, videoUrl);
 
       const button = createButtonElement(tFn);
@@ -2091,7 +2243,7 @@
 
       const dropdown = createDropdownOptions(downloadSites, button, actions.openDownloadSite);
 
-      const existingDownload = document.querySelector('.download-options');
+      const existingDownload = $('.download-options');
       if (existingDownload) existingDownload.remove();
 
       try {
@@ -2111,13 +2263,13 @@
             addDownloadButton(controlsArg);
           window.youtubePlus.downloadButtonManager.refreshDownloadButton = () => {
             try {
-              const btn = document.querySelector('.ytp-download-button');
-              const dd = document.querySelector('.download-options');
+              const btn = $('.ytp-download-button');
+              const dd = $('.download-options');
 
               // If we should show downloads but the elements are missing, attempt to recreate
               if (settings.enableDownload && (!btn || !dd)) {
                 try {
-                  const controlsEl = document.querySelector('.ytp-right-controls');
+                  const controlsEl = $('.ytp-right-controls');
                   if (controlsEl) {
                     // recreate button + dropdown
                     addDownloadButton(controlsEl);
@@ -2141,7 +2293,7 @@
 
           window.youtubePlus.rebuildDownloadDropdown = () => {
             try {
-              const controlsEl = document.querySelector('.ytp-right-controls');
+              const controlsEl = $('.ytp-right-controls');
               if (!controlsEl) return;
               window.youtubePlus.downloadButtonManager.addDownloadButton(controlsEl);
               window.youtubePlus.settings = window.youtubePlus.settings || settings;
@@ -2162,16 +2314,16 @@
      */
     const refreshDownloadButton = () => {
       const button = getElement('.ytp-download-button');
-      let dropdown = document.querySelector('.download-options');
+      let dropdown = $('.download-options');
 
       // If downloads are enabled but the dropdown/button are missing, recreate them
       if (settings.enableDownload && (!button || !dropdown)) {
         try {
-          const controlsEl = document.querySelector('.ytp-right-controls');
+          const controlsEl = $('.ytp-right-controls');
           if (controlsEl) {
             addDownloadButton(controlsEl);
             // re-query after creation
-            dropdown = document.querySelector('.download-options');
+            dropdown = $('.download-options');
           }
         } catch (e) {
           logger && logger.warn && logger.warn('[YouTube+] recreate download button failed:', e);
@@ -2197,7 +2349,11 @@
   // MODULE INITIALIZATION
   // ============================================================================
 
+  let initialized = false;
+
   function init() {
+    if (initialized) return;
+    initialized = true;
     try {
       window.YouTubeUtils &&
         YouTubeUtils.logger &&
@@ -2257,10 +2413,22 @@
     };
   }
 
-  // Auto-initialize when DOM is ready
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+  const ensureInit = () => {
+    if (!isRelevantRoute()) return;
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(init, { timeout: 1500 });
+    } else {
+      setTimeout(init, 0);
+    }
+  };
+
+  onDomReady(ensureInit);
+
+  if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+    YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', ensureInit, {
+      passive: true,
+    });
   } else {
-    init();
+    document.addEventListener('yt-navigate-finish', ensureInit, { passive: true });
   }
 })();

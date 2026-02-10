@@ -27,7 +27,7 @@
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.3.4',
+    currentVersion: '2.4',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
@@ -401,14 +401,14 @@
     notification.className = 'youtube-enhancer-notification update-notification';
     // Use centralized notification container for consistent placement. Keep visual styles but remove fixed positioning.
     notification.style.cssText = `
-    z-index: 10001; max-width: 360px;
-    background: rgba(255,255,255,0.04); padding: 16px 18px; border-radius: 14px;
-    color: rgba(255,255,255,0.95);
-    box-shadow: 0 8px 30px rgba(11, 15, 25, 0.45), inset 0 1px 0 rgba(255,255,255,0.02);
-    border: 1px solid rgba(255,255,255,0.08);
-    -webkit-backdrop-filter: blur(10px) saturate(120%);
-    backdrop-filter: blur(10px) saturate(120%);
-    animation: slideInFromBottom 0.4s ease-out;
+      z-index: 10001; max-width: 360px;
+      background: rgba(255,255,255,0.04); padding: 16px 18px; border-radius: 14px;
+      color: rgba(255,255,255,0.95);
+      box-shadow: 0 8px 30px rgba(11, 15, 25, 0.45), inset 0 1px 0 rgba(255,255,255,0.02);
+      border: 1px solid rgba(255,255,255,0.08);
+      -webkit-backdrop-filter: blur(10px) saturate(120%);
+      backdrop-filter: blur(10px) saturate(120%);
+      animation: slideInFromBottom 0.4s ease-out;
     `;
 
     notification.innerHTML = `
@@ -494,12 +494,10 @@
             from { transform: translateY(100%); opacity: 0; }
             to { transform: translateY(0); opacity: 1; }
           }
-
           @keyframes slideOutToBottom {
             from { transform: translateY(0); opacity: 1; }
             to { transform: translateY(100%); opacity: 0; }
           }
-
           #update-close-btn:hover {
             background: rgba(255, 255, 255, 0.25);
           }
@@ -739,7 +737,7 @@
 
       // Parse changelog from HTML
       // Look for version link followed by changelog span
-      // Structure: <a ...>v2.3.4</a> ... <span class="version-changelog">...</span>
+      // Structure: <a ...>v2.4</a> ... <span class="version-changelog">...</span>
       const escapedVersion = version.replace(/\./g, '\\.');
       // Match anchor tag content that contains the version number (handling prefixes like 'v', 'вер. ', etc.)
       const versionRegex = new RegExp(
@@ -973,7 +971,6 @@
 
   // Optimized settings UI
   const addUpdateSettings = () => {
-    // ✅ Use cached querySelector
     const aboutSection = YouTubeUtils.querySelector(
       '.ytp-plus-settings-section[data-section="about"]'
     );
@@ -1134,73 +1131,13 @@
   };
 
   /**
-   * Handle settings modal mutation
-   * @param {MutationRecord} mutation - Mutation record
-   * @param {Object} state - Settings observer state
-   * @returns {boolean} True if settings found
-   */
-  const handleSettingsModalMutation = (mutation, state) => {
-    for (const node of mutation.addedNodes) {
-      if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
-        state.settingsObserved = true;
-        setTimeout(addUpdateSettings, 100);
-        return true;
-      }
-    }
-    return false;
-  };
-
-  /**
-   * Handle about nav item mutation
-   * @returns {void}
-   */
-  const handleAboutNavItemMutation = () => {
-    const aboutNavItem = YouTubeUtils.querySelector(
-      '.ytp-plus-settings-nav-item[data-section="about"].active:not([data-observed])'
-    );
-    if (aboutNavItem) {
-      aboutNavItem.setAttribute('data-observed', '');
-      setTimeout(addUpdateSettings, 50);
-    }
-  };
-
-  /**
-   * Create settings modal observer
-   * @returns {MutationObserver} Mutation observer
-   */
-  const createSettingsObserver = () => {
-    const state = { settingsObserved: false };
-
-    const observer = new MutationObserver(mutations => {
-      if (state.settingsObserved) return;
-
-      for (const mutation of mutations) {
-        if (handleSettingsModalMutation(mutation, state)) {
-          return;
-        }
-      }
-
-      handleAboutNavItemMutation();
-    });
-
-    return observer;
-  };
-
-  /**
-   * Setup settings modal observer
+   * Setup settings modal event listener
    * @returns {void}
    */
   const setupSettingsObserver = () => {
-    const observer = createSettingsObserver();
-    YouTubeUtils.cleanupManager.registerObserver(observer);
-
-    if (document.body) {
-      observer.observe(document.body, { childList: true, subtree: true });
-    } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        observer.observe(document.body, { childList: true, subtree: true });
-      });
-    }
+    document.addEventListener('youtube-plus-settings-modal-opened', () => {
+      setTimeout(addUpdateSettings, 100);
+    });
   };
 
   /**

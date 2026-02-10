@@ -17,24 +17,75 @@
 (function () {
   'use strict';
 
+  if (typeof location !== 'undefined' && location.hostname !== 'music.youtube.com') {
+    return;
+  }
+
+  // DOM cache helper with fallback
+  const qs = selector => {
+    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
+      return window.YouTubeDOMCache.get(selector);
+    }
+    return document.querySelector(selector);
+  };
+
   /**
    * Read YouTube Music settings from localStorage with defaults.
    * Kept in sync with defaults in settings UI.
    */
-  function readMusicSettings() {
-    const defaults = {
-      enableMusic: true,
-    };
+  const MUSIC_SETTINGS_DEFAULTS = {
+    enableMusic: true,
+    immersiveSearchStyles: true,
+    hoverStyles: true,
+    playerSidebarStyles: true,
+    centeredPlayerStyles: true,
+    playerBarStyles: true,
+    centeredPlayerBarStyles: true,
+    miniPlayerStyles: true,
+  };
 
+  function mergeMusicSettings(parsed) {
+    const merged = { ...MUSIC_SETTINGS_DEFAULTS };
+    if (!parsed || typeof parsed !== 'object') return merged;
+
+    if (typeof parsed.enableMusic === 'boolean') merged.enableMusic = parsed.enableMusic;
+    for (const key of Object.keys(MUSIC_SETTINGS_DEFAULTS)) {
+      if (key === 'enableMusic') continue;
+      if (typeof parsed[key] === 'boolean') merged[key] = parsed[key];
+    }
+
+    // Legacy flags mapping
+    if (typeof parsed.enableImmersiveSearch === 'boolean') {
+      merged.immersiveSearchStyles = parsed.enableImmersiveSearch;
+    }
+    if (typeof parsed.enableSidebarHover === 'boolean') {
+      merged.hoverStyles = parsed.enableSidebarHover;
+    }
+    if (typeof parsed.enableCenteredPlayer === 'boolean') {
+      merged.centeredPlayerStyles = parsed.enableCenteredPlayer;
+    }
+
+    // Backward-compat: if legacy flags exist and enableMusic wasn't set, infer enableMusic
+    const legacyEnabled = !!(
+      parsed.enableMusicStyles ||
+      parsed.enableMusicEnhancements ||
+      parsed.enableImmersiveSearch ||
+      parsed.enableSidebarHover ||
+      parsed.enableCenteredPlayer
+    );
+    if (legacyEnabled && typeof parsed.enableMusic !== 'boolean') merged.enableMusic = true;
+
+    return merged;
+  }
+
+  function readMusicSettings() {
     // Prefer userscript-global storage so youtube.com and music.youtube.com share the setting.
     try {
       if (typeof GM_getValue !== 'undefined') {
         const stored = GM_getValue('youtube-plus-music-settings', null);
         if (typeof stored === 'string' && stored) {
           const parsed = JSON.parse(stored);
-          if (parsed && typeof parsed.enableMusic === 'boolean') {
-            return { enableMusic: parsed.enableMusic };
-          }
+          return mergeMusicSettings(parsed);
         }
       }
     } catch {
@@ -43,25 +94,11 @@
 
     try {
       const stored = localStorage.getItem('youtube-plus-music-settings');
-      if (!stored) return defaults;
+      if (!stored) return { ...MUSIC_SETTINGS_DEFAULTS };
       const parsed = JSON.parse(stored);
-      if (parsed && typeof parsed.enableMusic === 'boolean') {
-        return { enableMusic: parsed.enableMusic };
-      }
-      if (parsed && typeof parsed === 'object') {
-        const legacyEnabled = !!(
-          parsed.enableMusicStyles ||
-          parsed.enableMusicEnhancements ||
-          parsed.enableImmersiveSearch ||
-          parsed.enableSidebarHover ||
-          parsed.enableCenteredPlayer ||
-          parsed.enableScrollToTop
-        );
-        return { enableMusic: legacyEnabled };
-      }
-      return defaults;
+      return mergeMusicSettings(parsed);
     } catch {
-      return defaults;
+      return { ...MUSIC_SETTINGS_DEFAULTS };
     }
   }
 
@@ -69,8 +106,10 @@
     return !!(settings && settings.enableMusic);
   }
 
-  function isScrollToTopEnabled(settings) {
-    return !!(settings && settings.enableMusic && window.location.hostname === 'music.youtube.com');
+  // Scroll-to-top is now handled globally by enhanced.js
+  // This function is kept for backward compatibility but always returns false
+  function isScrollToTopEnabled() {
+    return false;
   }
 
   /**
@@ -182,33 +221,7 @@
         #av-id:hover, #av-id:active { filter: none !important; }
     `;
 
-  // Стили для кнопки "Scroll to top"
-  const scrollToTopStyles = `
-        /* Base appearance for YouTube Music scroll-to-top button. */
-        .ytmusic-top-button {position: fixed !important; bottom: 100px !important; right: 20px !important; width: 48px; height: 48px; background: rgba(255,255,255,.12); color: #fff; border: none; border-radius: 50%; cursor: pointer; display: flex !important; align-items: center; justify-content: center; z-index: 10000 !important; opacity: 0; visibility: hidden; transition: all .3s cubic-bezier(0.4, 0, 0.2, 1); backdrop-filter: blur(12px) saturate(180%); -webkit-backdrop-filter: blur(12px) saturate(180%); border: 1px solid rgba(255,255,255,.18); box-shadow: 0 8px 32px 0 rgba(31,38,135,.18); pointer-events: auto !important;}
-        /* Dark mode support */
-        html[dark] .ytmusic-top-button {background: rgba(255,255,255,.15); border-color: rgba(255,255,255,.25);}
-        /* Light mode support */
-        html:not([dark]) .ytmusic-top-button {background: rgba(0,0,0,.08); color: #030303; border-color: rgba(0,0,0,.1);}
-        /* Hover state */
-        .ytmusic-top-button:hover {background: rgba(255,255,255,.25); transform: translateY(-2px) scale(1.07); box-shadow: 0 8px 32px rgba(0,0,0,.35);}
-        html[dark] .ytmusic-top-button:hover {background: rgba(255,255,255,.28);}
-        html:not([dark]) .ytmusic-top-button:hover {background: rgba(0,0,0,.15);}
-        /* Visible state */
-        .ytmusic-top-button.visible {opacity: 1 !important; visibility: visible !important;}
-        /* Force show class for debugging */
-        .ytmusic-top-button.force-show {opacity: 1 !important; visibility: visible !important; display: flex !important;}
-        /* Smooth icon transitions */
-        .ytmusic-top-button svg {transition: transform .2s ease;}
-        .ytmusic-top-button:hover svg {transform: translateY(-1px) scale(1.1);}
-        /* Focus and active states */
-        .ytmusic-top-button:focus {outline: 2px solid rgba(255,255,255,0.5); outline-offset: 2px; box-shadow: 0 8px 32px rgba(0,0,0,.25);}
-        .ytmusic-top-button:active {transform: translateY(0) scale(0.98);}
-        /* Responsive positioning */
-        @media (max-height: 600px) {.ytmusic-top-button {bottom: 80px !important;}}
-        /* Allow reuse of the global .top-button rules when available */
-        .ytmusic-top-button.top-button { /* additional shared rules can apply via .top-button */ }
-    `;
+  // Scroll-to-top styles removed - now handled by enhanced.js universal button
 
   /**
    * Applies all enhanced styles to YouTube Music interface
@@ -222,17 +235,14 @@
     const s = musicSettingsSnapshot || readMusicSettings();
     if (!s.enableMusic) return;
 
-    const styleParts = [
-      enhancedStyles,
-      immersiveSearchStyles,
-      hoverStyles,
-      playerSidebarStyles,
-      centeredPlayerStyles,
-      playerBarStyles,
-      centeredPlayerBarStyles,
-      miniPlayerStyles,
-      scrollToTopStyles,
-    ];
+    const styleParts = [enhancedStyles];
+    if (s.immersiveSearchStyles) styleParts.push(immersiveSearchStyles);
+    if (s.hoverStyles) styleParts.push(hoverStyles);
+    if (s.playerSidebarStyles) styleParts.push(playerSidebarStyles);
+    if (s.centeredPlayerStyles) styleParts.push(centeredPlayerStyles);
+    if (s.playerBarStyles) styleParts.push(playerBarStyles);
+    if (s.centeredPlayerBarStyles) styleParts.push(centeredPlayerBarStyles);
+    if (s.miniPlayerStyles) styleParts.push(miniPlayerStyles);
 
     const allStyles = `\n${styleParts.join('\n')}\n`;
 
@@ -441,42 +451,31 @@
       return sidePanel;
     }
 
-    // Try finding ANY scrollable element within side-panel
+    // Last resort: walk direct children and a few levels deep for scrollable elements
+    // Avoids querySelectorAll('*') + getComputedStyle which is extremely expensive
     if (sidePanel) {
-      const allElements = Array.from(sidePanel.querySelectorAll('*'));
-
-      // Prefer elements that explicitly allow scrolling via CSS overflow, and pick the
-      // element with the largest scroll delta as a best-effort heuristic.
+      const fallbackSelectors = [
+        'div[id]',
+        'div[class]',
+        '[role="tabpanel"]',
+        '[role="list"]',
+        '[role="listbox"]',
+      ];
       let best = null;
-      let bestScore = 0;
+      let bestDelta = 0;
 
-      for (const el of allElements) {
+      for (const sel of fallbackSelectors) {
         try {
-          const sh = el.scrollHeight || 0;
-          const ch = el.clientHeight || 0;
-          const delta = sh - ch;
-          if (delta <= 10) continue;
-
-          const style = window.getComputedStyle?.(el) || {};
-          const overflowY = (style.overflowY || '').toLowerCase();
-
-          // Base score by delta, boost if overflow-y allows scrolling
-          let score = delta;
-          if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'overlay') {
-            score += 100000;
-          }
-
-          // Prefer elements with role=tabpanel or obvious content containers
-          if (el.getAttribute && el.getAttribute('role') === 'tabpanel') {
-            score += 5000;
-          }
-
-          if (score > bestScore) {
-            bestScore = score;
-            best = el;
+          const candidates = sidePanel.querySelectorAll(sel);
+          for (const el of candidates) {
+            const delta = (el.scrollHeight || 0) - (el.clientHeight || 0);
+            if (delta > 10 && delta > bestDelta) {
+              bestDelta = delta;
+              best = el;
+            }
           }
         } catch {
-          // ignore read errors (detached or cross-origin)
+          // ignore
         }
       }
 
@@ -486,7 +485,7 @@
         window.YouTubeUtils?.logger?.debug?.(
           '[YouTube+][Music]',
           `✓ Best scroll container chosen: ${tag}${id}`,
-          { scrollHeight: best.scrollHeight, clientHeight: best.clientHeight, score: bestScore }
+          { scrollHeight: best.scrollHeight, clientHeight: best.clientHeight }
         );
         scrollContainerCache.set(sidePanel, best);
         return best;
@@ -496,28 +495,7 @@
     // Don't cache null result - content may load asynchronously
     window.YouTubeUtils?.logger?.debug?.(
       '[YouTube+][Music]',
-      '✗ No scroll container found. Available elements:',
-      Array.from(sidePanel?.querySelectorAll('*') || [])
-        .map(el => {
-          let classes = '';
-          try {
-            if (typeof el.className === 'string') {
-              const s = el.className.trim();
-              classes = s ? '.' + s.split(/\s+/).join('.') : '';
-            } else if (el.classList && typeof el.classList === 'object') {
-              const list = Array.from(el.classList).filter(Boolean);
-              classes = list.length ? '.' + list.join('.') : '';
-            }
-          } catch {
-            classes = '';
-          }
-          const scrollInfo =
-            el.scrollHeight > el.clientHeight
-              ? ` [scrollable: ${el.scrollHeight}/${el.clientHeight}]`
-              : '';
-          return el.tagName + (el.id ? `#${el.id}` : '') + classes + scrollInfo;
-        })
-        .slice(0, 30)
+      '✗ No scroll container found in side-panel'
     );
     return null;
   }
@@ -792,9 +770,7 @@
       setupButtonPosition(button, sidePanel, MusicUtils, { insideSidePanel: attachInsidePanel });
 
       // Always append to `body` so the button is never clipped by panel
-      // transforms/overflow. If `attachInsidePanel` is true we'll keep the
-      // button visually near the panel using a position updater below.
-      document.body.appendChild(button);
+      // transforms/overflow. If `attachInsidePanel` is true we'll try panel first.
 
       if (attachInsidePanel) {
         try {
@@ -913,7 +889,7 @@
         `Creating button (attempt ${buttonCreationState.attempts}/${buttonCreationState.maxAttempts})`
       );
 
-      const sidePanel = document.querySelector('#side-panel');
+      const sidePanel = qs('#side-panel');
       const MusicUtils = window.YouTubePlusMusicUtils || {};
       const button = createButton();
 
@@ -925,7 +901,7 @@
         );
 
         // Try queue renderer (shown in playlist/queue view)
-        const queueRenderer = document.querySelector('ytmusic-queue-renderer');
+        const queueRenderer = qs('ytmusic-queue-renderer');
         if (queueRenderer) {
           const queueContents = queueRenderer.querySelector('#contents');
           if (queueContents) {
@@ -936,7 +912,7 @@
         }
 
         // Try to find main scrollable area on homepage/explore pages
-        const mainContent = document.querySelector('ytmusic-browse');
+        const mainContent = qs('ytmusic-browse');
         if (mainContent) {
           const scrollContainer = mainContent.querySelector('ytmusic-section-list-renderer');
           if (scrollContainer) {
@@ -1020,10 +996,10 @@
       }
 
       // Look for containers that need a button
-      const sidePanel = document.querySelector('#side-panel');
-      const mainContent = document.querySelector('ytmusic-browse');
-      const queueRenderer = document.querySelector('ytmusic-queue-renderer');
-      const tabRenderer = document.querySelector('ytmusic-tab-renderer[tab-identifier]');
+      const sidePanel = qs('#side-panel');
+      const mainContent = qs('ytmusic-browse');
+      const queueRenderer = qs('ytmusic-queue-renderer');
+      const tabRenderer = qs('ytmusic-tab-renderer[tab-identifier]');
 
       if (sidePanel || mainContent || queueRenderer || tabRenderer) {
         window.YouTubeUtils?.logger?.debug?.(
@@ -1285,7 +1261,7 @@
         }
 
         if (!button) {
-          const sidePanel = document.querySelector('#side-panel');
+          const sidePanel = qs('#side-panel');
           if (sidePanel) checkAndCreateButton();
         }
       } catch (error) {
@@ -1360,7 +1336,7 @@
       createScrollToTopButton,
       saveSettings,
       applySettingsChanges,
-      version: '2.3',
+      version: '2.4',
     };
   }
 
@@ -1386,11 +1362,7 @@
         try {
           if (typeof newValue === 'string' && newValue) {
             const parsed = JSON.parse(newValue);
-            if (parsed && typeof parsed.enableMusic === 'boolean') {
-              musicSettingsSnapshot = { enableMusic: parsed.enableMusic };
-            } else {
-              musicSettingsSnapshot = readMusicSettings();
-            }
+            musicSettingsSnapshot = mergeMusicSettings(parsed);
           } else {
             musicSettingsSnapshot = readMusicSettings();
           }
@@ -1405,7 +1377,7 @@
   } catch {}
 
   window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Module loaded (lazy)', {
-    version: '2.3',
+    version: '2.4',
     hostname: window.location.hostname,
     enabled:
       window.location.hostname === 'music.youtube.com' &&

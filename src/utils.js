@@ -2,6 +2,14 @@
 (function () {
   'use strict';
 
+  // DOM cache helper with fallback
+  const qs = selector => {
+    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
+      return window.YouTubeDOMCache.get(selector);
+    }
+    return document.querySelector(selector);
+  };
+
   /**
    * Logs an error message with module context
    * @param {string} module - The module name where the error occurred
@@ -149,12 +157,25 @@
       add(id, css) {
         try {
           let el = document.getElementById(id);
+          styles.set(id, css);
           if (!el) {
             el = document.createElement('style');
             el.id = id;
+            if (!document.head) {
+              document.addEventListener(
+                'DOMContentLoaded',
+                () => {
+                  if (!document.getElementById(id) && document.head) {
+                    document.head.appendChild(el);
+                    el.textContent = Array.from(styles.values()).join('\n\n');
+                  }
+                },
+                { once: true }
+              );
+              return;
+            }
             document.head.appendChild(el);
           }
-          styles.set(id, css);
           el.textContent = Array.from(styles.values()).join('\n\n');
         } catch (e) {
           logError('StyleManager', 'add failed', e);
@@ -251,6 +272,7 @@
   const cleanupManager = (function () {
     const observers = new Set();
     const listeners = new Map();
+    const listenerStats = { registeredTotal: 0 };
     const intervals = new Set();
     const timeouts = new Set();
     const animationFrames = new Set();
@@ -287,10 +309,21 @@
           target.addEventListener(ev, fn, opts);
           const key = Symbol();
           listeners.set(key, { target, ev, fn, opts });
+          listenerStats.registeredTotal++;
           return key;
         } catch (e) {
           logError('cleanupManager', 'registerListener failed', e);
           return null;
+        }
+      },
+      getListenerStats() {
+        try {
+          return {
+            active: listeners.size,
+            registeredTotal: listenerStats.registeredTotal,
+          };
+        } catch {
+          return { active: 0, registeredTotal: 0 };
         }
       },
       registerInterval(id) {
@@ -1041,9 +1074,7 @@
         },
         extractSubscriberCountFromPage() {
           try {
-            const el =
-              document.querySelector('yt-formatted-string#subscriber-count') ||
-              document.querySelector('[id*="subscriber-count"]');
+            const el = qs('yt-formatted-string#subscriber-count') || qs('[id*="subscriber-count"]');
             if (!el) return 0;
             const txt = el.textContent || '';
             const digits = txt.replace(/[^0-9]/g, '');

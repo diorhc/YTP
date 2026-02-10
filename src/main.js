@@ -1,5 +1,5 @@
 /* eslint-disable no-console */
-if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy === null) {
+if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy == null) {
   const s = s => s;
   trustedTypes.createPolicy('default', { createHTML: s, createScriptURL: s, createScript: s });
 }
@@ -31,7 +31,7 @@ const executionScript = () => {
   const DEBUG_handleNavigateFactory = false;
   const TAB_AUTO_SWITCH_TO_COMMENTS = false;
 
-  if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy === null) {
+  if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy == null) {
     const s = s => s;
     trustedTypes.createPolicy('default', { createHTML: s, createScriptURL: s, createScript: s });
   }
@@ -71,15 +71,15 @@ const executionScript = () => {
      * @returns {Element | null}
      *  */
     const qsOne = (elm, selector) => {
-      if (window.YouTubeDOMCache) {
+      if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.querySelector === 'function') {
         return window.YouTubeDOMCache.querySelector(selector, elm);
       }
       return HTMLElement_.prototype.querySelector.call(elm, selector);
     };
 
     const _qs = selector => {
-      if (window.YouTubeDOMCache) {
-        return window.YouTubeDOMCache.querySelector(selector, document);
+      if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
+        return window.YouTubeDOMCache.get(selector);
       }
       return document.querySelector(selector);
     };
@@ -92,6 +92,20 @@ const executionScript = () => {
       if (arguments.length === 1) return _qs(a);
       return qsOne(a, b);
     }
+
+    /**
+     * Query all elements with optional caching
+     * @param {string} selector - CSS selector
+     * @param {Element|Document} [context] - Context element
+     * @returns {Element[]} Array of elements
+     */
+    const qsAll = (selector, context) => {
+      const ctx = context || document;
+      if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.getAll === 'function') {
+        return window.YouTubeDOMCache.getAll(selector);
+      }
+      return Array.from(ctx.querySelectorAll(selector));
+    };
 
     const defineProperties = (p, o) => {
       if (!p) {
@@ -560,57 +574,41 @@ const executionScript = () => {
     };
 
     let pageType = null;
-    let pageLang = 'en';
-    const langWords = {
-      en: {
-        //'share':'Share',
-        info: 'Info',
-        videos: 'Videos',
-        playlist: 'Playlist',
-      },
-      jp: {
-        //'share':'共有',
-        info: '情報',
-        videos: '動画',
-        playlist: '再生リスト',
-      },
-      tw: {
-        //'share':'分享',
-        info: '資訊',
-        videos: '影片',
-        playlist: '播放清單',
-      },
-      cn: {
-        //'share':'分享',
-        info: '资讯',
-        videos: '视频',
-        playlist: '播放列表',
-      },
-      du: {
-        //'share':'Teilen',
-        info: 'Info',
-        videos: 'Videos',
-        playlist: 'Playlist',
-      },
-      fr: {
-        //'share':'Partager',
-        info: 'Info',
-        videos: 'Vidéos',
-        playlist: 'Playlist',
-      },
-      kr: {
-        //'share':'공유',
-        info: '정보',
-        videos: '동영상',
-        playlist: '재생목록',
-      },
-      ru: {
-        //'share':'Поделиться',
-        info: 'Описание',
-        videos: 'Видео',
-        playlist: 'Плейлист',
-      },
-    };
+    let _pageLang = 'en';
+    /**
+     * Translation helper using centralized i18n system
+     * @param {string} key - Translation key
+     * @returns {string} Translated string
+     */
+    function getWord(tag) {
+      try {
+        // Use centralized i18n system if available
+        if (typeof window !== 'undefined' && window.YouTubePlusI18n) {
+          const translation = window.YouTubePlusI18n.t(`tabs.${tag}`);
+          if (translation && translation !== `tabs.${tag}`) {
+            return translation;
+          }
+        }
+
+        // Fallback to basic English translations
+        const fallbackWords = {
+          info: 'Info',
+          videos: 'Videos',
+          playlist: 'Playlist',
+        };
+
+        return fallbackWords[tag] || tag;
+      } catch (error) {
+        console.warn('[YouTube+][Main] Translation error:', error);
+        // Final fallback to English
+        const englishWords = {
+          info: 'Info',
+          videos: 'Videos',
+          playlist: 'Playlist',
+        };
+        return englishWords[tag] || tag;
+      }
+    }
 
     const svgComments =
       `<path d="M80 27H12A12 12 90 0 0 0 39v42a12 12 90 0 0 12 12h12v20a2 2 90 0 0 3.4 2L47 93h33a12 
@@ -633,10 +631,6 @@ const executionScript = () => {
 
     const svgPlayList =
       `<path d="M0 3h12v2H0zm0 4h12v2H0zm0 4h8v2H0zm16 0V7h-2v4h-4v2h4v4h2v-4h4v-2z"/>`.trim();
-
-    function getWord(tag) {
-      return langWords[pageLang][tag] || langWords['en'][tag] || '';
-    }
 
     const svgElm = (w, h, vw, vh, p, m) =>
       `<svg${m ? ` class=${m}` : ''} width="${w}" height="${h}" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid meet">${p}</svg>`;
@@ -698,6 +692,28 @@ const executionScript = () => {
       return addHTML;
     }
 
+    const langWords = {
+      ar: true,
+      cn: true,
+      du: true,
+      de: true,
+      en: true,
+      es: true,
+      fr: true,
+      hi: true,
+      id: true,
+      it: true,
+      jp: true,
+      kr: true,
+      pl: true,
+      pt: true,
+      ru: true,
+      tr: true,
+      tw: true,
+      uk: true,
+      vi: true,
+    };
+
     function getLang() {
       let lang = 'en';
       const htmlLang = ((document || 0).documentElement || 0).lang || '';
@@ -746,8 +762,8 @@ const executionScript = () => {
     function getLangForPage() {
       const lang = getLang();
 
-      if (langWords[lang]) pageLang = lang;
-      else pageLang = 'en';
+      if (langWords[lang]) _pageLang = lang;
+      else _pageLang = 'en';
     }
 
     /** @type {Object.<string, number>} */
@@ -821,7 +837,14 @@ const executionScript = () => {
       }
       if (changeOnRoot) {
         // prevent change of document.body
-        pluginDetectObserver.observe(document.body, { attributes: true });
+        pluginDetectObserver.observe(document.body, {
+          attributes: true,
+          attributeFilter: [
+            'data-ytlstm-new-layout',
+            'data-ytlstm-overlay-text-shadow',
+            'data-ytlstm-theater-mode',
+          ],
+        });
       }
       for (const detected of newPlugins) {
         const pluginItem = plugin[`${detected}`];
@@ -833,11 +856,32 @@ const executionScript = () => {
       }
     };
 
-    pluginDetectObserver.observe(document.documentElement, { attributes: true });
-    if (document.body) pluginDetectObserver.observe(document.body, { attributes: true });
+    const pluginAttributeFilter = [
+      'data-ytlstm-new-layout',
+      'data-ytlstm-overlay-text-shadow',
+      'data-ytlstm-theater-mode',
+    ];
+    pluginDetectObserver.observe(document.documentElement, {
+      attributes: true,
+      attributeFilter: pluginAttributeFilter,
+    });
+    if (document.body) {
+      pluginDetectObserver.observe(document.body, {
+        attributes: true,
+        attributeFilter: pluginAttributeFilter,
+      });
+    }
     navigateFinishedPromise.then(() => {
-      pluginDetectObserver.observe(document.documentElement, { attributes: true });
-      if (document.body) pluginDetectObserver.observe(document.body, { attributes: true });
+      pluginDetectObserver.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: pluginAttributeFilter,
+      });
+      if (document.body) {
+        pluginDetectObserver.observe(document.body, {
+          attributes: true,
+          attributeFilter: pluginAttributeFilter,
+        });
+      }
     });
 
     const funcCanCollapse = function (_s) {
@@ -1068,7 +1112,7 @@ const executionScript = () => {
       const ytdFlexyElm = elements.flexy;
 
       if (!cachedTabLinks || cachedTabLinks.length === 0 || !cachedTabLinks[0].isConnected) {
-        cachedTabLinks = document.querySelectorAll('#material-tabs a[tyt-tab-content]');
+        cachedTabLinks = qsAll('#material-tabs a[tyt-tab-content]');
         cachedTabContents.clear();
       }
       const links = cachedTabLinks;
@@ -1170,7 +1214,7 @@ const executionScript = () => {
     }
 
     function getSuitableElement(selector) {
-      const elements = document.querySelectorAll(selector);
+      const elements = qsAll(selector);
       let j = -1,
         h = -1;
       for (let i = 0, l = elements.length; i < l; i++) {
@@ -1312,7 +1356,7 @@ const executionScript = () => {
     
     function ytBtnCloseEngagementPanels() {
       if (isEngagementPanelExpanded()) {
-        for (const s of document.querySelectorAll(
+        for (const s of qsAll(
           `ytd-watch-flexy[tyt-tab] #panels.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility]:not([hidden])`
         )) {
           if (s.getAttribute('visibility') == "ENGAGEMENT_PANEL_VISIBILITY_EXPANDED") ytBtnCloseEngagementPanel(s);
@@ -1323,7 +1367,7 @@ const executionScript = () => {
 
     function ytBtnCloseEngagementPanels() {
       const actions = [];
-      for (const panelElm of document.querySelectorAll(
+      for (const panelElm of qsAll(
         `ytd-watch-flexy[tyt-tab] #panels.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility]:not([hidden])`
       )) {
         if (
@@ -1460,7 +1504,7 @@ const executionScript = () => {
       // });
 
       const requireElements = [
-        ...document.querySelectorAll(
+        ...qsAll(
           'ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *'
         ),
       ]
@@ -1822,7 +1866,7 @@ const executionScript = () => {
     const checkElementExist = (css, exclude) => {
       const elms = window.YouTubeDOMCache
         ? window.YouTubeDOMCache.querySelectorAll(css, document)
-        : document.querySelectorAll(css);
+        : qsAll(css);
       for (const p of elms) {
         if (!p.closest(exclude)) return p;
       }
@@ -2089,9 +2133,7 @@ const executionScript = () => {
 
         if (isSubTypeExist) return true;
 
-        const movie_player = [...document.querySelectorAll('#movie_player')].filter(
-          e => !e.closest('[hidden]')
-        )[0];
+        const movie_player = qsAll('#movie_player').filter(e => !e.closest('[hidden]'))[0];
         if (movie_player) {
           const media = qsOne(movie_player, 'video[class], audio[class]');
           if (
@@ -2174,7 +2216,7 @@ const executionScript = () => {
         document.removeEventListener('yt-navigate-finish', f, false);
         if (t38 !== u38) return;
         setTimeout(() => {
-          const currentAbout = [...document.querySelectorAll('ytd-about-channel-renderer')].filter(
+          const currentAbout = qsAll('ytd-about-channel-renderer').filter(
             e => !e.closest('[hidden]')
           )[0];
           let okay = false;
@@ -2193,9 +2235,9 @@ const executionScript = () => {
             }
           }
           if (okay) {
-            const descriptionModel = [
-              ...document.querySelectorAll('yt-description-preview-view-model'),
-            ].filter(e => !e.closest('[hidden]'))[0];
+            const descriptionModel = [...qsAll('yt-description-preview-view-model')].filter(
+              e => !e.closest('[hidden]')
+            )[0];
             if (descriptionModel) {
               const button = [...descriptionModel.querySelectorAll('button')].filter(
                 e => !e.closest('[hidden]') && `${e.textContent}`.trim().length > 0
@@ -2230,7 +2272,7 @@ const executionScript = () => {
 
           // console.log('tabview-script-handleNavigate')
 
-          const ytdAppElm = document.querySelector('ytd-app');
+          const ytdAppElm = qs('ytd-app');
           const ytdAppCnt = insp(ytdAppElm);
 
           let object = null;
@@ -2348,9 +2390,9 @@ const executionScript = () => {
       const _getMediaElement = i => {
         if (mediaModeLock === 0) {
           const e =
-            document.querySelector('.video-stream.html5-main-video') ||
-            document.querySelector('#movie_player video, #movie_player audio') ||
-            document.querySelector('body video[src], body audio[src]');
+            qs('.video-stream.html5-main-video') ||
+            qs('#movie_player video, #movie_player audio') ||
+            qs('body video[src], body audio[src]');
           if (e) {
             if (e.nodeName === 'VIDEO') mediaModeLock = 1;
             else if (e.nodeName === 'AUDIO') mediaModeLock = 2;
@@ -2390,7 +2432,7 @@ const executionScript = () => {
           }
           if (s.endpoint) {
             try {
-              const ytdAppElm = document.querySelector('ytd-app');
+              const ytdAppElm = qs('ytd-app');
               const ytdAppCnt = insp(ytdAppElm);
               ytdAppCnt.replaceState(s.endpoint, '', u);
             } catch {}
@@ -2398,12 +2440,12 @@ const executionScript = () => {
         },
         getMediaElement(i) {
           const s = _getMediaElement(i) || '';
-          if (s) return document.querySelector(s);
+          if (s) return qs(s);
           return null;
         },
         getMediaElements(i) {
           const s = _getMediaElement(i) || '';
-          if (s) return document.querySelectorAll(s);
+          if (s) return qsAll(s);
           return [];
         },
       };
@@ -2556,7 +2598,7 @@ const executionScript = () => {
 
           this.activated = true;
 
-          const ytdAppElm = document.querySelector('ytd-app');
+          const ytdAppElm = qs('ytd-app');
           const ytdAppCnt = insp(ytdAppElm);
 
           if (!ytdAppCnt) return;
@@ -2659,9 +2701,7 @@ const executionScript = () => {
         moFn(lockId) {
           if (lockGet['fullChannelNameOnHoverAttrAsyncLock'] !== lockId) return;
 
-          const uploadInfo = document.querySelector(
-            '#primary.ytd-watch-flexy ytd-watch-metadata #upload-info'
-          );
+          const uploadInfo = qs('#primary.ytd-watch-flexy ytd-watch-metadata #upload-info');
           if (!uploadInfo) return;
 
           const evtOpt = { passive: true, capture: false };
@@ -2673,9 +2713,7 @@ const executionScript = () => {
         },
         async onNavigateFinish() {
           await this.promiseReady.then();
-          const uploadInfo = document.querySelector(
-            '#primary.ytd-watch-flexy ytd-watch-metadata #upload-info'
-          );
+          const uploadInfo = qs('#primary.ytd-watch-flexy ytd-watch-metadata #upload-info');
           if (!uploadInfo) return;
           this.mo.observe(uploadInfo, {
             attributes: true,
@@ -2741,7 +2779,7 @@ const executionScript = () => {
     const makeInitAttached = tag => {
       const inPageRearrange_ = inPageRearrange;
       inPageRearrange = false;
-      for (const elm of document.querySelectorAll(`${tag}`)) {
+      for (const elm of qsAll(`${tag}`)) {
         const cnt = insp(elm) || 0;
         if (typeof cnt.attached498 === 'function' && !elm[__attachedSymbol__]) {
           Promise.resolve(elm).then(eventMap[`${tag}::attached`]).catch(console.warn);
@@ -2752,9 +2790,7 @@ const executionScript = () => {
 
     const getGeneralChatElement = async () => {
       for (let i = 2; i-- > 0; ) {
-        const t = document.querySelector(
-          '#columns.style-scope.ytd-watch-flexy ytd-live-chat-frame#chat'
-        );
+        const t = qs('#columns.style-scope.ytd-watch-flexy ytd-live-chat-frame#chat');
         if (t instanceof Element) return t;
         if (i > 0) {
           // try later
@@ -2766,11 +2802,11 @@ const executionScript = () => {
     };
 
     const nsTemplateObtain = () => {
-      let nsTemplate = document.querySelector('ytd-watch-flexy noscript[ns-template]');
+      let nsTemplate = qs('ytd-watch-flexy noscript[ns-template]');
       if (!nsTemplate) {
         nsTemplate = document.createElement('noscript');
         nsTemplate.setAttribute('ns-template', '');
-        document.querySelector('ytd-watch-flexy').appendChild(nsTemplate);
+        qs('ytd-watch-flexy').appendChild(nsTemplate);
       }
       return nsTemplate;
     };
@@ -2843,7 +2879,7 @@ const executionScript = () => {
         bFixForResizedTabLater = false;
 
         const runLowPriority = () => {
-          for (const element of document.querySelectorAll('[io-intersected]')) {
+          for (const element of qsAll('[io-intersected]')) {
             const cnt = insp(element);
             if (element instanceof HTMLElement_ && typeof cnt.calculateCanCollapse === 'function') {
               try {
@@ -2863,7 +2899,7 @@ const executionScript = () => {
           // #tab-info is now shown.
           // to fix the sizing issue (description info cards in tab info)
           requestAnimationFrame(() => {
-            for (const element of document.querySelectorAll(
+            for (const element of qsAll(
               '#tab-info ytd-video-description-infocards-section-renderer, #tab-info yt-chip-cloud-renderer, #tab-info ytd-horizontal-card-list-renderer, #tab-info yt-horizontal-list-renderer'
             )) {
               const cnt = insp(element);
@@ -2875,7 +2911,7 @@ const executionScript = () => {
             }
             // to fix expand/collapse sizing issue (inline-expander in tab info)
             // for example, expand button is required but not shown as it was rendered in the hidden state
-            for (const element of document.querySelectorAll('#tab-info ytd-text-inline-expander')) {
+            for (const element of qsAll('#tab-info ytd-text-inline-expander')) {
               const cnt = insp(element);
               if (element instanceof HTMLElement_ && typeof cnt.resize === 'function') {
                 cnt.resize(false); // reflow due to offsetWidth calling
@@ -2886,7 +2922,7 @@ const executionScript = () => {
         }
 
         if (!isResize && typeof lastTab === 'string' && lastTab.startsWith('#tab-')) {
-          const tabContent = document.querySelector('.tab-content-cld:not(.tab-content-hidden)');
+          const tabContent = qs('.tab-content-cld:not(.tab-content-hidden)');
           if (tabContent) {
             const renderers = tabContent.querySelectorAll('yt-chip-cloud-renderer');
             for (const renderer of renderers) {
@@ -3268,7 +3304,7 @@ const executionScript = () => {
 
         // if(!elements.comments || elements.comments.isConnected === false) return;
         if (hostElement && !hostElement.closest('#right-tabs')) {
-          document.querySelector('#tab-comments').assignChildren111(null, hostElement, null);
+          qs('#tab-comments').assignChildren111(null, hostElement, null);
         } else {
           const shouldTabVisible =
             elements.comments &&
@@ -3377,9 +3413,7 @@ const executionScript = () => {
         // hostElement.__connectedFlg__ = 5;
         if (!hostElement || !hostElement.classList.contains('ytd-item-section-renderer')) return;
         // console.log(12991, 'ytd-comments-header-renderer::attached')
-        const targetElement = document.querySelector(
-          '[tyt-comments-area] ytd-comments-header-renderer'
-        );
+        const targetElement = qs('[tyt-comments-area] ytd-comments-header-renderer');
         if (hostElement === targetElement) {
           hostElement.setAttribute111('tyt-comments-header-field', '');
         } else {
@@ -3405,11 +3439,8 @@ const executionScript = () => {
         if (hostElement.hasAttribute000('field-of-cm-count')) {
           hostElement.removeAttribute000('field-of-cm-count');
 
-          const cmCount = document.querySelector('#tyt-cm-count');
-          if (
-            cmCount &&
-            !document.querySelector('#tab-comments ytd-comments-header-renderer[field-of-cm-count]')
-          ) {
+          const cmCount = qs('#tyt-cm-count');
+          if (cmCount && !qs('#tab-comments ytd-comments-header-renderer[field-of-cm-count]')) {
             cmCount.textContent = '';
           }
         }
@@ -3434,7 +3465,7 @@ const executionScript = () => {
         if (
           cnt &&
           hostElement.closest('#tab-comments') &&
-          document.querySelector('#tab-comments ytd-comments-header-renderer') === hostElement
+          qs('#tab-comments ytd-comments-header-renderer') === hostElement
         ) {
           b = true;
         } else if (
@@ -3472,9 +3503,7 @@ const executionScript = () => {
       },
 
       'ytd-comments-header-renderer::deferredCounterUpdate': () => {
-        const nodes = document.querySelectorAll(
-          '#tab-comments ytd-comments-header-renderer[class]'
-        );
+        const nodes = qsAll('#tab-comments ytd-comments-header-renderer[class]');
         if (nodes.length === 1) {
           const hostElement = nodes[0];
           const cnt = insp(hostElement);
@@ -3510,7 +3539,7 @@ const executionScript = () => {
               ez = z[0][0];
             }
           }
-          const cmCount = document.querySelector('#tyt-cm-count');
+          const cmCount = qs('#tyt-cm-count');
           if (ez) {
             hostElement.setAttribute111('field-of-cm-count', '');
             cmCount && (cmCount.textContent = ez.trim());
@@ -3658,7 +3687,7 @@ const executionScript = () => {
           const inlineExpanderElm = infoExpander.querySelector('ytd-text-inline-expander');
           if (inlineExpanderElm) {
             const mo = new MutationObserver(() => {
-              const p = document.querySelector('#tab-info ytd-text-inline-expander');
+              const p = qs('#tab-info ytd-text-inline-expander');
               sessionStorage.__$$tmp_UseAutoExpandInfoDesc$$__ =
                 p && p.hasAttribute('is-expanded') ? '1' : '';
               if (p) fixInlineExpanderContent();
@@ -3674,9 +3703,10 @@ const executionScript = () => {
           }
 
           if (infoExpander && !infoExpander.closest('#right-tabs')) {
-            document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
+            const tabInfoElm = qs('#tab-info');
+            if (tabInfoElm) tabInfoElm.assignChildren111(null, infoExpander, null);
           } else {
-            if (document.querySelector('[tyt-tab-content="#tab-info"]')) {
+            if (qs('[tyt-tab-content="#tab-info"]')) {
               const shouldTabVisible =
                 elements.infoExpander && elements.infoExpander.closest('#tab-info');
               document
@@ -3712,7 +3742,7 @@ const executionScript = () => {
           // }
         } else if (!hostElement.closest('#tab-info')) {
           const bodyRenderer = hostElement;
-          let bodyRendererNew = document.querySelector(
+          let bodyRendererNew = qs(
             'ytd-expandable-video-description-body-renderer[tyt-info-renderer]'
           );
           if (!bodyRendererNew) {
@@ -3952,7 +3982,7 @@ const executionScript = () => {
 
           const chatContainer = chatElem ? chatElem.closest('#chat-container') || chatElem : null;
           if (chatContainer && !chatContainer.hasAttribute000('tyt-chat-container')) {
-            for (const p of document.querySelectorAll('[tyt-chat-container]')) {
+            for (const p of qsAll('[tyt-chat-container]')) {
               p.removeAttribute000('[tyt-chat-container]');
             }
             chatContainer.setAttribute111('tyt-chat-container', '');
@@ -4273,7 +4303,7 @@ const executionScript = () => {
 
         const related = elements.related;
         if (related && related.isConnected && !related.closest('#right-tabs #tab-videos')) {
-          document.querySelector('#tab-videos').assignChildren111(null, related, null);
+          qs('#tab-videos').assignChildren111(null, related, null);
         }
         const infoExpander = elements.infoExpander;
         if (
@@ -4281,7 +4311,7 @@ const executionScript = () => {
           infoExpander.isConnected &&
           !infoExpander.closest('#right-tabs #tab-info')
         ) {
-          document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
+          qs('#tab-info').assignChildren111(null, infoExpander, null);
         } else {
           // if (infoExpander && ytdFlexyElm && shouldFixInfo) {
           //   shouldFixInfo = false;
@@ -4293,7 +4323,7 @@ const executionScript = () => {
         if (commentsArea) {
           const isConnected = commentsArea.isConnected;
           if (isConnected && !commentsArea.closest('#right-tabs #tab-comments')) {
-            const tab = document.querySelector('#tab-comments');
+            const tab = qs('#tab-comments');
             tab.assignChildren111(null, commentsArea, null);
           } else {
             // if (!isConnected || tab.classList.contains('tab-content-hidden')) removeKeepCommentsScroller();
@@ -4312,16 +4342,14 @@ const executionScript = () => {
           }
         }
 
-        const ytdAppElm = document.querySelector(
-          'ytd-page-manager#page-manager.style-scope.ytd-app'
-        );
+        const ytdAppElm = qs('ytd-page-manager#page-manager.style-scope.ytd-app');
         const ytdAppCnt = insp(ytdAppElm);
         pageType = ytdAppCnt ? (ytdAppCnt.data || 0).page : null;
 
-        if (!document.querySelector('ytd-watch-flexy #player')) return;
+        if (!qs('ytd-watch-flexy #player')) return;
         // shouldFixInfo = true;
         // console.log('yt-navigate-finish')
-        const flexyArr = [...document.querySelectorAll('ytd-watch-flexy')].filter(
+        const flexyArr = qsAll('ytd-watch-flexy').filter(
           e => !e.closest('[hidden]') && e.querySelector('#player')
         );
         if (flexyArr.length === 1) {
@@ -4358,8 +4386,8 @@ const executionScript = () => {
       onceInsertRightTabs: () => {
         // if(lockId !== lockGet['yt-navigate-finish-videos']) return;
         const related = elements.related;
-        let rightTabs = document.querySelector('#right-tabs');
-        if (!document.querySelector('#right-tabs') && related) {
+        let rightTabs = qs('#right-tabs');
+        if (!qs('#right-tabs') && related) {
           getLangForPage();
           const docTmp = document.createElement('template');
           docTmp.innerHTML = createHTML(getTabsHTML());
@@ -4377,9 +4405,7 @@ const executionScript = () => {
           const secondaryWrapper = document.createElement('secondary-wrapper');
           secondaryWrapper.classList.add('tabview-secondary-wrapper');
           secondaryWrapper.id = 'secondary-inner-wrapper';
-          const secondaryInner = document.querySelector(
-            '#secondary-inner.style-scope.ytd-watch-flexy'
-          );
+          const secondaryInner = qs('#secondary-inner.style-scope.ytd-watch-flexy');
 
           inPageRearrange = true;
           secondaryWrapper.replaceChildren000(...secondaryInner.childNodes);
@@ -4405,19 +4431,19 @@ const executionScript = () => {
             },
             { rootMargin: '0px' }
           );
-          for (const btn of document.querySelectorAll('.tab-btn[tyt-tab-content]')) {
+          for (const btn of qsAll('.tab-btn[tyt-tab-content]')) {
             ioTabBtns.observe(btn);
           }
           if (!related.closest('#right-tabs')) {
-            document.querySelector('#tab-videos').assignChildren111(null, related, null);
+            qs('#tab-videos').assignChildren111(null, related, null);
           }
           const infoExpander = elements.infoExpander;
           if (infoExpander && !infoExpander.closest('#right-tabs')) {
-            document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
+            qs('#tab-info').assignChildren111(null, infoExpander, null);
           }
           const commentsArea = elements.comments;
           if (commentsArea && !commentsArea.closest('#right-tabs')) {
-            document.querySelector('#tab-comments').assignChildren111(null, commentsArea, null);
+            qs('#tab-comments').assignChildren111(null, commentsArea, null);
           }
           rightTabsProvidedPromise.resolve();
           roRightTabs.disconnect();
@@ -4459,7 +4485,7 @@ const executionScript = () => {
 
       twoColumnChanged10: lockId => {
         if (lockId !== lockGet['twoColumnChanged10Lock']) return;
-        for (const continuation of document.querySelectorAll(
+        for (const continuation of qsAll(
           '#tab-videos ytd-watch-next-secondary-results-renderer ytd-continuation-item-renderer'
         )) {
           if (continuation.closest('[hidden]')) continue;
@@ -4502,9 +4528,7 @@ const executionScript = () => {
                     // Theater mode is still active, no action needed
                   } else {
                     // Theater mode was lost, restore it
-                    const sizeBtn = document.querySelector(
-                      'ytd-watch-flexy #ytd-player button.ytp-size-button'
-                    );
+                    const sizeBtn = qs('ytd-watch-flexy #ytd-player button.ytp-size-button');
                     if (sizeBtn && !isTheater()) {
                       sizeBtn.click();
                     }
@@ -4516,14 +4540,11 @@ const executionScript = () => {
               (q & (1 | 2 | 4 | 8 | 16 | 4096)) === (1 | 0 | 4 | 0 | 16 | 4096)
             ) {
               special = 3;
-            } else if (
-              (q & (1 | 16)) === (1 | 16) &&
-              document.querySelector('[data-ytlstm-theater-mode]')
-            ) {
+            } else if ((q & (1 | 16)) === (1 | 16) && qs('[data-ytlstm-theater-mode]')) {
               special = 1;
             } else if (
               (q & (1 | 8 | 16)) === (1 | 8 | 16) &&
-              document.querySelector('[is-two-columns_][theater][tyt-chat="+"]')
+              qs('[is-two-columns_][theater][tyt-chat="+"]')
             ) {
               special = 2;
             }
@@ -4533,9 +4554,7 @@ const executionScript = () => {
               // Restore theater mode after exiting fullscreen
               setTimeout(() => {
                 if (!isTheater()) {
-                  const sizeBtn = document.querySelector(
-                    'ytd-watch-flexy #ytd-player button.ytp-size-button'
-                  );
+                  const sizeBtn = qs('ytd-watch-flexy #ytd-player button.ytp-size-button');
                   if (sizeBtn) {
                     sizeBtn.click();
                   }
@@ -4850,7 +4869,7 @@ const executionScript = () => {
         await delayPn(delayTime);
         if (lockGet['fixInitialTabStateLock'] !== lockId) return;
         // console.log('fixInitialTabStateFn 0c');
-        const kTab = document.querySelector('[tyt-tab]');
+        const kTab = qs('[tyt-tab]');
         const qTab =
           !kTab || kTab.getAttribute('tyt-tab') === ''
             ? checkElementExist('ytd-watch-flexy[is-two-columns_]', '[hidden]')
@@ -4868,7 +4887,7 @@ const executionScript = () => {
           const hasTheater = qTab.hasAttribute('theater');
           if (!hasTheater) {
             DEBUG_5085 && console.log('fixInitialTabStateFn 1b');
-            const btn0 = document.querySelector('.tab-btn-visible'); // or default button
+            const btn0 = qs('.tab-btn-visible'); // or default button
             if (btn0) {
               switchToTab(btn0);
             } else {
@@ -4963,7 +4982,7 @@ const executionScript = () => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
         await customElements.whenDefined(nodeName);
-        const dummy = document.querySelector(nodeName) || document.createElement(nodeName);
+        const dummy = qs(nodeName) || document.createElement(nodeName);
         const cProto = insp(dummy).constructor.prototype;
         return cProto;
       } catch (e) {
@@ -4996,7 +5015,7 @@ const executionScript = () => {
     let moOverallActive = false;
     const shouldActivateMoOverall = () => {
       try {
-        return !!document.querySelector('ytd-watch-flexy #player');
+        return !!qs('ytd-watch-flexy #player');
       } catch {
         return false;
       }
@@ -5031,7 +5050,7 @@ const executionScript = () => {
     });
 
     const moEgmPanelReadyClearFn = () => {
-      if (document.querySelector('[tyt-egm-panel-jclmd]') === null) {
+      if (qs('[tyt-egm-panel-jclmd]') === null) {
         moEgmPanelReady.takeRecords();
         moEgmPanelReady.disconnect();
       }
@@ -5064,154 +5083,150 @@ const executionScript = () => {
 const styles = {
   main: `
   @keyframes relatedElementProvided{0%{background-position-x:3px;}100%{background-position-x:4px;}}
-html[tabview-loaded="icp"] #related.ytd-watch-flexy{animation:relatedElementProvided 1ms linear 0s 1 normal forwards;}
-html[tabview-loaded="icp"] #right-tabs #related.ytd-watch-flexy,html[tabview-loaded="icp"] [hidden] #related.ytd-watch-flexy,html[tabview-loaded="icp"] #right-tabs ytd-expander#expander,html[tabview-loaded="icp"] [hidden] ytd-expander#expander,html[tabview-loaded="icp"] ytd-comments ytd-expander#expander{animation:initial;}
-#secondary.ytd-watch-flexy{position:relative;}
-#secondary-inner.style-scope.ytd-watch-flexy{height:100%;}
-#secondary-inner secondary-wrapper{display:flex;flex-direction:column;flex-wrap:nowrap;box-sizing:border-box;padding:0;margin:0;border:0;height:100%;max-height:calc(100vh - var(--ytd-toolbar-height,56px));position:absolute;top:0;right:0;left:0;contain:strict;padding:var(--ytd-margin-6x) var(--ytd-margin-6x) var(--ytd-margin-6x) 0;}
-#right-tabs{position:relative;display:flex;padding:0;margin:0;flex-grow:1;flex-direction:column;}
-[tyt-tab=""] #right-tabs{flex-grow:0;}
-[tyt-tab=""] #right-tabs .tab-content{border:0;}
-#right-tabs .tab-content{flex-grow:1;}
-ytd-watch-flexy[hide-default-text-inline-expander] #primary.style-scope.ytd-watch-flexy ytd-text-inline-expander{display:none;}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden{--comment-pre-load-sizing:90px;visibility:collapse;z-index:-1;position:absolute!important;left:2px;top:2px;width:var(--comment-pre-load-sizing)!important;height:var(--comment-pre-load-sizing)!important;display:block!important;pointer-events:none!important;overflow:hidden;contain:strict;border:0;margin:0;padding:0;}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments>ytd-item-section-renderer#sections{display:block!important;overflow:hidden;height:var(--comment-pre-load-sizing);width:var(--comment-pre-load-sizing);contain:strict;border:0;margin:0;padding:0;}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments>ytd-item-section-renderer#sections>#contents{display:flex!important;flex-direction:row;gap:60px;overflow:hidden;height:var(--comment-pre-load-sizing);width:var(--comment-pre-load-sizing);contain:strict;border:0;margin:0;padding:0;}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents{--comment-pre-load-display:none;}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*:only-of-type,ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*:last-child{--comment-pre-load-display:block;}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*{display:var(--comment-pre-load-display)!important;}
-ytd-watch-flexy #tab-comments:not(.tab-content-hidden){pointer-events:auto!important;}
-ytd-watch-flexy #tab-comments:not(.tab-content-hidden) *{pointer-events:auto!important;}
-ytd-watch-flexy #tab-comments:not(.tab-content-hidden) button,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-button-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) a,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) tp-yt-paper-button,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) [role="button"],ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-button-shape{pointer-events:auto!important;}
-ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-comment-action-buttons-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-button-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) #action-buttons,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-menu-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-dropdown-menu{pointer-events:auto!important;}
-#right-tabs #material-tabs{position:relative;display:flex;padding:0;border:1px solid var(--ytd-searchbox-legacy-border-color);overflow:hidden;}
-[tyt-tab] #right-tabs #material-tabs{border-radius:12px;}
-[tyt-tab^="#"] #right-tabs #material-tabs{border-radius:12px 12px 0 0;}
-ytd-watch-flexy:not([is-two-columns_]) #right-tabs #material-tabs{outline:0;}
-#right-tabs #material-tabs a.tab-btn[tyt-tab-content]>*{pointer-events:none;}
-#right-tabs #material-tabs a.tab-btn[tyt-tab-content]>.font-size-right{pointer-events:initial;display:none;}
-ytd-watch-flexy #right-tabs .tab-content{padding:0;box-sizing:border-box;display:block;border:1px solid var(--ytd-searchbox-legacy-border-color);border-top:0;position:relative;top:0;display:flex;flex-direction:row;overflow:hidden;border-radius:0 0 12px 12px;}
-ytd-watch-flexy:not([is-two-columns_]) #right-tabs .tab-content{height:100%;}
-ytd-watch-flexy #right-tabs .tab-content-cld{box-sizing:border-box;position:relative;display:block;width:100%;overflow:auto;--tab-content-padding:var(--ytd-margin-4x);padding:var(--tab-content-padding);contain:layout paint;will-change:scroll-position;}
-.tab-content-cld,#right-tabs,.tab-content{transition:none;animation:none;}
-ytd-watch-flexy #right-tabs .tab-content-cld::-webkit-scrollbar{width:8px;height:8px;}
-ytd-watch-flexy #right-tabs .tab-content-cld::-webkit-scrollbar-track{background:transparent;}
-ytd-watch-flexy #right-tabs .tab-content-cld::-webkit-scrollbar-thumb{background:rgba(144,144,144,.5);border-radius:4px;}
-ytd-watch-flexy #right-tabs .tab-content-cld::-webkit-scrollbar-thumb:hover{background:rgba(170,170,170,.7);}
-#right-tabs #emojis.ytd-commentbox{inset:auto 0 auto 0;width:auto;}
-ytd-watch-flexy[is-two-columns_] #right-tabs .tab-content-cld{height:100%;width:100%;contain:size layout paint style;position:absolute;}
-ytd-watch-flexy #right-tabs .tab-content-cld.tab-content-hidden{display:none;width:100%;contain:size layout paint style;}
-@supports (color:var(--tabview-tab-btn-define)){
-ytd-watch-flexy #right-tabs .tab-btn{background:var(--yt-spec-general-background-a);}
-html{--tyt-tab-btn-flex-grow:1;--tyt-tab-btn-flex-basis:0%;--tyt-tab-bar-color-1-def:#ff4533;--tyt-tab-bar-color-2-def:var(--yt-brand-light-red);--tyt-tab-bar-color-1:var(--main-color,var(--tyt-tab-bar-color-1-def));--tyt-tab-bar-color-2:var(--main-color,var(--tyt-tab-bar-color-2-def));}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]{flex:var(--tyt-tab-btn-flex-grow) 1 var(--tyt-tab-btn-flex-basis);position:relative;display:inline-block;text-decoration:none;text-transform:uppercase;--tyt-tab-btn-color:var(--yt-spec-text-secondary);color:var(--tyt-tab-btn-color);text-align:center;padding:14px 8px 10px;border:0;border-bottom:4px solid transparent;font-weight:500;font-size:12px;line-height:18px;cursor:pointer;transition:border 200ms linear 100ms;background-color:var(--ytd-searchbox-legacy-button-color);text-transform:var(--yt-button-text-transform,inherit);user-select:none!important;overflow:hidden;white-space:nowrap;text-overflow:clip;}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]>svg{height:18px;padding-right:0;vertical-align:bottom;opacity:.5;margin-right:0;color:var(--yt-button-color,inherit);fill:var(--iron-icon-fill-color,currentcolor);stroke:var(--iron-icon-stroke-color,none);pointer-events:none;}
-ytd-watch-flexy #right-tabs .tab-btn{--tabview-btn-txt-ml:8px;}
-ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]{--tabview-btn-txt-ml:0;}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]>svg+span{margin-left:var(--tabview-btn-txt-ml);}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active{font-weight:500;outline:0;--tyt-tab-btn-color:var(--yt-spec-text-primary);background-color:var(--ytd-searchbox-legacy-button-focus-color);border-bottom:2px var(--tyt-tab-bar-color-2) solid;}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active svg{opacity:.9;}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover{background-color:var(--ytd-searchbox-legacy-button-hover-color);--tyt-tab-btn-color:var(--yt-spec-text-primary);}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover svg{opacity:.9;}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].tab-btn-hidden{display:none;}
-ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"],ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]:hover{--tyt-tab-btn-color:var(--yt-spec-icon-disabled);}
-ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"] span#tyt-cm-count:empty{display:none;}
-ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{display:inline-block;width:4em;text-align:left;font-size:inherit;color:currentColor;transform:scaleX(.8);}}
-@supports (color:var(--tyt-cm-count-define)){
-ytd-watch-flexy{--tyt-x-loading-content-letter-spacing:2px;}
-html{--tabview-text-loading:"Loading";--tabview-text-fetching:"Fetching";--tabview-panel-loading:var(--tabview-text-loading);}
-html:lang(ja){--tabview-text-loading:"読み込み中";--tabview-text-fetching:"フェッチ..";}
-html:lang(ko){--tabview-text-loading:"로딩..";--tabview-text-fetching:"가져오기..";}
-html:lang(zh-Hant){--tabview-text-loading:"載入中";--tabview-text-fetching:"擷取中";}
-html:lang(zh-Hans){--tabview-text-loading:"加载中";--tabview-text-fetching:"抓取中";}
-html:lang(ru){--tabview-text-loading:"Загрузка";--tabview-text-fetching:"Получение";}
-ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{content:var(--tabview-text-loading);letter-spacing:var(--tyt-x-loading-content-letter-spacing);}}
-@supports (color:var(--tabview-font-size-btn-define)){
-.font-size-right{display:inline-flex;flex-direction:column;position:absolute;right:0;top:0;bottom:0;width:16px;padding:4px 0;justify-content:space-evenly;align-content:space-evenly;pointer-events:none;}
-html body ytd-watch-flexy.style-scope .font-size-btn{user-select:none!important;}
-.font-size-btn{--tyt-font-size-btn-display:none;display:var(--tyt-font-size-btn-display,none);width:12px;height:12px;color:var(--yt-spec-text-secondary);background-color:var(--yt-spec-badge-chip-background);box-sizing:border-box;cursor:pointer;transform-origin:left top;margin:0;padding:0;position:relative;font-family:'Menlo','Lucida Console','Monaco','Consolas',monospace;line-height:100%;font-weight:900;transition:background-color 90ms linear,color 90ms linear;pointer-events:all;}
-.font-size-btn:hover{background-color:var(--yt-spec-text-primary);color:var(--yt-spec-general-background-a);}
-@supports (zoom:.5){
-.tab-btn .font-size-btn{--tyt-font-size-btn-display:none;}
-.tab-btn.active:hover .font-size-btn{--tyt-font-size-btn-display:inline-block;}
-body ytd-watch-flexy:not([is-two-columns_]) #columns.ytd-watch-flexy{flex-direction:column;}
-body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy{display:block;width:100%;box-sizing:border-box;}
-body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy secondary-wrapper{padding-left:var(--ytd-margin-6x);contain:content;height:initial;}
-body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy secondary-wrapper #right-tabs{overflow:auto;}
-[tyt-chat="+"] { --tyt-chat-grow: 1;}
-[tyt-chat="+"] secondary-wrapper>[tyt-chat-container]{flex-grow:var(--tyt-chat-grow);flex-shrink:0;display:flex;flex-direction:column;}
-[tyt-chat="+"] secondary-wrapper>[tyt-chat-container]>#chat{flex-grow:var(--tyt-chat-grow);}
-ytd-watch-flexy[is-two-columns_]:not([theater]) #columns.style-scope.ytd-watch-flexy{min-height:calc(100vh - var(--ytd-toolbar-height,56px));}
-ytd-watch-flexy[is-two-columns_]:not([full-bleed-player]) ytd-live-chat-frame#chat{min-height:initial!important;height:initial!important;}
-ytd-watch-flexy[tyt-tab^="#"]:not([is-two-columns_]):not([tyt-chat="+"]) #right-tabs{min-height:var(--ytd-watch-flexy-chat-max-height);}
-body ytd-watch-flexy:not([is-two-columns_]) #chat.ytd-watch-flexy{margin-top:0;}
-body ytd-watch-flexy:not([is-two-columns_]) ytd-watch-metadata.ytd-watch-flexy{margin-bottom:0;}
-ytd-watch-metadata.ytd-watch-flexy ytd-metadata-row-container-renderer{display:none;}
-#tab-info [show-expand-button] #expand-sizer.ytd-text-inline-expander{visibility:initial;}
-#tab-info #collapse.button.ytd-text-inline-expander {display: none;}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#left-arrow-container.ytd-video-description-infocards-section-renderer>#left-arrow,#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#right-arrow-container.ytd-video-description-infocards-section-renderer>#right-arrow{border:6px solid transparent;opacity:.65;}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#left-arrow-container.ytd-video-description-infocards-section-renderer>#left-arrow:hover,#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#right-arrow-container.ytd-video-description-infocards-section-renderer>#right-arrow:hover{opacity:1;}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>div#left-arrow-container::before{content:'';background:transparent;width:40px;display:block;height:40px;position:absolute;left:-20px;top:0;z-index:-1;}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>div#right-arrow-container::before{content:'';background:transparent;width:40px;display:block;height:40px;position:absolute;right:-20px;top:0;z-index:-1;}
-body ytd-watch-flexy[is-two-columns_][tyt-egm-panel_] #columns.style-scope.ytd-watch-flexy #panels.style-scope.ytd-watch-flexy{flex-grow:1;flex-shrink:0;display:flex;flex-direction:column;}
-body ytd-watch-flexy[is-two-columns_][tyt-egm-panel_] #columns.style-scope.ytd-watch-flexy #panels.style-scope.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]{height:initial;max-height:initial;min-height:initial;flex-grow:1;flex-shrink:0;display:flex;flex-direction:column;}
-secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] ytd-transcript-renderer:not(:empty),secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] #body.ytd-transcript-renderer:not(:empty),secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] #content.ytd-transcript-renderer:not(:empty){flex-grow:1;height:initial;max-height:initial;min-height:initial;}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer{position:relative;}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer>[panel-target-id]:only-child{contain:style size;}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-list-renderer.ytd-transcript-search-panel-renderer{flex-grow:1;contain:strict;}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-renderer.style-scope.ytd-transcript-segment-list-renderer{contain:layout paint style;}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-renderer.style-scope.ytd-transcript-segment-list-renderer>.segment{contain:layout paint style;}
-body ytd-watch-flexy[theater] #secondary.ytd-watch-flexy{margin-top:var(--ytd-margin-3x);padding-top:0;}
-body ytd-watch-flexy[theater] secondary-wrapper{margin-top:0;padding-top:0;}
-body ytd-watch-flexy[theater] #chat.ytd-watch-flexy{margin-bottom:var(--ytd-margin-2x);}
-ytd-watch-flexy[theater] #right-tabs .tab-btn[tyt-tab-content]{padding:8px 4px 6px;border-bottom:0 solid transparent;}
-ytd-watch-flexy[theater] #playlist.ytd-watch-flexy{margin-bottom:var(--ytd-margin-2x);}
-ytd-watch-flexy[theater] ytd-playlist-panel-renderer[collapsible][collapsed] .header.ytd-playlist-panel-renderer{padding:6px 8px;}
-#tab-comments ytd-comments#comments [field-of-cm-count]{margin-top:0;}
-#tab-info>ytd-expandable-video-description-body-renderer{margin-bottom:var(--ytd-margin-3x);}
-#tab-info [class]:last-child{margin-bottom:0;padding-bottom:0;}
-#tab-info ytd-rich-metadata-row-renderer ytd-rich-metadata-renderer{max-width:initial;}
-ytd-watch-flexy[is-two-columns_] secondary-wrapper #chat.ytd-watch-flexy{margin-bottom:var(--ytd-margin-3x);}
-ytd-watch-flexy[tyt-tab] tp-yt-paper-tooltip{white-space:nowrap;contain:content;}
-ytd-watch-info-text tp-yt-paper-tooltip.style-scope.ytd-watch-info-text{margin-bottom:-300px;margin-top:-96px;}
-[hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata{font-size:1.2rem;line-height:1.8rem;}
-[hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata yt-animated-rolling-number{font-size:inherit;}
-[hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata #info-container.style-scope.ytd-watch-info-text{align-items:center;}
-ytd-watch-flexy[hide-default-text-inline-expander]{--tyt-bottom-watch-metadata-margin:6px;}
-[hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata>#description-inner.ytd-watch-metadata{margin:6px 12px;}
-[hide-default-text-inline-expander] ytd-watch-metadata[title-headline-xs] h1.ytd-watch-metadata{font-size:1.8rem;}
-ytd-watch-flexy[is-two-columns_][hide-default-text-inline-expander] #below.style-scope.ytd-watch-flexy ytd-merch-shelf-renderer{padding:0;border:0;margin:0;}
-ytd-watch-flexy[is-two-columns_][hide-default-text-inline-expander] #below.style-scope.ytd-watch-flexy ytd-watch-metadata.ytd-watch-flexy{margin-bottom:6px;}
-#tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--horizontal .yt-video-attribute-view-model__link-container .yt-video-attribute-view-model__hero-section{flex-shrink:0;}
-#tab-info yt-video-attribute-view-model .yt-video-attribute-view-model__overflow-menu{background:var(--yt-emoji-picker-category-background-color);border-radius:99px;}
-#tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--image-square.yt-video-attribute-view-model--image-large .yt-video-attribute-view-model__hero-section{max-height:128px;}
-#tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--image-large .yt-video-attribute-view-model__hero-section{max-width:128px;}
-#tab-info ytd-reel-shelf-renderer #items.yt-horizontal-list-renderer ytd-reel-item-renderer.yt-horizontal-list-renderer{max-width:142px;}
-ytd-watch-info-text#ytd-watch-info-text.style-scope.ytd-watch-metadata #view-count.style-scope.ytd-watch-info-text,ytd-watch-info-text#ytd-watch-info-text.style-scope.ytd-watch-metadata #date-text.style-scope.ytd-watch-info-text{align-items:center;}
-ytd-watch-info-text:not([detailed]) #info.ytd-watch-info-text a.yt-simple-endpoint.yt-formatted-string{pointer-events:none;}
-body ytd-app>ytd-popup-container>tp-yt-iron-dropdown>#contentWrapper>[slot="dropdown-content"]{backdrop-filter:none;}
-#tab-info [tyt-clone-refresh-count]{overflow:visible!important;}
-#tab-info #items.ytd-horizontal-card-list-renderer yt-video-attribute-view-model.ytd-horizontal-card-list-renderer{contain:layout;}
-#tab-info #thumbnail-container.ytd-structured-description-channel-lockup-renderer,#tab-info ytd-media-lockup-renderer[is-compact] #thumbnail-container.ytd-media-lockup-renderer{flex-shrink:0;}
-secondary-wrapper ytd-donation-unavailable-renderer{--ytd-margin-6x:var(--ytd-margin-2x);--ytd-margin-5x:var(--ytd-margin-2x);--ytd-margin-4x:var(--ytd-margin-2x);--ytd-margin-3x:var(--ytd-margin-2x);}
-[tyt-no-less-btn] #less{display:none;}
-.tyt-metadata-hover-resized #purchase-button,.tyt-metadata-hover-resized #sponsor-button,.tyt-metadata-hover-resized #analytics-button,.tyt-metadata-hover-resized #subscribe-button{display:none!important;}
-.tyt-metadata-hover #upload-info{max-width:max-content;min-width:max-content;flex-basis:100vw;flex-shrink:0;}
-.tyt-info-invisible{display:none;}
-[tyt-playlist-expanded] secondary-wrapper>ytd-playlist-panel-renderer#playlist{overflow:auto;flex-shrink:1;flex-grow:1;max-height:unset!important;}
-[tyt-playlist-expanded] secondary-wrapper>ytd-playlist-panel-renderer#playlist>#container{max-height:unset!important;}
-secondary-wrapper ytd-playlist-panel-renderer{--ytd-margin-6x:var(--ytd-margin-3x);}
-#tab-info ytd-structured-description-playlist-lockup-renderer[collections] #playlist-thumbnail.style-scope.ytd-structured-description-playlist-lockup-renderer{max-width:100%;}
-#tab-info ytd-structured-description-playlist-lockup-renderer[collections] #lockup-container.ytd-structured-description-playlist-lockup-renderer{padding:1px;}
-#tab-info ytd-structured-description-playlist-lockup-renderer[collections] #thumbnail.ytd-structured-description-playlist-lockup-renderer{outline:1px solid rgba(127,127,127,.5);}
-ytd-live-chat-frame#chat[collapsed] ytd-message-renderer~#show-hide-button.ytd-live-chat-frame>ytd-toggle-button-renderer.ytd-live-chat-frame{padding:0;}
-ytd-watch-flexy{--tyt-bottom-watch-metadata-margin:12px;}
-ytd-watch-flexy[rounded-info-panel],ytd-watch-flexy[rounded-player-large]{--tyt-rounded-a1:12px;}
-#bottom-row.style-scope.ytd-watch-metadata .item.ytd-watch-metadata{margin-right:var(--tyt-bottom-watch-metadata-margin,12px);margin-top:var(--tyt-bottom-watch-metadata-margin,12px);}
-#cinematics{contain:layout style size;}
-ytd-watch-flexy[is-two-columns_]{contain:layout style;}
-.yt-spec-touch-feedback-shape--touch-response .yt-spec-touch-feedback-shape__fill{background-color:transparent;}
-/* plugin: external.ytlstm */
+  html[tabview-loaded="icp"] #related.ytd-watch-flexy{animation:relatedElementProvided 1ms linear 0s 1 normal forwards;}
+  html[tabview-loaded="icp"] #right-tabs #related.ytd-watch-flexy,html[tabview-loaded="icp"] [hidden] #related.ytd-watch-flexy,html[tabview-loaded="icp"] #right-tabs ytd-expander#expander,html[tabview-loaded="icp"] [hidden] ytd-expander#expander,html[tabview-loaded="icp"] ytd-comments ytd-expander#expander{animation:initial;}
+  #secondary.ytd-watch-flexy{position:relative;}
+  #secondary-inner.style-scope.ytd-watch-flexy{height:100%;}
+  #secondary-inner secondary-wrapper{display:flex;flex-direction:column;flex-wrap:nowrap;box-sizing:border-box;padding:0;margin:0;border:0;height:100%;max-height:calc(100vh - var(--ytd-toolbar-height,56px));position:absolute;top:0;right:0;left:0;contain:strict;padding:var(--ytd-margin-6x) var(--ytd-margin-6x) var(--ytd-margin-6x) 0;}
+  #right-tabs{position:relative;display:flex;padding:0;margin:0;flex-grow:1;flex-direction:column;}
+  [tyt-tab=""] #right-tabs{flex-grow:0;}
+  [tyt-tab=""] #right-tabs .tab-content{border:0;}
+  #right-tabs .tab-content{flex-grow:1;}
+  ytd-watch-flexy[hide-default-text-inline-expander] #primary.style-scope.ytd-watch-flexy ytd-text-inline-expander{display:none;}
+  ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden{--comment-pre-load-sizing:90px;visibility:collapse;z-index:-1;position:absolute!important;left:2px;top:2px;width:var(--comment-pre-load-sizing)!important;height:var(--comment-pre-load-sizing)!important;display:block!important;pointer-events:none!important;overflow:hidden;contain:strict;border:0;margin:0;padding:0;}
+  ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments>ytd-item-section-renderer#sections{display:block!important;overflow:hidden;height:var(--comment-pre-load-sizing);width:var(--comment-pre-load-sizing);contain:strict;border:0;margin:0;padding:0;}
+  ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments>ytd-item-section-renderer#sections>#contents{display:flex!important;flex-direction:row;gap:60px;overflow:hidden;height:var(--comment-pre-load-sizing);width:var(--comment-pre-load-sizing);contain:strict;border:0;margin:0;padding:0;}
+  ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents{--comment-pre-load-display:none;}
+  ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*:only-of-type,ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*:last-child{--comment-pre-load-display:block;}
+  ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*{display:var(--comment-pre-load-display)!important;}
+  ytd-watch-flexy #tab-comments:not(.tab-content-hidden){pointer-events:auto!important;}
+  ytd-watch-flexy #tab-comments:not(.tab-content-hidden) *{pointer-events:auto!important;}
+  ytd-watch-flexy #tab-comments:not(.tab-content-hidden) button,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-button-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) a,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) tp-yt-paper-button,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) [role="button"],ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-button-shape{pointer-events:auto!important;}
+  ytd-watch-flexy #tab-comments tp-yt-paper-button{white-space:normal;word-break:break-word;max-width:100%;overflow-wrap:break-word;}
+  ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-comment-action-buttons-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-button-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) #action-buttons,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) ytd-menu-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-dropdown-menu{pointer-events:auto!important;}
+  #right-tabs #material-tabs{position:relative;display:flex;padding:0;border:1px solid var(--ytd-searchbox-legacy-border-color);overflow:hidden;}
+  [tyt-tab] #right-tabs #material-tabs{border-radius:12px;}
+  [tyt-tab^="#"] #right-tabs #material-tabs{border-radius:12px 12px 0 0;}
+  ytd-watch-flexy:not([is-two-columns_]) #right-tabs #material-tabs{outline:0;}
+  #right-tabs #material-tabs a.tab-btn[tyt-tab-content]>*{pointer-events:none;}
+  #right-tabs #material-tabs a.tab-btn[tyt-tab-content]>.font-size-right{pointer-events:initial;display:none;}
+  ytd-watch-flexy #right-tabs .tab-content{padding:0;box-sizing:border-box;display:block;border:1px solid var(--ytd-searchbox-legacy-border-color);border-top:0;position:relative;top:0;display:flex;flex-direction:row;overflow:hidden;border-radius:0 0 12px 12px;}
+  ytd-watch-flexy:not([is-two-columns_]) #right-tabs .tab-content{height:100%;}
+  ytd-watch-flexy #right-tabs .tab-content-cld{box-sizing:border-box;position:relative;display:block;width:100%;overflow:auto;--tab-content-padding:var(--ytd-margin-4x);padding:var(--tab-content-padding);contain:layout paint;will-change:scroll-position;}
+  .tab-content-cld,#right-tabs,.tab-content{transition:none;animation:none;}
+  ytd-watch-flexy #right-tabs .tab-content-cld::-webkit-scrollbar{width:8px;height:8px;}
+  ytd-watch-flexy #right-tabs .tab-content-cld::-webkit-scrollbar-track{background:transparent;}
+  ytd-watch-flexy #right-tabs .tab-content-cld::-webkit-scrollbar-thumb{background:rgba(144,144,144,.5);border-radius:4px;}
+  ytd-watch-flexy #right-tabs .tab-content-cld::-webkit-scrollbar-thumb:hover{background:rgba(170,170,170,.7);}
+  #right-tabs #emojis.ytd-commentbox{inset:auto 0 auto 0;width:auto;}
+  ytd-watch-flexy[is-two-columns_] #right-tabs .tab-content-cld{height:100%;width:100%;contain:size layout paint style;position:absolute;}
+  ytd-watch-flexy #right-tabs .tab-content-cld.tab-content-hidden{display:none;width:100%;contain:size layout paint style;}
+  @supports (color:var(--tabview-tab-btn-define)){
+  ytd-watch-flexy #right-tabs .tab-btn{background:var(--yt-spec-general-background-a);}
+  html{--tyt-tab-btn-flex-grow:1;--tyt-tab-btn-flex-basis:0%;--tyt-tab-bar-color-1-def:#ff4533;--tyt-tab-bar-color-2-def:var(--yt-brand-light-red);--tyt-tab-bar-color-1:var(--main-color,var(--tyt-tab-bar-color-1-def));--tyt-tab-bar-color-2:var(--main-color,var(--tyt-tab-bar-color-2-def));}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]{flex:var(--tyt-tab-btn-flex-grow) 1 var(--tyt-tab-btn-flex-basis);position:relative;display:inline-block;text-decoration:none;text-transform:uppercase;--tyt-tab-btn-color:var(--yt-spec-text-secondary);color:var(--tyt-tab-btn-color);text-align:center;padding:14px 8px 10px;border:0;border-bottom:4px solid transparent;font-weight:500;font-size:12px;line-height:18px;cursor:pointer;transition:border 200ms linear 100ms;background-color:var(--ytd-searchbox-legacy-button-color);text-transform:var(--yt-button-text-transform,inherit);user-select:none!important;overflow:hidden;white-space:nowrap;text-overflow:clip;}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]>svg{height:18px;padding-right:0;vertical-align:bottom;opacity:.5;margin-right:0;color:var(--yt-button-color,inherit);fill:var(--iron-icon-fill-color,currentcolor);stroke:var(--iron-icon-stroke-color,none);pointer-events:none;}
+  ytd-watch-flexy #right-tabs .tab-btn{--tabview-btn-txt-ml:8px;}
+  ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]{--tabview-btn-txt-ml:0;}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]>svg+span{margin-left:var(--tabview-btn-txt-ml);}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active{font-weight:500;outline:0;--tyt-tab-btn-color:var(--yt-spec-text-primary);background-color:var(--ytd-searchbox-legacy-button-focus-color);border-bottom:2px var(--tyt-tab-bar-color-2) solid;}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active svg{opacity:.9;}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover{background-color:var(--ytd-searchbox-legacy-button-hover-color);--tyt-tab-btn-color:var(--yt-spec-text-primary);}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover svg{opacity:.9;}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].tab-btn-hidden{display:none;}
+  ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"],ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]:hover{--tyt-tab-btn-color:var(--yt-spec-icon-disabled);}
+  ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"] span#tyt-cm-count:empty{display:none;}
+  ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{display:inline-block;width:4em;text-align:left;font-size:inherit;color:currentColor;transform:scaleX(.8);}}
+  @supports (color:var(--tyt-cm-count-define)){
+  ytd-watch-flexy{--tyt-x-loading-content-letter-spacing:2px;}
+  html{--tabview-text-loading:"Loading";--tabview-text-fetching:"Fetching";--tabview-panel-loading:var(--tabview-text-loading);}
+  ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{content:var(--tabview-text-loading);letter-spacing:var(--tyt-x-loading-content-letter-spacing);}}
+  @supports (color:var(--tabview-font-size-btn-define)){
+  .font-size-right{display:inline-flex;flex-direction:column;position:absolute;right:0;top:0;bottom:0;width:16px;padding:4px 0;justify-content:space-evenly;align-content:space-evenly;pointer-events:none;}
+  html body ytd-watch-flexy.style-scope .font-size-btn{user-select:none!important;}
+  .font-size-btn{--tyt-font-size-btn-display:none;display:var(--tyt-font-size-btn-display,none);width:12px;height:12px;color:var(--yt-spec-text-secondary);background-color:var(--yt-spec-badge-chip-background);box-sizing:border-box;cursor:pointer;transform-origin:left top;margin:0;padding:0;position:relative;font-family:'Menlo','Lucida Console','Monaco','Consolas',monospace;line-height:100%;font-weight:900;transition:background-color 90ms linear,color 90ms linear;pointer-events:all;}
+  .font-size-btn:hover{background-color:var(--yt-spec-text-primary);color:var(--yt-spec-general-background-a);}
+  @supports (zoom:.5){
+  .tab-btn .font-size-btn{--tyt-font-size-btn-display:none;}
+  .tab-btn.active:hover .font-size-btn{--tyt-font-size-btn-display:inline-block;}
+  body ytd-watch-flexy:not([is-two-columns_]) #columns.ytd-watch-flexy{flex-direction:column;}
+  body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy{display:block;width:100%;box-sizing:border-box;}
+  body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy secondary-wrapper{padding-left:var(--ytd-margin-6x);contain:content;height:initial;}
+  body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy secondary-wrapper #right-tabs{overflow:auto;}
+  [tyt-chat="+"] { --tyt-chat-grow: 1;}
+  [tyt-chat="+"] secondary-wrapper>[tyt-chat-container]{flex-grow:var(--tyt-chat-grow);flex-shrink:0;display:flex;flex-direction:column;}
+  [tyt-chat="+"] secondary-wrapper>[tyt-chat-container]>#chat{flex-grow:var(--tyt-chat-grow);}
+  ytd-watch-flexy[is-two-columns_]:not([theater]) #columns.style-scope.ytd-watch-flexy{min-height:calc(100vh - var(--ytd-toolbar-height,56px));}
+  ytd-watch-flexy[is-two-columns_]:not([full-bleed-player]) ytd-live-chat-frame#chat{min-height:initial!important;height:initial!important;}
+  ytd-watch-flexy[tyt-tab^="#"]:not([is-two-columns_]):not([tyt-chat="+"]) #right-tabs{min-height:var(--ytd-watch-flexy-chat-max-height);}
+  body ytd-watch-flexy:not([is-two-columns_]) #chat.ytd-watch-flexy{margin-top:0;}
+  body ytd-watch-flexy:not([is-two-columns_]) ytd-watch-metadata.ytd-watch-flexy{margin-bottom:0;}
+  ytd-watch-metadata.ytd-watch-flexy ytd-metadata-row-container-renderer{display:none;}
+  #tab-info [show-expand-button] #expand-sizer.ytd-text-inline-expander{visibility:initial;}
+  #tab-info #collapse.button.ytd-text-inline-expander {display: none;}
+  #tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#left-arrow-container.ytd-video-description-infocards-section-renderer>#left-arrow,#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#right-arrow-container.ytd-video-description-infocards-section-renderer>#right-arrow{border:6px solid transparent;opacity:.65;}
+  #tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#left-arrow-container.ytd-video-description-infocards-section-renderer>#left-arrow:hover,#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>#right-arrow-container.ytd-video-description-infocards-section-renderer>#right-arrow:hover{opacity:1;}
+  #tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>div#left-arrow-container::before{content:'';background:transparent;width:40px;display:block;height:40px;position:absolute;left:-20px;top:0;z-index:-1;}
+  #tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer>div#right-arrow-container::before{content:'';background:transparent;width:40px;display:block;height:40px;position:absolute;right:-20px;top:0;z-index:-1;}
+  body ytd-watch-flexy[is-two-columns_][tyt-egm-panel_] #columns.style-scope.ytd-watch-flexy #panels.style-scope.ytd-watch-flexy{flex-grow:1;flex-shrink:0;display:flex;flex-direction:column;}
+  body ytd-watch-flexy[is-two-columns_][tyt-egm-panel_] #columns.style-scope.ytd-watch-flexy #panels.style-scope.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]{height:initial;max-height:initial;min-height:initial;flex-grow:1;flex-shrink:0;display:flex;flex-direction:column;}
+  secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] ytd-transcript-renderer:not(:empty),secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] #body.ytd-transcript-renderer:not(:empty),secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] #content.ytd-transcript-renderer:not(:empty){flex-grow:1;height:initial;max-height:initial;min-height:initial;}
+  secondary-wrapper #content.ytd-engagement-panel-section-list-renderer{position:relative;}
+  secondary-wrapper #content.ytd-engagement-panel-section-list-renderer>[panel-target-id]:only-child{contain:style size;}
+  secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-list-renderer.ytd-transcript-search-panel-renderer{flex-grow:1;contain:strict;}
+  secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-renderer.style-scope.ytd-transcript-segment-list-renderer{contain:layout paint style;}
+  secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-renderer.style-scope.ytd-transcript-segment-list-renderer>.segment{contain:layout paint style;}
+  body ytd-watch-flexy[theater] #secondary.ytd-watch-flexy{margin-top:var(--ytd-margin-3x);padding-top:0;}
+  body ytd-watch-flexy[theater] secondary-wrapper{margin-top:0;padding-top:0;}
+  body ytd-watch-flexy[theater] #chat.ytd-watch-flexy{margin-bottom:var(--ytd-margin-2x);}
+  ytd-watch-flexy[theater] #right-tabs .tab-btn[tyt-tab-content]{padding:8px 4px 6px;border-bottom:0 solid transparent;}
+  ytd-watch-flexy[theater] #playlist.ytd-watch-flexy{margin-bottom:var(--ytd-margin-2x);}
+  ytd-watch-flexy[theater] ytd-playlist-panel-renderer[collapsible][collapsed] .header.ytd-playlist-panel-renderer{padding:6px 8px;}
+  #tab-comments ytd-comments#comments [field-of-cm-count]{margin-top:0;}
+  #tab-info>ytd-expandable-video-description-body-renderer{margin-bottom:var(--ytd-margin-3x);}
+  #tab-info [class]:last-child{margin-bottom:0;padding-bottom:0;}
+  #tab-info ytd-rich-metadata-row-renderer ytd-rich-metadata-renderer{max-width:initial;}
+  ytd-watch-flexy[is-two-columns_] secondary-wrapper #chat.ytd-watch-flexy{margin-bottom:var(--ytd-margin-3x);}
+  ytd-watch-flexy[tyt-tab] tp-yt-paper-tooltip{white-space:nowrap;contain:content;}
+  ytd-watch-info-text tp-yt-paper-tooltip.style-scope.ytd-watch-info-text{margin-bottom:-300px;margin-top:-96px;}
+  [hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata{font-size:1.2rem;line-height:1.8rem;}
+  [hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata yt-animated-rolling-number{font-size:inherit;}
+  [hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata #info-container.style-scope.ytd-watch-info-text{align-items:center;}
+  ytd-watch-flexy[hide-default-text-inline-expander]{--tyt-bottom-watch-metadata-margin:6px;}
+  [hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata>#description-inner.ytd-watch-metadata{margin:6px 12px;}
+  [hide-default-text-inline-expander] ytd-watch-metadata[title-headline-xs] h1.ytd-watch-metadata{font-size:1.8rem;}
+  ytd-watch-flexy[is-two-columns_][hide-default-text-inline-expander] #below.style-scope.ytd-watch-flexy ytd-merch-shelf-renderer{padding:0;border:0;margin:0;}
+  ytd-watch-flexy[is-two-columns_][hide-default-text-inline-expander] #below.style-scope.ytd-watch-flexy ytd-watch-metadata.ytd-watch-flexy{margin-bottom:6px;}
+  #tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--horizontal .yt-video-attribute-view-model__link-container .yt-video-attribute-view-model__hero-section{flex-shrink:0;}
+  #tab-info yt-video-attribute-view-model .yt-video-attribute-view-model__overflow-menu{background:var(--yt-emoji-picker-category-background-color);border-radius:99px;}
+  #tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--image-square.yt-video-attribute-view-model--image-large .yt-video-attribute-view-model__hero-section{max-height:128px;}
+  #tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--image-large .yt-video-attribute-view-model__hero-section{max-width:128px;}
+  #tab-info ytd-reel-shelf-renderer #items.yt-horizontal-list-renderer ytd-reel-item-renderer.yt-horizontal-list-renderer{max-width:142px;}
+  ytd-watch-info-text#ytd-watch-info-text.style-scope.ytd-watch-metadata #view-count.style-scope.ytd-watch-info-text,ytd-watch-info-text#ytd-watch-info-text.style-scope.ytd-watch-metadata #date-text.style-scope.ytd-watch-info-text{align-items:center;}
+  ytd-watch-info-text:not([detailed]) #info.ytd-watch-info-text a.yt-simple-endpoint.yt-formatted-string{pointer-events:none;}
+  body ytd-app>ytd-popup-container>tp-yt-iron-dropdown>#contentWrapper>[slot="dropdown-content"]{backdrop-filter:none;}
+  #tab-info [tyt-clone-refresh-count]{overflow:visible!important;}
+  #tab-info #items.ytd-horizontal-card-list-renderer yt-video-attribute-view-model.ytd-horizontal-card-list-renderer{contain:layout;}
+  #tab-info #thumbnail-container.ytd-structured-description-channel-lockup-renderer,#tab-info ytd-media-lockup-renderer[is-compact] #thumbnail-container.ytd-media-lockup-renderer{flex-shrink:0;}
+  secondary-wrapper ytd-donation-unavailable-renderer{--ytd-margin-6x:var(--ytd-margin-2x);--ytd-margin-5x:var(--ytd-margin-2x);--ytd-margin-4x:var(--ytd-margin-2x);--ytd-margin-3x:var(--ytd-margin-2x);}
+  [tyt-no-less-btn] #less{display:none;}
+  .tyt-metadata-hover-resized #purchase-button,.tyt-metadata-hover-resized #sponsor-button,.tyt-metadata-hover-resized #analytics-button,.tyt-metadata-hover-resized #subscribe-button{display:none!important;}
+  .tyt-metadata-hover #upload-info{max-width:max-content;min-width:max-content;flex-basis:100vw;flex-shrink:0;}
+  .tyt-info-invisible{display:none;}
+  [tyt-playlist-expanded] secondary-wrapper>ytd-playlist-panel-renderer#playlist{overflow:auto;flex-shrink:1;flex-grow:1;max-height:unset!important;}
+  [tyt-playlist-expanded] secondary-wrapper>ytd-playlist-panel-renderer#playlist>#container{max-height:unset!important;}
+  secondary-wrapper ytd-playlist-panel-renderer{--ytd-margin-6x:var(--ytd-margin-3x);}
+  #tab-info ytd-structured-description-playlist-lockup-renderer[collections] #playlist-thumbnail.style-scope.ytd-structured-description-playlist-lockup-renderer{max-width:100%;}
+  #tab-info ytd-structured-description-playlist-lockup-renderer[collections] #lockup-container.ytd-structured-description-playlist-lockup-renderer{padding:1px;}
+  #tab-info ytd-structured-description-playlist-lockup-renderer[collections] #thumbnail.ytd-structured-description-playlist-lockup-renderer{outline:1px solid rgba(127,127,127,.5);}
+  ytd-live-chat-frame#chat[collapsed] ytd-message-renderer~#show-hide-button.ytd-live-chat-frame>ytd-toggle-button-renderer.ytd-live-chat-frame{padding:0;}
+  ytd-watch-flexy{--tyt-bottom-watch-metadata-margin:12px;}
+  ytd-watch-flexy[rounded-info-panel],ytd-watch-flexy[rounded-player-large]{--tyt-rounded-a1:12px;}
+  #bottom-row.style-scope.ytd-watch-metadata .item.ytd-watch-metadata{margin-right:var(--tyt-bottom-watch-metadata-margin,12px);margin-top:var(--tyt-bottom-watch-metadata-margin,12px);}
+  #cinematics{contain:layout style size;}
+  ytd-watch-flexy[is-two-columns_]{contain:layout style;}
+  .yt-spec-touch-feedback-shape--touch-response .yt-spec-touch-feedback-shape__fill{background-color:transparent;}
+  /* plugin: external.ytlstm */
   body[data-ytlstm-theater-mode] #secondary-inner[class] > secondary-wrapper[class]:not(#chat-container):not(#chat) {display: flex !important;}  
   body[data-ytlstm-theater-mode] secondary-wrapper {all: unset;height: 100vh;}
   body[data-ytlstm-theater-mode] #right-tabs {display: none;}
@@ -5357,44 +5372,141 @@ ytd-watch-flexy[is-two-columns_]{contain:layout style;}
     document.documentElement.appendChild(style);
   }
 
+  const applyTabviewI18nVars = () => {
+    const root = document.documentElement;
+    if (!root) return;
+    const i18n = typeof window !== 'undefined' ? window.YouTubePlusI18n : null;
+    const translate = (key, fallback) => {
+      if (i18n && typeof i18n.t === 'function') {
+        const value = i18n.t(key);
+        if (value && value !== key) return value;
+      }
+      return fallback;
+    };
+    const toCssString = value => {
+      const text = String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
+      return `"${text}"`;
+    };
+    root.style.setProperty('--tabview-text-loading', toCssString(translate('loading', 'Loading')));
+    root.style.setProperty(
+      '--tabview-text-fetching',
+      toCssString(translate('fetching', 'Fetching'))
+    );
+  };
+
+  const applyTabviewI18nTabs = () => {
+    const container = document.querySelector('#right-tabs');
+    if (!container) return false;
+    const i18n = typeof window !== 'undefined' ? window.YouTubePlusI18n : null;
+    const translate = (key, fallback) => {
+      if (i18n && typeof i18n.t === 'function') {
+        const value = i18n.t(key);
+        if (value && value !== key) return value;
+      }
+      return fallback;
+    };
+    const labels = [
+      { selector: '#tab-btn1 span', key: 'info', fallback: 'Info' },
+      { selector: '#tab-btn4 span', key: 'videos', fallback: 'Videos' },
+      { selector: '#tab-btn5 span', key: 'playlist', fallback: 'Playlist' },
+    ];
+    for (const { selector, key, fallback } of labels) {
+      const label = container.querySelector(selector);
+      if (label) label.textContent = translate(key, fallback);
+    }
+    return true;
+  };
+
+  const scheduleTabviewI18nTabs = () => {
+    let attempts = 0;
+    const tryApply = () => {
+      if (applyTabviewI18nTabs()) return;
+      if (attempts < 20) {
+        attempts += 1;
+        setTimeout(tryApply, 250);
+      }
+    };
+    tryApply();
+  };
+
+  let tabviewI18nListenerBound = false;
+  const bindTabviewI18n = () => {
+    let attempts = 0;
+    const tryBind = () => {
+      const i18n = typeof window !== 'undefined' ? window.YouTubePlusI18n : null;
+      if (i18n && typeof i18n.t === 'function') {
+        applyTabviewI18nVars();
+        scheduleTabviewI18nTabs();
+        if (!tabviewI18nListenerBound && typeof i18n.onLanguageChange === 'function') {
+          i18n.onLanguageChange(() => {
+            applyTabviewI18nVars();
+            scheduleTabviewI18nTabs();
+          });
+          tabviewI18nListenerBound = true;
+        }
+        return;
+      }
+      if (attempts < 20) {
+        attempts += 1;
+        setTimeout(tryBind, 250);
+      }
+    };
+    tryBind();
+  };
+
+  bindTabviewI18n();
+  scheduleTabviewI18nTabs();
+
   // Initialize lazy loading for non-critical features
   if (typeof window !== 'undefined' && window.YouTubePlusLazyLoader) {
     const { register, loadOnIdle } = window.YouTubePlusLazyLoader;
 
-    // Register non-critical features for lazy loading
+    // Register deferred initialization for heavy modules
+    // These will be initialized when their features are needed
+
+    // Stats module - load when channel page is detected
     register(
-      'quality-selector-enhancements',
+      'stats-module',
       () => {
-        console.log('[YouTube+] Quality selector enhancements loaded');
+        if (window.YouTubeStatsReady) {
+          console.log('[YouTube+] Stats module already initialized');
+          return;
+        }
+        console.log('[YouTube+] Stats module initialization deferred');
+        // Stats is already loaded but we mark it as lazy-ready
+        window.YouTubeStatsReady = true;
       },
-      { priority: 5, delay: 2000 }
+      { priority: 3, delay: 1000 }
     );
 
+    // Download modal - load when download button is clicked
     register(
-      'download-modal',
+      'download-module',
       () => {
-        console.log('[YouTube+] Download modal loaded');
+        console.log('[YouTube+] Download module ready');
       },
-      { priority: 3, delay: 0 }
+      { priority: 4, delay: 500 }
     );
 
+    // Playlist search - load when playlist page detected
     register(
-      'statistics-overlay',
+      'playlist-search-module',
       () => {
-        console.log('[YouTube+] Statistics overlay loaded');
+        console.log('[YouTube+] Playlist search ready');
       },
-      { priority: 4, delay: 1000 }
+      { priority: 2, delay: 800 }
     );
 
+    // Thumbnail overlay - load when video page detected
     register(
-      'av-toggle-visibility',
+      'thumbnail-module',
       () => {
-        console.log('[YouTube+] AV toggle visibility loaded');
+        console.log('[YouTube+] Thumbnail overlay ready');
       },
-      { priority: 6, delay: 1500 }
+      { priority: 3, delay: 600 }
     );
 
     // Load all non-critical features during browser idle time
-    loadOnIdle(3000);
+    loadOnIdle(2000);
   }
 })();

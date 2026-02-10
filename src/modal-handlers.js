@@ -3,7 +3,46 @@
  * Extracted from createSettingsModal to reduce complexity
  */
 
-/* global GM_setValue */
+/* global GM_setValue, GM_getValue */
+
+// DOM cache helpers with fallback
+const qs = selector => {
+  if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
+    return window.YouTubeDOMCache.get(selector);
+  }
+  return document.querySelector(selector);
+};
+
+/**
+ * Safely set a setting by path (supports dot notation)
+ * @param {Record<string, any>} settings
+ * @param {string} path
+ * @param {any} value
+ */
+const setSettingByPath = (settings, path, value) => {
+  if (!settings || typeof settings !== 'object') return;
+  if (!path || typeof path !== 'string') return;
+
+  // Fast path: simple key
+  if (!path.includes('.')) {
+    settings[path] = value;
+    return;
+  }
+
+  const keys = path.split('.').filter(Boolean);
+  if (!keys.length) return;
+  const lastKey = keys.pop();
+  if (!lastKey) return;
+
+  let cur = settings;
+  for (const k of keys) {
+    if (!Object.prototype.hasOwnProperty.call(cur, k) || typeof cur[k] !== 'object' || !cur[k]) {
+      cur[k] = {};
+    }
+    cur = cur[k];
+  }
+  cur[lastKey] = value;
+};
 
 /**
  * Initialize download sites settings
@@ -11,7 +50,17 @@
  */
 const initializeDownloadSites = settings => {
   if (!settings.downloadSites) {
-    settings.downloadSites = { y2mate: true, ytdl: true, direct: true };
+    settings.downloadSites = { externalDownloader: true, ytdl: true, direct: true };
+  }
+  // Migrate old key if present
+  if (
+    settings.downloadSites &&
+    Object.prototype.hasOwnProperty.call(settings.downloadSites, 'y2mate')
+  ) {
+    if (!Object.prototype.hasOwnProperty.call(settings.downloadSites, 'externalDownloader')) {
+      settings.downloadSites.externalDownloader = settings.downloadSites.y2mate;
+    }
+    delete settings.downloadSites.y2mate;
   }
 };
 
@@ -83,7 +132,7 @@ const handleDownloadButtonToggle = context => {
   } else {
     // remove button + dropdown if present
     if (existing) existing.remove();
-    const dropdown = document.querySelector('.download-options');
+    const dropdown = qs('.download-options');
     if (dropdown) dropdown.remove();
   }
 };
@@ -101,7 +150,7 @@ const handleSpeedControlToggle = context => {
     if (controls && !existing) addSpeedControlButton(controls);
   } else {
     if (existing) existing.remove();
-    const speedOptions = document.querySelector('.speed-options');
+    const speedOptions = qs('.speed-options');
     if (speedOptions) speedOptions.remove();
   }
 };
@@ -168,7 +217,8 @@ const handleSimpleSettingToggle = (
   saveSettings,
   modal
 ) => {
-  settings[setting] = /** @type {HTMLInputElement} */ (target).checked;
+  const checked = /** @type {HTMLInputElement} */ (target).checked;
+  setSettingByPath(settings, setting, checked);
 
   // Mark modal as dirty
   try {
@@ -193,7 +243,59 @@ const handleSimpleSettingToggle = (
   if (setting === 'enableDownload') {
     const submenu = modal.querySelector('.download-submenu');
     if (submenu) {
-      submenu.style.display = /** @type {HTMLInputElement} */ (target).checked ? 'block' : 'none';
+      submenu.style.display = checked ? 'block' : 'none';
+    }
+    const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="download"]');
+    if (toggleBtn instanceof HTMLElement) {
+      if (checked) {
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+        toggleBtn.style.display = 'inline-flex';
+      } else {
+        toggleBtn.setAttribute('disabled', '');
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.style.display = 'none';
+      }
+    }
+  }
+
+  // Show/hide submenu for Zen Styles
+  if (setting === 'enableZenStyles') {
+    const submenu = modal.querySelector('.style-submenu');
+    if (submenu) {
+      submenu.style.display = checked ? 'block' : 'none';
+    }
+    const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="style"]');
+    if (toggleBtn instanceof HTMLElement) {
+      if (checked) {
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+        toggleBtn.style.display = 'inline-flex';
+      } else {
+        toggleBtn.setAttribute('disabled', '');
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.style.display = 'none';
+      }
+    }
+  }
+
+  // Show/hide submenu for Enhanced Features
+  if (setting === 'enableEnhanced') {
+    const submenu = modal.querySelector('.enhanced-submenu');
+    if (submenu) {
+      submenu.style.display = checked ? 'block' : 'none';
+    }
+    const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="enhanced"]');
+    if (toggleBtn instanceof HTMLElement) {
+      if (checked) {
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+        toggleBtn.style.display = 'inline-flex';
+      } else {
+        toggleBtn.setAttribute('disabled', '');
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.style.display = 'none';
+      }
     }
   }
 };
@@ -214,8 +316,24 @@ const handleSimpleSettingToggle = (
 const initializeDownloadCustomization = settings => {
   if (!settings.downloadSiteCustomization) {
     settings.downloadSiteCustomization = {
-      y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+      externalDownloader: { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
     };
+  }
+  // Migrate previous customization
+  if (
+    settings.downloadSiteCustomization &&
+    Object.prototype.hasOwnProperty.call(settings.downloadSiteCustomization, 'y2mate')
+  ) {
+    if (
+      !Object.prototype.hasOwnProperty.call(
+        settings.downloadSiteCustomization,
+        'externalDownloader'
+      )
+    ) {
+      settings.downloadSiteCustomization.externalDownloader =
+        settings.downloadSiteCustomization.y2mate;
+    }
+    delete settings.downloadSiteCustomization.y2mate;
   }
 };
 
@@ -237,7 +355,7 @@ const initializeDownloadSite = (settings, site) => {
  * @returns {string} Fallback name
  */
 const getDownloadSiteFallbackName = (site, t) => {
-  if (site === 'y2mate') return 'Y2Mate';
+  if (site === 'externalDownloader') return 'SSYouTube';
   if (site === 'ytdl') return t('byYTDL');
   return t('directDownload');
 };
@@ -312,34 +430,34 @@ const handleDownloadSiteInput = (target, site, field, settings, markDirty, t) =>
  * @param {Function} t - Translation function
  */
 /**
- * Ensure Y2Mate settings structure exists
+ * Ensure external downloader settings structure exists
  * @param {Object} settings - Settings object
  */
-const ensureY2MateStructure = settings => {
+const ensureExternalDownloaderStructure = settings => {
   if (!settings.downloadSiteCustomization) {
     settings.downloadSiteCustomization = {
-      y2mate: { name: 'Y2Mate', url: 'https://www.y2mate.com/youtube/{videoId}' },
+      externalDownloader: { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
     };
   }
-  if (!settings.downloadSiteCustomization.y2mate) {
-    settings.downloadSiteCustomization.y2mate = { name: '', url: '' };
+  if (!settings.downloadSiteCustomization.externalDownloader) {
+    settings.downloadSiteCustomization.externalDownloader = { name: '', url: '' };
   }
 };
 
 /**
- * Read Y2Mate input values from container
+ * Read external downloader input values from container
  * @param {HTMLElement} container - Container element
  * @param {Object} settings - Settings object
  */
-const readY2MateInputs = (container, settings) => {
+const readExternalDownloaderInputs = (container, settings) => {
   const nameInput = container.querySelector(
-    'input.download-site-input[data-site="y2mate"][data-field="name"]'
+    'input.download-site-input[data-site="externalDownloader"][data-field="name"]'
   );
   const urlInput = container.querySelector(
-    'input.download-site-input[data-site="y2mate"][data-field="url"]'
+    'input.download-site-input[data-site="externalDownloader"][data-field="url"]'
   );
-  if (nameInput) settings.downloadSiteCustomization.y2mate.name = nameInput.value;
-  if (urlInput) settings.downloadSiteCustomization.y2mate.url = urlInput.value;
+  if (nameInput) settings.downloadSiteCustomization.externalDownloader.name = nameInput.value;
+  if (urlInput) settings.downloadSiteCustomization.externalDownloader.url = urlInput.value;
 };
 
 /**
@@ -359,12 +477,12 @@ const triggerRebuildDropdown = () => {
   }
 };
 
-const handleY2MateSave = (target, settings, saveSettings, showNotification, t) => {
-  ensureY2MateStructure(settings);
+const handleExternalDownloaderSave = (target, settings, saveSettings, showNotification, t) => {
+  ensureExternalDownloaderStructure(settings);
 
   const container = target.closest('.download-site-option');
   if (container) {
-    readY2MateInputs(container, settings);
+    readExternalDownloaderInputs(container, settings);
   }
 
   saveSettings();
@@ -373,18 +491,25 @@ const handleY2MateSave = (target, settings, saveSettings, showNotification, t) =
     window.youtubePlus.settings = window.youtubePlus.settings || settings;
   }
   triggerRebuildDropdown();
-  showNotification(t('y2mateSettingsSaved'));
+  try {
+    const msg =
+      (t && typeof t === 'function' && t('externalDownloaderSettingsSaved')) ||
+      t('y2mateSettingsSaved');
+    showNotification(msg);
+  } catch {
+    showNotification('Settings saved');
+  }
 };
 
 /**
- * Reset Y2Mate to default values
+ * Reset external downloader to default values
  * @param {Object} settings - Settings object
  */
-const resetY2MateToDefaults = settings => {
-  ensureY2MateStructure(settings);
-  settings.downloadSiteCustomization.y2mate = {
-    name: 'Y2Mate',
-    url: 'https://www.y2mate.com/youtube/{videoId}',
+const resetExternalDownloaderToDefaults = settings => {
+  ensureExternalDownloaderStructure(settings);
+  settings.downloadSiteCustomization.externalDownloader = {
+    name: 'SSYouTube',
+    url: 'https://ssyoutube.com/watch?v={videoId}',
   };
 };
 
@@ -393,19 +518,19 @@ const resetY2MateToDefaults = settings => {
  * @param {HTMLElement} container - Container element
  * @param {Object} settings - Settings object
  */
-const updateY2MateModalInputs = (container, settings) => {
+const updateExternalDownloaderModalInputs = (container, settings) => {
   const nameInput = container.querySelector(
-    'input.download-site-input[data-site="y2mate"][data-field="name"]'
+    'input.download-site-input[data-site="externalDownloader"][data-field="name"]'
   );
   const urlInput = container.querySelector(
-    'input.download-site-input[data-site="y2mate"][data-field="url"]'
+    'input.download-site-input[data-site="externalDownloader"][data-field="url"]'
   );
   const nameDisplay = container.querySelector('.download-site-name');
 
-  const y2mateSettings = settings.downloadSiteCustomization.y2mate;
-  if (nameInput) nameInput.value = y2mateSettings.name;
-  if (urlInput) urlInput.value = y2mateSettings.url;
-  if (nameDisplay) nameDisplay.textContent = y2mateSettings.name;
+  const edSettings = settings.downloadSiteCustomization.externalDownloader;
+  if (nameInput) nameInput.value = edSettings.name;
+  if (urlInput) urlInput.value = edSettings.url;
+  if (nameDisplay) nameDisplay.textContent = edSettings.name;
 };
 
 /**
@@ -416,12 +541,12 @@ const updateY2MateModalInputs = (container, settings) => {
  * @param {Function} showNotification - Function to show notification
  * @param {Function} t - Translation function
  */
-const handleY2MateReset = (modal, settings, saveSettings, showNotification, t) => {
-  resetY2MateToDefaults(settings);
+const handleExternalDownloaderReset = (modal, settings, saveSettings, showNotification, t) => {
+  resetExternalDownloaderToDefaults(settings);
 
   const container = modal.querySelector('.download-site-option');
   if (container) {
-    updateY2MateModalInputs(container, settings);
+    updateExternalDownloaderModalInputs(container, settings);
   }
 
   saveSettings();
@@ -430,7 +555,12 @@ const handleY2MateReset = (modal, settings, saveSettings, showNotification, t) =
     window.youtubePlus.settings = window.youtubePlus.settings || settings;
   }
   triggerRebuildDropdown();
-  showNotification(t('y2mateReset'));
+  try {
+    const msg = (t && typeof t === 'function' && t('externalDownloaderReset')) || t('y2mateReset');
+    showNotification(msg);
+  } catch {
+    showNotification('Settings reset');
+  }
 };
 
 /**
@@ -453,6 +583,11 @@ const handleSidebarNavigation = (navItem, modal) => {
     `.ytp-plus-settings-section[data-section="${section}"]`
   );
   if (targetSection) targetSection.classList.remove('hidden');
+
+  // Persist active nav section so it can be restored on next modal open
+  try {
+    localStorage.setItem('ytp-plus-active-nav-section', section);
+  } catch {}
 };
 
 /**
@@ -464,21 +599,71 @@ const handleSidebarNavigation = (navItem, modal) => {
  */
 const handleMusicSettingToggle = (target, setting, showNotification, t) => {
   try {
-    // Load current music settings
-    const musicSettings = { enableMusic: true };
+    const defaults = {
+      enableMusic: true,
+      immersiveSearchStyles: true,
+      hoverStyles: true,
+      playerSidebarStyles: true,
+      centeredPlayerStyles: true,
+      playerBarStyles: true,
+      centeredPlayerBarStyles: true,
+      miniPlayerStyles: true,
+      scrollToTopStyles: true,
+    };
+
+    const allowedKeys = new Set(Object.keys(defaults));
+    if (!allowedKeys.has(setting)) return;
+
+    // Load current music settings (prefer GM storage for cross-subdomain sync)
+    /** @type {Record<string, any>} */
+    let musicSettings = { ...defaults };
+
     try {
-      const stored = localStorage.getItem('youtube-plus-music-settings');
-      if (stored) {
-        const parsed = JSON.parse(stored);
-        if (parsed && typeof parsed.enableMusic === 'boolean') {
-          musicSettings.enableMusic = parsed.enableMusic;
+      if (typeof GM_getValue !== 'undefined') {
+        const stored = GM_getValue('youtube-plus-music-settings', null);
+        if (typeof stored === 'string' && stored) {
+          const parsed = JSON.parse(stored);
+          if (parsed && typeof parsed === 'object') musicSettings = { ...musicSettings, ...parsed };
         }
       }
     } catch {}
 
-    if (setting !== 'enableMusic') return;
+    try {
+      const stored = localStorage.getItem('youtube-plus-music-settings');
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (parsed && typeof parsed === 'object') musicSettings = { ...musicSettings, ...parsed };
+      }
+    } catch {}
 
-    musicSettings.enableMusic = /** @type {HTMLInputElement} */ (target).checked;
+    musicSettings[setting] = /** @type {HTMLInputElement} */ (target).checked;
+
+    // UI: toggle visibility of music submenu card when main switch changes
+    try {
+      if (setting === 'enableMusic') {
+        const enabled = !!musicSettings.enableMusic;
+        const root = /** @type {HTMLElement|null} */ (
+          target.closest('.ytp-plus-settings-section') || target.closest('.ytp-plus-settings-panel')
+        );
+        if (root) {
+          const submenu = root.querySelector('.music-submenu[data-submenu="music"]');
+          if (submenu instanceof HTMLElement) {
+            submenu.style.display = enabled ? 'block' : 'none';
+          }
+          const toggleBtn = root.querySelector('.ytp-plus-submenu-toggle[data-submenu="music"]');
+          if (toggleBtn instanceof HTMLElement) {
+            if (enabled) {
+              toggleBtn.removeAttribute('disabled');
+              toggleBtn.style.display = 'inline-flex';
+            } else {
+              toggleBtn.setAttribute('disabled', '');
+              toggleBtn.style.display = 'none';
+            }
+            toggleBtn.setAttribute('aria-expanded', enabled ? 'true' : 'false');
+          }
+        }
+      }
+    } catch {}
 
     // Save to localStorage
     localStorage.setItem('youtube-plus-music-settings', JSON.stringify(musicSettings));
@@ -504,8 +689,8 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
     if (showNotification && t) {
       showNotification(t('musicSettingsSaved'));
     }
-  } catch (err) {
-    console.warn('[YouTube+] handleMusicSettingToggle failed:', err);
+  } catch {
+    console.warn('[YouTube+] handleMusicSettingToggle failed');
   }
 };
 
@@ -515,7 +700,17 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
  * @returns {boolean} True if it's a music setting
  */
 const isMusicSetting = setting => {
-  return setting === 'enableMusic';
+  return (
+    setting === 'enableMusic' ||
+    setting === 'immersiveSearchStyles' ||
+    setting === 'hoverStyles' ||
+    setting === 'playerSidebarStyles' ||
+    setting === 'centeredPlayerStyles' ||
+    setting === 'playerBarStyles' ||
+    setting === 'centeredPlayerBarStyles' ||
+    setting === 'miniPlayerStyles' ||
+    setting === 'scrollToTopStyles'
+  );
 };
 
 // Export handlers
@@ -524,8 +719,8 @@ if (typeof window !== 'undefined') {
     handleDownloadSiteToggle,
     handleSimpleSettingToggle,
     handleDownloadSiteInput,
-    handleY2MateSave,
-    handleY2MateReset,
+    handleExternalDownloaderSave,
+    handleExternalDownloaderReset,
     handleSidebarNavigation,
     applySettingLive,
     handleMusicSettingToggle,

@@ -34,7 +34,8 @@
    */
   const CONFIG = {
     selectors: {
-      deleteButtons: 'div[class^="VfPpkd-Bz112c-"]',
+      deleteButtons:
+        'div[class^="VfPpkd-Bz112c-"], button[aria-label*="Delete"], button[aria-label*="Удалить"], button[aria-label*="Remove"]',
       menuButton: '[aria-haspopup="menu"]',
     },
     classes: {
@@ -65,6 +66,57 @@
     isProcessing: false,
     settingsNavListenerKey: null,
     panelCollapsed: false,
+    initialized: false,
+  };
+
+  const COMMENT_HISTORY_URL =
+    'https://myactivity.google.com/page?hl=ru&utm_medium=web&utm_source=youtube&page=youtube_comments';
+
+  const isMyActivityCommentsPage = () => {
+    try {
+      const host = location.hostname || '';
+      if (!host.includes('myactivity.google.com')) return false;
+      const params = new URLSearchParams(location.search || '');
+      return params.get('page') === 'youtube_comments';
+    } catch {
+      return false;
+    }
+  };
+
+  const registerObserverSafe = observer => {
+    try {
+      if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+        YouTubeUtils.cleanupManager.registerObserver(observer);
+      }
+    } catch {}
+  };
+
+  const registerListenerSafe = (target, event, handler, options) => {
+    try {
+      if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+        return YouTubeUtils.cleanupManager.registerListener(target, event, handler, options);
+      }
+    } catch {}
+    try {
+      target.addEventListener(event, handler, options);
+    } catch {}
+    return null;
+  };
+
+  const addStyleBlock = cssText => {
+    try {
+      if (window.YouTubeUtils && YouTubeUtils.StyleManager) {
+        YouTubeUtils.StyleManager.add('comment-delete-styles', cssText);
+        return;
+      }
+    } catch {}
+    try {
+      if (document.getElementById('comment-delete-styles')) return;
+      const style = document.createElement('style');
+      style.id = 'comment-delete-styles';
+      style.textContent = cssText;
+      (document.head || document.documentElement).appendChild(style);
+    } catch {}
   };
 
   // Optimized settings
@@ -407,21 +459,21 @@
           .${CONFIG.classes.button}{flex:1;min-width:140px;}
         }
       `;
-    YouTubeUtils.StyleManager.add('comment-delete-styles', styles);
+    addStyleBlock(styles);
   }, 'addStyles');
 
   /**
    * Add comment manager settings to YouTube+ settings panel
    */
   const addCommentManagerSettings = withErrorBoundary(() => {
-    const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
-    if (!advancedSection) return;
+    const experimentalSection = $('.ytp-plus-settings-section[data-section="experimental"]');
+    if (!experimentalSection) return;
 
     // If already exists, move it to the bottom to ensure Comment Manager is last
     const existing = $('.comment-manager-settings-item');
     if (existing) {
       try {
-        advancedSection.appendChild(existing);
+        experimentalSection.appendChild(existing);
       } catch {
         // ignore
       }
@@ -445,10 +497,10 @@
       `;
 
     // Append to end (ensure it's the bottom-most item)
-    advancedSection.appendChild(settingsItem);
+    experimentalSection.appendChild(settingsItem);
 
     $('#open-comment-history-page').addEventListener('click', () => {
-      window.open('https://www.youtube.com/feed/history/comment_history', '_blank');
+      window.open(COMMENT_HISTORY_URL, '_blank');
     });
   }, 'addCommentManagerSettings');
 
@@ -460,21 +512,33 @@
     settings.load();
     addStyles();
 
-    // Setup observer with throttling
+    // Setup observer with throttling — scope to #comments or #content for performance
     state.observer?.disconnect();
     state.observer = new MutationObserver(debounce(initializeScript, CONFIG.debounceDelay));
 
-    // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(state.observer);
+    registerObserverSafe(state.observer);
 
-    // ✅ Safe observe with document.body check
+    const observeTarget = () => {
+      const target =
+        document.querySelector('#comments') || document.querySelector('#content') || document.body;
+      state.observer.observe(target, { childList: true, subtree: true });
+    };
+
     if (document.body) {
-      state.observer.observe(document.body, { childList: true, subtree: true });
+      observeTarget();
     } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        state.observer.observe(document.body, { childList: true, subtree: true });
-      });
+      document.addEventListener('DOMContentLoaded', observeTarget);
     }
+
+    // Re-scope observer after navigation (comments container may change)
+    window.addEventListener(
+      'yt-navigate-finish',
+      () => {
+        state.observer.disconnect();
+        setTimeout(observeTarget, 200);
+      },
+      { passive: true }
+    );
 
     // Initial setup
     if (document.readyState === 'loading') {
@@ -483,29 +547,10 @@
       initializeScript();
     }
 
-    // Settings modal integration
-    const settingsObserver = new MutationObserver(mutations => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
-            setTimeout(addCommentManagerSettings, 100);
-            return;
-          }
-        }
-      }
+    // Settings modal integration — use event instead of MutationObserver
+    document.addEventListener('youtube-plus-settings-modal-opened', () => {
+      setTimeout(addCommentManagerSettings, 100);
     });
-
-    // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-
-    // ✅ Safe observe with document.body check
-    if (document.body) {
-      settingsObserver.observe(document.body, { childList: true, subtree: true });
-    } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        settingsObserver.observe(document.body, { childList: true, subtree: true });
-      });
-    }
 
     const handleAdvancedNavClick = e => {
       const target = /** @type {EventTarget & HTMLElement} */ (e.target);
@@ -515,7 +560,7 @@
     };
 
     if (!state.settingsNavListenerKey) {
-      state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
+      state.settingsNavListenerKey = registerListenerSafe(
         document,
         'click',
         handleAdvancedNavClick,
@@ -524,6 +569,56 @@
     }
   }, 'init');
 
-  // Start the module
-  init();
+  /**
+   * Check if current route is relevant for comment manager
+   * @returns {boolean} True if on /watch, /shorts, or channel pages
+   */
+  const isRelevantRoute = () => {
+    if (isMyActivityCommentsPage()) return true;
+    const path = location.pathname;
+    return (
+      path === '/watch' ||
+      path.startsWith('/shorts/') ||
+      path.startsWith('/@') ||
+      path.startsWith('/channel/')
+    );
+  };
+
+  /**
+   * Schedule lazy initialization with route checking
+   */
+  const scheduleInit = () => {
+    if (state.initialized || !isRelevantRoute()) return;
+
+    requestIdleCallback(
+      () => {
+        if (!state.initialized && isRelevantRoute()) {
+          init();
+          state.initialized = true;
+        }
+      },
+      { timeout: 2000 }
+    );
+  };
+
+  // Navigation observer to trigger lazy init
+  const navigationObserver = new MutationObserver(
+    debounce(() => {
+      if (!state.initialized && isRelevantRoute()) {
+        scheduleInit();
+      }
+    }, 300)
+  );
+
+  // Watch for navigation changes
+  if (document.body) {
+    navigationObserver.observe(document.body, {
+      childList: true,
+      subtree: false,
+      attributes: false,
+    });
+  }
+
+  // Start the module (lazy)
+  scheduleInit();
 })();

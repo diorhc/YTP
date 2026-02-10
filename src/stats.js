@@ -44,6 +44,26 @@
 
   if (isStudioPage()) return;
 
+  let statsInitialized = false;
+
+  const isStatsRelevant = () => {
+    try {
+      const path = location.pathname || '';
+      if (path === '/watch' || path.startsWith('/shorts')) return true;
+      return isChannelPage(location.href);
+    } catch {
+      return false;
+    }
+  };
+
+  const runWhenReady = cb => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', cb, { once: true });
+    } else {
+      cb();
+    }
+  };
+
   // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const t = (key, params = {}) => {
     if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
@@ -59,84 +79,88 @@
 
   // Glassmorphism styles for stats button and menu (shorts-keyboard-feedback look)
   const styles = `
-            .videoStats{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-left:8px;background:rgba(255,255,255,0.12);box-shadow:0 12px 30px rgba(0,0,0,0.32);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1.25px solid rgba(255,255,255,0.12);transition:transform .18s ease,background .18s}
-            html[dark] .videoStats{background:rgba(24,24,24,0.68);border:1.25px solid rgba(255,255,255,0.08)}html:not([dark]) .videoStats{background:rgba(255,255,255,0.12);border:1.25px solid rgba(0,0,0,0.06)}.videoStats:hover{transform:translateY(-2px)}.videoStats svg{width:18px;height:18px;fill:var(--yt-spec-text-primary,#030303)}html[dark] .videoStats svg{fill:#fff}html:not([dark]) .videoStats svg{fill:#222}
-            .shortsStats{display:flex;align-items:center;justify-content:center;margin-top:16px;margin-bottom:16px;width:48px;height:48px;border-radius:50%;cursor:pointer;background:rgba(255,255,255,0.12);box-shadow:0 12px 30px rgba(0,0,0,0.32);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1.25px solid rgba(255,255,255,0.12);transition:transform .22s ease}html[dark] .shortsStats{background:rgba(24,24,24,0.68);border:1.25px solid rgba(255,255,255,0.08)}html:not([dark]) .shortsStats{background:rgba(255,255,255,0.12);border:1.25px solid rgba(0,0,0,0.06)}
-            .shortsStats:hover{transform:translateY(-3px)}.shortsStats svg{width:24px;height:24px;fill:#222}html[dark] .shortsStats svg{fill:#fff}html:not([dark]) .shortsStats svg{fill:#222}
-            .stats-menu-container{position:relative;display:inline-block}.stats-horizontal-menu{position:absolute;display:flex;left:100%;top:0;height:100%;visibility:hidden;opacity:0;transition:visibility 0s,opacity 0.2s linear;z-index:100}.stats-menu-container:hover .stats-horizontal-menu{visibility:visible;opacity:1}.stats-menu-button{margin-left:8px;white-space:nowrap}
-            /* Modal overlay and container with glassmorphism */
-            .stats-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.55));z-index:99999;display:flex;align-items:center;justify-content:center;animation:fadeInModal .18s;backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%)}
-            .stats-modal-container{max-width:1100px;max-height:calc(100vh - 32px);display:flex;flex-direction:column}
-            .stats-modal-content{background:rgba(24,24,24,0.92);border-radius:20px;box-shadow:0 18px 40px rgba(0,0,0,0.45);overflow:hidden;display:flex;flex-direction:column;animation:scaleInModal .18s;border:1.5px solid rgba(255,255,255,0.08);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%)}
-            html[dark] .stats-modal-content{background:rgba(24, 24, 24, 0.25)}
-            html:not([dark]) .stats-modal-content{background:rgba(255,255,255,0.95);color:#222;border:1.25px solid rgba(0,0,0,0.06)}
-            .stats-modal-close{background:transparent;border:none;color:#fff;font-size:36px;line-height:1;width:36px;height:36px;cursor:pointer;transition:transform .15s ease,color .15s;display:flex;align-items:center;justify-content:center;border-radius:8px;padding:0}
-            .stats-modal-close:hover{color:#ff6b6b;transform:scale(1.1)}
-            html:not([dark]) .stats-modal-close{color:#666}
-            html:not([dark]) .stats-modal-close:hover{color:#ff6b6b}            
-            /* Modal body */
-            .stats-modal-body{padding:16px;overflow:visible;flex:1;display:flex;flex-direction:column}
-            /* Thumbnail preview */
-            /* Thumbnail/title layout: title centered above a row with image left and stats grid right */
-            .stats-thumb-title-centered{font-size:16px;font-weight:600;color:#fff;margin:0 0 12px 0;text-align:center}
-            html:not([dark]) .stats-thumb-title-centered{color:#111}
-            .stats-thumb-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
-            .stats-thumb-img{width:36vw;max-width:420px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid rgba(255,255,255,0.06);max-height:44vh}
-            html:not([dark]) .stats-thumb-img{border:1px solid rgba(0,0,0,0.06)}
-            /* ensure the grid takes remaining horizontal space */
-            .stats-thumb-row .stats-grid{flex:1;min-width:0}
-            .stats-thumb-left{display:flex;flex-direction:column;align-items:center;gap:8px}
-            .stats-thumb-left .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
-            html:not([dark]) .stats-thumb-left .stats-thumb-sub{color:rgba(0,0,0,0.6)}
-            /* extras row under thumbnail: inline, single line */
-            .stats-thumb-extras{display:flex;flex-direction:row;gap:10px;align-items:center;margin-top:8px}
-            .stats-thumb-extras .stats-card{padding:8px 10px}
-            .stats-thumb-meta{display:flex;flex-direction:column;justify-content:center}
-            .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
-            html:not([dark]) .stats-thumb-sub{color:rgba(0,0,0,0.6)}            
-            /* Loading state */
-            .stats-loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#fff}
-            html:not([dark]) .stats-loader{color:#666}
-            .stats-spinner{width:60px;height:60px;animation:spin 1s linear infinite;margin-bottom:16px}
-            .stats-spinner circle{stroke-dasharray:80;stroke-dashoffset:60;animation:dash 1.5s ease-in-out infinite}            
-            /* Error state */
-            .stats-error{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#ff6b6b;text-align:center}
-            .stats-error-icon{width:60px;height:60px;margin-bottom:16px;stroke:#ff6b6b}            
-            /* Stats grid */
-            .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}            
-            /* Stats card */
-            .stats-card{background:rgba(255,255,255,0.05);border-radius:12px;padding:12px;display:flex;align-items:center;gap:12px;border:1px solid rgba(255,255,255,0.08);transition:transform .18s ease,box-shadow .18s ease}
-            html:not([dark]) .stats-card{background:rgba(0,0,0,0.03);border:1px solid rgba(0,0,0,0.1)}
-            .stats-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,0.3)}            
-            /* Stats icon */
-            .stats-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-            .stats-icon svg{width:24px;height:24px}
-            .stats-icon-views{background:rgba(59,130,246,0.15);color:#3b82f6}
-            .stats-icon-likes{background:rgba(34,197,94,0.15);color:#22c55e}
-            .stats-icon-dislikes{background:rgba(239,68,68,0.15);color:#ef4444}
-            .stats-icon-comments{background:rgba(168,85,247,0.15);color:#a855f7}
-            .stats-icon-viewers{background:rgba(234,179,8,0.15);color:#eab308}
-            .stats-icon-subscribers{background:rgba(236,72,153,0.15);color:#ec4899}
-            .stats-icon-videos{background:rgba(14,165,233,0.15);color:#0ea5e9}
-            /* Pair likes/dislikes into a single grid cell */
-            .stats-card-pair{display:flex;gap:8px;align-items:stretch}
-            .stats-card-pair .stats-card{flex:1;margin:0}
-            @media(max-width:480px){.stats-card-pair{flex-direction:column}}            
-            /* Stats info */
-            .stats-info{flex:1;min-width:0}
-            .stats-label{font-size:13px;color:rgba(255,255,255,0.72);margin-bottom:4px;font-weight:500}
-            html:not([dark]) .stats-label{color:rgba(0,0,0,0.6)}
-            .stats-value{font-size:20px;font-weight:700;color:#fff;line-height:1.2;margin-bottom:2px}
-            html:not([dark]) .stats-value{color:#111}
-            .stats-exact{font-size:13px;color:rgba(255,255,255,0.5);font-weight:400}
-            html:not([dark]) .stats-exact{color:rgba(0,0,0,0.5)}            
-            /* Animations */
-            @keyframes fadeInModal{from{opacity:0}to{opacity:1}}
-            @keyframes scaleInModal{from{transform:scale(0.95);opacity:0}to{transform:scale(1);opacity:1}}
-            @keyframes spin{to{transform:rotate(360deg)}}
-            @keyframes dash{0%{stroke-dashoffset:80}50%{stroke-dashoffset:10}100%{stroke-dashoffset:80}}            
-            /* Responsive */
-            @media(max-width:768px){.stats-modal-container{width:95vw}.stats-grid{grid-template-columns:1fr}.stats-card{padding:16px}}
+        .videoStats{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-left:8px;background:rgba(255,255,255,0.12);box-shadow:0 12px 30px rgba(0,0,0,0.32);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1.25px solid rgba(255,255,255,0.12);transition:transform .18s ease,background .18s}
+        html[dark] .videoStats{background:rgba(24,24,24,0.68);border:1.25px solid rgba(255,255,255,0.08)}html:not([dark]) .videoStats{background:rgba(255,255,255,0.12);border:1.25px solid rgba(0,0,0,0.06)}.videoStats:hover{transform:translateY(-2px)}.videoStats svg{width:18px;height:18px;fill:var(--yt-spec-text-primary,#030303)}html[dark] .videoStats svg{fill:#fff}html:not([dark]) .videoStats svg{fill:#222}
+        .shortsStats{display:flex;align-items:center;justify-content:center;margin-top:16px;margin-bottom:16px;width:48px;height:48px;border-radius:50%;cursor:pointer;background:rgba(255,255,255,0.12);box-shadow:0 12px 30px rgba(0,0,0,0.32);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1.25px solid rgba(255,255,255,0.12);transition:transform .22s ease}html[dark] .shortsStats{background:rgba(24,24,24,0.68);border:1.25px solid rgba(255,255,255,0.08)}html:not([dark]) .shortsStats{background:rgba(255,255,255,0.12);border:1.25px solid rgba(0,0,0,0.06)}
+        .shortsStats:hover{transform:translateY(-3px)}.shortsStats svg{width:24px;height:24px;fill:#222}html[dark] .shortsStats svg{fill:#fff}html:not([dark]) .shortsStats svg{fill:#222}
+        .stats-menu-container{position:relative;display:inline-block}.stats-horizontal-menu{position:absolute;display:flex;left:100%;top:0;height:100%;visibility:hidden;opacity:0;transition:visibility 0s,opacity 0.2s linear;z-index:100}.stats-menu-container:hover .stats-horizontal-menu{visibility:visible;opacity:1}.stats-menu-button{margin-left:8px;white-space:nowrap}
+        /* Modal overlay and container with glassmorphism */
+        .stats-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:linear-gradient(rgba(0,0,0,0.45),rgba(0,0,0,0.55));z-index:99999;display:flex;align-items:center;justify-content:center;animation:fadeInModal .18s;backdrop-filter:blur(20px) saturate(170%);-webkit-backdrop-filter:blur(20px) saturate(170%)}
+        .stats-modal-container{max-width:1100px;max-height:calc(100vh - 32px);display:flex;flex-direction:column}
+        .stats-modal-content{background:rgba(24,24,24,0.92);border-radius:20px;box-shadow:0 18px 40px rgba(0,0,0,0.45);overflow:hidden;display:flex;flex-direction:column;animation:scaleInModal .18s;border:1.5px solid rgba(255,255,255,0.08);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%)}
+        /* Fix custom element display for Chrome */
+        button-view-model{display:inline-flex;align-items:center;justify-content:center;}
+        button-view-model.yt-spec-button-view-model{vertical-align:top;}
+        ytd-tri-state-button-view-model{display:inline-flex;align-items:center;justify-content:center;}
+        ytd-tri-state-button-view-model button{display:inline-flex;align-items:center;}
+        html[dark] .stats-modal-content{background:rgba(24, 24, 24, 0.25)}
+        html:not([dark]) .stats-modal-content{background:rgba(255,255,255,0.95);color:#222;border:1.25px solid rgba(0,0,0,0.06)}
+        .stats-modal-close{background:transparent;border:none;color:#fff;font-size:36px;line-height:1;width:36px;height:36px;cursor:pointer;transition:transform .15s ease,color .15s;display:flex;align-items:center;justify-content:center;border-radius:8px;padding:0}
+        .stats-modal-close:hover{color:#ff6b6b;transform:scale(1.1)}
+        html:not([dark]) .stats-modal-close{color:#666}
+        html:not([dark]) .stats-modal-close:hover{color:#ff6b6b}            
+        /* Modal body */
+        .stats-modal-body{padding:16px;overflow:visible;flex:1;display:flex;flex-direction:column}
+        /* Thumbnail preview */
+        .stats-thumb-title-centered{font-size:16px;font-weight:600;color:#fff;margin:0 0 12px 0;text-align:center}
+        html:not([dark]) .stats-thumb-title-centered{color:#111}
+        .stats-thumb-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
+        .stats-thumb-img{width:36vw;max-width:420px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid rgba(255,255,255,0.06);max-height:44vh}
+        html:not([dark]) .stats-thumb-img{border:1px solid rgba(0,0,0,0.06)}
+        /* ensure the grid takes remaining horizontal space */
+        .stats-thumb-row .stats-grid{flex:1;min-width:0}
+        .stats-thumb-left{display:flex;flex-direction:column;align-items:center;gap:8px}
+        .stats-thumb-left .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
+        html:not([dark]) .stats-thumb-left .stats-thumb-sub{color:rgba(0,0,0,0.6)}
+        /* extras row under thumbnail: inline, single line */
+        .stats-thumb-extras{display:flex;flex-direction:row;gap:10px;align-items:center;margin-top:8px}
+        .stats-thumb-extras .stats-card{padding:8px 10px}
+        .stats-thumb-meta{display:flex;flex-direction:column;justify-content:center}
+        .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
+        html:not([dark]) .stats-thumb-sub{color:rgba(0,0,0,0.6)}            
+        /* Loading state */
+        .stats-loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#fff}
+        html:not([dark]) .stats-loader{color:#666}
+        .stats-spinner{width:60px;height:60px;animation:spin 1s linear infinite;margin-bottom:16px}
+        .stats-spinner circle{stroke-dasharray:80;stroke-dashoffset:60;animation:dash 1.5s ease-in-out infinite}            
+        /* Error state */
+        .stats-error{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:#ff6b6b;text-align:center}
+        .stats-error-icon{width:60px;height:60px;margin-bottom:16px;stroke:#ff6b6b}            
+        /* Stats grid */
+        .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}            
+        /* Stats card */
+        .stats-card{background:rgba(255,255,255,0.05);border-radius:12px;padding:12px;display:flex;align-items:center;gap:12px;border:1px solid rgba(255,255,255,0.08);transition:transform .18s ease,box-shadow .18s ease}
+        html:not([dark]) .stats-card{background:rgba(0,0,0,0.03);border:1px solid rgba(0,0,0,0.1)}
+        .stats-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px rgba(0,0,0,0.3)}            
+        /* Stats icon */
+        .stats-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
+        .stats-icon svg{width:24px;height:24px}
+        .stats-icon-views{background:rgba(59,130,246,0.15);color:#3b82f6}
+        .stats-icon-likes{background:rgba(34,197,94,0.15);color:#22c55e}
+        .stats-icon-dislikes{background:rgba(239,68,68,0.15);color:#ef4444}
+        .stats-icon-comments{background:rgba(168,85,247,0.15);color:#a855f7}
+        .stats-icon-viewers{background:rgba(234,179,8,0.15);color:#eab308}
+        .stats-icon-subscribers{background:rgba(236,72,153,0.15);color:#ec4899}
+        .stats-icon-videos{background:rgba(14,165,233,0.15);color:#0ea5e9}
+        /* Pair likes/dislikes into a single grid cell */
+        .stats-card-pair{display:flex;gap:8px;align-items:stretch}
+        .stats-card-pair .stats-card{flex:1;margin:0}
+        @media(max-width:480px){.stats-card-pair{flex-direction:column}}            
+        /* Stats info */
+        .stats-info{flex:1;min-width:0}
+        .stats-label{font-size:13px;color:rgba(255,255,255,0.72);margin-bottom:4px;font-weight:500}
+        html:not([dark]) .stats-label{color:rgba(0,0,0,0.6)}
+        .stats-value{font-size:20px;font-weight:700;color:#fff;line-height:1.2;margin-bottom:2px}
+        html:not([dark]) .stats-value{color:#111}
+        .stats-exact{font-size:13px;color:rgba(255,255,255,0.5);font-weight:400}
+        html:not([dark]) .stats-exact{color:rgba(0,0,0,0.5)}            
+        /* Animations */
+        @keyframes fadeInModal{from{opacity:0}to{opacity:1}}
+        @keyframes scaleInModal{from{transform:scale(0.95);opacity:0}to{transform:scale(1);opacity:1}}
+        @keyframes spin{to{transform:rotate(360deg)}}
+        @keyframes dash{0%{stroke-dashoffset:80}50%{stroke-dashoffset:10}100%{stroke-dashoffset:80}}            
+        /* Responsive */
+        @media(max-width:768px){.stats-modal-container{width:95vw}.stats-grid{grid-template-columns:1fr}.stats-card{padding:16px}}
         `;
 
   // Settings state
@@ -194,7 +218,6 @@
 
   function addStyles() {
     if (!byId('youtube-enhancer-styles')) {
-      // ✅ Use StyleManager instead of createElement('style')
       YouTubeUtils.StyleManager.add('youtube-enhancer-styles', styles);
     }
   }
@@ -894,10 +917,8 @@
         extractLikes() {
           try {
             const btn =
-              document.querySelector(
-                'ytd-toggle-button-renderer[is-icon-button] yt-formatted-string'
-              ) ||
-              document.querySelector(
+              $('ytd-toggle-button-renderer[is-icon-button] yt-formatted-string') ||
+              $(
                 '#top-level-buttons-computed ytd-toggle-button-renderer:first-child yt-formatted-string'
               );
             const text = btn && btn.textContent ? btn.textContent.trim() : '';
@@ -913,7 +934,7 @@
         },
         extractComments() {
           try {
-            const el = document.querySelector(
+            const el = $(
               '#count > ytd-comment-thread-renderer, ytd-comments-header-renderer #count'
             );
             const text = el && el.textContent ? el.textContent.trim() : '';
@@ -2022,13 +2043,11 @@
 
     containerDiv.appendChild(horizontalMenu);
 
-    const joinButton = document.querySelector(
-      '.yt-flexible-actions-view-model-wiz__action:not(.stats-menu-container)'
-    );
+    const joinButton = $('.yt-flexible-actions-view-model-wiz__action:not(.stats-menu-container)');
     if (joinButton) {
       joinButton.parentNode.appendChild(containerDiv);
     } else {
-      const buttonContainer = document.querySelector('#subscribe-button + #buttons');
+      const buttonContainer = $('#subscribe-button + #buttons');
       if (buttonContainer) {
         buttonContainer.appendChild(containerDiv);
       }
@@ -2039,10 +2058,8 @@
 
   function checkAndAddMenu() {
     if (!statsButtonEnabled) return;
-    const joinButton = document.querySelector(
-      '.yt-flexible-actions-view-model-wiz__action:not(.stats-menu-container)'
-    );
-    const statsMenu = document.querySelector('.stats-menu-container');
+    const joinButton = $('.yt-flexible-actions-view-model-wiz__action:not(.stats-menu-container)');
+    const statsMenu = $('.stats-menu-container');
 
     if (joinButton && !statsMenu) {
       createStatsMenu();
@@ -2084,31 +2101,10 @@
     });
   }
 
-  // Observe settings modal for experimental section
-  const settingsObserver = new MutationObserver(mutations => {
-    for (const { addedNodes } of mutations) {
-      for (const node of addedNodes) {
-        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
-          setTimeout(addSettingsUI, 50);
-        }
-      }
-    }
-    if (document.querySelector('.ytp-plus-settings-nav-item[data-section="experimental"].active')) {
-      setTimeout(addSettingsUI, 50);
-    }
+  // Settings modal integration — use event instead of MutationObserver
+  document.addEventListener('youtube-plus-settings-modal-opened', () => {
+    setTimeout(addSettingsUI, 50);
   });
-
-  // ✅ Register observer in cleanupManager
-  YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-
-  // ✅ Safe observe with document.body check
-  if (document.body) {
-    settingsObserver.observe(document.body, { childList: true });
-  } else {
-    document.addEventListener('DOMContentLoaded', () => {
-      settingsObserver.observe(document.body, { childList: true });
-    });
-  }
 
   const handleExperimentalNavClick = e => {
     const { target } = e;
@@ -2164,36 +2160,93 @@
     }
   }
 
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+  const scheduleInit = () => {
+    if (statsInitialized || !isStatsRelevant()) return;
+    statsInitialized = true;
+
+    const run = () => {
+      try {
+        init();
+      } catch (e) {
+        statsInitialized = false;
+        throw e;
+      }
+    };
+
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(run, { timeout: 2000 });
+    } else {
+      setTimeout(run, 0);
+    }
+  };
+
+  runWhenReady(scheduleInit);
+
+  const handleNavigate = () => {
+    scheduleInit();
+    if (!statsInitialized || !statsButtonEnabled) return;
+    checkAndInsertIcon();
+    checkAndAddMenu();
+    if (isChannelPage(location.href)) {
+      checkChannelTabs(location.href);
+    }
+  };
+
+  if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+    YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
+      passive: true,
+    });
   } else {
-    init();
+    window.addEventListener('yt-navigate-finish', handleNavigate);
   }
 
-  window.addEventListener('yt-navigate-finish', () => {
-    if (statsButtonEnabled) {
-      checkAndInsertIcon();
-      checkAndAddMenu();
-      if (isChannelPage(location.href)) {
-        checkChannelTabs(location.href);
-      }
-    }
-  });
-
-  document.addEventListener('yt-action', event => {
+  const handleAction = event => {
+    scheduleInit();
+    if (!statsInitialized || !statsButtonEnabled) return;
     const ev = /** @type {CustomEvent<any>} */ (event);
     if (ev.detail && ev.detail.actionName === 'yt-reload-continuation-items-command') {
-      if (statsButtonEnabled) {
-        checkAndInsertIcon();
-        checkAndAddMenu();
-      }
+      checkAndInsertIcon();
+      checkAndAddMenu();
     }
-  });
+  };
+
+  if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+    YouTubeUtils.cleanupManager.registerListener(document, 'yt-action', handleAction, {
+      passive: true,
+    });
+  } else {
+    document.addEventListener('yt-action', handleAction);
+  }
 })();
 
 // count
 (function () {
   'use strict';
+
+  // DOM Cache Helper - reduces repeated queries
+  const getCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
+  /**
+   * Query single element with optional caching
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Context element
+   * @returns {Element|null}
+   */
+  const $ = (sel, ctx) =>
+    getCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
+  /**
+   * Query all elements with optional caching
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Context element
+   * @returns {Element[]}
+   */
+  const $$ = (sel, ctx) =>
+    getCache()?.querySelectorAll(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
+  /**
+   * Get element by ID with optional caching
+   * @param {string} id - Element ID
+   * @returns {Element|null}
+   */
+  const byId = id => getCache()?.getElementById(id) || document.getElementById(id);
 
   // Do not run this module inside YouTube Studio (studio.youtube.com)
   const isStudioPageCount = () => {
@@ -2413,29 +2466,41 @@
   }
 
   function addStyles() {
-    // ✅ Use StyleManager instead of createElement('style')
     const styles = `
-        .channel-banner-overlay{position:absolute;top:0;left:0;width:100%;height:100%;border-radius:12px;z-index:10;display:flex;justify-content:space-around;align-items:center;color:#fff;font-family:var(--stats-font-family,'Rubik',sans-serif);font-size:var(--stats-font-size,24px);box-sizing:border-box;transition:background-color .3s ease;backdrop-filter:blur(2px)}
-        .settings-button{position:absolute;top:8px;right:8px;width:24px;height:24px;cursor:pointer;z-index:2;transition:transform .2s;opacity:.7}
-        .settings-button:hover{transform:scale(1.1);opacity:1}
-        .settings-menu{position:absolute;top:35px;right:8px;background:rgba(0,0,0,.95);padding:12px;border-radius:8px;z-index:10;display:none;backdrop-filter:blur(12px);border:1px solid rgba(255,255,255,.1);min-width:320px}
-        .settings-menu.show{display:block}
-        .stat-container{display:flex;flex-direction:column;align-items:center;justify-content:center;visibility:hidden;width:33%;height:100%;padding:0 1rem}
-        .number-container{display:flex;align-items:center;justify-content:center;font-weight:700;min-height:3rem}
-        .label-container{display:flex;align-items:center;margin-top:.5rem;font-size:1.2rem;opacity:.9}
-        .label-container svg{width:1.5rem;height:1.5rem;margin-right:.5rem}
-        .difference{font-size:1.8rem;height:2rem;margin-bottom:.5rem;transition:opacity .3s}
-        .spinner-container{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;justify-content:center;align-items:center}
-        .loading-spinner{animation:spin 1s linear infinite}
-        @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
-        @media(max-width:768px){.channel-banner-overlay{flex-direction:column;padding:8px;min-height:160px}.settings-menu{width:280px;right:4px}}
-        .setting-group{margin-bottom:12px}
-        .setting-group:last-child{margin-bottom:0}
-        .setting-group label{display:block;margin-bottom:4px;font-weight:600;color:#fff;font-size:14px}
-        .setting-group input[type="range"]{width:100%;margin:4px 0}
-        .setting-group input[type="checkbox"]{margin-right:8px}
-        .setting-value{color:#aaa;font-size:12px;margin-top:2px}
-        `;
+      .channel-banner-overlay{position:absolute;top:0;left:0;width:100%;height:100%;border-radius:12px;z-index:9;display:flex;justify-content:space-around;align-items:center;color:#fff;font-family:var(--stats-font-family,'Rubik',sans-serif);font-size:var(--stats-font-size,24px);box-sizing:border-box;transition:background-color .3s ease;backdrop-filter:blur(2px)}        
+      .settings-button{position:absolute;top:12px;right:12px;width:32px;height:32px;border-radius:50%;cursor:pointer;z-index:11;transition:all .2s ease;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.4);backdrop-filter:blur(4px);border:1px solid rgba(255,255,255,0.1);opacity:0.7}
+      .channel-banner-overlay:hover .settings-button{opacity:1}
+      .settings-button:hover{transform:rotate(30deg) scale(1.1);opacity:1;background:rgba(0,0,0,0.6);border-color:rgba(255,255,255,0.3)}
+      .settings-button svg{width:18px;height:18px;fill:white;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.5))}        
+      .settings-menu{position:absolute;top:52px;right:12px;background:rgba(28,28,28,0.75);padding:16px;border-radius:16px;z-index:12;display:flex;flex-direction:column;gap:12px;backdrop-filter:blur(16px) saturate(180%);border:1px solid rgba(255,255,255,0.08);box-shadow:0 8px 32px rgba(0,0,0,0.6);min-width:320px;opacity:0;visibility:hidden;transform:translateY(-10px) scale(0.98);transition:all 0.2s cubic-bezier(0.2,0,0.2,1);pointer-events:none}
+      .settings-menu.show{opacity:1;visibility:visible;transform:translateY(0) scale(1);pointer-events:auto}        
+      .settings-menu .ytp-plus-settings-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:8px;background:rgba(255,255,255,0.02);}
+      .settings-menu .ytp-plus-settings-item + .ytp-plus-settings-item{margin-top:6px}
+      .settings-menu .ytp-plus-settings-item .ytp-plus-settings-item-label{color:#eee;font-size:14px;font-weight:500}
+      .settings-menu label{color:#eee!important;font-size:14px!important;font-weight:500!important;margin-bottom:6px!important}        
+      .settings-menu input[type="range"]{-webkit-appearance:none;width:100%!important;height:4px;background:rgba(255,255,255,0.2)!important;border-radius:2px;margin:12px 0 4px 0!important;cursor:pointer}
+      .settings-menu input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;height:16px;width:16px;border-radius:50%;background:#3ea6ff;margin-top:-6px;box-shadow:0 2px 4px rgba(0,0,0,0.3);border:2px solid #fff;transition:transform .1s;cursor:pointer}
+      .settings-menu input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.2)}        
+      .settings-menu select{width:100%!important;background:rgba(255,255,255,0.1)!important;border:1px solid rgba(255,255,255,0.1)!important;color:#fff!important;padding:8px 12px!important;border-radius:6px!important;font-size:13px!important;margin-bottom:12px!important;cursor:pointer;outline:none}
+      .settings-menu select:hover{background:rgba(255,255,255,0.15)!important}
+      .settings-menu select option{background:#333;color:#fff}        
+      /* Don't override the shared settings checkbox styling; only target non-shared inputs */
+      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox){appearance:none;width:18px!important;height:18px!important;border:2px solid rgba(255,255,255,0.4)!important;border-radius:4px!important;background:transparent!important;cursor:pointer;position:relative;margin-right:12px!important;vertical-align:middle;transition:all .2s}
+      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox):checked{background:#3ea6ff!important;border-color:#3ea6ff!important}
+      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox):checked::after{content:'';position:absolute;left:5px;top:1px;width:4px;height:10px;border:solid white;border-width:0 2px 2px 0;transform:rotate(45deg)}        
+      .stat-container{display:flex;flex-direction:column;align-items:center;justify-content:center;visibility:hidden;width:33%;height:100%;padding:0 1rem;text-shadow:0 2px 4px rgba(0,0,0,0.3)}
+      .number-container{display:flex;align-items:center;justify-content:center;font-weight:700;min-height:3rem}
+      .label-container{display:flex;align-items:center;margin-top:.5rem;font-size:1.2rem;opacity:.9}
+      .label-container svg{width:1.5rem;height:1.5rem;margin-right:.5rem;filter:drop-shadow(0 1px 2px rgba(0,0,0,0.3))}
+      .difference{font-size:1.8rem;height:2rem;margin-bottom:.5rem;transition:opacity .3s}
+      .spinner-container{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;justify-content:center;align-items:center}
+      .loading-spinner{animation:spin 1s linear infinite}
+      @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
+      @media(max-width:768px){.channel-banner-overlay{flex-direction:column;padding:8px;min-height:160px}.settings-menu{width:280px!important;right:4px!important;top:48px!important}}
+      .setting-group{margin-bottom:12px}
+      .setting-group:last-child{margin-bottom:0}
+      .setting-value{color:#bbb;font-size:12px;margin-top:4px}
+      `;
     YouTubeUtils.StyleManager.add('channel-stats-overlay', styles);
   }
 
@@ -2498,12 +2563,18 @@
         updateDisplayState();
       }
     });
-
+    // Render options as single-line settings items using shared classes
     OPTIONS.forEach(option => {
-      const checkboxContainer = document.createElement('div');
-      checkboxContainer.style.display = 'flex';
-      checkboxContainer.style.alignItems = 'center';
-      checkboxContainer.style.marginTop = '5px';
+      const item = document.createElement('div');
+      item.className = 'ytp-plus-settings-item';
+
+      const left = document.createElement('div');
+
+      const label = document.createElement('label');
+      label.className = 'ytp-plus-settings-item-label';
+      label.htmlFor = `show-${option}`;
+      label.textContent = t(option);
+      left.appendChild(label);
 
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
@@ -2511,17 +2582,9 @@
       checkbox.checked = localStorage.getItem(`show-${option}`) !== 'false';
       checkbox.className = 'ytp-plus-settings-checkbox';
 
-      const checkboxLabel = document.createElement('label');
-      checkboxLabel.htmlFor = `show-${option}`;
-      checkboxLabel.textContent = t(option);
-      checkboxLabel.style.cursor = 'pointer';
-      checkboxLabel.style.color = 'white';
-      checkboxLabel.style.fontSize = '14px';
-      checkboxLabel.style.marginLeft = '8px';
-
-      checkboxContainer.appendChild(checkbox);
-      checkboxContainer.appendChild(checkboxLabel);
-      displaySection.appendChild(checkboxContainer);
+      item.appendChild(left);
+      item.appendChild(checkbox);
+      displaySection.appendChild(item);
     });
 
     return displaySection;
@@ -2583,25 +2646,7 @@
       }
     });
 
-    // Handle select changes
-    controlsSection.addEventListener('change', e => {
-      const target = e.target;
-
-      // Handle font family selector
-      if (target.classList.contains('font-family-select')) {
-        const select = /** @type {HTMLSelectElement} */ (target);
-        localStorage.setItem('youtubeEnhancerFontFamily', select.value);
-        if (state.overlay) {
-          state.overlay
-            .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-            .forEach(el => {
-              el.style.fontFamily = select.value;
-            });
-        }
-      }
-    });
-
-    // Font family selector
+    // Font family selector - using glass-dropdown style
     const fontLabel = document.createElement('label');
     fontLabel.textContent = t('fontFamily');
     fontLabel.style.display = 'block';
@@ -2609,10 +2654,6 @@
     fontLabel.style.fontSize = '16px';
     fontLabel.style.fontWeight = 'bold';
 
-    const fontSelect = document.createElement('select');
-    fontSelect.className = 'font-family-select';
-    fontSelect.style.width = '100%';
-    fontSelect.style.marginBottom = '10px';
     const fonts = [
       { name: 'Rubik', value: 'Rubik, sans-serif' },
       { name: 'Impact', value: 'Impact, Charcoal, sans-serif' },
@@ -2620,6 +2661,12 @@
       { name: 'Tahoma', value: 'Tahoma, Geneva, sans-serif' },
     ];
     const savedFont = localStorage.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif';
+    const savedFontName = fonts.find(f => f.value === savedFont)?.name || 'Rubik';
+
+    // Hidden native select for compatibility
+    const fontSelect = document.createElement('select');
+    fontSelect.className = 'font-family-select';
+    fontSelect.style.display = 'none';
     fonts.forEach(f => {
       const opt = document.createElement('option');
       opt.value = f.value;
@@ -2627,6 +2674,92 @@
       if (f.value === savedFont) opt.selected = true;
       fontSelect.appendChild(opt);
     });
+
+    // Glass dropdown
+    const fontDropdown = document.createElement('div');
+    fontDropdown.className = 'glass-dropdown';
+    fontDropdown.id = 'stats-font-dropdown';
+    fontDropdown.tabIndex = 0;
+    fontDropdown.setAttribute('role', 'listbox');
+    fontDropdown.setAttribute('aria-expanded', 'false');
+    fontDropdown.style.marginBottom = '12px';
+    fontDropdown.innerHTML = `
+      <button class="glass-dropdown__toggle" type="button" aria-haspopup="listbox">
+        <span class="glass-dropdown__label">${savedFontName}</span>
+        <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+      </button>
+      <ul class="glass-dropdown__list" role="presentation">
+        ${fonts
+          .map(f => {
+            const sel = f.value === savedFont ? ' aria-selected="true"' : '';
+            return `<li class="glass-dropdown__item" data-value="${f.value}" role="option"${sel}>${f.name}</li>`;
+          })
+          .join('')}
+      </ul>
+    `;
+
+    // Initialize glass dropdown interactions
+    const initFontDropdown = () => {
+      const toggle = fontDropdown.querySelector('.glass-dropdown__toggle');
+      const list = fontDropdown.querySelector('.glass-dropdown__list');
+      const label = fontDropdown.querySelector('.glass-dropdown__label');
+      // eslint-disable-next-line no-unused-vars
+      let items = Array.from(fontDropdown.querySelectorAll('.glass-dropdown__item'));
+
+      const closeList = () => {
+        fontDropdown.setAttribute('aria-expanded', 'false');
+        if (list) list.style.display = 'none';
+      };
+
+      const openList = () => {
+        fontDropdown.setAttribute('aria-expanded', 'true');
+        if (list) list.style.display = 'block';
+        items = Array.from(fontDropdown.querySelectorAll('.glass-dropdown__item'));
+      };
+
+      closeList();
+
+      if (toggle) {
+        toggle.addEventListener('click', e => {
+          e.stopPropagation();
+          const expanded = fontDropdown.getAttribute('aria-expanded') === 'true';
+          if (expanded) closeList();
+          else openList();
+        });
+      }
+
+      document.addEventListener('click', e => {
+        if (!fontDropdown.contains(e.target)) closeList();
+      });
+
+      if (list) {
+        list.addEventListener('click', e => {
+          const it = e.target.closest('.glass-dropdown__item');
+          if (!it) return;
+          const val = it.dataset.value;
+          fontDropdown
+            .querySelectorAll('.glass-dropdown__item')
+            .forEach(i => i.removeAttribute('aria-selected'));
+          it.setAttribute('aria-selected', 'true');
+          if (label) label.textContent = it.textContent;
+          fontSelect.value = val;
+          closeList();
+
+          // Apply font change
+          localStorage.setItem('youtubeEnhancerFontFamily', val);
+          if (state.overlay) {
+            state.overlay
+              .querySelectorAll('.subscribers-number,.views-number,.videos-number')
+              .forEach(el => {
+                el.style.fontFamily = val;
+              });
+          }
+        });
+      }
+    };
+
+    // Delay initialization to ensure DOM is ready
+    setTimeout(initFontDropdown, 0);
 
     // Font size slider
     const fontSizeLabel = document.createElement('label');
@@ -2695,6 +2828,7 @@
 
     controlsSection.appendChild(fontLabel);
     controlsSection.appendChild(fontSelect);
+    controlsSection.appendChild(fontDropdown);
     controlsSection.appendChild(fontSizeLabel);
     controlsSection.appendChild(fontSizeSlider);
     controlsSection.appendChild(fontSizeValue);
@@ -3053,7 +3187,7 @@
 
   async function fetchChannelId(_channelName) {
     // Try meta tag first
-    const metaTag = document.querySelector('meta[itemprop="channelId"]');
+    const metaTag = $('meta[itemprop="channelId"]');
     if (metaTag && metaTag.content) return metaTag.content;
 
     // Try URL pattern
@@ -3130,7 +3264,7 @@
   }
 
   function clearExistingOverlay() {
-    const existingOverlay = document.querySelector('.channel-banner-overlay');
+    const existingOverlay = $('.channel-banner-overlay');
     if (existingOverlay) {
       try {
         existingOverlay.remove();
@@ -3141,7 +3275,6 @@
     if (state.intervalId) {
       try {
         clearInterval(state.intervalId);
-        // ✅ Unregister from cleanupManager if it was registered
         YouTubeUtils.cleanupManager.unregisterInterval(state.intervalId);
       } catch {
         console.warn('[YouTube+] Failed to clear interval');
@@ -3331,7 +3464,7 @@
   }
 
   function updateDisplayState() {
-    const overlay = document.querySelector('.channel-banner-overlay');
+    const overlay = $('.channel-banner-overlay');
     if (!overlay) return;
 
     const statContainers = overlay.querySelectorAll('div[style*="width"]');
@@ -3528,9 +3661,7 @@
 
   // Add settings UI to experimental section
   function addSettingsUI() {
-    const section = document.querySelector(
-      '.ytp-plus-settings-section[data-section="experimental"]'
-    );
+    const section = $('.ytp-plus-settings-section[data-section="experimental"]');
     if (!section || section.querySelector('.count-settings-item')) return;
 
     const item = document.createElement('div');
@@ -3553,7 +3684,7 @@
         observePageChanges();
         addNavigationListener();
         setTimeout(() => {
-          const bannerElement = document.getElementById('page-header-banner-sizer');
+          const bannerElement = byId('page-header-banner-sizer');
           if (bannerElement && isChannelPage()) {
             addOverlay(bannerElement);
           }
@@ -3564,30 +3695,10 @@
     });
   }
 
-  // Observe settings modal for experimental section
-  const settingsObserver = new MutationObserver(mutations => {
-    for (const { addedNodes } of mutations) {
-      for (const node of addedNodes) {
-        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
-          setTimeout(addSettingsUI, 100);
-          return;
-        }
-      }
-    }
-    if (document.querySelector('.ytp-plus-settings-nav-item[data-section="experimental"].active')) {
-      setTimeout(addSettingsUI, 50);
-    }
+  // Settings modal integration — use event instead of MutationObserver
+  document.addEventListener('youtube-plus-settings-modal-opened', () => {
+    setTimeout(addSettingsUI, 100);
   });
-  YouTubeUtils.cleanupManager.registerObserver(settingsObserver);
-
-  // ✅ Safe observe with document.body check
-  if (document.body) {
-    settingsObserver.observe(document.body, { childList: true, subtree: true });
-  } else {
-    document.addEventListener('DOMContentLoaded', () => {
-      settingsObserver.observe(document.body, { childList: true, subtree: true });
-    });
-  }
 
   const experimentalNavClickHandler = e => {
     const { target } = e;
@@ -3723,7 +3834,7 @@
    * @returns {HTMLElement|null} Banner element
    */
   function findBannerElement() {
-    let bannerElement = document.getElementById('page-header-banner-sizer');
+    let bannerElement = byId('page-header-banner-sizer');
 
     if (!bannerElement) {
       const alternatives = [
@@ -3734,7 +3845,7 @@
       ];
 
       for (const selector of alternatives) {
-        bannerElement = document.querySelector(selector);
+        bannerElement = $(selector);
         if (bannerElement) break;
       }
     }
@@ -3793,12 +3904,19 @@
       attributes: false,
     };
 
+    // Scope to #page-manager or #content instead of full document.body
+    const startObserver = () => {
+      const target =
+        document.querySelector('#page-manager') ||
+        document.querySelector('#content') ||
+        document.body;
+      observer.observe(target, observerConfig);
+    };
+
     if (document.body) {
-      observer.observe(document.body, observerConfig);
+      startObserver();
     } else {
-      document.addEventListener('DOMContentLoaded', () => {
-        observer.observe(document.body, observerConfig);
-      });
+      document.addEventListener('DOMContentLoaded', startObserver);
     }
   }
 
@@ -3836,7 +3954,7 @@
 
     window.addEventListener('yt-navigate-finish', () => {
       if (isChannelPage()) {
-        const bannerElement = document.getElementById('page-header-banner-sizer');
+        const bannerElement = byId('page-header-banner-sizer');
         if (bannerElement) {
           addOverlay(bannerElement);
           utils.log('Navigated to channel page');
@@ -3877,7 +3995,7 @@
     window.YouTubeStats = {
       init,
       cleanup,
-      version: '2.3.4',
+      version: '2.4',
     };
   }
 

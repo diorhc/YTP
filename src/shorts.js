@@ -76,6 +76,8 @@
     editingShortcut: null,
     cachedVideo: null,
     lastVideoCheck: 0,
+    initialized: false,
+    routeObserver: null,
   };
 
   /**
@@ -93,7 +95,6 @@
       }
 
       for (const selector of selectors) {
-        // ✅ Use cached querySelector
         const video = YouTubeUtils.querySelector(selector);
         if (video) {
           state.cachedVideo = video;
@@ -625,7 +626,6 @@
   const addStyles = () => {
     if (document.getElementById('shorts-keyboard-styles')) return;
 
-    // ✅ Use StyleManager instead of createElement('style')
     const styles = `
                 :root{--shorts-feedback-bg:rgba(255,255,255,.15);--shorts-feedback-border:rgba(255,255,255,.2);--shorts-feedback-color:#fff;--shorts-help-bg:rgba(255,255,255,.15);--shorts-help-border:rgba(255,255,255,.2);--shorts-help-color:#fff;}
                 html[dark],body[dark]{--shorts-feedback-bg:rgba(34,34,34,.7);--shorts-feedback-border:rgba(255,255,255,.15);--shorts-feedback-color:#fff;--shorts-help-bg:rgba(34,34,34,.7);--shorts-help-border:rgba(255,255,255,.1);--shorts-help-color:#fff;}
@@ -697,15 +697,48 @@
   };
 
   /**
+   * Check if current route is /shorts page
+   * @returns {boolean} True if on /shorts/* route
+   */
+  const isOnShortsPage = () => location.pathname.startsWith('/shorts/');
+
+  /**
+   * Cleanup when leaving shorts page
+   */
+  const cleanup = () => {
+    if (!state.initialized) return;
+
+    // Remove help panel if visible
+    if (state.helpVisible) {
+      helpPanel.hide();
+    }
+
+    // Clear any pending timeouts
+    if (state.actionTimeout) {
+      clearTimeout(state.actionTimeout);
+      state.actionTimeout = null;
+    }
+
+    // Clear cached video
+    state.cachedVideo = null;
+
+    state.initialized = false;
+  };
+
+  /**
    * Initialize the Shorts keyboard controls module
    * Sets up event listeners and styles
    * @returns {void}
    */
   const init = () => {
+    // Strict route guard
+    if (!isOnShortsPage()) return;
+    if (state.initialized) return;
+
+    state.initialized = true;
     utils.loadSettings();
     addStyles();
 
-    // ✅ Register listeners in cleanupManager
     YouTubeUtils.cleanupManager.registerListener(document, 'keydown', handleKeydown, true);
 
     // Prefer destructuring the event parameter
@@ -724,16 +757,51 @@
     });
   };
 
+  // Route observer to cleanup when leaving /shorts
+  const observeRoute = () => {
+    let lastPath = location.pathname;
+
+    state.routeObserver = new MutationObserver(() => {
+      const currentPath = location.pathname;
+      if (currentPath !== lastPath) {
+        lastPath = currentPath;
+
+        if (!isOnShortsPage() && state.initialized) {
+          // Left shorts page
+          cleanup();
+        } else if (isOnShortsPage() && !state.initialized) {
+          // Entered shorts page
+          init();
+        }
+      }
+    });
+
+    if (document.body) {
+      state.routeObserver.observe(document.body, {
+        childList: true,
+        subtree: false,
+      });
+    }
+  };
+
+  // Initialize if on shorts page
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+    document.addEventListener('DOMContentLoaded', () => {
+      init();
+      observeRoute();
+    });
   } else {
     init();
+    observeRoute();
   }
 
-  if (utils.isInShortsPage() && !localStorage.getItem('shorts_keyboard_help_shown')) {
+  // Show help tip on first visit
+  if (isOnShortsPage() && !localStorage.getItem('shorts_keyboard_help_shown')) {
     setTimeout(() => {
-      feedback.show('Press ? for shortcuts');
-      localStorage.setItem('shorts_keyboard_help_shown', 'true');
+      if (isOnShortsPage()) {
+        feedback.show('Press ? for shortcuts');
+        localStorage.setItem('shorts_keyboard_help_shown', 'true');
+      }
     }, 2000);
   }
 })();

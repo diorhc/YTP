@@ -27,7 +27,6 @@
    */
   const byId = id => getCache()?.getElementById(id) || document.getElementById(id);
 
-  // Early exit for embeds to prevent duplicate panels - ✅ Use cached querySelector
   if (window.location.hostname !== 'www.youtube.com' || window.frameElement) {
     return;
   }
@@ -74,6 +73,14 @@
   };
 
   let initStarted = false;
+
+  const isRelevantRoute = () => {
+    try {
+      return location.pathname === '/watch';
+    } catch {
+      return false;
+    }
+  };
 
   const scheduleInitRetry = () => {
     const timeoutId = setTimeout(init, 250);
@@ -813,7 +820,6 @@
 
   // Settings panel
   const addTimecodePanelSettings = () => {
-    // ✅ Use cached querySelector
     const advancedSection = YouTubeUtils.querySelector
       ? YouTubeUtils.querySelector('.ytp-plus-settings-section[data-section="advanced"]')
       : $('.ytp-plus-settings-section[data-section="advanced"]');
@@ -825,6 +831,18 @@
     ) {
       return;
     }
+
+    const getSubmenuExpanded = () => {
+      try {
+        const raw = localStorage.getItem('ytp-plus-submenu-states');
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.timecode === 'boolean') return parsed.timecode;
+      } catch {}
+      return null;
+    };
+    const storedExpanded = getSubmenuExpanded();
+    const initialExpanded = typeof storedExpanded === 'boolean' ? storedExpanded : true;
 
     const { ctrlKey, altKey, shiftKey } = config.shortcut;
     const modifierValue =
@@ -839,18 +857,51 @@
       ].find(Boolean) || 'none';
 
     const enableDiv = document.createElement('div');
-    enableDiv.className = 'ytp-plus-settings-item timecode-settings-item';
+    enableDiv.className =
+      'ytp-plus-settings-item timecode-settings-item ytp-plus-settings-item--with-submenu';
     enableDiv.innerHTML = `
         <div>
-          <label class="ytp-plus-settings-item-label">${t('enableTimecode')}</label>
+          <label class="ytp-plus-settings-item-label" for="timecode-enable-checkbox">${t(
+            'enableTimecode'
+          )}</label>
           <div class="ytp-plus-settings-item-description">${t('enableDescription')}</div>
         </div>
-        <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enabled" ${config.enabled ? 'checked' : ''}>
+        <div class="ytp-plus-settings-item-actions">
+          <button
+            type="button"
+            class="ytp-plus-submenu-toggle"
+            data-submenu="timecode"
+            aria-label="Toggle timecode submenu"
+            aria-expanded="${initialExpanded ? 'true' : 'false'}"
+            ${config.enabled ? '' : 'disabled'}
+            style="display:${config.enabled ? 'inline-flex' : 'none'};"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <input type="checkbox" id="timecode-enable-checkbox" class="ytp-plus-settings-checkbox" data-setting="enabled" ${
+            config.enabled ? 'checked' : ''
+          }>
+        </div>
       `;
+
+    const submenuWrap = document.createElement('div');
+    submenuWrap.className = 'timecode-submenu';
+    submenuWrap.dataset.submenu = 'timecode';
+    submenuWrap.style.display = config.enabled && initialExpanded ? 'block' : 'none';
+    submenuWrap.style.marginLeft = '12px';
+    submenuWrap.style.marginBottom = '12px';
+
+    const submenuCard = document.createElement('div');
+    submenuCard.className = 'glass-card';
+    submenuCard.style.display = 'flex';
+    submenuCard.style.flexDirection = 'column';
+    submenuCard.style.gap = '8px';
 
     const shortcutDiv = document.createElement('div');
     shortcutDiv.className = 'ytp-plus-settings-item timecode-settings-item timecode-shortcut-item';
-    shortcutDiv.style.display = config.enabled ? 'flex' : 'none';
+    shortcutDiv.style.display = 'flex';
     shortcutDiv.innerHTML = `
         <div>
           <label class="ytp-plus-settings-item-label">${t('keyboardShortcut')}</label>
@@ -926,7 +977,9 @@
         </div>
       `;
 
-    advancedSection.append(enableDiv, shortcutDiv);
+    submenuCard.appendChild(shortcutDiv);
+    submenuWrap.appendChild(submenuCard);
+    advancedSection.append(enableDiv, submenuWrap);
 
     // Initialize custom glass dropdown interactions
     const initGlassDropdown = () => {
@@ -1029,7 +1082,23 @@
       const target = /** @type {EventTarget & HTMLElement} */ (e.target);
       if (target.matches && target.matches('.ytp-plus-settings-checkbox[data-setting="enabled"]')) {
         config.enabled = /** @type {HTMLInputElement} */ (target).checked;
-        shortcutDiv.style.display = config.enabled ? 'flex' : 'none';
+        const submenuToggle = enableDiv.querySelector(
+          '.ytp-plus-submenu-toggle[data-submenu="timecode"]'
+        );
+        if (submenuToggle instanceof HTMLElement) {
+          if (config.enabled) {
+            const stored = getSubmenuExpanded();
+            const nextExpanded = typeof stored === 'boolean' ? stored : true;
+            submenuToggle.removeAttribute('disabled');
+            submenuToggle.style.display = 'inline-flex';
+            submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+            submenuWrap.style.display = nextExpanded ? 'block' : 'none';
+          } else {
+            submenuToggle.setAttribute('disabled', '');
+            submenuToggle.style.display = 'none';
+            submenuWrap.style.display = 'none';
+          }
+        }
         toggleTimecodePanel(config.enabled);
         saveSettings();
       }
@@ -1057,7 +1126,6 @@
   const insertTimecodeStyles = () => {
     if (byId('timecode-panel-styles')) return;
 
-    // ✅ Use StyleManager instead of createElement('style')
     const styles = `
         :root{--tc-panel-bg:rgba(255,255,255,0.06);--tc-panel-border:rgba(255,255,255,0.12);--tc-panel-color:#fff}
         html[dark],body[dark]{--tc-panel-bg:rgba(34,34,34,0.75);--tc-panel-border:rgba(255,255,255,0.12);--tc-panel-color:#fff}
@@ -1111,7 +1179,7 @@
         #timecode-actions button{padding:8px 12px;border:none;border-radius:8px;cursor:pointer;font-size:13px;transition:background .18s;color:inherit;background:rgba(255,255,255,0.02)}
         #timecode-actions button:hover{background:rgba(255,255,255,0.04)}
         #timecode-track-toggle.active{background:linear-gradient(90deg,#ff6b6b,#ff4444);color:#fff}
-        `;
+      `;
     YouTubeUtils.StyleManager.add('timecode-panel-styles', styles);
   };
 
@@ -1210,7 +1278,6 @@
     if (closeButton) {
       toggleTimecodePanel(false);
     } else if (target.id === 'timecode-add-btn') {
-      // ✅ Use cached querySelector
       const video = YouTubeUtils.querySelector ? YouTubeUtils.querySelector('video') : $('video');
       if (video) showTimecodeForm(video.currentTime);
     } else if (target.id === 'timecode-track-toggle') {
@@ -1238,7 +1305,7 @@
       }
     } else if (item && !target.closest('.timecode-actions')) {
       const time = parseFloat(item.dataset.time);
-      const video = document.querySelector('video');
+      const video = $('video');
       if (video && !isNaN(time)) {
         /** @type {HTMLVideoElement} */ (video).currentTime = time;
         if (video.paused) video.play();
@@ -1469,7 +1536,7 @@
 
     const track = () => {
       try {
-        const video = document.querySelector('video');
+        const video = $('video');
         const { panel, currentTime, list } = state.dom;
 
         // Stop tracking if essential elements are missing or panel is hidden
@@ -1634,7 +1701,6 @@
       document.addEventListener('mouseup', handleUp);
     };
 
-    // ✅ Register the mousedown listener for cleanup
     YouTubeUtils.cleanupManager.registerListener(header, 'mousedown', mouseDownHandler);
   };
 
@@ -1699,7 +1765,7 @@
   // Toggle panel
   const toggleTimecodePanel = show => {
     // Close any existing panels first (cleanup)
-    document.querySelectorAll('#timecode-panel').forEach(panel => {
+    $$('#timecode-panel').forEach(panel => {
       if (panel !== state.dom.panel) panel.remove();
     });
 
@@ -1738,7 +1804,6 @@
       state.editingIndex = null;
       state.timecodes.clear();
 
-      // ✅ Обновляем панель только если она уже открыта
       if (config.enabled && state.dom.panel && !state.dom.panel.classList.contains('hidden')) {
         const saved = loadTimecodesFromStorage();
         if (saved?.length) {
@@ -1760,7 +1825,6 @@
   // Keyboard shortcuts
   const setupKeyboard = () => {
     document.addEventListener('keydown', e => {
-      // ✅ Проверяем, включена ли функция в настройках
       if (!config.enabled) return;
 
       const target = /** @type {EventTarget & HTMLElement} */ (e.target);
@@ -1791,11 +1855,12 @@
   // Initialize
   const init = () => {
     if (initStarted) return;
+    if (!isRelevantRoute()) return;
 
     const appRoot =
       (typeof YouTubeUtils?.querySelector === 'function' &&
         YouTubeUtils.querySelector('ytd-app')) ||
-      document.querySelector('ytd-app');
+      $('ytd-app');
 
     if (!appRoot) {
       scheduleInitRetry();
@@ -1810,28 +1875,21 @@
     setupNavigation();
 
     // Settings modal observer
-    let activeSettingsModal = null;
     let modalObserver = null;
-
-    const disconnectModalObserver = () => {
-      try {
-        modalObserver?.disconnect?.();
-      } catch {}
-      modalObserver = null;
-      activeSettingsModal = null;
-    };
 
     const attachModalObserver = modalEl => {
       if (!modalEl || !(modalEl instanceof Element)) return;
-      if (modalObserver) return;
+      if (modalObserver) {
+        try {
+          modalObserver.disconnect();
+        } catch {}
+        modalObserver = null;
+      }
 
-      activeSettingsModal = modalEl;
       modalObserver = new MutationObserver(() => {
         if (
-          document.querySelector(
-            '.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)'
-          ) &&
-          !document.querySelector('.timecode-settings-item')
+          $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)') &&
+          !$('.timecode-settings-item')
         ) {
           setTimeout(addTimecodePanelSettings, 50);
         }
@@ -1846,39 +1904,15 @@
       });
     };
 
-    const bodyObserver = new MutationObserver(mutations => {
-      for (const mutation of mutations) {
-        for (const node of mutation.addedNodes) {
-          if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
-            attachModalObserver(node);
-            setTimeout(addTimecodePanelSettings, 100);
-          }
-        }
-
-        for (const node of mutation.removedNodes) {
-          if (node === activeSettingsModal) {
-            disconnectModalObserver();
-          }
-        }
+    // Settings modal integration — use event instead of body MutationObserver
+    document.addEventListener('youtube-plus-settings-modal-opened', () => {
+      const modal = document.querySelector('.ytp-plus-settings-modal');
+      if (modal) {
+        attachModalObserver(modal);
+        setTimeout(addTimecodePanelSettings, 100);
       }
     });
 
-    // ✅ Register observer in cleanupManager
-    YouTubeUtils.cleanupManager.registerObserver(bodyObserver);
-
-    // Observe only direct additions/removals on body (avoid subtree/attribute scans)
-    const startBodyObserver = () => {
-      if (!document.body) return;
-      bodyObserver.observe(document.body, { childList: true, subtree: false });
-    };
-
-    if (document.body) {
-      startBodyObserver();
-    } else {
-      document.addEventListener('DOMContentLoaded', startBodyObserver, { once: true });
-    }
-
-    // ✅ Register global click listener in cleanupManager
     const clickHandler = e => {
       if (
         /** @type {HTMLElement} */ (e.target).classList?.contains('ytp-plus-settings-nav-item') &&
@@ -1889,7 +1923,6 @@
     };
     YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
 
-    // ✅ Больше не создаём панель автоматически - только по шорткату
     if (config.enabled && !state.resizeListenerKey) {
       const onResize = YouTubeUtils.throttle(() => {
         if (!state.dom.panel) return;
@@ -1912,11 +1945,27 @@
     }
   };
 
+  const handleNavigate = () => {
+    if (!isRelevantRoute()) {
+      if (initStarted) cleanup();
+      return;
+    }
+    init();
+  };
+
   // Start on document ready
   if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init, { once: true });
+    document.addEventListener('DOMContentLoaded', handleNavigate, { once: true });
   } else {
-    init();
+    handleNavigate();
+  }
+
+  if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+    YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
+      passive: true,
+    });
+  } else {
+    document.addEventListener('yt-navigate-finish', handleNavigate, { passive: true });
   }
 
   // Cleanup on beforeunload

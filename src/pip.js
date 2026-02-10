@@ -246,14 +246,24 @@
    * @returns {void}
    */
   const addPipSettingsToModal = () => {
-    // ✅ Use cached querySelector
     const advancedSection = YouTubeUtils.querySelector(
       '.ytp-plus-settings-section[data-section="advanced"]'
     );
     if (!advancedSection || YouTubeUtils.querySelector('.pip-settings-item')) return;
 
+    const getSubmenuExpanded = () => {
+      try {
+        const raw = localStorage.getItem('ytp-plus-submenu-states');
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (parsed && typeof parsed.pip === 'boolean') return parsed.pip;
+      } catch {}
+      return null;
+    };
+    const storedExpanded = getSubmenuExpanded();
+    const initialExpanded = typeof storedExpanded === 'boolean' ? storedExpanded : true;
+
     // Add styles if they don't exist
-    // ✅ Use StyleManager instead of createElement('style')
     if (!document.getElementById('pip-styles')) {
       const styles = `
           .pip-shortcut-editor { display: flex; align-items: center; gap: 8px; }
@@ -264,20 +274,51 @@
 
     // Enable/disable toggle
     const enableItem = document.createElement('div');
-    enableItem.className = 'ytp-plus-settings-item pip-settings-item';
+    enableItem.className =
+      'ytp-plus-settings-item pip-settings-item ytp-plus-settings-item--with-submenu';
     enableItem.innerHTML = `
         <div>
-          <label class="ytp-plus-settings-item-label">${t('pipTitle')}</label>
+          <label class="ytp-plus-settings-item-label" for="pip-enable-checkbox">${t(
+            'pipTitle'
+          )}</label>
           <div class="ytp-plus-settings-item-description">${t('pipDescription')}</div>
         </div>
-        <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enablePiP" id="pip-enable-checkbox" ${pipSettings.enabled ? 'checked' : ''}>
+        <div class="ytp-plus-settings-item-actions">
+          <button
+            type="button"
+            class="ytp-plus-submenu-toggle"
+            data-submenu="pip"
+            aria-label="Toggle PiP submenu"
+            aria-expanded="${initialExpanded ? 'true' : 'false'}"
+            ${pipSettings.enabled ? '' : 'disabled'}
+            style="display:${pipSettings.enabled ? 'inline-flex' : 'none'};"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enablePiP" id="pip-enable-checkbox" ${pipSettings.enabled ? 'checked' : ''}>
+        </div>
       `;
     advancedSection.appendChild(enableItem);
 
     // Shortcut settings
+    const submenuWrap = document.createElement('div');
+    submenuWrap.className = 'pip-submenu';
+    submenuWrap.dataset.submenu = 'pip';
+    submenuWrap.style.display = pipSettings.enabled && initialExpanded ? 'block' : 'none';
+    submenuWrap.style.marginLeft = '12px';
+    submenuWrap.style.marginBottom = '12px';
+
+    const submenuCard = document.createElement('div');
+    submenuCard.className = 'glass-card';
+    submenuCard.style.display = 'flex';
+    submenuCard.style.flexDirection = 'column';
+    submenuCard.style.gap = '8px';
+
     const shortcutItem = document.createElement('div');
     shortcutItem.className = 'ytp-plus-settings-item pip-shortcut-item';
-    shortcutItem.style.display = pipSettings.enabled ? 'flex' : 'none';
+    shortcutItem.style.display = 'flex';
 
     const { ctrlKey, altKey, shiftKey } = pipSettings.shortcut;
     const modifierValue =
@@ -379,7 +420,9 @@
           <input type="text" id="pip-key" value="${pipSettings.shortcut.key}" maxlength="1" style="width: 30px; text-align: center;">
         </div>
       `;
-    advancedSection.appendChild(shortcutItem);
+    submenuCard.appendChild(shortcutItem);
+    submenuWrap.appendChild(submenuCard);
+    advancedSection.appendChild(submenuWrap);
 
     // Initialize glass dropdown interactions for PiP selector
     const initPipDropdown = () => {
@@ -470,7 +513,23 @@
     document.getElementById('pip-enable-checkbox').addEventListener('change', e => {
       const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
       pipSettings.enabled = target.checked;
-      shortcutItem.style.display = pipSettings.enabled ? 'flex' : 'none';
+      const submenuToggle = enableItem.querySelector(
+        '.ytp-plus-submenu-toggle[data-submenu="pip"]'
+      );
+      if (submenuToggle instanceof HTMLElement) {
+        if (pipSettings.enabled) {
+          const stored = getSubmenuExpanded();
+          const nextExpanded = typeof stored === 'boolean' ? stored : true;
+          submenuToggle.removeAttribute('disabled');
+          submenuToggle.style.display = 'inline-flex';
+          submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+          submenuWrap.style.display = nextExpanded ? 'block' : 'none';
+        } else {
+          submenuToggle.setAttribute('disabled', '');
+          submenuToggle.style.display = 'none';
+          submenuWrap.style.display = 'none';
+        }
+      }
       saveSettings();
     });
 
@@ -507,7 +566,6 @@
       e.ctrlKey === ctrlKey &&
       e.key.toUpperCase() === key
     ) {
-      // ✅ Use cached querySelector and guard by tagName to avoid referencing DOM lib types in TS
       const video = getVideoElement();
       if (video) {
         void togglePictureInPicture(video);
@@ -563,41 +621,15 @@
     document.addEventListener('keydown', keyListener, { once: true, capture: true });
   });
 
-  // DOM observers for the settings modal
-  const observer = new MutationObserver(mutations => {
-    for (const mutation of mutations) {
-      for (const node of mutation.addedNodes) {
-        if (node instanceof Element && node.classList?.contains('ytp-plus-settings-modal')) {
-          setTimeout(addPipSettingsToModal, 100);
-        }
-      }
-    }
-
-    document.addEventListener('leavepictureinpicture', () => {
-      setSessionActive(false);
-    });
-    // Check for section changes - ✅ Use cached querySelector
-    if (YouTubeUtils.querySelector('.ytp-plus-settings-nav-item[data-section="advanced"].active')) {
-      // If advanced section is active and our settings aren't there yet, add them
-      if (!YouTubeUtils.querySelector('.pip-settings-item')) {
-        setTimeout(addPipSettingsToModal, 50);
-      }
-    }
+  // Settings modal integration — use event instead of MutationObserver
+  document.addEventListener('youtube-plus-settings-modal-opened', () => {
+    setTimeout(addPipSettingsToModal, 100);
   });
 
-  // ✅ Register observer in cleanupManager
-  YouTubeUtils.cleanupManager.registerObserver(observer);
+  document.addEventListener('leavepictureinpicture', () => {
+    setSessionActive(false);
+  });
 
-  // ✅ Safe observe with document.body check
-  if (document.body) {
-    observer.observe(document.body, { childList: true, subtree: true });
-  } else {
-    document.addEventListener('DOMContentLoaded', () => {
-      observer.observe(document.body, { childList: true, subtree: true });
-    });
-  }
-
-  // ✅ Register global click listener in cleanupManager
   const clickHandler = e => {
     const target = /** @type {EventTarget & HTMLElement} */ (e.target);
     if (target.classList && target.classList.contains('ytp-plus-settings-nav-item')) {

@@ -1126,7 +1126,14 @@ async function performTerserMinification(code, outPath) {
     console.log('Terser options:', JSON.stringify(terserOpts, null, 2));
   }
 
-  const minified = await terser.minify(code, terserOpts);
+  // Remove any userscript metadata block from the code before minifying.
+  // Terser will re-insert the header via `format.preamble`, so keeping the
+  // original header in the input would duplicate it in the output.
+  const codeToMinify = code
+    .replace(REGEX_PATTERNS.stripLineMeta, '')
+    .replace(REGEX_PATTERNS.stripBlockMeta, '');
+
+  const minified = await terser.minify(codeToMinify, terserOpts);
 
   if (minified.error) {
     console.error('[Build Error] Terser minification error:', minified.error);

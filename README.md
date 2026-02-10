@@ -3,19 +3,17 @@
 
 <!-- GREASYFORK_INSTALLS:START -->
 
-
 <p align="center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-1262-blue?style=flat-square" height="25" />
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-1275-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="version" src="https://img.shields.io/badge/version-2.3.4-blue?style=flat-square" height="25" />
+    <img alt="version" src="https://img.shields.io/badge/version-2.4-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
     <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
   </a>
 </p>
-
 
 <!-- GREASYFORK_INSTALLS:END -->
 
@@ -27,7 +25,7 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 
 - Enable Picture-in-Picture (PIP) — via hotkey.
 - Add/copy timecodes to videos (convenient for notes and editing) — via hotkey.
-- Download videos through external services (Y2Mate - can be changed and edited to your own) and integration with my project [by YTDL](https://github.com/diorhc/YTDL), now with direct download from YouTube.
+- Download videos through external services (external downloader — can be changed and configured to your preference) and integration with my project [by YTDL](https://github.com/diorhc/YTDL), now with direct download from YouTube.
 - Download audio and subtitles.
 - Take a screenshot of the current frame and save it locally.
 - Support for zoom in the player.

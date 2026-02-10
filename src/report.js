@@ -46,7 +46,6 @@
       if (k === 'class') {
         el.className = /** @type {string} */ (v);
       } else if (k === 'html') {
-        // ✅ SECURITY FIX: Use createSafeHTML for innerHTML
         if (typeof window._ytplusCreateHTML === 'function') {
           el.innerHTML = window._ytplusCreateHTML(/** @type {string} */ (v));
         } else {
