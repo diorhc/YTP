@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "बेहतर कैप्शन",
   "zenStyleBetterCaptionsDesc": "धुंधली पृष्ठभूमि के साथ बेहतर उपशीर्षक स्टाइलिंग",
   "zenStylePlayerBlurLabel": "प्लेयर कंट्रोल ब्लर",
-  "zenStylePlayerBlurDesc": "प्लेयर कंट्रोल में ब्लर इफेक्ट जोड़ें"
+  "zenStylePlayerBlurDesc": "प्लेयर कंट्रोल में ब्लर इफेक्ट जोड़ें",
+  "playlistDeleteMode": "हटाने का मोड",
+  "playlistDeleteModeExit": "हटाने के मोड से बाहर निकलें",
+  "playlistSelectVideo": "वीडियो चुनें",
+  "playlistSelectedCount": "{count} चुना गया",
+  "playlistDeleteConfirm": "{count} वीडियो प्लेलिस्ट से हटाएं?",
+  "playlistDeleteSuccess": "{count} वीडियो प्लेलिस्ट से हटाए गए",
+  "playlistDeletePartial": "{success} वीडियो हटाए गए, {fail} विफल"
 }

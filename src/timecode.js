@@ -1122,6 +1122,19 @@
     });
   };
 
+  const ensureTimecodePanelSettings = (attempt = 0) => {
+    const advancedVisible = $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)');
+    if (!advancedVisible) {
+      if (attempt < 20) setTimeout(() => ensureTimecodePanelSettings(attempt + 1), 80);
+      return;
+    }
+
+    addTimecodePanelSettings();
+    if (!$('.timecode-settings-item') && attempt < 20) {
+      setTimeout(() => ensureTimecodePanelSettings(attempt + 1), 80);
+    }
+  };
+
   // CSS
   const insertTimecodeStyles = () => {
     if (byId('timecode-panel-styles')) return;
@@ -1876,6 +1889,7 @@
 
     // Settings modal observer
     let modalObserver = null;
+    let modalObserverTimeout = null;
 
     const attachModalObserver = modalEl => {
       if (!modalEl || !(modalEl instanceof Element)) return;
@@ -1887,12 +1901,17 @@
       }
 
       modalObserver = new MutationObserver(() => {
-        if (
-          $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)') &&
-          !$('.timecode-settings-item')
-        ) {
-          setTimeout(addTimecodePanelSettings, 50);
-        }
+        // Debounce modal observer to reduce unnecessary checks
+        if (modalObserverTimeout) return;
+        modalObserverTimeout = setTimeout(() => {
+          modalObserverTimeout = null;
+          if (
+            $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)') &&
+            !$('.timecode-settings-item')
+          ) {
+            setTimeout(() => ensureTimecodePanelSettings(), 50);
+          }
+        }, 30);
       });
 
       YouTubeUtils.cleanupManager.registerObserver(modalObserver);
@@ -1909,16 +1928,15 @@
       const modal = document.querySelector('.ytp-plus-settings-modal');
       if (modal) {
         attachModalObserver(modal);
-        setTimeout(addTimecodePanelSettings, 100);
+        setTimeout(() => ensureTimecodePanelSettings(), 100);
       }
     });
 
     const clickHandler = e => {
-      if (
-        /** @type {HTMLElement} */ (e.target).classList?.contains('ytp-plus-settings-nav-item') &&
-        /** @type {HTMLElement} */ (e.target).dataset.section === 'advanced'
-      ) {
-        setTimeout(addTimecodePanelSettings, 50);
+      const target = /** @type {HTMLElement} */ (e.target);
+      const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
+      if (navItem?.dataset?.section === 'advanced') {
+        setTimeout(() => ensureTimecodePanelSettings(), 50);
       }
     };
     YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);

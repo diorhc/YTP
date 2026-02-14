@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Phụ Đề Tốt Hơn",
   "zenStyleBetterCaptionsDesc": "Kiểu phụ đề nâng cao với nền mờ",
   "zenStylePlayerBlurLabel": "Làm Mờ Điều Khiển Trình Phát",
-  "zenStylePlayerBlurDesc": "Thêm hiệu ứng làm mờ cho điều khiển trình phát"
+  "zenStylePlayerBlurDesc": "Thêm hiệu ứng làm mờ cho điều khiển trình phát",
+  "playlistDeleteMode": "Chế độ xóa",
+  "playlistDeleteModeExit": "Thoát chế độ xóa",
+  "playlistSelectVideo": "Chọn video",
+  "playlistSelectedCount": "{count} đã chọn",
+  "playlistDeleteConfirm": "Xóa {count} video khỏi playlist?",
+  "playlistDeleteSuccess": "{count} video đã được xóa khỏi playlist",
+  "playlistDeletePartial": "{success} đã xóa, {fail} không thành công"
 }

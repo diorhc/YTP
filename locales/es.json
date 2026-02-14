@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Mejores Subtítulos",
   "zenStyleBetterCaptionsDesc": "Estilo de subtítulos mejorado con fondo difuminado",
   "zenStylePlayerBlurLabel": "Desenfoque de Controles del Reproductor",
-  "zenStylePlayerBlurDesc": "Agregar efecto de desenfoque a los controles del reproductor"
+  "zenStylePlayerBlurDesc": "Agregar efecto de desenfoque a los controles del reproductor",
+  "playlistDeleteMode": "Modo de eliminación",
+  "playlistDeleteModeExit": "Salir del modo de eliminación",
+  "playlistSelectVideo": "Seleccionar video",
+  "playlistSelectedCount": "{count} seleccionado",
+  "playlistDeleteConfirm": "¿Eliminar {count} videos de la lista de reproducción?",
+  "playlistDeleteSuccess": "{count} videos eliminados de la lista de reproducción",
+  "playlistDeletePartial": "{success} eliminados, {fail} no se pudieron eliminar"
 }

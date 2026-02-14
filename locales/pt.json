@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Legendas Melhores",
   "zenStyleBetterCaptionsDesc": "Estilo de legendas aprimorado com fundo desfocado",
   "zenStylePlayerBlurLabel": "Desfoque dos Controles do Reprodutor",
-  "zenStylePlayerBlurDesc": "Adicionar efeito de desfoque aos controles do reprodutor"
+  "zenStylePlayerBlurDesc": "Adicionar efeito de desfoque aos controles do reprodutor",
+  "playlistDeleteMode": "Modo de Exclusão",
+  "playlistDeleteModeExit": "Sair do Modo de Exclusão",
+  "playlistSelectVideo": "Selecionar Vídeo",
+  "playlistSelectedCount": "{count} selecionado(s)",
+  "playlistDeleteConfirm": "Excluir {count} vídeo(s) da playlist?",
+  "playlistDeleteSuccess": "{count} vídeo(s) excluído(s) da playlist",
+  "playlistDeletePartial": "{success} vídeo(s) excluído(s), {fail} vídeo(s) não foi(ram) possível excluir"
 }

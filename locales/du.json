@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Betere Ondertitels",
   "zenStyleBetterCaptionsDesc": "Verbeterde ondertitelstijl met vervagingsachtergrond",
   "zenStylePlayerBlurLabel": "Speler Bedieningselementen Vervagen",
-  "zenStylePlayerBlurDesc": "Voeg vervagingseffect toe aan speler bedieningselementen"
+  "zenStylePlayerBlurDesc": "Voeg vervagingseffect toe aan speler bedieningselementen",
+  "playlistDeleteMode": "Verwijdermodus",
+  "playlistDeleteModeExit": "Verlaat de verwijdermodus",
+  "playlistSelectVideo": "Selecteer video",
+  "playlistSelectedCount": "{count} geselecteerd",
+  "playlistDeleteConfirm": "Verwijder {count} video's uit de afspeellijst?",
+  "playlistDeleteSuccess": "{count} video's verwijderd uit de afspeellijst",
+  "playlistDeletePartial": "{success} verwijderd, {fail} niet verwijderd"
 }

@@ -60,6 +60,7 @@
   "enhancedFeaturesTitle": "Расширенные функции",
   "enhancedFeaturesDesc": "Дополнительные функции продуктивности и улучшения интерфейса",
   "enablePlayAllLabel": "Кнопка «Воспроизвести все»",
+  "playAllButton": "Воспроизвести все",
   "enablePlayAllDesc": "Добавить кнопку «Воспроизвести все» на плейлисты и страницы каналов",
   "enableResumeTimeLabel": "Продолжить воспроизведение",
   "enableResumeTimeDesc": "Запоминать позицию видео и предлагать продолжить",
@@ -279,5 +280,12 @@
   "zenStyleBetterCaptionsLabel": "Улучшенные субтитры",
   "zenStyleBetterCaptionsDesc": "Улучшенный стиль субтитров с размытым фоном",
   "zenStylePlayerBlurLabel": "Размытие элементов управления плеера",
-  "zenStylePlayerBlurDesc": "Добавить эффект размытия к элементам управления"
+  "zenStylePlayerBlurDesc": "Добавить эффект размытия к элементам управления",
+  "playlistDeleteMode": "Режим удаления",
+  "playlistDeleteModeExit": "Выйти из режима удаления",
+  "playlistSelectVideo": "Выбрать видео",
+  "playlistSelectedCount": "{count} выбрано",
+  "playlistDeleteConfirm": "Удалить {count} видео из плейлиста?",
+  "playlistDeleteSuccess": "{count} видео удалено из плейлиста",
+  "playlistDeletePartial": "{success} удалено, {fail} не удалось"
 }

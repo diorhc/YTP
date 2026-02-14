@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "より良い字幕",
   "zenStyleBetterCaptionsDesc": "ぼかし背景付きの強化された字幕スタイリング",
   "zenStylePlayerBlurLabel": "プレーヤーコントロールのぼかし",
-  "zenStylePlayerBlurDesc": "プレーヤーコントロールにぼかし効果を追加"
+  "zenStylePlayerBlurDesc": "プレーヤーコントロールにぼかし効果を追加",
+  "playlistDeleteMode": "削除モード",
+  "playlistDeleteModeExit": "削除モードを終了",
+  "playlistSelectVideo": "ビデオを選択",
+  "playlistSelectedCount": "{count} 選択済み",
+  "playlistDeleteConfirm": "{count} 件のビデオをプレイリストから削除しますか？",
+  "playlistDeleteSuccess": "{count} 件のビデオがプレイリストから削除されました",
+  "playlistDeletePartial": "{success} 件のビデオが削除され、{fail} 件のビデオは削除されませんでした"
 }

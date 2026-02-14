@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Кращі субтитри",
   "zenStyleBetterCaptionsDesc": "Покращене оформлення субтитрів з розмитим фоном",
   "zenStylePlayerBlurLabel": "Розмиття елементів керування програвачем",
-  "zenStylePlayerBlurDesc": "Додати ефект розмиття до елементів керування програвачем"
+  "zenStylePlayerBlurDesc": "Додати ефект розмиття до елементів керування програвачем",
+  "playlistDeleteMode": "Режим видалення",
+  "playlistDeleteModeExit": "Вийти з режиму видалення",
+  "playlistSelectVideo": "Вибрати відео",
+  "playlistSelectedCount": "{count} вибрано",
+  "playlistDeleteConfirm": "Видалити {count} відео з плейлиста?",
+  "playlistDeleteSuccess": "{count} відео видалено з плейлиста",
+  "playlistDeletePartial": "{success} видалено, {fail} не вдалося"
 }

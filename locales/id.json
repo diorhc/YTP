@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Teks Terjemahan Lebih Baik",
   "zenStyleBetterCaptionsDesc": "Gaya teks terjemahan yang ditingkatkan dengan latar belakang blur",
   "zenStylePlayerBlurLabel": "Blur Kontrol Pemutar",
-  "zenStylePlayerBlurDesc": "Tambahkan efek blur ke kontrol pemutar"
+  "zenStylePlayerBlurDesc": "Tambahkan efek blur ke kontrol pemutar",
+  "playlistDeleteMode": "Mode Hapus",
+  "playlistDeleteModeExit": "Keluar dari mode hapus",
+  "playlistSelectVideo": "Pilih video",
+  "playlistSelectedCount": "{count} dipilih",
+  "playlistDeleteConfirm": "Hapus {count} video dari playlist?",
+  "playlistDeleteSuccess": "{count} video dihapus dari playlist",
+  "playlistDeletePartial": "{success} dihapus, {fail} gagal"
 }

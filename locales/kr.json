@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "더 나은 자막",
   "zenStyleBetterCaptionsDesc": "블러 배경이 있는 향상된 자막 스타일링",
   "zenStylePlayerBlurLabel": "플레이어 컨트롤 블러",
-  "zenStylePlayerBlurDesc": "플레이어 컨트롤에 블러 효과 추가"
+  "zenStylePlayerBlurDesc": "플레이어 컨트롤에 블러 효과 추가",
+  "playlistDeleteMode": "삭제 모드",
+  "playlistDeleteModeExit": "삭제 모드 종료",
+  "playlistSelectVideo": "비디오 선택",
+  "playlistSelectedCount": "{count} 선택됨",
+  "playlistDeleteConfirm": "{count}개의 비디오를 재생목록에서 삭제하시겠습니까?",
+  "playlistDeleteSuccess": "{count}개의 비디오가 재생목록에서 삭제되었습니다",
+  "playlistDeletePartial": "{success}개의 비디오가 삭제되었고, {fail}개의 비디오는 삭제되지 않았습니다"
 }

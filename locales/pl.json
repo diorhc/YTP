@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Lepsze Napisy",
   "zenStyleBetterCaptionsDesc": "Ulepszone stylizowanie napisów z rozmytym tłem",
   "zenStylePlayerBlurLabel": "Rozmycie Kontrolek Odtwarzacza",
-  "zenStylePlayerBlurDesc": "Dodaj efekt rozmycia do kontrolek odtwarzacza"
+  "zenStylePlayerBlurDesc": "Dodaj efekt rozmycia do kontrolek odtwarzacza",
+  "playlistDeleteMode": "Tryb usuwania",
+  "playlistDeleteModeExit": "Wyjdź z trybu usuwania",
+  "playlistSelectVideo": "Wybierz wideo",
+  "playlistSelectedCount": "{count} wybrano",
+  "playlistDeleteConfirm": "Usunąć {count} wideo z playlisty?",
+  "playlistDeleteSuccess": "{count} wideo usunięto z playlisty",
+  "playlistDeletePartial": "{success} wideo usunięto, {fail} wideo nie udało się usunąć"
 }

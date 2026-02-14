@@ -1028,9 +1028,9 @@
    */
   const createObserver = () => {
     const debounce = getDebounce();
-    const debouncedCheck = debounce(checkAndCreateButton, 250);
+    const debouncedCheck = debounce(checkAndCreateButton, 200);
     let lastCheckTime = 0;
-    const minCheckInterval = 500; // Minimum 500ms between checks
+    const minCheckInterval = 300; // Minimum 300ms between checks (reduced for better responsiveness)
 
     return new MutationObserver(mutations => {
       // Rate limiting: skip if checked too recently
@@ -1336,7 +1336,7 @@
       createScrollToTopButton,
       saveSettings,
       applySettingsChanges,
-      version: '2.4',
+      version: '2.4.1',
     };
   }
 
@@ -1377,7 +1377,7 @@
   } catch {}
 
   window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Module loaded (lazy)', {
-    version: '2.4',
+    version: '2.4.1',
     hostname: window.location.hostname,
     enabled:
       window.location.hostname === 'music.youtube.com' &&

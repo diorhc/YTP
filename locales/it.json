@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Sottotitoli Migliori",
   "zenStyleBetterCaptionsDesc": "Stile dei sottotitoli migliorato con sfondo sfocato",
   "zenStylePlayerBlurLabel": "Sfocatura Controlli Lettore",
-  "zenStylePlayerBlurDesc": "Aggiungi effetto sfocatura ai controlli del lettore"
+  "zenStylePlayerBlurDesc": "Aggiungi effetto sfocatura ai controlli del lettore",
+  "playlistDeleteMode": "Modalità di eliminazione",
+  "playlistDeleteModeExit": "Esci dalla modalità di eliminazione",
+  "playlistSelectVideo": "Seleziona video",
+  "playlistSelectedCount": "{count} selezionati",
+  "playlistDeleteConfirm": "Eliminare {count} video dalla playlist?",
+  "playlistDeleteSuccess": "{count} video eliminati dalla playlist",
+  "playlistDeletePartial": "{success} eliminati, {fail} non riusciti"
 }

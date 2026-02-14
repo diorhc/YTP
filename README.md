@@ -3,19 +3,17 @@
 
 <!-- GREASYFORK_INSTALLS:START -->
 
-
 <p align="center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-1383-blue?style=flat-square" height="25" />
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-1400-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="version" src="https://img.shields.io/badge/version-2.4-blue?style=flat-square" height="25" />
+    <img alt="version" src="https://img.shields.io/badge/version-2.4.1-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
     <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
   </a>
 </p>
-
 
 <!-- GREASYFORK_INSTALLS:END -->
 
@@ -27,8 +25,9 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 
 - Enable Picture-in-Picture (PIP) — via hotkey.
 - Add/copy timecodes to videos (convenient for notes and editing) — via hotkey.
-- Download videos through external services (external downloader — can be changed and configured to your preference) and integration with my project [by YTDL](https://github.com/diorhc/YTDL), now with direct download from YouTube.
+- Download videos through external services (external downloader — can be changed and configured to your own preferences) and integration with my project [by YTDL](https://github.com/diorhc/YTDL), now with direct download from YouTube.
 - Download audio and subtitles.
+- Block ads (optional, can be downloaded from [Firefox](https://addons.mozilla.org/addon/ublock-origin/), [Edge](https://microsoftedge.microsoft.com/addons/detail/ublock-origin/odfafepnkmbhccpbejgmiehpchacaeak), [Opera](https://addons.opera.com/extensions/details/ublock/), [Chrome](https://chrome.google.com/webstore/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm))
 - Take a screenshot of the current frame and save it locally.
 - Support for zoom in the player.
 - "Statistics" button on video page — quick access to views/subscribers/engagement.
@@ -42,11 +41,11 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 - Report bugs and suggest new features.
 - YouTube Music: enhanced player (optional).
 - Full immersion (immersive animations).
-- Partial support for all languages.
+- Support for all languages (partial).
 
 ## Installation
 
-1. Install the [Violetmonkey](https://violentmonkey.github.io/) or [Tampermonkey](https://www.tampermonkey.net/) extension.
+1. Install the [Violentmonkey](https://violentmonkey.github.io/) or [Tampermonkey](https://www.tampermonkey.net/) extension.
 2. Install the script from [GreasyFork](https://greasyfork.org/ru/scripts/537017-youtube).
 
 ## Hotkeys (default)
@@ -58,7 +57,7 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
             Add current timecode to description/comment                 ... + T
             Take screenshot of frame                                    S
             Open comment manager                                        C
-            Show hotkey reference                                       Shift/
+            Show hotkey reference                                       Shift+/
             Zoom in/out video in player                                 Shift + Mouse Wheel
 ```
 

@@ -1375,9 +1375,10 @@
         document.querySelector('#content') ||
         document.querySelector('#page-manager') ||
         document.body;
+      // Optimize observer: avoid subtree on body, only childList needed for route changes
       mutationObserver.observe(target, {
         childList: true,
-        subtree: true,
+        subtree: target !== document.body,
       });
     };
 

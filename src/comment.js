@@ -504,11 +504,29 @@
     });
   }, 'addCommentManagerSettings');
 
+  const ensureCommentManagerSettings = (attempt = 0) => {
+    const experimentalVisible = $(
+      '.ytp-plus-settings-section[data-section="experimental"]:not(.hidden)'
+    );
+    if (!experimentalVisible) {
+      if (attempt < 20) setTimeout(() => ensureCommentManagerSettings(attempt + 1), 80);
+      return;
+    }
+
+    addCommentManagerSettings();
+    if (!$('.comment-manager-settings-item') && attempt < 20) {
+      setTimeout(() => ensureCommentManagerSettings(attempt + 1), 80);
+    }
+  };
+
   /**
    * Initialize comment manager module
    * Sets up observers, event listeners, and initial state
    */
   const init = withErrorBoundary(() => {
+    // Early exit if already initialized to prevent duplicate work
+    if (state.initialized && state.observer) return;
+
     settings.load();
     addStyles();
 
@@ -549,13 +567,14 @@
 
     // Settings modal integration — use event instead of MutationObserver
     document.addEventListener('youtube-plus-settings-modal-opened', () => {
-      setTimeout(addCommentManagerSettings, 100);
+      setTimeout(() => ensureCommentManagerSettings(), 100);
     });
 
-    const handleAdvancedNavClick = e => {
+    const handleExperimentalNavClick = e => {
       const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      if (target.dataset?.section === 'advanced') {
-        setTimeout(addCommentManagerSettings, 50);
+      const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
+      if (navItem?.dataset?.section === 'experimental') {
+        setTimeout(() => ensureCommentManagerSettings(), 50);
       }
     };
 
@@ -563,7 +582,7 @@
       state.settingsNavListenerKey = registerListenerSafe(
         document,
         'click',
-        handleAdvancedNavClick,
+        handleExperimentalNavClick,
         { passive: true, capture: true }
       );
     }

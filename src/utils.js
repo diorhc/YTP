@@ -105,27 +105,51 @@
     let timeout = null;
     let lastArgs = null;
     let lastThis = null;
+    let isDestroyed = false;
+
     /** @this {any} */
     const debounced = function (...args) {
+      if (isDestroyed) return;
+
       lastArgs = args;
       lastThis = this;
-      clearTimeout(timeout);
-      if (options.leading && !timeout) {
-        /** @type {Function} */ (fn).apply(this, args);
+
+      if (timeout !== null) clearTimeout(timeout);
+
+      if (options.leading && timeout === null) {
+        try {
+          /** @type {Function} */ (fn).apply(this, args);
+        } catch (e) {
+          console.error('[YouTube+] Debounced function error:', e);
+        }
       }
+
       timeout = setTimeout(() => {
-        if (!options.leading) /** @type {Function} */ (fn).apply(lastThis, lastArgs);
+        if (!isDestroyed && !options.leading) {
+          try {
+            /** @type {Function} */ (fn).apply(lastThis, lastArgs);
+          } catch (e) {
+            console.error('[YouTube+] Debounced function error:', e);
+          }
+        }
         timeout = null;
         lastArgs = null;
         lastThis = null;
       }, ms);
     };
+
     debounced.cancel = () => {
-      clearTimeout(timeout);
+      if (timeout !== null) clearTimeout(timeout);
       timeout = null;
       lastArgs = null;
       lastThis = null;
     };
+
+    debounced.destroy = () => {
+      debounced.cancel();
+      isDestroyed = true;
+    };
+
     return /** @type {any} */ (debounced);
   };
 

@@ -760,16 +760,23 @@
   // Route observer to cleanup when leaving /shorts
   const observeRoute = () => {
     let lastPath = location.pathname;
+    let isCurrentlyOnShorts = isOnShortsPage();
 
     state.routeObserver = new MutationObserver(() => {
       const currentPath = location.pathname;
-      if (currentPath !== lastPath) {
-        lastPath = currentPath;
+      // Quick path check first before expensive isOnShortsPage()
+      if (currentPath === lastPath) return;
 
-        if (!isOnShortsPage() && state.initialized) {
+      lastPath = currentPath;
+      const nowOnShorts = isOnShortsPage();
+
+      if (nowOnShorts !== isCurrentlyOnShorts) {
+        isCurrentlyOnShorts = nowOnShorts;
+
+        if (!nowOnShorts && state.initialized) {
           // Left shorts page
           cleanup();
-        } else if (isOnShortsPage() && !state.initialized) {
+        } else if (nowOnShorts && !state.initialized) {
           // Entered shorts page
           init();
         }

@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "更好的字幕",
   "zenStyleBetterCaptionsDesc": "增強字幕樣式，添加模糊背景",
   "zenStylePlayerBlurLabel": "播放器控制項模糊",
-  "zenStylePlayerBlurDesc": "為播放器控制項添加模糊效果"
+  "zenStylePlayerBlurDesc": "為播放器控制項添加模糊效果",
+  "playlistDeleteMode": "刪除模式",
+  "playlistDeleteModeExit": "退出刪除模式",
+  "playlistSelectVideo": "選擇影片",
+  "playlistSelectedCount": "{count} 已選取",
+  "playlistDeleteConfirm": "從播放清單刪除 {count} 部影片？",
+  "playlistDeleteSuccess": "{count} 部影片已從播放清單刪除",
+  "playlistDeletePartial": "{success} 已刪除，{fail} 刪除失敗"
 }

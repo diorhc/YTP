@@ -264,7 +264,7 @@
   "zenStylesDesc": "Daha temiz bir YouTube deneyimi için geliştirilmiş görsel stiller",
   "zenStyleThumbnailHoverLabel": "Küçük Resim Üzerine Gelme Önizlemesi",
   "zenStyleThumbnailHoverDesc": "Üzerine gelindiğinde satır içi önizleme oynatıcıyı büyüt",
-  "zenStyleImmersiveSearchLabel": "몰입형 Arama",
+  "zenStyleImmersiveSearchLabel": "Sürükleyici Arama",
   "zenStyleImmersiveSearchDesc": "Odaklandığında ortalanmış arama kutusu deneyimi",
   "zenStyleHideVoiceSearchLabel": "Sesli Aramayı Gizle",
   "zenStyleHideVoiceSearchDesc": "Başlıktan sesli arama düğmesini kaldır",
@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Daha İyi Altyazılar",
   "zenStyleBetterCaptionsDesc": "Bulanık arka planlı geliştirilmiş altyazı stili",
   "zenStylePlayerBlurLabel": "Oynatıcı Kontrolleri Bulanıklığı",
-  "zenStylePlayerBlurDesc": "Oynatıcı kontrollerine bulanıklık efekti ekle"
+  "zenStylePlayerBlurDesc": "Oynatıcı kontrollerine bulanıklık efekti ekle",
+  "playlistDeleteMode": "Silme Modu",
+  "playlistDeleteModeExit": "Silme Modundan Çık",
+  "playlistSelectVideo": "Video Seç",
+  "playlistSelectedCount": "{count} seçildi",
+  "playlistDeleteConfirm": "{count} videoyu oynatma listesinden silmek istiyor musunuz?",
+  "playlistDeleteSuccess": "{count} video oynatma listesinden silindi",
+  "playlistDeletePartial": "{success} video silindi, {fail} video silinemedi"
 }

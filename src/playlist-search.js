@@ -126,6 +126,7 @@
     observerThrottleMs: 300, // Reduced throttle for faster updates
     maxPlaylistItems: 10000, // Increased limit for large playlists
     maxQueryLength: 300, // Increased for more flexible search
+    deleteDelay: 250, // Delay between sequential delete actions
   };
 
   const state = {
@@ -141,6 +142,10 @@
     itemTagName: null,
     playlistPanel: null,
     isPlaylistPage: false,
+    // Deletion state
+    isDeleting: false,
+    deleteMode: false,
+    selectedItems: new Set(),
   };
 
   const inputDebouncers = new WeakMap();
@@ -378,10 +383,87 @@
       padding: 8px 16px;
       background: transparent;
       border-bottom: 1px solid var(--yt-spec-10-percent-layer);
-      position: sticky;
-      top: 0;
-      z-index: 1;
+      z-index: 50;
+      width: 94%;
     `;
+
+    // Make search (and delete bar inside it) sticky within the playlist area.
+    // We try to use `position: sticky` when possible; if the DOM structure
+    // prevents sticky from working, fall back to `position: fixed` anchored
+    // to the playlist panel so the UI remains visible while scrolling.
+    const ensureSticky = () => {
+      try {
+        // If we're on the /watch page, keep the previous simple sticky style
+        // to avoid changing the look/positioning inside the right-hand panel.
+        if (!state.isPlaylistPage) {
+          searchContainer.style.position = 'sticky';
+          searchContainer.style.top = '0';
+          searchContainer.style.zIndex = '1';
+          searchContainer.style.background = 'transparent';
+          return;
+        }
+
+        const panel = state.playlistPanel || getPlaylistContext()?.panel;
+        // Prefer small top offset on watch page (inside right panel), larger
+        // offset on playlist page to account for header/thumbnail column.
+        const topOffset = state.isPlaylistPage ? 84 : 8;
+
+        // Try to find a scrollable ancestor for sticky positioning
+        let scrollAncestor = panel;
+        while (scrollAncestor && scrollAncestor !== document.body) {
+          const style = window.getComputedStyle(scrollAncestor);
+          const overflowY = style.overflowY;
+          if (
+            (overflowY === 'auto' || overflowY === 'scroll') &&
+            scrollAncestor.scrollHeight > scrollAncestor.clientHeight
+          ) {
+            break;
+          }
+          scrollAncestor = scrollAncestor.parentElement;
+        }
+
+        if (scrollAncestor && scrollAncestor !== document.body) {
+          // If a scrollable ancestor exists, use sticky
+          searchContainer.style.position = 'sticky';
+          searchContainer.style.top = `${topOffset}px`;
+          searchContainer.style.background = 'var(--yt-spec-badge-chip-background)';
+          searchContainer.style.backdropFilter = 'blur(6px)';
+          searchContainer.style.boxShadow = 'var(--yt-shadow)';
+        } else if (panel) {
+          // Fallback: position fixed near the playlist panel so it remains visible
+          const rect = panel.getBoundingClientRect();
+          searchContainer.style.position = 'fixed';
+          searchContainer.style.top = `${topOffset}px`;
+          // Place horizontally aligned with the panel
+          searchContainer.style.left = `${rect.left}px`;
+          searchContainer.style.width = `${rect.width}px`;
+          searchContainer.style.background = 'var(--yt-spec-badge-chip-background)';
+          searchContainer.style.backdropFilter = 'blur(6px)';
+          searchContainer.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
+          searchContainer.style.zIndex = '9999';
+
+          // Recompute on resize/scroll to keep alignment
+          const recompute = debounce(() => {
+            const r = panel.getBoundingClientRect();
+            searchContainer.style.left = `${r.left}px`;
+            searchContainer.style.width = `${r.width}px`;
+          }, 120);
+          window.addEventListener('resize', recompute, { passive: true });
+          // If panel scrolls inside the page, adjust on scroll
+          window.addEventListener('scroll', recompute, { passive: true });
+        } else {
+          // Last fallback: simple sticky at top
+          searchContainer.style.position = 'sticky';
+          searchContainer.style.top = `${topOffset}px`;
+          searchContainer.style.background = 'var(--yt-spec-badge-chip-background)';
+        }
+      } catch {
+        // Ignore errors and leave default styles
+      }
+    };
+
+    // Ensure sticky after insertion as DOM layout may change
+    setTimeout(ensureSticky, 100);
 
     const searchInput = document.createElement('input');
     searchInput.type = 'text';
@@ -433,6 +515,9 @@
 
     // Store original items
     collectOriginalItems();
+
+    // Add delete UI (toggle button + action bar)
+    addDeleteUI(searchContainer);
 
     // Setup MutationObserver to watch for new playlist items
     setupPlaylistObserver();
@@ -659,8 +744,506 @@
       YouTubeUtils.logger.debug(`[Playlist Search] Showing ${visible} of ${total} videos`);
   };
 
+  // ── Video Deletion Feature (similar to comment.js pattern) ──
+
+  /**
+   * Log error with error boundary integration
+   * @param {string} context - Error context
+   * @param {Error|string|unknown} error - Error object or message
+   */
+  const logError = (context, error) => {
+    const errorObj = error instanceof Error ? error : new Error(String(error));
+    if (window.YouTubeErrorBoundary) {
+      window.YouTubeErrorBoundary.logError(errorObj, { context });
+    } else {
+      console.error(`[YouTube+][PlaylistSearch] ${context}:`, error);
+    }
+  };
+
+  /**
+   * Wraps function with error boundary protection
+   * @template {Function} T
+   * @param {T} fn - Function to wrap
+   * @param {string} context - Error context for debugging
+   * @returns {T} Wrapped function
+   */
+  const withErrorBoundary = (fn, context) => {
+    if (window.YouTubeErrorBoundary?.withErrorBoundary) {
+      return /** @type {T} */ (window.YouTubeErrorBoundary.withErrorBoundary(fn, 'PlaylistSearch'));
+    }
+    return /** @type {any} */ (
+      (...args) => {
+        try {
+          return fn(...args);
+        } catch (error) {
+          logError(context, error);
+          return null;
+        }
+      }
+    );
+  };
+
+  /**
+   * Toggle delete mode — shows/hides checkboxes on playlist items
+   */
+  const toggleDeleteMode = withErrorBoundary(() => {
+    state.deleteMode = !state.deleteMode;
+    state.selectedItems.clear();
+
+    const container = state.playlistPanel || getPlaylistContext()?.panel;
+    if (!container) return;
+
+    const toggleBtn = container.querySelector('.ytplus-playlist-delete-toggle');
+    const deleteBar = container.querySelector('.ytplus-playlist-delete-bar');
+
+    if (state.deleteMode) {
+      if (toggleBtn) {
+        toggleBtn.classList.add('active');
+        toggleBtn.setAttribute('aria-pressed', 'true');
+        toggleBtn.title = t('playlistDeleteModeExit');
+      }
+      if (deleteBar) deleteBar.style.display = '';
+      addCheckboxesToItems();
+    } else {
+      if (toggleBtn) {
+        toggleBtn.classList.remove('active');
+        toggleBtn.setAttribute('aria-pressed', 'false');
+        toggleBtn.title = t('playlistDeleteMode');
+      }
+      if (deleteBar) deleteBar.style.display = 'none';
+      removeCheckboxesFromItems();
+    }
+    updateDeleteBarState();
+  }, 'toggleDeleteMode');
+
+  /**
+   * Add selection checkboxes to each playlist video item
+   */
+  const addCheckboxesToItems = withErrorBoundary(() => {
+    const itemsRoot = state.itemsContainer || state.playlistPanel;
+    if (!itemsRoot || !state.itemSelector) return;
+
+    const items = itemsRoot.querySelectorAll(state.itemSelector);
+    items.forEach((item, idx) => {
+      if (item.querySelector('.ytplus-playlist-item-checkbox')) return;
+
+      const checkbox = document.createElement('input');
+      checkbox.type = 'checkbox';
+      // Use shared settings checkbox styling for consistent look
+      checkbox.className = 'ytplus-playlist-item-checkbox ytp-plus-settings-checkbox';
+      checkbox.setAttribute('aria-label', t('playlistSelectVideo'));
+      checkbox.dataset.index = String(idx);
+      checkbox.style.cssText = `
+        position: absolute;
+        top: 8px;
+        left: 8px;
+        z-index: 2;
+        cursor: pointer;
+      `;
+
+      checkbox.addEventListener('change', () => {
+        const videoId = item.getAttribute('video-id') || `item-${idx}`;
+        if (checkbox.checked) {
+          state.selectedItems.add(videoId);
+        } else {
+          state.selectedItems.delete(videoId);
+        }
+        updateDeleteBarState();
+      });
+      checkbox.addEventListener('click', e => e.stopPropagation());
+
+      // Ensure the parent has relative positioning for the checkbox
+      item.style.position = 'relative';
+      item.insertBefore(checkbox, item.firstChild);
+    });
+  }, 'addCheckboxesToItems');
+
+  /**
+   * Remove all checkboxes from playlist items
+   */
+  const removeCheckboxesFromItems = withErrorBoundary(() => {
+    const itemsRoot = state.itemsContainer || state.playlistPanel;
+    if (!itemsRoot) return;
+    itemsRoot.querySelectorAll('.ytplus-playlist-item-checkbox').forEach(cb => cb.remove());
+    state.selectedItems.clear();
+  }, 'removeCheckboxesFromItems');
+
+  /**
+   * Update delete action bar button state
+   */
+  const updateDeleteBarState = withErrorBoundary(() => {
+    const container = state.playlistPanel || getPlaylistContext()?.panel;
+    if (!container) return;
+
+    const deleteBtn = container.querySelector('.ytplus-playlist-delete-selected');
+    const countSpan = container.querySelector('.ytplus-playlist-selected-count');
+
+    if (deleteBtn) {
+      deleteBtn.disabled = state.selectedItems.size === 0;
+      deleteBtn.style.opacity = state.selectedItems.size > 0 ? '1' : '0.5';
+    }
+    if (countSpan) {
+      countSpan.textContent = t('playlistSelectedCount', { count: state.selectedItems.size });
+    }
+  }, 'updateDeleteBarState');
+
+  /**
+   * Select all visible playlist items
+   */
+  const selectAllItems = withErrorBoundary(() => {
+    const itemsRoot = state.itemsContainer || state.playlistPanel;
+    if (!itemsRoot) return;
+
+    itemsRoot.querySelectorAll('.ytplus-playlist-item-checkbox').forEach(cb => {
+      const item = cb.closest(state.itemSelector);
+      if (item && item.style.display !== 'none') {
+        cb.checked = true;
+        const videoId = item.getAttribute('video-id') || `item-${cb.dataset.index}`;
+        state.selectedItems.add(videoId);
+      }
+    });
+    updateDeleteBarState();
+  }, 'selectAllItems');
+
+  /**
+   * Clear all checkbox selections
+   */
+  const clearAllItems = withErrorBoundary(() => {
+    const itemsRoot = state.itemsContainer || state.playlistPanel;
+    if (!itemsRoot) return;
+
+    itemsRoot.querySelectorAll('.ytplus-playlist-item-checkbox').forEach(cb => {
+      cb.checked = false;
+    });
+    state.selectedItems.clear();
+    updateDeleteBarState();
+  }, 'clearAllItems');
+
+  /**
+   * Find and click the native "Remove from playlist" menu option for a given item.
+   * YouTube provides a three-dot menu on each playlist item. We simulate a click on
+   * the menu button, wait for the popup, then click the remove option.
+   * @param {Element} item - playlist video renderer element
+   * @returns {Promise<boolean>} Whether the item was successfully removed
+   */
+  const removeItemViaMenu = item => {
+    return new Promise(resolve => {
+      try {
+        // Find the three-dot menu button (⋮)
+        const menuBtn =
+          item.querySelector('button#button[aria-label]') ||
+          item.querySelector('yt-icon-button#button') ||
+          item.querySelector('ytd-menu-renderer button') ||
+          item.querySelector('[aria-haspopup="menu"]') ||
+          item.querySelector('button.yt-icon-button');
+
+        if (!menuBtn) {
+          console.warn('[Playlist Search] Could not find menu button for item');
+          resolve(false);
+          return;
+        }
+
+        // Click the menu button to open popup
+        menuBtn.click();
+
+        // Wait for the popup menu to appear
+        setTimeout(() => {
+          try {
+            // Look for the "Remove from playlist" option in the popup
+            const menuItems = document.querySelectorAll(
+              'tp-yt-paper-listbox ytd-menu-service-item-renderer, ' +
+                'ytd-menu-popup-renderer ytd-menu-service-item-renderer, ' +
+                'tp-yt-iron-dropdown ytd-menu-service-item-renderer'
+            );
+
+            let removeOption = null;
+            for (const mi of menuItems) {
+              const text = (mi.textContent || '').toLowerCase();
+              // Match various translations of "Remove from playlist"
+              if (
+                text.includes('remove') ||
+                text.includes('удалить') ||
+                text.includes('supprimer') ||
+                text.includes('entfernen') ||
+                text.includes('eliminar') ||
+                text.includes('rimuovi') ||
+                text.includes('kaldır') ||
+                text.includes('削除') ||
+                text.includes('삭제') ||
+                text.includes('移除') ||
+                text.includes('oʻchirish') ||
+                text.includes('жою') ||
+                text.includes('өчүрүү') ||
+                text.includes('выдаліць') ||
+                text.includes('премахване') ||
+                text.includes('xóa')
+              ) {
+                removeOption = mi;
+                break;
+              }
+            }
+
+            if (removeOption) {
+              removeOption.click();
+              // Close any remaining popup
+              setTimeout(() => {
+                document.body.click();
+                resolve(true);
+              }, 100);
+            } else {
+              // Close the menu if we can't find the option
+              document.body.click();
+              console.warn('[Playlist Search] Could not find "Remove" option in menu');
+              resolve(false);
+            }
+          } catch (err) {
+            document.body.click();
+            logError('removeItemViaMenu:findOption', err);
+            resolve(false);
+          }
+        }, 350);
+      } catch (err) {
+        logError('removeItemViaMenu', err);
+        resolve(false);
+      }
+    });
+  };
+
+  /**
+   * Delete selected videos from the playlist sequentially
+   */
+  const deleteSelectedItems = withErrorBoundary(async () => {
+    if (state.isDeleting || state.selectedItems.size === 0) return;
+
+    const count = state.selectedItems.size;
+    const confirmed = confirm(t('playlistDeleteConfirm', { count }));
+    if (!confirmed) return;
+
+    state.isDeleting = true;
+    const itemsRoot = state.itemsContainer || state.playlistPanel;
+    if (!itemsRoot || !state.itemSelector) {
+      state.isDeleting = false;
+      return;
+    }
+
+    const allItems = Array.from(itemsRoot.querySelectorAll(state.itemSelector));
+    const toDelete = allItems.filter((item, idx) => {
+      const videoId = item.getAttribute('video-id') || `item-${idx}`;
+      return state.selectedItems.has(videoId);
+    });
+
+    let successCount = 0;
+    let failCount = 0;
+
+    for (const item of toDelete) {
+      const result = await removeItemViaMenu(item);
+      if (result) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+      // Delay between actions to let YouTube process
+      await new Promise(r => setTimeout(r, config.deleteDelay));
+    }
+
+    state.isDeleting = false;
+    state.selectedItems.clear();
+
+    // Re-collect items after deletion
+    setTimeout(() => {
+      collectOriginalItems();
+      if (state.deleteMode) {
+        addCheckboxesToItems();
+      }
+      updateDeleteBarState();
+    }, 500);
+
+    // Notify user
+    const msg =
+      failCount > 0
+        ? t('playlistDeletePartial', { success: successCount, fail: failCount })
+        : t('playlistDeleteSuccess', { count: successCount });
+    window.YouTubeUtils?.logger?.debug?.(`[Playlist Search] ${msg}`);
+  }, 'deleteSelectedItems');
+
+  /**
+   * Add delete mode toggle button and action bar to the search UI
+   * @param {HTMLElement} searchContainer - The .ytplus-playlist-search container
+   */
+  const addDeleteUI = searchContainer => {
+    if (!searchContainer || searchContainer.querySelector('.ytplus-playlist-delete-toggle')) return;
+
+    // Add styles for delete UI (once)
+    addDeleteStyles();
+
+    // Toggle button (trash icon) next to the search input
+    const toggleBtn = document.createElement('button');
+    toggleBtn.type = 'button';
+    toggleBtn.className = 'ytplus-playlist-delete-toggle';
+    toggleBtn.setAttribute('aria-pressed', 'false');
+    toggleBtn.title = t('playlistDeleteMode');
+    toggleBtn.innerHTML = `
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
+           stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+        <polyline points="3 6 5 6 21 6"/>
+        <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
+        <line x1="10" y1="11" x2="10" y2="17"/>
+        <line x1="14" y1="11" x2="14" y2="17"/>
+      </svg>
+    `;
+    toggleBtn.style.cssText = `
+      background: transparent;
+      border: 1px solid var(--yt-spec-10-percent-layer);
+      border-radius: 50%;
+      width: 36px;
+      height: 36px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      color: var(--yt-spec-text-secondary);
+      transition: all 0.2s;
+      vertical-align: middle;
+      margin-left: 6px;
+      flex-shrink: 0;
+    `;
+    toggleBtn.addEventListener('click', toggleDeleteMode);
+
+    // Wrap search input and toggle in a flex container
+    const inputWrapper = document.createElement('div');
+    inputWrapper.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    const searchInput = searchContainer.querySelector('.ytplus-playlist-search-input');
+    if (searchInput) {
+      searchInput.style.width = ''; // Reset fixed width
+      searchInput.style.flex = '1';
+      searchInput.parentNode.insertBefore(inputWrapper, searchInput);
+      inputWrapper.appendChild(searchInput);
+      inputWrapper.appendChild(toggleBtn);
+    }
+
+    // Action bar (hidden initially)
+    const deleteBar = document.createElement('div');
+    deleteBar.className = 'ytplus-playlist-delete-bar';
+    deleteBar.style.cssText = `
+      display: none;
+      padding: 6px 0 0;
+      gap: 8px;
+      align-items: center;
+      flex-wrap: wrap;
+    `;
+    deleteBar.style.display = 'none';
+
+    const countSpan = document.createElement('span');
+    countSpan.className = 'ytplus-playlist-selected-count';
+    countSpan.style.cssText = `
+      font-size: 12px;
+      color: var(--yt-spec-text-secondary);
+      margin-right: auto;
+    `;
+    countSpan.textContent = t('playlistSelectedCount', { count: 0 });
+
+    const createBtn = (label, cls, onClick) => {
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.textContent = label;
+      btn.className = cls;
+      btn.style.cssText = `
+        padding: 5px 12px;
+        border-radius: 16px;
+        border: 1px solid var(--yt-spec-10-percent-layer);
+        cursor: pointer;
+        font-size: 12px;
+        font-weight: 500;
+        background: var(--yt-spec-badge-chip-background);
+        color: var(--yt-spec-text-primary);
+        transition: all 0.2s;
+      `;
+      btn.addEventListener('click', onClick);
+      return btn;
+    };
+
+    const selectAllBtn = createBtn(t('selectAll'), 'ytplus-playlist-select-all', selectAllItems);
+    const clearAllBtn = createBtn(t('clearAll'), 'ytplus-playlist-clear-all', clearAllItems);
+    const deleteBtn = createBtn(
+      t('deleteSelected'),
+      'ytplus-playlist-delete-selected',
+      deleteSelectedItems
+    );
+    deleteBtn.disabled = true;
+    deleteBtn.style.opacity = '0.5';
+    deleteBtn.style.background = 'rgba(255,99,71,.12)';
+    deleteBtn.style.borderColor = 'rgba(255,99,71,.25)';
+    deleteBtn.style.color = '#ff5c5c';
+
+    deleteBar.append(countSpan, selectAllBtn, clearAllBtn, deleteBtn);
+    searchContainer.appendChild(deleteBar);
+  };
+
+  /**
+   * Add CSS styles for the delete UI components
+   */
+  const addDeleteStyles = () => {
+    if (document.getElementById('ytplus-playlist-delete-styles')) return;
+    const css = `
+      .ytplus-playlist-delete-toggle.active {
+        color: #ff5c5c !important;
+        border-color: rgba(255,99,71,.4) !important;
+        background: rgba(255,99,71,.1) !important;
+      }
+      .ytplus-playlist-delete-toggle:hover {
+        color: var(--yt-spec-text-primary);
+        border-color: var(--yt-spec-text-secondary);
+      }
+      .ytplus-playlist-delete-bar {
+        display: flex;
+      }
+      .ytplus-playlist-delete-selected:not(:disabled):hover {
+        background: rgba(255,99,71,.22) !important;
+      }
+      .ytplus-playlist-select-all:hover,
+      .ytplus-playlist-clear-all:hover {
+        background: var(--yt-spec-10-percent-layer) !important;
+      }
+      .ytplus-playlist-item-checkbox {
+        opacity: 0.85;
+        transition: opacity 0.15s;
+      }
+      .ytplus-playlist-item-checkbox:hover {
+        opacity: 1;
+      }
+      /* Use the shared settings checkbox styling for playlist item checkboxes */
+      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox{appearance:none;-webkit-appearance:none;-moz-appearance:none;width:20px;height:20px;min-width:20px;min-height:20px;margin-left:auto;border:2px solid var(--yt-glass-border);border-radius:50%;background:transparent;display:inline-flex;align-items:center;justify-content:center;transition:all 250ms cubic-bezier(.4,0,.23,1);cursor:pointer;position:relative;flex-shrink:0;color:#fff;box-sizing:border-box;}
+      html:not([dark]) .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox{border-color:rgba(0,0,0,.25);color:#222;}
+      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:focus-visible{outline:2px solid var(--yt-accent);outline-offset:2px;}
+      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:hover{background:var(--yt-hover-bg);transform:scale(1.1);}
+      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox::before{content:"";width:5px;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(45deg);top:6px;left:3px;transition:width 100ms ease 50ms,opacity 50ms;transform-origin:0% 0%;opacity:0;}
+      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox::after{content:"";width:0;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(305deg);top:11px;left:7px;transition:width 100ms ease,opacity 50ms;transform-origin:0% 0%;opacity:0;}
+      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:checked{transform:rotate(0deg) scale(1.15);}
+      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:checked::before{width:9px;opacity:1;background:#fff;transition:width 150ms ease 100ms,opacity 150ms ease 100ms;}
+      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:checked::after{width:16px;opacity:1;background:#fff;transition:width 150ms ease 250ms,opacity 150ms ease 250ms;}
+    `;
+    try {
+      if (window.YouTubeUtils?.StyleManager) {
+        window.YouTubeUtils.StyleManager.add('ytplus-playlist-delete-styles', css);
+        return;
+      }
+    } catch {}
+    const style = document.createElement('style');
+    style.id = 'ytplus-playlist-delete-styles';
+    style.textContent = css;
+    (document.head || document.documentElement).appendChild(style);
+  };
+
   // Clean up search UI
   const cleanup = () => {
+    // Exit delete mode if active
+    if (state.deleteMode) {
+      removeCheckboxesFromItems();
+      state.deleteMode = false;
+    }
+    state.isDeleting = false;
+    state.selectedItems.clear();
+
     const searchUI = qs('.ytplus-playlist-search');
     if (searchUI) {
       searchUI.remove();

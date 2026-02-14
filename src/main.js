@@ -5429,30 +5429,39 @@ const styles = {
     tryApply();
   };
 
+  const refreshTabviewI18n = () => {
+    applyTabviewI18nVars();
+    scheduleTabviewI18nTabs();
+  };
+
   let tabviewI18nListenerBound = false;
   const bindTabviewI18n = () => {
     let attempts = 0;
     const tryBind = () => {
       const i18n = typeof window !== 'undefined' ? window.YouTubePlusI18n : null;
       if (i18n && typeof i18n.t === 'function') {
-        applyTabviewI18nVars();
-        scheduleTabviewI18nTabs();
+        refreshTabviewI18n();
         if (!tabviewI18nListenerBound && typeof i18n.onLanguageChange === 'function') {
-          i18n.onLanguageChange(() => {
-            applyTabviewI18nVars();
-            scheduleTabviewI18nTabs();
-          });
+          i18n.onLanguageChange(refreshTabviewI18n);
           tabviewI18nListenerBound = true;
         }
         return;
       }
-      if (attempts < 20) {
+      if (attempts < 120) {
         attempts += 1;
-        setTimeout(tryBind, 250);
+        setTimeout(tryBind, 500);
       }
     };
     tryBind();
   };
+
+  // Also react to global i18n lifecycle events for modules that initialize later.
+  if (typeof window !== 'undefined') {
+    window.addEventListener('youtube-plus-i18n-ready', refreshTabviewI18n, { passive: true });
+    window.addEventListener('youtube-plus-language-changed', refreshTabviewI18n, {
+      passive: true,
+    });
+  }
 
   bindTabviewI18n();
   scheduleTabviewI18nTabs();

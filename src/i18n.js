@@ -47,6 +47,11 @@
     'hi',
     'id',
     'vi',
+    'uz',
+    'kk',
+    'ky',
+    'be',
+    'bg',
   ];
 
   // Complete language names mapping for all YouTube supported languages
@@ -193,8 +198,8 @@
     ro: 'en',
     'ro-ro': 'en',
     // Balkan languages
-    bg: 'ru',
-    'bg-bg': 'ru',
+    bg: 'bg',
+    'bg-bg': 'bg',
     hr: 'en',
     'hr-hr': 'en',
     sr: 'ru',
@@ -246,16 +251,17 @@
     // Central Asian
     az: 'tr',
     'az-az': 'tr',
-    be: 'ru',
-    'be-by': 'ru',
+    be: 'be',
+    'be-by': 'be',
     hy: 'ru',
     ka: 'en',
-    kk: 'ru',
-    'kk-kz': 'ru',
-    ky: 'ru',
+    kk: 'kk',
+    'kk-kz': 'kk',
+    ky: 'ky',
     mn: 'ru',
     tg: 'ru',
-    uz: 'ru',
+    uz: 'uz',
+    'uz-uz': 'uz',
     // Baltic languages
     lt: 'en',
     'lt-lt': 'en',
@@ -301,26 +307,38 @@
       console.warn('[YouTube+][i18n]', 'Error reading embedded translations', e);
     }
 
+    // Try raw GitHub first — often contains the latest changes and avoids
+    // CDN caching delays. If that fails, fall back to jsDelivr with a
+    // lightweight cache-bust query param to reduce the chance of stale
+    // responses from the CDN.
     try {
-      const url = `${CDN_URLS.jsdelivr}/${lang}.json`;
-      const response = await fetch(url, {
+      const rawUrl = `${CDN_URLS.github}/${lang}.json`;
+      const response = await fetch(rawUrl, {
         cache: 'default',
         headers: { Accept: 'application/json' },
       });
       if (!response.ok) throw new Error(`HTTP ${response.status}`);
       return await response.json();
-    } catch {
+    } catch (firstErr) {
       try {
-        const url = `${CDN_URLS.github}/${lang}.json`;
-        console.warn('[YouTube+][i18n]', `Primary CDN failed, trying GitHub raw: ${url}`);
-        const response = await fetch(url, {
-          cache: 'default',
+        const cdnUrl = `${CDN_URLS.jsdelivr}/${lang}.json?_=${Date.now()}`;
+        console.warn(
+          '[YouTube+][i18n]',
+          `Raw GitHub fetch failed, trying jsDelivr (with cache-bust): ${cdnUrl}`
+        );
+        const response = await fetch(cdnUrl, {
+          cache: 'no-cache',
           headers: { Accept: 'application/json' },
         });
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
       } catch (err) {
-        console.error('[YouTube+][i18n]', `Failed to fetch translations for ${lang}:`, err);
+        console.error(
+          '[YouTube+][i18n]',
+          `Failed to fetch translations for ${lang}:`,
+          err,
+          firstErr
+        );
         throw err;
       }
     }
@@ -339,6 +357,21 @@
     const loadPromise = (async () => {
       try {
         const translations = await fetchTranslation(languageCode);
+        // Quick sanity check: warn if common UI keys are missing from fetched translations
+        try {
+          const missing = [];
+          ['loading', 'fetching'].forEach(k => {
+            if (!Object.prototype.hasOwnProperty.call(translations, k)) missing.push(k);
+          });
+          if (missing.length > 0) {
+            console.warn(
+              '[YouTube+][i18n]',
+              `Translations for ${languageCode} missing keys: ${missing.join(', ')} (source may be stale)`
+            );
+          }
+        } catch {
+          /* ignore sanity-check errors */
+        }
         translationsCache.set(languageCode, translations);
         loadingPromises.delete(languageCode);
         return translations;
@@ -392,6 +425,25 @@
    * @type {Promise|null}
    */
   let loadingPromise = null;
+
+  /**
+   * Emit a global browser event for i18n lifecycle hooks.
+   * @param {string} name - Event name
+   * @param {Object} detail - Event payload
+   */
+  function emitI18nEvent(name, detail = {}) {
+    try {
+      if (typeof window === 'undefined') return;
+      window.dispatchEvent(new CustomEvent(name, { detail }));
+    } catch {
+      try {
+        if (typeof window === 'undefined') return;
+        window.dispatchEvent(new Event(name));
+      } catch {
+        /* no-op */
+      }
+    }
+  }
 
   // Language mapping for common locale codes - extended to support all YouTube languages
   const languageMap = {
@@ -652,6 +704,10 @@
             console.error('[YouTube+][i18n]', 'Error in language change listener:', error);
           }
         });
+        emitI18nEvent('youtube-plus-language-changed', {
+          language: currentLanguage,
+          previousLanguage: oldLang,
+        });
       }
       return success;
     } catch (error) {
@@ -833,6 +889,9 @@
 
       // Load translations
       await loadTranslations();
+      emitI18nEvent('youtube-plus-i18n-ready', {
+        language: currentLanguage,
+      });
     } catch (error) {
       console.error('[YouTube+][i18n]', 'Initialization error:', error);
       currentLanguage = 'en';

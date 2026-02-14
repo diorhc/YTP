@@ -2074,7 +2074,16 @@
 
   function addSettingsUI() {
     const section = $('.ytp-plus-settings-section[data-section="experimental"]');
-    if (!section || $('.stats-button-settings-item', section)) return;
+    if (!section) return false;
+
+    const existingItem = $('.stats-button-settings-item', section);
+    if (existingItem) {
+      const label = existingItem.querySelector('.ytp-plus-settings-item-label');
+      const description = existingItem.querySelector('.ytp-plus-settings-item-description');
+      if (label) label.textContent = t('statisticsButton');
+      if (description) description.textContent = t('statisticsButtonDescription');
+      return true;
+    }
 
     const item = document.createElement('div');
     item.className = 'ytp-plus-settings-item stats-button-settings-item';
@@ -2087,7 +2096,7 @@
       `;
     section.appendChild(item);
 
-    item.querySelector('input').addEventListener('change', e => {
+    item.querySelector('input')?.addEventListener('change', e => {
       const { target } = e;
       const input = /** @type {EventTarget & HTMLInputElement} */ (target);
       statsButtonEnabled = input.checked;
@@ -2099,23 +2108,33 @@
         checkAndAddMenu();
       }
     });
+
+    return true;
+  }
+
+  function ensureSettingsUI(attempt = 0) {
+    const attached = addSettingsUI();
+    if (attached || attempt >= 20) return;
+    setTimeout(() => ensureSettingsUI(attempt + 1), 100);
   }
 
   // Settings modal integration — use event instead of MutationObserver
   document.addEventListener('youtube-plus-settings-modal-opened', () => {
-    setTimeout(addSettingsUI, 50);
+    ensureSettingsUI();
   });
 
   const handleExperimentalNavClick = e => {
     const { target } = e;
     const el = /** @type {EventTarget & HTMLElement} */ (target);
-    if (
-      el.classList?.contains('ytp-plus-settings-nav-item') &&
-      el.dataset?.section === 'experimental'
-    ) {
-      setTimeout(addSettingsUI, 50);
+    const navItem = el?.closest?.('.ytp-plus-settings-nav-item');
+    if (navItem?.dataset?.section === 'experimental') {
+      ensureSettingsUI();
     }
   };
+
+  document.addEventListener('youtube-plus-language-changed', () => {
+    ensureSettingsUI();
+  });
 
   if (!experimentalNavListenerKey) {
     experimentalNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
@@ -2297,6 +2316,7 @@
     isUpdating: false,
     intervalId: null,
     currentChannelName: null,
+    currentChannelId: null,
     enabled: localStorage.getItem(CONFIG.STORAGE_KEY) !== 'false',
     updateInterval:
       parseInt(localStorage.getItem('youtubeEnhancerInterval'), 10) ||
@@ -2305,6 +2325,8 @@
       parseFloat(localStorage.getItem('youtubeEnhancerOpacity')) || CONFIG.DEFAULT_OVERLAY_OPACITY,
     lastSuccessfulStats: new Map(),
     previousStats: new Map(),
+    channelIdCache: new Map(),
+    lastChannelIdWarnAt: 0,
     previousUrl: location.href,
     isChecking: false,
     documentListenerKeys: new Set(),
@@ -3185,19 +3207,48 @@
       });
   }
 
-  async function fetchChannelId(_channelName) {
+  async function fetchChannelId(channelName) {
+    const cacheKey = channelName || state.currentChannelName || window.location.pathname;
+
+    if (cacheKey && state.channelIdCache.has(cacheKey)) {
+      return state.channelIdCache.get(cacheKey);
+    }
+
+    if (state.currentChannelId) {
+      return state.currentChannelId;
+    }
+
+    if (typeof channelName === 'string' && /^UC[\w-]{22}$/.test(channelName)) {
+      state.currentChannelId = channelName;
+      if (cacheKey) state.channelIdCache.set(cacheKey, channelName);
+      return channelName;
+    }
+
     // Try meta tag first
     const metaTag = $('meta[itemprop="channelId"]');
-    if (metaTag && metaTag.content) return metaTag.content;
+    if (metaTag && metaTag.content) {
+      state.currentChannelId = metaTag.content;
+      if (cacheKey) state.channelIdCache.set(cacheKey, metaTag.content);
+      return metaTag.content;
+    }
 
     // Try URL pattern
     const urlMatch = window.location.href.match(/channel\/(UC[\w-]+)/);
-    if (urlMatch && urlMatch[1]) return urlMatch[1];
+    if (urlMatch && urlMatch[1]) {
+      state.currentChannelId = urlMatch[1];
+      if (cacheKey) state.channelIdCache.set(cacheKey, urlMatch[1]);
+      return urlMatch[1];
+    }
 
     // Try ytInitialData
     const channelInfo = await getChannelInfo(window.location.href);
-    if (channelInfo && channelInfo.channelId) return channelInfo.channelId;
-    throw new Error('Could not determine channel ID');
+    if (channelInfo && channelInfo.channelId) {
+      state.currentChannelId = channelInfo.channelId;
+      if (cacheKey) state.channelIdCache.set(cacheKey, channelInfo.channelId);
+      return channelInfo.channelId;
+    }
+
+    return null;
   }
 
   /**
@@ -3293,6 +3344,7 @@
     }
     if (state.lastSuccessfulStats) state.lastSuccessfulStats.clear();
     if (state.previousStats) state.previousStats.clear();
+    state.currentChannelId = null;
     state.isUpdating = false;
     state.overlay = null;
     utils.log('Cleared existing overlay');
@@ -3627,10 +3679,21 @@
    */
   async function updateOverlayContent(overlay, channelName) {
     if (!shouldUpdateOverlay(channelName)) return;
+    if (!overlay || !overlay.isConnected) return;
+    if (document.visibilityState === 'hidden') return;
     state.isUpdating = true;
 
     try {
       const channelId = await fetchChannelId(channelName);
+      if (!channelId) {
+        const now = Date.now();
+        if (now - state.lastChannelIdWarnAt > 15000) {
+          state.lastChannelIdWarnAt = now;
+          utils.warn('Skipping overlay update: channel ID is not available yet');
+        }
+        return;
+      }
+      state.currentChannelId = channelId;
       const stats = await fetchChannelStats(channelId);
 
       // Check if channel changed during async operations
@@ -3662,7 +3725,16 @@
   // Add settings UI to experimental section
   function addSettingsUI() {
     const section = $('.ytp-plus-settings-section[data-section="experimental"]');
-    if (!section || section.querySelector('.count-settings-item')) return;
+    if (!section) return false;
+
+    const existingItem = section.querySelector('.count-settings-item');
+    if (existingItem) {
+      const label = existingItem.querySelector('.ytp-plus-settings-item-label');
+      const description = existingItem.querySelector('.ytp-plus-settings-item-description');
+      if (label) label.textContent = t('channelStatsTitle');
+      if (description) description.textContent = t('channelStatsDescription');
+      return true;
+    }
 
     const item = document.createElement('div');
     item.className = 'ytp-plus-settings-item count-settings-item';
@@ -3675,7 +3747,7 @@
       `;
     section.appendChild(item);
 
-    item.querySelector('input').addEventListener('change', e => {
+    item.querySelector('input')?.addEventListener('change', e => {
       const { target } = e;
       const input = /** @type {EventTarget & HTMLInputElement} */ (target);
       state.enabled = input.checked;
@@ -3693,23 +3765,33 @@
         clearExistingOverlay();
       }
     });
+
+    return true;
+  }
+
+  function ensureSettingsUI(attempt = 0) {
+    const attached = addSettingsUI();
+    if (attached || attempt >= 20) return;
+    setTimeout(() => ensureSettingsUI(attempt + 1), 100);
   }
 
   // Settings modal integration — use event instead of MutationObserver
   document.addEventListener('youtube-plus-settings-modal-opened', () => {
-    setTimeout(addSettingsUI, 100);
+    ensureSettingsUI();
   });
 
   const experimentalNavClickHandler = e => {
     const { target } = e;
     const el = /** @type {EventTarget & HTMLElement} */ (target);
-    if (
-      el.classList?.contains('ytp-plus-settings-nav-item') &&
-      el.dataset?.section === 'experimental'
-    ) {
-      setTimeout(addSettingsUI, 50);
+    const navItem = el?.closest?.('.ytp-plus-settings-nav-item');
+    if (navItem?.dataset?.section === 'experimental') {
+      ensureSettingsUI();
     }
   };
+
+  document.addEventListener('youtube-plus-language-changed', () => {
+    ensureSettingsUI();
+  });
 
   const listenerKey = YouTubeUtils.cleanupManager.registerListener(
     document,
@@ -3778,6 +3860,8 @@
   function createDebouncedUpdate(overlay, channelName) {
     let lastUpdateTime = 0;
     return () => {
+      if (!overlay || !overlay.isConnected) return;
+      if (document.visibilityState === 'hidden') return;
       const now = Date.now();
       if (now - lastUpdateTime >= state.updateInterval - 100) {
         updateOverlayContent(overlay, channelName);
@@ -3995,7 +4079,7 @@
     window.YouTubeStats = {
       init,
       cleanup,
-      version: '2.4',
+      version: '2.4.1',
     };
   }
 

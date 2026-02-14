@@ -60,6 +60,7 @@
   "enhancedFeaturesTitle": "Enhanced Features",
   "enhancedFeaturesDesc": "Additional productivity features and UI enhancements",
   "enablePlayAllLabel": "Play All Button",
+  "playAllButton": "Play All",
   "enablePlayAllDesc": "Add Play All button to playlists and channel pages",
   "enableResumeTimeLabel": "Resume Playback",
   "enableResumeTimeDesc": "Remember video position and offer to resume",
@@ -279,5 +280,12 @@
   "zenStyleBetterCaptionsLabel": "Better Captions",
   "zenStyleBetterCaptionsDesc": "Enhanced subtitle styling with blur backdrop",
   "zenStylePlayerBlurLabel": "Player Controls Blur",
-  "zenStylePlayerBlurDesc": "Add blur effect to player controls"
+  "zenStylePlayerBlurDesc": "Add blur effect to player controls",
+  "playlistDeleteMode": "Delete mode",
+  "playlistDeleteModeExit": "Exit delete mode",
+  "playlistSelectVideo": "Select video",
+  "playlistSelectedCount": "{count} selected",
+  "playlistDeleteConfirm": "Delete {count} video(s) from playlist?",
+  "playlistDeleteSuccess": "{count} video(s) removed from playlist",
+  "playlistDeletePartial": "{success} removed, {fail} failed"
 }

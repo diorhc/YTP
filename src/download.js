@@ -1358,9 +1358,17 @@
    * @param {Object} formParts - Form elements
    */
   function disableFormControls(formParts) {
-    formParts.qualitySelect.disabled = true;
-    formParts.downloadBtn.disabled = true;
-    formParts.cancelBtn.disabled = true;
+    try {
+      if (formParts.qualitySelect) formParts.qualitySelect.disabled = true;
+      if (formParts.downloadBtn) {
+        formParts.downloadBtn.disabled = true;
+        formParts.downloadBtn.style.opacity = '0.5';
+        formParts.downloadBtn.style.cursor = 'not-allowed';
+      }
+      if (formParts.cancelBtn) formParts.cancelBtn.disabled = true;
+    } catch (e) {
+      console.error('Error disabling form controls:', e);
+    }
   }
 
   /**
@@ -1368,9 +1376,20 @@
    * @param {Object} formParts - Form elements
    */
   function enableFormControls(formParts) {
-    formParts.qualitySelect.disabled = false;
-    formParts.downloadBtn.disabled = false;
-    formParts.cancelBtn.disabled = false;
+    try {
+      if (formParts.qualitySelect) formParts.qualitySelect.disabled = false;
+      if (formParts.downloadBtn) formParts.downloadBtn.disabled = false;
+      if (formParts.cancelBtn) formParts.cancelBtn.disabled = false;
+
+      // Reset button styles to ensure they're clickable
+      if (formParts.downloadBtn) {
+        formParts.downloadBtn.style.opacity = '1';
+        formParts.downloadBtn.style.cursor = 'pointer';
+        formParts.downloadBtn.style.pointerEvents = 'auto';
+      }
+    } catch (e) {
+      console.error('Error enabling form controls:', e);
+    }
   }
 
   /**
@@ -1422,7 +1441,7 @@
       embedThumbnail: format === 'audio',
       onProgress: p => {
         formParts.progressFill.style.width = `${p.percent || 0}%`;
-        formParts.progressText.textContent = `${p.percent || 0}% � ${formatBytes(p.loaded || 0)} / ${p.total ? formatBytes(p.total) : '�'}`;
+        formParts.progressText.textContent = `${p.percent || 0}% • ${formatBytes(p.loaded || 0)} / ${p.total ? formatBytes(p.total) : '—'}`;
       },
     };
 
@@ -1444,14 +1463,35 @@
    * @param {Error} err - Error object
    */
   function handleDownloadError(formParts, err) {
-    formParts.progressText.textContent = `${t('downloadFailed')} ${err?.message || 'error'}`;
+    const errorMsg = err?.message || 'Unknown error';
+    formParts.progressText.textContent = `${t('downloadFailed')} ${errorMsg}`;
+    formParts.progressText.style.color = '#ff5555';
+
+    // Ensure controls are re-enabled even if something goes wrong
     enableFormControls(formParts);
+
+    // Add a safety timeout to force re-enable after 500ms
+    setTimeout(() => {
+      try {
+        enableFormControls(formParts);
+      } catch (e) {
+        console.error('Failed to re-enable controls:', e);
+      }
+    }, 500);
+
+    // Reset progress text color after 3 seconds
+    setTimeout(() => {
+      formParts.progressText.style.color = '#fff';
+    }, 3000);
   }
 
   function wireModalEvents(formParts, activeFormatGetter, getSubtitlesData) {
     formParts.cancelBtn.addEventListener('click', () => closeModal());
 
     formParts.downloadBtn.addEventListener('click', async () => {
+      // Prevent multiple simultaneous downloads
+      if (formParts.downloadBtn.disabled) return;
+
       disableFormControls(formParts);
       initializeProgress(formParts);
 
@@ -1465,7 +1505,16 @@
         }
         completeDownload(formParts);
       } catch (err) {
+        console.error('[Download Error]:', err);
         handleDownloadError(formParts, err);
+      } finally {
+        // Extra safety: ensure controls are re-enabled
+        setTimeout(() => {
+          if (formParts.downloadBtn && !formParts.downloadBtn.disabled) {
+            return; // Already enabled
+          }
+          enableFormControls(formParts);
+        }, 1000);
       }
     });
   }

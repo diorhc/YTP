@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "ترجمات أفضل",
   "zenStyleBetterCaptionsDesc": "تصميم ترجمات محسن مع خلفية ضبابية",
   "zenStylePlayerBlurLabel": "تمويه عناصر التحكم في المشغل",
-  "zenStylePlayerBlurDesc": "إضافة تأثير ضبابي لعناصر التحكم في المشغل"
+  "zenStylePlayerBlurDesc": "إضافة تأثير ضبابي لعناصر التحكم في المشغل",
+  "playlistDeleteMode": "وضع الحذف",
+  "playlistDeleteModeExit": "الخروج من وضع الحذف",
+  "playlistSelectVideo": "تحديد الفيديو",
+  "playlistSelectedCount": "{count} تم تحديده",
+  "playlistDeleteConfirm": "حذف {count} فيديو من قائمة التشغيل؟",
+  "playlistDeleteSuccess": "تم حذف {count} فيديو من قائمة التشغيل",
+  "playlistDeletePartial": "{success} تم الحذف, {fail} فشل"
 }

@@ -279,5 +279,12 @@
   "zenStyleBetterCaptionsLabel": "Bessere Untertitel",
   "zenStyleBetterCaptionsDesc": "Verbessertes Untertitel-Styling mit Unschärfe-Hintergrund",
   "zenStylePlayerBlurLabel": "Player-Steuerung Unschärfe",
-  "zenStylePlayerBlurDesc": "Unschärfe-Effekt zu Player-Steuerelementen hinzufügen"
+  "zenStylePlayerBlurDesc": "Unschärfe-Effekt zu Player-Steuerelementen hinzufügen",
+  "playlistDeleteMode": "Löschmodus",
+  "playlistDeleteModeExit": "Löschmodus verlassen",
+  "playlistSelectVideo": "Video auswählen",
+  "playlistSelectedCount": "{count} ausgewählt",
+  "playlistDeleteConfirm": "{count} Videos aus der Wiedergabeliste löschen?",
+  "playlistDeleteSuccess": "{count} Videos aus der Wiedergabeliste gelöscht",
+  "playlistDeletePartial": "{success} gelöscht, {fail} nicht gelöscht"
 }
