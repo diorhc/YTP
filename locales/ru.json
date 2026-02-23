@@ -287,5 +287,7 @@
   "playlistSelectedCount": "{count} выбрано",
   "playlistDeleteConfirm": "Удалить {count} видео из плейлиста?",
   "playlistDeleteSuccess": "{count} видео удалено из плейлиста",
-  "playlistDeletePartial": "{success} удалено, {fail} не удалось"
+  "playlistDeletePartial": "{success} удалено, {fail} не удалось",
+  "translateComment": "Перевести",
+  "showOriginal": "Показать оригинал"
 }

@@ -262,6 +262,21 @@ const onDomReady = (() => {
     } catch {}
 
     try {
+      // #right-tabs itself may be the scroll host on single-column layout
+      const rightTabsEl = document.getElementById('right-tabs');
+      if (rightTabsEl) {
+        if (rightTabsEl._topButtonScrollHandler) {
+          rightTabsEl.removeEventListener('scroll', rightTabsEl._topButtonScrollHandler);
+          rightTabsEl._topButtonScrollHandler = null;
+        }
+        if (rightTabsEl._scrollCleanup) {
+          rightTabsEl._scrollCleanup();
+          rightTabsEl._scrollCleanup = null;
+        }
+      }
+    } catch {}
+
+    try {
       const playlistScroll = $('ytd-playlist-panel-renderer #items');
       if (playlistScroll && playlistScroll._topButtonScrollHandler) {
         playlistScroll.removeEventListener('scroll', playlistScroll._topButtonScrollHandler);
@@ -294,12 +309,24 @@ const onDomReady = (() => {
       if (!button) return;
 
       if (button.id === 'right-tabs-top-button') {
-        const activeTab = $('#right-tabs .tab-content-cld:not(.tab-content-hidden)');
-        if (activeTab) {
+        // Always use direct DOM query here — class-based selectors may be stale in cache
+        const activeTab = document.querySelector(
+          '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
+        );
+        const rightTabsEl = document.getElementById('right-tabs');
+        // On single-column layout #right-tabs is the actual scroll host (overflow:auto),
+        // so prefer scrolling it when it already has a positive scrollTop.
+        const scrollTarget =
+          rightTabsEl && rightTabsEl.scrollTop > 0
+            ? rightTabsEl
+            : activeTab && activeTab.scrollTop > 0
+              ? activeTab
+              : activeTab || rightTabsEl;
+        if (scrollTarget) {
           if ('scrollBehavior' in document.documentElement.style) {
-            activeTab.scrollTo({ top: 0, behavior: 'smooth' });
+            scrollTarget.scrollTo({ top: 0, behavior: 'smooth' });
           } else {
-            activeTab.scrollTop = 0;
+            scrollTarget.scrollTop = 0;
           }
           button.setAttribute('aria-label', t('scrolledToTop') || 'Scrolled to top');
           setTimeout(() => {
@@ -526,18 +553,48 @@ const onDomReady = (() => {
             window.YouTubePlusScrollManager?.removeAllListeners?.(tab);
           });
 
-          const activeTab = $('#right-tabs .tab-content-cld:not(.tab-content-hidden)');
+          // Also remove any direct #right-tabs scroll handler from a previous run
+          try {
+            const prevRtEl = document.getElementById('right-tabs');
+            if (prevRtEl) {
+              if (prevRtEl._topButtonScrollHandler) {
+                prevRtEl.removeEventListener('scroll', prevRtEl._topButtonScrollHandler);
+                delete prevRtEl._topButtonScrollHandler;
+              }
+              if (prevRtEl._scrollCleanup) {
+                prevRtEl._scrollCleanup();
+                delete prevRtEl._scrollCleanup;
+              }
+            }
+          } catch {}
+
+          // Always use direct DOM query — class-based ':not(.tab-content-hidden)' selectors
+          // can return a stale cached element (the previously-active tab, which is still in
+          // the DOM but now hidden). A direct query guarantees the correct live result.
+          const activeTab = document.querySelector(
+            '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
+          );
           const button = byId('right-tabs-top-button');
 
           if (activeTab && button) {
+            // On single-column layouts, #right-tabs itself has overflow:auto and acts as
+            // the scroll host. In that case the individual tab <div> never gets scrollTop>0.
+            // Detect which element is actually scrollable and attach the listener there.
+            const rightTabsEl = document.getElementById('right-tabs');
+            const rtIsScrollHost =
+              rightTabsEl &&
+              rightTabsEl !== activeTab &&
+              rightTabsEl.scrollHeight > rightTabsEl.clientHeight + 10;
+            const scrollTarget = rtIsScrollHost ? rightTabsEl : activeTab;
+
             // Use ScrollManager if available for better performance
             if (window.YouTubePlusScrollManager) {
               const cleanup = window.YouTubePlusScrollManager.addScrollListener(
-                activeTab,
-                () => handleScroll(activeTab, button),
+                scrollTarget,
+                () => handleScroll(scrollTarget, button),
                 { debounce: 100, runInitial: true }
               );
-              activeTab._scrollCleanup = cleanup;
+              scrollTarget._scrollCleanup = cleanup;
             } else {
               // Fallback to manual debouncing
               const debounceFunc =
@@ -550,13 +607,13 @@ const onDomReady = (() => {
                         timeoutId = setTimeout(() => fn(...args), delay);
                       };
                     };
-              const scrollHandler = debounceFunc(() => handleScroll(activeTab, button), 100);
-              activeTab._topButtonScrollHandler = scrollHandler;
-              activeTab.addEventListener('scroll', scrollHandler, {
+              const scrollHandler = debounceFunc(() => handleScroll(scrollTarget, button), 100);
+              scrollTarget._topButtonScrollHandler = scrollHandler;
+              scrollTarget.addEventListener('scroll', scrollHandler, {
                 passive: true,
                 capture: false,
               });
-              handleScroll(activeTab, button);
+              handleScroll(scrollTarget, button);
             }
           }
         } catch (error) {
@@ -1269,6 +1326,8 @@ const onDomReady = (() => {
           }
           if (await checkButton()) clearInterval(pollId);
         }, 500);
+        // Register so the global cleanup manager can stop it during navigation teardown
+        window.YouTubeUtils?.cleanupManager?.registerInterval?.(pollId);
       }
     } catch {
       // ignore
@@ -1740,16 +1799,16 @@ const onDomReady = (() => {
       clsPrevention: `
         /* CLS Prevention - Reserve space for dynamic elements */
         #ytp-plus-dislike-text { min-width: 1.5em;display: inline-block !important;}
-        /* Contain layout for dynamic panels */
+        /* Contain layout only for our own panels (not YouTube layout elements) */
         .ytp-plus-stats-panel, .ytp-plus-modal-content { contain: layout style;}
         /* Prevent layout shifts from search box animations */
         yt-searchbox { will-change: transform;}
-        /* Stable feed items */
-        ytd-rich-item-renderer { contain: layout style;content-visibility: auto;contain-intrinsic-size: auto 400px;}
-        /* Stable thumbnails */
-        ytd-thumbnail { contain: layout style paint;content-visibility: auto;}
-        /* Prevent header shifts */
-        #masthead-container { contain: layout style;}
+        /* Reduce CLS from late-loading channel avatars */
+        #owner #avatar { min-width: 40px; min-height: 40px; }
+        /* Reserve space for action buttons to prevent shift */
+        ytd-menu-renderer.ytd-watch-metadata { min-height: 36px; }
+        /* Subscribe button stability */
+        ytd-subscribe-button-renderer { min-width: 90px; }
       `,
     };
 
@@ -1905,4 +1964,232 @@ const onDomReady = (() => {
   } catch (err) {
     console.error('zen-youtube-features injection failed', err);
   }
+})();
+
+// Comment Translation Button
+// Restores the "Translate to ..." button that YouTube removed from comments
+(function () {
+  'use strict';
+
+  const t = (key, params = {}) => {
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    return key;
+  };
+
+  const TRANSLATE_BTN_CLASS = 'ytp-comment-translate-btn';
+  const TRANSLATED_ATTR = 'data-ytp-translated';
+  const ORIGINAL_ATTR = 'data-ytp-original-text';
+
+  /** Detect user's preferred language */
+  const getUserLanguage = () => {
+    try {
+      if (window.YouTubePlusI18n?.getLanguage) return window.YouTubePlusI18n.getLanguage();
+      const htmlLang = document.documentElement.lang;
+      if (htmlLang) return htmlLang.split('-')[0];
+    } catch {}
+    return navigator.language?.split('-')[0] || 'en';
+  };
+
+  /** Translate text using Google Translate (free endpoint) */
+  const translateText = async (text, targetLang) => {
+    try {
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
+      const resp = await fetch(url);
+      const data = await resp.json();
+      if (Array.isArray(data) && Array.isArray(data[0])) {
+        return data[0].map(s => (s && s[0]) || '').join('');
+      }
+    } catch (e) {
+      console.warn('[YouTube+] Translation failed:', e);
+    }
+    return null;
+  };
+
+  /** Get the translate button label (uses i18n) */
+  const getTranslateLabel = () => t('translateComment') || 'Translate';
+
+  /** Get the show-original button label (uses i18n) */
+  const getShowOriginalLabel = () => t('showOriginal') || 'Show original';
+
+  /** Inject CSS for translate button */
+  const injectStyles = (() => {
+    let injected = false;
+    return () => {
+      if (injected) return;
+      injected = true;
+      const css = `
+        .${TRANSLATE_BTN_CLASS}{
+          display:inline-flex;align-items:center;gap:4px;
+          background:none;border:none;cursor:pointer;
+          color:var(--yt-spec-text-secondary,#aaa);
+          font-size:1.2rem;line-height:1.8rem;font-weight:400;
+          padding:4px 0;margin-top:4px;
+          font-family:'Roboto','Arial',sans-serif;
+          transition:color .2s;
+        }
+        .${TRANSLATE_BTN_CLASS}:hover{color:var(--yt-spec-text-primary,#fff);}
+        .${TRANSLATE_BTN_CLASS}[disabled]{opacity:.5;cursor:wait;}
+        .${TRANSLATE_BTN_CLASS} svg{flex-shrink:0;}
+      `;
+      try {
+        if (window.YouTubeUtils?.StyleManager?.add) {
+          window.YouTubeUtils.StyleManager.add('ytp-comment-translate-styles', css);
+          return;
+        }
+      } catch {}
+      const style = document.createElement('style');
+      style.id = 'ytp-comment-translate-styles';
+      style.textContent = css;
+      (document.head || document.documentElement).appendChild(style);
+    };
+  })();
+
+  const translateIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>`;
+
+  /** Add translate button to a comment element */
+  const addTranslateButton = commentEl => {
+    if (commentEl.querySelector(`.${TRANSLATE_BTN_CLASS}`)) return;
+
+    // Find the text content element
+    const contentEl = commentEl.querySelector(
+      '#content-text.ytd-comment-view-model, ' +
+        '#content-text.ytd-comment-renderer, ' +
+        'yt-attributed-string#content-text, ' +
+        'yt-formatted-string#content-text, ' +
+        '#content-text'
+    );
+    if (!contentEl) return;
+
+    const text = (contentEl.textContent || '').trim();
+    if (!text || text.length < 2) return;
+
+    // Don't add if comment is already in user's language (basic heuristic)
+    const userLang = getUserLanguage();
+
+    const btn = document.createElement('button');
+    btn.className = TRANSLATE_BTN_CLASS;
+    btn.type = 'button';
+    btn.innerHTML = `${translateIcon} ${getTranslateLabel()}`;
+    btn.setAttribute('aria-label', getTranslateLabel());
+
+    btn.addEventListener('click', async e => {
+      e.preventDefault();
+      e.stopPropagation();
+
+      if (contentEl.hasAttribute(TRANSLATED_ATTR)) {
+        // Toggle back to original
+        const original = contentEl.getAttribute(ORIGINAL_ATTR);
+        if (original) {
+          contentEl.textContent = original;
+          contentEl.removeAttribute(TRANSLATED_ATTR);
+          btn.innerHTML = `${translateIcon} ${getTranslateLabel()}`;
+        }
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = `${translateIcon} ...`;
+
+      const originalText = contentEl.textContent || '';
+      const translated = await translateText(originalText, userLang);
+
+      if (translated && translated !== originalText) {
+        contentEl.setAttribute(ORIGINAL_ATTR, originalText);
+        contentEl.setAttribute(TRANSLATED_ATTR, 'true');
+        contentEl.textContent = translated;
+        btn.innerHTML = `${translateIcon} ${getShowOriginalLabel()}`;
+      } else {
+        btn.innerHTML = `${translateIcon} ${getTranslateLabel()}`;
+      }
+      btn.disabled = false;
+    });
+
+    // Insert after the text content
+    const actionBar = commentEl.querySelector(
+      '#action-buttons, ytd-comment-action-buttons-renderer, #toolbar'
+    );
+    if (actionBar) {
+      actionBar.parentElement.insertBefore(btn, actionBar);
+    } else {
+      contentEl.after(btn);
+    }
+  };
+
+  /** Process all visible comments */
+  const processComments = () => {
+    const commentSelectors = [
+      'ytd-comment-view-model',
+      'ytd-comment-renderer',
+      'ytd-comment-thread-renderer',
+    ];
+    for (const sel of commentSelectors) {
+      document.querySelectorAll(sel).forEach(addTranslateButton);
+    }
+  };
+
+  /** Debounced processing */
+  let processTimeout = null;
+  const scheduleProcess = () => {
+    if (processTimeout) clearTimeout(processTimeout);
+    processTimeout = setTimeout(processComments, 300);
+  };
+
+  /** Initialize */
+  const init = () => {
+    injectStyles();
+    processComments();
+
+    // Observe for new comments
+    const commentsContainer = document.querySelector('#comments, #tab-comments, #content');
+    const target = commentsContainer || document.body;
+
+    const observer = new MutationObserver(mutations => {
+      let hasNewComments = false;
+      for (const m of mutations) {
+        for (const node of m.addedNodes) {
+          if (!(node instanceof Element)) continue;
+          if (
+            node.matches?.(
+              'ytd-comment-view-model, ytd-comment-renderer, ytd-comment-thread-renderer'
+            ) ||
+            node.querySelector?.('ytd-comment-view-model, ytd-comment-renderer, #content-text')
+          ) {
+            hasNewComments = true;
+            break;
+          }
+        }
+        if (hasNewComments) break;
+      }
+      if (hasNewComments) scheduleProcess();
+    });
+
+    observer.observe(target, { childList: true, subtree: true });
+
+    try {
+      if (window.YouTubeUtils?.cleanupManager) {
+        window.YouTubeUtils.cleanupManager.registerObserver(observer);
+      }
+    } catch {}
+  };
+
+  // Lazy init on watch pages
+  const scheduleInit = () => {
+    const isVideoPage = location.pathname === '/watch' || location.pathname.startsWith('/shorts/');
+    if (!isVideoPage) return;
+
+    if (typeof requestIdleCallback === 'function') {
+      requestIdleCallback(() => init(), { timeout: 3000 });
+    } else {
+      setTimeout(init, 1500);
+    }
+  };
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', scheduleInit, { once: true });
+  } else {
+    scheduleInit();
+  }
+
+  window.addEventListener('yt-navigate-finish', scheduleInit, { passive: true });
 })();

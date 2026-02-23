@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} geselecteerd",
   "playlistDeleteConfirm": "Verwijder {count} video's uit de afspeellijst?",
   "playlistDeleteSuccess": "{count} video's verwijderd uit de afspeellijst",
-  "playlistDeletePartial": "{success} verwijderd, {fail} niet verwijderd"
+  "playlistDeletePartial": "{success} verwijderd, {fail} niet verwijderd",
+  "translateComment": "Vertalen",
+  "showOriginal": "Origineel tonen"
 }

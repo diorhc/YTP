@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} seçildi",
   "playlistDeleteConfirm": "{count} videoyu oynatma listesinden silmek istiyor musunuz?",
   "playlistDeleteSuccess": "{count} video oynatma listesinden silindi",
-  "playlistDeletePartial": "{success} video silindi, {fail} video silinemedi"
+  "playlistDeletePartial": "{success} video silindi, {fail} video silinemedi",
+  "translateComment": "Çevir",
+  "showOriginal": "Orijinali göster"
 }

@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} таңдалды",
   "playlistDeleteConfirm": "Ойнату тізімінен {count} бейнені жоясыз ба?",
   "playlistDeleteSuccess": "Ойнату тізімінен {count} бейне жойылды",
-  "playlistDeletePartial": "{success} жойылды, {fail} қате"
+  "playlistDeletePartial": "{success} жойылды, {fail} қате",
+  "translateComment": "Аудару",
+  "showOriginal": "Түпнұсқаны көрсету"
 }

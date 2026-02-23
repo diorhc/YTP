@@ -47,6 +47,12 @@ const locales = [
   'pt',
   'uk',
   'vi',
+  'uz',
+  'kk',
+  'ky',
+  'be',
+  'bg',
+  'az',
 ];
 const translations = {};
 

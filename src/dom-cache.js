@@ -13,7 +13,10 @@
       /** @type {Map<string, NodeList|Element[]>} */
       this.multiCache = new Map();
       this.maxAge = 5000; // Cache TTL: 5 seconds
-      this.nullMaxAge = 250; // Cache TTL for null/empty results: 250ms
+      this.nullMaxAge = 1000; // Cache TTL for null/empty results: 1 s (was 250 ms).
+      // Most modules react to DOM changes via MutationObserver or yt-navigate-finish,
+      // so a 1-second stale window for "not found" entries is safe and cuts
+      // repeated querySelector calls by ~75 % for elements absent from the page.
       this.maxSize = 500; // Max cache entries
       this.cleanupInterval = null;
       this.enabled = true;

@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} 선택됨",
   "playlistDeleteConfirm": "{count}개의 비디오를 재생목록에서 삭제하시겠습니까?",
   "playlistDeleteSuccess": "{count}개의 비디오가 재생목록에서 삭제되었습니다",
-  "playlistDeletePartial": "{success}개의 비디오가 삭제되었고, {fail}개의 비디오는 삭제되지 않았습니다"
+  "playlistDeletePartial": "{success}개의 비디오가 삭제되었고, {fail}개의 비디오는 삭제되지 않았습니다",
+  "translateComment": "번역",
+  "showOriginal": "원문 보기"
 }

@@ -24,7 +24,7 @@
 // @name:uz             YouTube +
 // @name:vi             YouTube +
 // @namespace           by
-// @version             2.4.1
+// @version             2.4.2
 // @author              diorhc
 // @description         Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:ar      Tabview YouTube and download and other features ↴

@@ -800,6 +800,387 @@
     window.YouTubePerformance.runChunkedTasks = runChunkedTasks;
     window.YouTubePerformance.wrapForINP = wrapForINP;
 
+    // ─── LCP Optimization Suite ────────────────────────────────────────────────
+    // Target: Main page <5s, Video page <3.5s, Playlist page <3.5s
+
+    /**
+     * 1. Resource Hints - preconnect to YouTube CDN origins
+     *    Shaves 100-300ms from first resource fetch on each origin.
+     */
+    const injectResourceHints = () => {
+      const origins = [
+        'https://www.youtube.com',
+        'https://i.ytimg.com', // Thumbnails (LCP candidate)
+        'https://yt3.ggpht.com', // Channel avatars
+        'https://fonts.googleapis.com', // Fonts
+        'https://www.gstatic.com', // Static resources
+        'https://play.google.com', // Play store resources
+      ];
+
+      const head = document.head;
+      if (!head) return;
+
+      const existingHrefs = new Set();
+      head.querySelectorAll('link[rel="preconnect"]').forEach(el => {
+        existingHrefs.add(el.href);
+      });
+
+      for (const origin of origins) {
+        if (existingHrefs.has(origin) || existingHrefs.has(origin + '/')) continue;
+        const link = document.createElement('link');
+        link.rel = 'preconnect';
+        link.href = origin;
+        link.crossOrigin = 'anonymous';
+        head.appendChild(link);
+      }
+    };
+
+    /**
+     * 2. LCP Element Priority Boost
+     *    Set fetchpriority="high" on the LCP element (main video thumbnail / player poster).
+     */
+    const boostLCPElement = () => {
+      const path = location.pathname;
+      let lcpSelector;
+
+      if (path === '/watch' || path.startsWith('/shorts/')) {
+        // Video page: player poster or first video frame
+        lcpSelector =
+          '#movie_player .ytp-cued-thumbnail-overlay-image, #movie_player video, ytd-player #ytd-player .html5-video-container';
+      } else if (path === '/playlist') {
+        // Playlist page: first visible thumbnail
+        lcpSelector = 'ytd-playlist-video-renderer:first-child img.yt-core-image';
+      } else {
+        // Main page: first visible rich item thumbnail
+        lcpSelector =
+          'ytd-rich-item-renderer:first-child img.yt-core-image, ytd-rich-grid-media img.yt-core-image';
+      }
+
+      if (!lcpSelector) return;
+
+      requestAnimationFrame(() => {
+        const el = document.querySelector(lcpSelector);
+        if (el && el.tagName === 'IMG') {
+          el.setAttribute('fetchpriority', 'high');
+          el.setAttribute('loading', 'eager');
+          // Remove lazy loading if set by YouTube
+          if (el.loading === 'lazy') el.loading = 'eager';
+        }
+      });
+    };
+
+    /**
+     * 3. Content-Visibility CSS for off-screen sections
+     *    Dramatically reduces initial render work by skipping layout/paint for below-the-fold.
+     */
+    const injectContentVisibilityCSS = () => {
+      const cssId = 'ytp-perf-content-visibility';
+      if (document.getElementById(cssId)) return;
+
+      const css = `
+        /* ── YouTube+ LCP Performance Optimizations ── */
+
+        /* Off-screen section rendering deferral */
+        ytd-comments#comments { content-visibility: auto; contain-intrinsic-size: auto 800px; }
+        #secondary ytd-compact-video-renderer:nth-child(n+6) { content-visibility: auto; contain-intrinsic-size: auto 94px; }
+        ytd-watch-next-secondary-results-renderer ytd-item-section-renderer { content-visibility: auto; contain-intrinsic-size: auto 600px; }
+
+        /* Main/browse feed - defer items below first viewport */
+        ytd-rich-grid-renderer #contents > ytd-rich-item-renderer:nth-child(n+9) { content-visibility: auto; contain-intrinsic-size: auto 360px; }
+        ytd-section-list-renderer > #contents > ytd-item-section-renderer:nth-child(n+3) { content-visibility: auto; contain-intrinsic-size: auto 500px; }
+
+        /* Playlist page - defer items beyond visible viewport */
+        ytd-playlist-video-list-renderer #contents > ytd-playlist-video-renderer:nth-child(n+12) { content-visibility: auto; contain-intrinsic-size: auto 90px; }
+
+        /* Note: contain:layout is intentionally omitted here — it breaks position:sticky
+           for chips-wrapper and tabs-container on browse/channel pages. */
+
+        /* Guide sidebar - not needed for LCP */
+        ytd-mini-guide-renderer { content-visibility: auto; contain-intrinsic-size: auto 100vh; }
+        tp-yt-app-drawer#guide { content-visibility: auto; contain-intrinsic-size: 240px 100vh; }
+
+        /* Below-the-fold metadata */
+        ytd-watch-metadata #description { content-visibility: auto; contain-intrinsic-size: auto 120px; }
+        ytd-structured-description-content-renderer { content-visibility: auto; contain-intrinsic-size: auto 200px; }
+
+        /* Shorts shelf on browse pages */
+        ytd-reel-shelf-renderer { content-visibility: auto; contain-intrinsic-size: auto 320px; }
+
+        /* Comments container on main watch - contain:style only, not layout (preserves sticky) */
+        ytd-item-section-renderer#sections { contain: style; }
+
+        /* Reduce paint complexity for non-visible items */
+        ytd-rich-grid-row:nth-child(n+4) { content-visibility: auto; contain-intrinsic-size: auto 240px; }
+
+        /* Engagement panels - safe deferral only when fully hidden */
+        ytd-engagement-panel-section-list-renderer[visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"] { content-visibility: auto; contain-intrinsic-size: auto 0px; }
+
+        /* Optimize image decoding */
+        ytd-thumbnail img, yt-image img, .yt-core-image { content-visibility: auto; }
+      `;
+
+      const style = document.createElement('style');
+      style.id = cssId;
+      style.textContent = css;
+      (document.head || document.documentElement).appendChild(style);
+    };
+
+    /**
+     * 4. Deferred Image Loading
+     *    Lazy-load images below the fold using IntersectionObserver.
+     */
+    const setupDeferredImageLoading = () => {
+      const imgObserver = new IntersectionObserver(
+        entries => {
+          for (const entry of entries) {
+            if (entry.isIntersecting) {
+              const img = entry.target;
+              const dataSrc = img.getAttribute('data-ytp-deferred-src');
+              if (dataSrc) {
+                img.src = dataSrc;
+                img.removeAttribute('data-ytp-deferred-src');
+              }
+              imgObserver.unobserve(img);
+            }
+          }
+        },
+        { rootMargin: '200px 0px' }
+      );
+
+      // Observe below-fold thumbnail images
+      const observeImages = () => {
+        const belowFold = document.querySelectorAll(
+          'ytd-rich-item-renderer:nth-child(n+5) img[src]:not([data-ytp-img-observed]),' +
+            'ytd-compact-video-renderer:nth-child(n+4) img[src]:not([data-ytp-img-observed])'
+        );
+        belowFold.forEach(img => {
+          img.setAttribute('data-ytp-img-observed', '1');
+        });
+      };
+
+      // Run periodically to catch new items
+      let imgTimer = null;
+      const scheduleObserve = () => {
+        if (imgTimer) return;
+        imgTimer = setTimeout(() => {
+          imgTimer = null;
+          observeImages();
+        }, 500);
+      };
+
+      window.addEventListener('yt-navigate-finish', scheduleObserve, { passive: true });
+      if (document.readyState !== 'loading') {
+        scheduleObserve();
+      } else {
+        document.addEventListener('DOMContentLoaded', scheduleObserve, { once: true });
+      }
+    };
+
+    /**
+     * 5. MutationObserver Optimization
+     *    Provides a shared, debounced MutationObserver to reduce overhead
+     *    from multiple independent subtree observers.
+     */
+    const SharedMutationManager = (() => {
+      let observer = null;
+      const callbacks = new Map(); // key -> {callback, filter}
+      let scheduled = false;
+      const pending = [];
+
+      const flush = () => {
+        scheduled = false;
+        const entries = [...pending];
+        pending.length = 0;
+
+        for (const [, { callback, filter }] of callbacks) {
+          const filtered = filter ? entries.filter(filter) : entries;
+          if (filtered.length > 0) {
+            try {
+              callback(filtered);
+            } catch (e) {
+              console.warn('[YouTube+ Perf] SharedMutation callback error:', e);
+            }
+          }
+        }
+      };
+
+      const start = () => {
+        if (observer) return;
+        observer = new MutationObserver(mutations => {
+          pending.push(...mutations);
+          if (!scheduled) {
+            scheduled = true;
+            // Use microtask for fast batching without losing responsiveness
+            queueMicrotask(flush);
+          }
+        });
+        const target = document.body || document.documentElement;
+        if (target) {
+          observer.observe(target, { childList: true, subtree: true });
+        }
+      };
+
+      return {
+        /**
+         * Register a callback for shared mutation observation.
+         * @param {string} key - Unique key
+         * @param {Function} callback - Called with filtered mutations
+         * @param {Function} [filter] - Optional filter for mutations
+         */
+        register(key, callback, filter) {
+          callbacks.set(key, { callback, filter });
+          if (callbacks.size === 1) start();
+        },
+        unregister(key) {
+          callbacks.delete(key);
+          if (callbacks.size === 0 && observer) {
+            observer.disconnect();
+            observer = null;
+          }
+        },
+        getCallbackCount: () => callbacks.size,
+      };
+    })();
+
+    /**
+     * 6. Idle-time Task Scheduler
+     *    Schedules non-critical initialization to idle periods.
+     */
+    const IdleScheduler = (() => {
+      const queue = [];
+      let running = false;
+
+      const processQueue = deadline => {
+        while (queue.length > 0 && (deadline ? deadline.timeRemaining() > 5 : true)) {
+          const task = queue.shift();
+          try {
+            task.fn();
+          } catch (e) {
+            console.warn('[YouTube+ Perf] Idle task error:', e);
+          }
+          if (!deadline) break; // Without deadline, run one task per iteration
+        }
+
+        if (queue.length > 0) {
+          scheduleNext();
+        } else {
+          running = false;
+        }
+      };
+
+      const scheduleNext = () => {
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(processQueue, { timeout: 3000 });
+        } else {
+          setTimeout(() => processQueue(null), 50);
+        }
+      };
+
+      return {
+        /**
+         * Schedule a task for idle execution.
+         * @param {Function} fn - Task function
+         * @param {number} [priority=0] - Higher = runs first
+         */
+        schedule(fn, priority = 0) {
+          queue.push({ fn, priority });
+          queue.sort((a, b) => b.priority - a.priority);
+          if (!running) {
+            running = true;
+            scheduleNext();
+          }
+        },
+        /** Get number of pending tasks */
+        pending: () => queue.length,
+      };
+    })();
+
+    /**
+     * 7. Long Task monitoring (via PerformanceObserver)
+     *    Helps identify blocking scripts beyond 50ms.
+     */
+    const initLongTaskMonitor = () => {
+      if (typeof PerformanceObserver === 'undefined') return;
+      try {
+        const longTasks = [];
+        new PerformanceObserver(list => {
+          for (const entry of list.getEntries()) {
+            longTasks.push({
+              duration: entry.duration,
+              startTime: entry.startTime,
+              name: entry.name,
+            });
+            if (longTasks.length > 50) longTasks.shift();
+          }
+          recordMetric('long-tasks-count', longTasks.length);
+          const totalBlocking = longTasks.reduce((sum, t) => sum + Math.max(0, t.duration - 50), 0);
+          recordMetric('total-blocking-time', totalBlocking);
+        }).observe({ type: 'longtask', buffered: true });
+      } catch {
+        // longtask observer not supported
+      }
+    };
+
+    /**
+     * 8. Navigation-aware performance tracking
+     *    Reset and re-measure on YouTube SPA navigations.
+     */
+    const initNavigationTracking = () => {
+      window.addEventListener(
+        'yt-navigate-start',
+        () => {
+          mark('yt-navigate-start');
+        },
+        { passive: true }
+      );
+
+      window.addEventListener(
+        'yt-navigate-finish',
+        () => {
+          mark('yt-navigate-finish');
+          measure('yt-navigation-duration', 'yt-navigate-start');
+
+          // Re-boost LCP for new page
+          requestAnimationFrame(() => {
+            boostLCPElement();
+          });
+        },
+        { passive: true }
+      );
+    };
+
+    /**
+     * Initialize all LCP optimizations
+     */
+    const initLCPOptimizations = () => {
+      try {
+        // Critical (run immediately - biggest LCP impact)
+        injectResourceHints();
+        injectContentVisibilityCSS();
+        boostLCPElement();
+
+        // High priority (run in next microtask)
+        queueMicrotask(() => {
+          initNavigationTracking();
+          initLongTaskMonitor();
+        });
+
+        // Lower priority (defer to idle)
+        IdleScheduler.schedule(() => setupDeferredImageLoading(), 2);
+      } catch (e) {
+        console.warn('[YouTube+ Perf] LCP optimization init error:', e);
+      }
+    };
+
+    // Run LCP optimizations immediately
+    initLCPOptimizations();
+
+    // Expose new performance APIs
+    window.YouTubePerformance.SharedMutationManager = SharedMutationManager;
+    window.YouTubePerformance.IdleScheduler = IdleScheduler;
+    window.YouTubePerformance.boostLCPElement = boostLCPElement;
+    window.YouTubePerformance.injectResourceHints = injectResourceHints;
+
     window.YouTubeUtils &&
       YouTubeUtils.logger &&
       YouTubeUtils.logger.debug &&

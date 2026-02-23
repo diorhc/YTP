@@ -52,6 +52,7 @@
     'ky',
     'be',
     'bg',
+    'az',
   ];
 
   // Complete language names mapping for all YouTube supported languages
@@ -249,8 +250,8 @@
     af: 'en',
     am: 'en',
     // Central Asian
-    az: 'tr',
-    'az-az': 'tr',
+    az: 'az',
+    'az-az': 'az',
     be: 'be',
     'be-by': 'be',
     hy: 'ru',
@@ -598,9 +599,19 @@
           );
         translations = await loadTranslationsFromLoader(currentLanguage);
         // Ensure we always have English fallback available (best-effort).
+        // Skip the async fetch when embedded English translations are already
+        // bundled — this avoids a network round-trip on every page load.
         if (!fallbackTranslationsEn || Object.keys(fallbackTranslationsEn).length === 0) {
           try {
-            fallbackTranslationsEn = await loadTranslationsFromLoader('en');
+            const embeddedEn =
+              typeof window !== 'undefined' &&
+              window.YouTubePlusEmbeddedTranslations &&
+              window.YouTubePlusEmbeddedTranslations['en'];
+            if (embeddedEn && typeof embeddedEn === 'object') {
+              fallbackTranslationsEn = embeddedEn;
+            } else {
+              fallbackTranslationsEn = await loadTranslationsFromLoader('en');
+            }
           } catch {
             fallbackTranslationsEn = {};
           }

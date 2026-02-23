@@ -91,8 +91,6 @@
         /* Fix custom element display for Chrome */
         button-view-model{display:inline-flex;align-items:center;justify-content:center;}
         button-view-model.yt-spec-button-view-model{vertical-align:top;}
-        ytd-tri-state-button-view-model{display:inline-flex;align-items:center;justify-content:center;}
-        ytd-tri-state-button-view-model button{display:inline-flex;align-items:center;}
         html[dark] .stats-modal-content{background:rgba(24, 24, 24, 0.25)}
         html:not([dark]) .stats-modal-content{background:rgba(255,255,255,0.95);color:#222;border:1.25px solid rgba(0,0,0,0.06)}
         .stats-modal-close{background:transparent;border:none;color:#fff;font-size:36px;line-height:1;width:36px;height:36px;cursor:pointer;transition:transform .15s ease,color .15s;display:flex;align-items:center;justify-content:center;border-radius:8px;padding:0}
@@ -782,10 +780,83 @@
       likes: null, // Will be fetched separately
       thumbnail: extractThumbnailUrl(details),
       duration: details.lengthSeconds,
-      country: microformat.availableCountries?.[0] || null,
+      country: null, // Fetched separately from channel browse (availableCountries is geo-restriction, not creator country)
       monetized: microformat.isFamilySafe !== undefined,
       channelId: details.channelId,
     };
+  }
+
+  /**
+   * Fetch the channel creator's country from InnerTube browse API
+   * @param {string} channelId - YouTube channel ID (UCxxxx)
+   * @returns {Promise<string|null>} 2-letter country code or null
+   */
+  async function fetchChannelCountryFromInnerTube(channelId) {
+    if (!channelId) return null;
+    try {
+      const url = `https://www.youtube.com/youtubei/v1/browse?key=${INNERTUBE_API_KEY}&prettyPrint=false`;
+      const body = {
+        browseId: channelId,
+        context: {
+          client: {
+            clientName: 'WEB',
+            clientVersion: INNERTUBE_CLIENT_VERSION,
+            hl: 'en',
+            gl: 'US',
+          },
+        },
+      };
+      const response = await fetch(url, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-YouTube-Client-Name': '1',
+          'X-YouTube-Client-Version': INNERTUBE_CLIENT_VERSION,
+        },
+        body: JSON.stringify(body),
+      });
+      if (!response.ok) return null;
+      const data = await response.json();
+      // Try multiple header paths — YouTube returns c4TabbedHeaderRenderer for
+      // older-UI channels and pageHeaderRenderer for newer-UI channels.
+      // Also check frameworkUpdates mutations for new-UI country metadata.
+      const country =
+        data?.header?.c4TabbedHeaderRenderer?.country ||
+        data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.find?.(
+          p => p?.text?.content?.length === 2
+        )?.text?.content ||
+        (() => {
+          const mutations = data?.frameworkUpdates?.entityBatchUpdate?.mutations || [];
+          for (const m of mutations) {
+            const c =
+              m?.payload?.channelHeaderMetadataEntityViewModel?.country ||
+              m?.payload?.channelBasicInfoEntityViewModel?.country;
+            if (c) return c;
+          }
+          return null;
+        })();
+      return country || null;
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Fallback: fetch channel country from TubeInsights backend API
+   * @param {string} channelId - YouTube channel ID (UCxxxx)
+   * @returns {Promise<string|null>} 2-letter country code or null
+   */
+  async function fetchChannelCountryFromTubeInsights(channelId) {
+    if (!channelId) return null;
+    try {
+      const response = await fetch(`https://tubeinsights.exyezed.cc/api/channels/${channelId}`);
+      if (!response.ok) return null;
+      const data = await response.json();
+      const country = data?.items?.[0]?.snippet?.country;
+      return typeof country === 'string' && country.trim() ? country.trim().toUpperCase() : null;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -806,7 +877,17 @@
       }
 
       const data = await response.json();
-      return parseVideoStatsFromResponse(data);
+      const stats = parseVideoStatsFromResponse(data);
+
+      // Fetch the real creator country from channel browse API
+      if (stats.channelId) {
+        stats.country = await fetchChannelCountryFromInnerTube(stats.channelId);
+        if (!stats.country) {
+          stats.country = await fetchChannelCountryFromTubeInsights(stats.channelId);
+        }
+      }
+
+      return stats;
     } catch (error) {
       console.error('[YouTube+][Stats] InnerTube fetch error:', error);
       return null;
@@ -2429,26 +2510,11 @@
     }
   }
 
-  history.pushState = (function (f) {
-    /** @this {any} */
-    return function (...args) {
-      f.call(this, ...args);
-      checkUrlChange();
-    };
-  })(history.pushState);
-
-  history.replaceState = (function (f) {
-    /** @this {any} */
-    return function (...args) {
-      f.call(this, ...args);
-      checkUrlChange();
-    };
-  })(history.replaceState);
-
-  window.addEventListener('popstate', checkUrlChange);
-
-  // YouTube SPA navigation
+  // YouTube SPA navigation — yt-navigate-finish fires for all pushState/replaceState
+  // transitions on youtube.com, so wrapping history APIs is redundant and creates
+  // an ever-growing wrapper chain when multiple modules do the same thing.
   window.addEventListener('yt-navigate-finish', checkUrlChange, { passive: true });
+  window.addEventListener('popstate', checkUrlChange, { passive: true });
 
   function init() {
     try {
@@ -4079,7 +4145,7 @@
     window.YouTubeStats = {
       init,
       cleanup,
-      version: '2.4.1',
+      version: '2.4.2',
     };
   }
 

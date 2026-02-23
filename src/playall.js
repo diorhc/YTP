@@ -149,17 +149,22 @@
 
   scheduleNonCritical(() =>
     insertStylesSafely(`<style>
-        .ytp-btn {border-radius: 10px; font-family: 'Roboto', 'Arial', sans-serif; font-size: 1.35rem; line-height: 1.8rem; font-weight: 500; padding: 0.4em 0.75em; margin-left: 0; user-select: none; white-space: nowrap;}        
+        .ytp-btn {border-radius: 8px; font-family: 'Roboto', 'Arial', sans-serif; font-size: 1.4rem; line-height: 3.2rem; font-weight: 500; padding: 0 12px; margin-left: 0; user-select: none; white-space: nowrap;}        
         .ytp-btn, .ytp-btn > * {text-decoration: none; cursor: pointer;}        
         .ytp-badge {border-radius: 8px; padding: 0.2em; font-size: 0.8em; vertical-align: top;} 
-        .ytp-play-all-btn, .ytp-random-badge, .ytp-random-notice {background-color: #2b66da; color: white;} 
-        .ytp-play-all-btn {display:inline-flex;align-items:center;justify-content:center;min-height:32px;padding:0.45em 0.85em;white-space:nowrap;flex-shrink:0;max-width:fit-content;}
-        .ytp-play-all-btn:hover {background-color: #6192ee;}        
+        .ytp-random-badge, .ytp-random-notice {background-color: #2b66da; color: white;} 
+        /* Style Play All as a YouTube chip button */
+        .ytp-play-all-btn {display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;white-space:nowrap;flex-shrink:0;max-width:fit-content;border-radius:8px;font-size:1.4rem;line-height:2rem;font-weight:500;background-color:var(--yt-spec-badge-chip-background,rgba(255,255,255,0.1));color:var(--yt-spec-text-primary,#fff);border:none;transition:background-color .2s;cursor:pointer;text-decoration:none;}
+        .ytp-play-all-btn:hover {background-color:var(--yt-spec-badge-chip-background-hover,rgba(255,255,255,0.2));}        
+        html:not([dark]) .ytp-play-all-btn {background-color:var(--yt-spec-badge-chip-background,rgba(0,0,0,0.05));color:var(--yt-spec-text-primary,#0f0f0f);}
+        html:not([dark]) .ytp-play-all-btn:hover {background-color:var(--yt-spec-badge-chip-background-hover,rgba(0,0,0,0.1));}
         .ytp-button-row-wrapper {width: 100%; display: block; margin: 0 0 0.6rem 0;} 
         .ytp-button-container {display: inline-flex; align-items: center; gap: 0.6em; width: auto; margin: 0; flex-wrap: nowrap; overflow-x: auto; max-width: 100%;} 
-        ytd-feed-filter-chip-bar-renderer iron-selector#chips,
-        ytd-feed-filter-chip-bar-renderer iron-selector,
-        ytd-feed-filter-chip-bar-renderer #chips-wrapper {display:flex; align-items:center; flex-wrap:nowrap; gap:8px; overflow-x:auto;}
+        /* Ensure Play All sits inside chip bar container flow */
+        ytd-feed-filter-chip-bar-renderer .ytp-play-all-btn,
+        yt-chip-cloud-renderer .ytp-play-all-btn,
+        chip-bar-view-model.ytChipBarViewModelHost .ytp-play-all-btn,
+        .ytp-button-container .ytp-play-all-btn {height:32px;line-height:32px;vertical-align:middle;}
         ytd-rich-grid-renderer .ytp-button-row-wrapper {margin-left: 0;}        
         /* fetch() API introduces a race condition. This hides the occasional duplicate buttons */
         .ytp-play-all-btn ~ .ytp-play-all-btn {display: none;}        
@@ -244,7 +249,7 @@
   };
 
   let id = '';
-  const apply = () => {
+  const apply = (retryCount = 0) => {
     if (id === '') {
       // do not apply prematurely, caused by mutation observer
       console.warn('[Play All] Channel ID not yet determined');
@@ -257,31 +262,59 @@
         'ytm-feed-filter-chip-bar-renderer .chip-bar-contents, ytm-feed-filter-chip-bar-renderer > div'
       );
     } else {
-      parent = queryHTMLElement(
-        'ytd-feed-filter-chip-bar-renderer iron-selector#chips, ytd-feed-filter-chip-bar-renderer iron-selector, ytd-feed-filter-chip-bar-renderer #chips-wrapper'
-      );
+      // Use document.querySelector directly to bypass the DOM cache, which can
+      // return a stale null when the chip bar renders after the first apply() call.
+      // Use chip-bar-view-model.ytChipBarViewModelHost as primary (new 2026 UI),
+      // matching the reference script at greasyfork.org/ru/scripts/490557.
+      const desktopParentSelectors = [
+        'chip-bar-view-model.ytChipBarViewModelHost',
+        'ytd-feed-filter-chip-bar-renderer iron-selector#chips',
+        'ytd-feed-filter-chip-bar-renderer #chips-wrapper',
+        'yt-chip-cloud-renderer #chips',
+        'yt-chip-cloud-renderer .yt-chip-cloud-renderer',
+      ];
+
+      for (const selector of desktopParentSelectors) {
+        const candidate = document.querySelector(selector);
+        if (candidate instanceof HTMLElement) {
+          parent = candidate;
+          break;
+        }
+      }
     }
 
-    // #5: add a custom container for buttons if Latest/Popular/Oldest is missing
+    // #5: add a custom container for buttons if chip bar not found
     if (parent === null) {
-      const grid = queryHTMLElement('ytd-rich-grid-renderer, ytm-rich-grid-renderer');
+      const grid = queryHTMLElement(
+        'ytd-rich-grid-renderer, ytm-rich-grid-renderer, div.ytChipBarViewModelChipWrapper'
+      );
       if (!grid) {
-        try {
-          const sel = 'ytd-rich-grid-renderer, ytm-rich-grid-renderer';
-          window.YouTubeUtils && YouTubeUtils.logger && YouTubeUtils.logger.debug
-            ? YouTubeUtils.logger.debug('[Play All] Grid container not found', sel)
-            : console.warn('[Play All] Grid container not found', sel);
-        } catch {}
+        // Grid not yet rendered — retry (handles SPA navigation timing)
+        if (retryCount < 12) {
+          setTimeout(() => apply(retryCount + 1), 300);
+        }
         return;
       }
 
-      // Check if container already exists
-      let existingContainer = grid.querySelector('.ytp-button-container');
-      if (!existingContainer) {
-        grid.insertAdjacentHTML('afterbegin', '<div class="ytp-button-container"></div>');
-        existingContainer = grid.querySelector('.ytp-button-container');
+      // Also search inside the grid for chip bar in case it is a child
+      const chipBarInGrid = grid.querySelector(
+        'chip-bar-view-model.ytChipBarViewModelHost, ytd-feed-filter-chip-bar-renderer iron-selector#chips, ytd-feed-filter-chip-bar-renderer #chips-wrapper, yt-chip-cloud-renderer #chips'
+      );
+      if (chipBarInGrid instanceof HTMLElement) {
+        parent = chipBarInGrid;
+      } else if (retryCount < 8) {
+        // Chip bar not rendered yet — wait and retry (up to ~2.4s total)
+        setTimeout(() => apply(retryCount + 1), 300);
+        return;
+      } else {
+        // Last resort: insert a wrapper at the top of the grid
+        let existingContainer = grid.querySelector('.ytp-button-container');
+        if (!existingContainer) {
+          grid.insertAdjacentHTML('afterbegin', '<div class="ytp-button-container"></div>');
+          existingContainer = grid.querySelector('.ytp-button-container');
+        }
+        parent = existingContainer instanceof HTMLElement ? existingContainer : null;
       }
-      parent = existingContainer instanceof HTMLElement ? existingContainer : null;
     }
 
     if (!parent) {
@@ -313,6 +346,7 @@
 
     const playlistSuffix = id.startsWith('UC') ? id.substring(2) : id;
 
+    // Insert button directly into the container (chip bar or fallback wrapper)
     parent.insertAdjacentHTML(
       'beforeend',
       `<a class="ytp-btn ytp-play-all-btn" href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=random&ytp-random-initial=1" title="${getPlayAllAriaLabel()}" aria-label="${getPlayAllAriaLabel()}">${getPlayAllLabel()}</a>`
@@ -383,12 +417,17 @@
       return;
     }
 
-    // Regenerate button if switched between Latest and Popular
-    const element = $(
-      'ytd-rich-grid-renderer, ytm-feed-filter-chip-bar-renderer .iron-selected, ytm-feed-filter-chip-bar-renderer .chip-bar-contents .selected'
-    );
-    if (element) {
-      observer.observe(element, {
+    // Regenerate button if switched between Latest and Popular.
+    // Observe the grid (attribute changes when chip selection changes) and
+    // also observe chip-bar-view-model directly for the new 2026 UI.
+    const observeTarget =
+      document.querySelector('ytd-rich-grid-renderer') ||
+      document.querySelector('chip-bar-view-model.ytChipBarViewModelHost') ||
+      $(
+        'ytm-feed-filter-chip-bar-renderer .iron-selected, ytm-feed-filter-chip-bar-renderer .chip-bar-contents .selected'
+      );
+    if (observeTarget) {
+      observer.observe(observeTarget, {
         attributes: true,
         childList: false,
         subtree: false,

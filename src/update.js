@@ -27,7 +27,7 @@
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.4.1',
+    currentVersion: '2.4.2',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
@@ -737,7 +737,7 @@
 
       // Parse changelog from HTML
       // Look for version link followed by changelog span
-      // Structure: <a ...>v2.4.1</a> ... <span class="version-changelog">...</span>
+      // Structure: <a ...>v2.4.2</a> ... <span class="version-changelog">...</span>
       const escapedVersion = version.replace(/\./g, '\\.');
       // Match anchor tag content that contains the version number (handling prefixes like 'v', 'вер. ', etc.)
       const versionRegex = new RegExp(

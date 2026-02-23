@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} tanlangan",
   "playlistDeleteConfirm": "Pleylistdan {count} videoni o'chirasizmi?",
   "playlistDeleteSuccess": "Pleylistdan {count} video olib tashlandi",
-  "playlistDeletePartial": "{success} olib tashlandi, {fail} xato"
+  "playlistDeletePartial": "{success} olib tashlandi, {fail} xato",
+  "translateComment": "Tarjima qilish",
+  "showOriginal": "Aslini ko'rsatish"
 }

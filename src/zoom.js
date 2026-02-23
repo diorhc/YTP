@@ -101,8 +101,10 @@
       } catch {
         // fallback: ignore
       }
-      // Console output for live debugging
-      console.warn('[YouTube+] Zoom restore:', entry);
+      // Console output for live debugging (only when debug mode is active)
+      if ((typeof window !== 'undefined' && window.YTP_DEBUG) || window.YouTubePlusConfig?.debug) {
+        console.warn('[YouTube+] Zoom restore:', entry);
+      }
     } catch {}
   }
 
@@ -434,9 +436,18 @@
         try {
           ev.target.setPointerCapture(ev.pointerId);
         } catch {}
-        // Start mouse drag for panning when single mouse pointer
+        // Start mouse drag for panning when single mouse pointer and zoomed in.
+        // Skip at default zoom so we don't interfere with YouTube's native
+        // hold-left-mouse-button → 2× speed feature.
         try {
-          if (ev.pointerType === 'mouse' && ev.button === 0 && pointers.size <= 1 && video) {
+          const currentZoom = parseFloat(input.value) || readZoomPan().zoom || DEFAULT_ZOOM;
+          if (
+            ev.pointerType === 'mouse' &&
+            ev.button === 0 &&
+            pointers.size <= 1 &&
+            video &&
+            currentZoom > 1
+          ) {
             dragging = true;
             dragStartX = ev.clientX;
             dragStartY = ev.clientY;
@@ -640,6 +651,11 @@
       try {
         if (!featureEnabled) return;
         if (ev.button !== 0 || !video) return;
+        // Only intercept mousedown (and call preventDefault) when actually zoomed in.
+        // At default zoom (1×) we must NOT call preventDefault() because it breaks
+        // YouTube's native hold-left-mouse-button → 2× speed feature.
+        const currentZoom = parseFloat(input.value) || readZoomPan().zoom || DEFAULT_ZOOM;
+        if (currentZoom <= 1) return;
         dragging = true;
         dragStartX = ev.clientX;
         dragStartY = ev.clientY;
@@ -1198,6 +1214,10 @@
     return wrap;
   }
 
+  // Guard: track whether the yt-navigate-finish listener was already added so that
+  // toggling the zoom feature on/off does not accumulate duplicate listeners.
+  let _navigateListenerAdded = false;
+
   // Call this to initialize zoom (e.g. on page load / SPA navigation)
   function initZoom() {
     try {
@@ -1208,7 +1228,10 @@
         createZoomUI();
       };
       ensure();
-      window.addEventListener('yt-navigate-finish', () => setTimeout(() => createZoomUI(), 300));
+      if (!_navigateListenerAdded) {
+        _navigateListenerAdded = true;
+        window.addEventListener('yt-navigate-finish', () => setTimeout(() => createZoomUI(), 300));
+      }
     } catch {
       console.error('initZoom error');
     }

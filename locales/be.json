@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} абрана",
   "playlistDeleteConfirm": "Выдаліць {count} відэа з плэйліста?",
   "playlistDeleteSuccess": "{count} відэа выдалена з плэйліста",
-  "playlistDeletePartial": "{success} выдалена, {fail} не ўдалося"
+  "playlistDeletePartial": "{success} выдалена, {fail} не ўдалося",
+  "translateComment": "Перакласці",
+  "showOriginal": "Паказаць арыгінал"
 }

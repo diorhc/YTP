@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} тандалды",
   "playlistDeleteConfirm": "Ойнотуу тизмесинен {count} видеону өчүрөсүзбү?",
   "playlistDeleteSuccess": "Ойнотуу тизмесинен {count} видео өчүрүлдү",
-  "playlistDeletePartial": "{success} өчүрүлдү, {fail} ката"
+  "playlistDeletePartial": "{success} өчүрүлдү, {fail} ката",
+  "translateComment": "Которуу",
+  "showOriginal": "Түпнүсканы көрсөтүү"
 }

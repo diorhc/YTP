@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} dipilih",
   "playlistDeleteConfirm": "Hapus {count} video dari playlist?",
   "playlistDeleteSuccess": "{count} video dihapus dari playlist",
-  "playlistDeletePartial": "{success} dihapus, {fail} gagal"
+  "playlistDeletePartial": "{success} dihapus, {fail} gagal",
+  "translateComment": "Terjemahkan",
+  "showOriginal": "Tampilkan asli"
 }

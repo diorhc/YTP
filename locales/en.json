@@ -287,5 +287,7 @@
   "playlistSelectedCount": "{count} selected",
   "playlistDeleteConfirm": "Delete {count} video(s) from playlist?",
   "playlistDeleteSuccess": "{count} video(s) removed from playlist",
-  "playlistDeletePartial": "{success} removed, {fail} failed"
+  "playlistDeletePartial": "{success} removed, {fail} failed",
+  "translateComment": "Translate",
+  "showOriginal": "Show original"
 }

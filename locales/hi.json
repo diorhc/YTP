@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} चुना गया",
   "playlistDeleteConfirm": "{count} वीडियो प्लेलिस्ट से हटाएं?",
   "playlistDeleteSuccess": "{count} वीडियो प्लेलिस्ट से हटाए गए",
-  "playlistDeletePartial": "{success} वीडियो हटाए गए, {fail} विफल"
+  "playlistDeletePartial": "{success} वीडियो हटाए गए, {fail} विफल",
+  "translateComment": "अनवद कर",
+  "showOriginal": "मल दखए"
 }

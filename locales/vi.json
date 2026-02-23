@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} đã chọn",
   "playlistDeleteConfirm": "Xóa {count} video khỏi playlist?",
   "playlistDeleteSuccess": "{count} video đã được xóa khỏi playlist",
-  "playlistDeletePartial": "{success} đã xóa, {fail} không thành công"
+  "playlistDeletePartial": "{success} đã xóa, {fail} không thành công",
+  "translateComment": "Dịch",
+  "showOriginal": "Hiện nguyên bản"
 }

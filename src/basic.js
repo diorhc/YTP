@@ -1126,11 +1126,11 @@ if (typeof window !== 'undefined') {
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.4.1] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.4.2] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.4.1',
+    version: '2.4.2',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1161,7 +1161,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.4.1 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.4.2 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -2265,7 +2265,12 @@ if (typeof window !== 'undefined') {
     },
 
     applyCurrentSpeed() {
-      document.querySelectorAll('video').forEach(video => {
+      // Use DOM cache when available to avoid redundant live queries.
+      const videos =
+        window.YouTubeDOMCache && typeof window.YouTubeDOMCache.getAll === 'function'
+          ? window.YouTubeDOMCache.getAll('video')
+          : document.querySelectorAll('video');
+      videos.forEach(video => {
         if (video && video.playbackRate !== this.speedControl.currentSpeed) {
           video.playbackRate = this.speedControl.currentSpeed;
         }
@@ -2276,6 +2281,29 @@ if (typeof window !== 'undefined') {
       if (this._speedInterval) clearInterval(this._speedInterval);
       this._speedInterval = null;
 
+      // Track left-mouse-button hold state so we can detect YouTube's native
+      // hold-to-2× speed feature. When the user presses and holds the left
+      // button on the player, YouTube temporarily sets playbackRate = 2. We
+      // must NOT override that, or the feature is immediately cancelled.
+      if (!this._mouseHoldTracked) {
+        this._mouseHoldTracked = true;
+        this._mouseButtonHeld = false;
+        document.addEventListener(
+          'mousedown',
+          e => {
+            if (e.button === 0) this._mouseButtonHeld = true;
+          },
+          { passive: true, capture: true }
+        );
+        document.addEventListener(
+          'mouseup',
+          e => {
+            if (e.button === 0) this._mouseButtonHeld = false;
+          },
+          { passive: true, capture: true }
+        );
+      }
+
       // Event-driven speed control instead of polling every 1s
       const applySpeed = () => this.applyCurrentSpeed();
       const attachSpeedListeners = video => {
@@ -2284,6 +2312,10 @@ if (typeof window !== 'undefined') {
         video.addEventListener('loadedmetadata', applySpeed);
         video.addEventListener('playing', applySpeed);
         video.addEventListener('ratechange', () => {
+          // YouTube's hold-to-2× temporarily raises playbackRate above the
+          // user-chosen speed while the left mouse button is held. Skip the
+          // reset so YouTube's native feature isn't cancelled.
+          if (this._mouseButtonHeld && video.playbackRate > this.speedControl.currentSpeed) return;
           if (video.playbackRate !== this.speedControl.currentSpeed) {
             video.playbackRate = this.speedControl.currentSpeed;
           }

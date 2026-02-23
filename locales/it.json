@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} selezionati",
   "playlistDeleteConfirm": "Eliminare {count} video dalla playlist?",
   "playlistDeleteSuccess": "{count} video eliminati dalla playlist",
-  "playlistDeletePartial": "{success} eliminati, {fail} non riusciti"
+  "playlistDeletePartial": "{success} eliminati, {fail} non riusciti",
+  "translateComment": "Traduci",
+  "showOriginal": "Mostra originale"
 }

@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} ausgewählt",
   "playlistDeleteConfirm": "{count} Videos aus der Wiedergabeliste löschen?",
   "playlistDeleteSuccess": "{count} Videos aus der Wiedergabeliste gelöscht",
-  "playlistDeletePartial": "{success} gelöscht, {fail} nicht gelöscht"
+  "playlistDeletePartial": "{success} gelöscht, {fail} nicht gelöscht",
+  "translateComment": "Übersetzen",
+  "showOriginal": "Original anzeigen"
 }

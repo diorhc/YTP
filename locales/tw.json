@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} 已選取",
   "playlistDeleteConfirm": "從播放清單刪除 {count} 部影片？",
   "playlistDeleteSuccess": "{count} 部影片已從播放清單刪除",
-  "playlistDeletePartial": "{success} 已刪除，{fail} 刪除失敗"
+  "playlistDeletePartial": "{success} 已刪除，{fail} 刪除失敗",
+  "translateComment": "翻譯",
+  "showOriginal": "顯示原文"
 }

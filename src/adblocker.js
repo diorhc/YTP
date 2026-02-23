@@ -48,7 +48,7 @@
      * @type {Object}
      */
     config: {
-      skipInterval: 1000,
+      skipInterval: 1000, // Combined ad-check interval (skip + remove + dismiss).
       removeInterval: 3000,
       enableLogging: false,
       maxRetries: 2,
@@ -85,13 +85,14 @@
      */
     selectors: {
       // Only hide minor ad UI elements that YouTube doesn't monitor
-      ads: '.ytp-ad-timed-pie-countdown-container,.ytp-ad-survey-questions',
+      ads: '.ytp-ad-timed-pie-countdown-container,.ytp-ad-survey-questions,.ytp-ad-overlay-container,.ytp-ad-progress,.ytp-ad-progress-list',
       // These are removed via DOM manipulation only (not CSS) to avoid detection
       elements:
-        '#masthead-ad,ytd-merch-shelf-renderer,.yt-mealbar-promo-renderer,ytmusic-mealbar-promo-renderer,ytmusic-statement-banner-renderer,.ytp-featured-product',
+        '#masthead-ad,ytd-merch-shelf-renderer,.yt-mealbar-promo-renderer,ytmusic-mealbar-promo-renderer,ytmusic-statement-banner-renderer,.ytp-featured-product,ytd-in-feed-ad-layout-renderer,ytd-banner-promo-renderer,ytd-statement-banner-renderer,ytd-brand-video-singleton-renderer,ytd-brand-video-shelf-renderer,ytd-promoted-sparkles-web-renderer,ytd-display-ad-renderer,ytd-promoted-video-renderer,.ytd-mealbar-promo-renderer',
       video: 'video.html5-main-video',
       // Match both ad-slot renderers inside reels and standalone ad-slot-renderer nodes
-      removal: 'ytd-reel-video-renderer .ytd-ad-slot-renderer, ytd-ad-slot-renderer, #player-ads',
+      removal:
+        'ytd-reel-video-renderer .ytd-ad-slot-renderer, ytd-ad-slot-renderer, #player-ads, ytd-in-feed-ad-layout-renderer, ytd-display-ad-renderer, ytd-promoted-sparkles-web-renderer, ytd-promoted-video-renderer, ad-slot-renderer, ytd-player-legacy-desktop-watch-ads-renderer',
     },
 
     // Known item wrapper selectors that should be removed when they only contain ads
@@ -199,7 +200,10 @@
 
       // Check for ad-showing class on player
       const moviePlayer = $('#movie_player');
-      const isAdShowing = moviePlayer && moviePlayer.classList.contains('ad-showing');
+      const isAdShowing =
+        moviePlayer &&
+        (moviePlayer.classList.contains('ad-showing') ||
+          moviePlayer.classList.contains('ad-interrupting'));
       if (!isAdShowing) {
         AdBlocker.state.retryCount = 0;
         return;
@@ -215,28 +219,54 @@
           'button.ytp-ad-skip-button-modern',
           '.ytp-ad-skip-button-slot button',
           '.ytp-ad-skip-button-container button',
+          '.ytp-ad-skip-button-modern .ytp-ad-skip-button-container',
+          // 2025+ new skip button selectors
+          '.ytp-skip-ad-button__text',
+          'button[class*="skip"]',
+          '.ytp-ad-skip-button-modern button',
+          'ytd-button-renderer.ytp-ad-skip-button-renderer button',
         ];
         for (const sel of skipSelectors) {
           const skipButton = document.querySelector(sel);
-          if (skipButton && skipButton.offsetParent !== null) {
-            skipButton.click();
-            AdBlocker.state.retryCount = 0;
-            return;
+          if (skipButton) {
+            // offsetParent is null for position:fixed elements (YouTube skip buttons)
+            // so use getBoundingClientRect width/height as the visibility check instead
+            const rect = skipButton.getBoundingClientRect();
+            if (rect.width > 0 && rect.height > 0) {
+              skipButton.click();
+              AdBlocker.state.retryCount = 0;
+              return;
+            }
           }
         }
 
-        // Strategy 2: Mute only (no playbackRate change - that's detectable)
+        // Strategy 2: Speed through ad (mute + seek to end)
         const video = $(AdBlocker.selectors.video);
         if (video) {
           video.muted = true;
+          // Attempt to seek to end of ad if duration is available
+          if (video.duration && isFinite(video.duration) && video.duration > 0) {
+            try {
+              video.currentTime = Math.max(video.duration - 0.1, 0);
+            } catch {}
+          }
         }
 
         // Strategy 3: Close overlay ads
-        const overlayClose = $(
-          '.ytp-ad-overlay-close-button, .ytp-ad-overlay-close-container button'
-        );
-        if (overlayClose) {
-          overlayClose.click();
+        const overlaySelectors = [
+          '.ytp-ad-overlay-close-button',
+          '.ytp-ad-overlay-close-container button',
+          '.ytp-ad-overlay-close-button button',
+          // 2025+ overlay close
+          '.ytp-ad-overlay-ad-info-button-container',
+          'button[id="dismiss-button"]',
+        ];
+        for (const sel of overlaySelectors) {
+          const overlayClose = $(sel);
+          if (overlayClose) {
+            overlayClose.click();
+            break;
+          }
         }
 
         AdBlocker.state.retryCount = 0;
@@ -451,9 +481,21 @@
           AdBlocker.dismissAdBlockerWarning();
         }
       };
-      // Single interval for all ad-related checks
+      // Single interval for all ad-related checks (faster interval for responsive skip)
       const adInterval = setInterval(combinedAdCheck, AdBlocker.config.skipInterval);
       YouTubeUtils.cleanupManager.registerInterval(adInterval);
+
+      // Also monitor video play events for immediate ad detection
+      try {
+        const handleVideoPlay = () => {
+          if (AdBlocker.config.enabled) {
+            setTimeout(AdBlocker.skipAd, 50);
+            setTimeout(AdBlocker.skipAd, 200);
+            setTimeout(AdBlocker.skipAd, 500);
+          }
+        };
+        document.addEventListener('playing', handleVideoPlay, { capture: true, passive: true });
+      } catch {}
 
       // Navigation handling
       const handleNavigation = () => {

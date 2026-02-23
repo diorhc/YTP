@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "youtubeplus",
-  "version": "2.4.1",
+  "version": "2.4.2",
   "description": "Professional-grade YouTube enhancement userscript with modular architecture, comprehensive error handling, performance monitoring, and automated testing",
   "private": true,
   "author": "diorhc",

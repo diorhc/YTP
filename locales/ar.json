@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} تم تحديده",
   "playlistDeleteConfirm": "حذف {count} فيديو من قائمة التشغيل؟",
   "playlistDeleteSuccess": "تم حذف {count} فيديو من قائمة التشغيل",
-  "playlistDeletePartial": "{success} تم الحذف, {fail} فشل"
+  "playlistDeletePartial": "{success} تم الحذف, {fail} فشل",
+  "translateComment": "ترجمة",
+  "showOriginal": "عرض الأصل"
 }

@@ -692,11 +692,14 @@ const executionScript = () => {
       return addHTML;
     }
 
+    // All languages shipped with the script — keep in sync with i18n.js AVAILABLE_LANGUAGES.
     const langWords = {
       ar: true,
+      be: true,
+      bg: true,
       cn: true,
-      du: true,
       de: true,
+      du: true,
       en: true,
       es: true,
       fr: true,
@@ -704,66 +707,130 @@ const executionScript = () => {
       id: true,
       it: true,
       jp: true,
+      kk: true,
       kr: true,
+      ky: true,
       pl: true,
       pt: true,
       ru: true,
       tr: true,
       tw: true,
       uk: true,
+      uz: true,
       vi: true,
     };
 
+    /**
+     * Get the current UI language code.
+     * Delegates to the centralized i18n system so all 24 languages (and their
+     * locale variants) are resolved correctly. Falls back to a minimal inline map
+     * for the brief window before i18n initialises.
+     */
     function getLang() {
-      let lang = 'en';
-      const htmlLang = ((document || 0).documentElement || 0).lang || '';
-      switch (htmlLang) {
-        case 'en':
-        case 'en-GB':
-          lang = 'en';
-          break;
-        case 'de':
-        case 'de-DE':
-          lang = 'du';
-          break;
-        case 'fr':
-        case 'fr-CA':
-        case 'fr-FR':
-          lang = 'fr';
-          break;
-        case 'zh-Hant':
-        case 'zh-Hant-HK':
-        case 'zh-Hant-TW':
-          lang = 'tw';
-          break;
-        case 'zh-Hans':
-        case 'zh-Hans-CN':
-          lang = 'cn';
-          break;
-        case 'ja':
-        case 'ja-JP':
-          lang = 'jp';
-          break;
-        case 'ko':
-        case 'ko-KR':
-          lang = 'kr';
-          break;
-        case 'ru':
-        case 'ru-RU':
-          lang = 'ru';
-          break;
-        default:
-          lang = 'en';
-      }
+      // Prefer the authoritative i18n system (already detects ytcfg, html[lang], URL hl=)
+      try {
+        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.getLanguage === 'function') {
+          const detected = window.YouTubePlusI18n.getLanguage();
+          if (detected && langWords[detected]) return detected;
+        }
+      } catch {}
 
-      return lang;
+      // Inline fallback covers all 24 supported languages so early callers
+      // (before i18n is ready) still get a correct code.
+      const htmlLang = ((document || 0).documentElement || 0).lang || '';
+      const localMap = {
+        // Dutch (de → 'du' is the project's internal code, not a typo)
+        de: 'du',
+        'de-de': 'du',
+        'de-at': 'du',
+        'de-ch': 'du',
+        // French
+        fr: 'fr',
+        'fr-fr': 'fr',
+        'fr-ca': 'fr',
+        'fr-be': 'fr',
+        'fr-ch': 'fr',
+        // Chinese (Traditional)
+        'zh-hant': 'tw',
+        'zh-hant-hk': 'tw',
+        'zh-hant-tw': 'tw',
+        'zh-tw': 'tw',
+        'zh-hk': 'tw',
+        // Chinese (Simplified)
+        'zh-hans': 'cn',
+        'zh-hans-cn': 'cn',
+        'zh-cn': 'cn',
+        zh: 'cn',
+        'zh-sg': 'cn',
+        // Japanese
+        ja: 'jp',
+        'ja-jp': 'jp',
+        // Korean
+        ko: 'kr',
+        'ko-kr': 'kr',
+        // Russian
+        ru: 'ru',
+        'ru-ru': 'ru',
+        // Ukrainian
+        uk: 'uk',
+        'uk-ua': 'uk',
+        // Belarusian
+        be: 'be',
+        'be-by': 'be',
+        // Bulgarian
+        bg: 'bg',
+        'bg-bg': 'bg',
+        // Spanish
+        es: 'es',
+        'es-es': 'es',
+        'es-419': 'es',
+        'es-mx': 'es',
+        // Portuguese
+        pt: 'pt',
+        'pt-pt': 'pt',
+        'pt-br': 'pt',
+        // Italian
+        it: 'it',
+        'it-it': 'it',
+        // Polish
+        pl: 'pl',
+        'pl-pl': 'pl',
+        // Dutch (nl → 'du')
+        nl: 'du',
+        'nl-nl': 'du',
+        'nl-be': 'du',
+        // Arabic
+        ar: 'ar',
+        'ar-sa': 'ar',
+        'ar-ae': 'ar',
+        'ar-eg': 'ar',
+        // Hindi
+        hi: 'hi',
+        'hi-in': 'hi',
+        // Indonesian
+        id: 'id',
+        'id-id': 'id',
+        // Turkish
+        tr: 'tr',
+        'tr-tr': 'tr',
+        // Vietnamese
+        vi: 'vi',
+        'vi-vn': 'vi',
+        // Uzbek
+        uz: 'uz',
+        'uz-uz': 'uz',
+        // Kazakh
+        kk: 'kk',
+        'kk-kz': 'kk',
+        // Kyrgyz
+        ky: 'ky',
+      };
+      return localMap[htmlLang.toLowerCase()] || 'en';
     }
 
     function getLangForPage() {
       const lang = getLang();
-
-      if (langWords[lang]) _pageLang = lang;
-      else _pageLang = 'en';
+      _pageLang = langWords[lang] ? lang : 'en';
     }
 
     /** @type {Object.<string, number>} */
@@ -5242,6 +5309,17 @@ const styles = {
   @supports (color: var(--tyt-fix-20251124)) { #below ytd-watch-metadata .ytTextCarouselItemViewModelImageType { height: 16px; width: 16px;}
   #below ytd-watch-metadata yt-text-carousel-item-view-model { column-gap: 6px;}
   #below ytd-watch-metadata ytd-watch-info-text#ytd-watch-info-text { font-size: inherit; line-height: inherit;}
+  /* Fix: video tab thumbnails (yt-lockup-view-model) too large in side panel */
+  #tab-videos yt-lockup-view-model{max-width:100%;contain:layout paint;}
+  #tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image,#tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image img,#tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image yt-image{max-width:168px;max-height:94px;width:168px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;}
+  #tab-videos yt-lockup-view-model .yt-lockup-view-model--horizontal{display:flex;gap:8px;align-items:flex-start;}
+  #tab-videos yt-lockup-view-model .yt-lockup-view-model--horizontal .yt-lockup-view-model__content-image{flex-shrink:0;width:168px;}
+  #tab-videos yt-lockup-view-model .yt-lockup-view-model--horizontal .yt-lockup-view-model__metadata{flex:1;min-width:0;overflow:hidden;}
+  #tab-videos ytd-video-renderer[use-search-ui] #thumbnail.ytd-video-renderer,#tab-videos ytd-compact-video-renderer #thumbnail{max-width:168px;width:168px;flex-shrink:0;}
+  /* ── LCP Performance: safe content-visibility hints (no contain:layout to preserve sticky) ── */
+  ytd-browse[page-subtype="home"] #contents.ytd-rich-grid-renderer>ytd-rich-item-renderer:nth-child(n+9){content-visibility:auto;contain-intrinsic-size:auto 360px;}
+  ytd-playlist-video-list-renderer #contents>ytd-playlist-video-renderer:nth-child(n+10){content-visibility:auto;contain-intrinsic-size:auto 90px;}
+  ytd-watch-next-secondary-results-renderer ytd-compact-video-renderer:nth-child(n+5){content-visibility:auto;contain-intrinsic-size:auto 94px;}
   `,
 };
 

@@ -286,5 +286,7 @@
   "playlistSelectedCount": "{count} 已选择",
   "playlistDeleteConfirm": "删除 {count} 个视频？",
   "playlistDeleteSuccess": "{count} 个视频已删除",
-  "playlistDeletePartial": "{success} 个已删除, {fail} 个失败"
+  "playlistDeletePartial": "{success} 个已删除, {fail} 个失败",
+  "translateComment": "翻译",
+  "showOriginal": "显示原文"
 }
