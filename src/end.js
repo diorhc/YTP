@@ -53,16 +53,14 @@
   // High-performance utilities: use shared debounce when available
   const debounce = (fn, ms) => {
     try {
-      return (
-        window.YouTubeUtils?.debounce ||
-        ((f, t) => {
-          let id;
-          return (...args) => {
-            clearTimeout(id);
-            id = setTimeout(() => f(...args), t);
-          };
-        })(fn, ms)
-      );
+      if (window.YouTubeUtils?.debounce) {
+        return window.YouTubeUtils.debounce(fn, ms);
+      }
+      let id;
+      return (...args) => {
+        clearTimeout(id);
+        id = setTimeout(() => fn(...args), ms);
+      };
     } catch {
       let id;
       return (...args) => {

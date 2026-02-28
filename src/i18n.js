@@ -55,9 +55,7 @@
     'az',
   ];
 
-  // Complete language names mapping for all YouTube supported languages
   const LANGUAGE_NAMES = {
-    // Primary supported languages
     en: 'English',
     ru: 'Русский',
     kr: '한국어',
@@ -67,7 +65,6 @@
     tw: '繁體中文',
     jp: '日本語',
     tr: 'Türkçe',
-    // European languages
     es: 'Español',
     pt: 'Português',
     de: 'Deutsch',
@@ -97,7 +94,6 @@
     ca: 'Català',
     eu: 'Euskara',
     gl: 'Galego',
-    // Middle Eastern & African languages
     ar: 'العربية',
     he: 'עברית',
     fa: 'فارسی',
@@ -105,7 +101,6 @@
     zu: 'isiZulu',
     af: 'Afrikaans',
     am: 'አማርኛ',
-    // Asian languages
     hi: 'हिन्दी',
     th: 'ไทย',
     vi: 'Tiếng Việt',
@@ -125,7 +120,6 @@
     my: 'မြန်မာ',
     ne: 'नेपाली',
     si: 'සිංහල',
-    // Central Asian & Caucasus languages
     az: 'Azərbaycanca',
     be: 'Беларуская',
     hy: 'Հայերեն',
@@ -137,49 +131,36 @@
     uz: 'Oʻzbekcha',
   };
 
-  // Language fallback mapping - maps YouTube locale variants to shipped translation files
   const LANGUAGE_FALLBACKS = {
-    // Spanish variants
     es: 'es',
     'es-es': 'es',
     'es-mx': 'es',
     'es-419': 'es',
-    // Portuguese variants
     pt: 'pt',
     'pt-br': 'pt',
     'pt-pt': 'pt',
-    // German variants
     de: 'de',
     'de-de': 'de',
     'de-at': 'de',
     'de-ch': 'de',
-    // Italian
     it: 'it',
-    // Polish
     pl: 'pl',
-    // Ukrainian - fallback to Russian
     uk: 'uk',
     'uk-ua': 'uk',
-    // Arabic variants
     ar: 'ar',
     'ar-sa': 'ar',
     'ar-ae': 'ar',
     'ar-eg': 'ar',
-    // Hindi
     hi: 'hi',
     'hi-in': 'hi',
-    // Thai
     th: 'en',
     'th-th': 'en',
-    // Vietnamese
     vi: 'vi',
     'vi-vn': 'vi',
-    // Indonesian/Malay
     id: 'id',
     'id-id': 'id',
     ms: 'en',
     'ms-my': 'en',
-    // Scandinavian languages
     sv: 'en',
     'sv-se': 'en',
     no: 'en',
@@ -189,7 +170,6 @@
     'da-dk': 'en',
     fi: 'en',
     'fi-fi': 'en',
-    // Central European languages
     cs: 'en',
     'cs-cz': 'en',
     sk: 'en',
@@ -198,7 +178,6 @@
     'hu-hu': 'en',
     ro: 'en',
     'ro-ro': 'en',
-    // Balkan languages
     bg: 'bg',
     'bg-bg': 'bg',
     hr: 'en',
@@ -207,17 +186,13 @@
     'sr-rs': 'ru',
     sl: 'en',
     'sl-si': 'en',
-    // Greek
     el: 'en',
     'el-gr': 'en',
-    // Hebrew
     he: 'en',
     'he-il': 'en',
     iw: 'en',
-    // Persian
     fa: 'en',
     'fa-ir': 'en',
-    // Indian languages
     bn: 'en',
     'bn-in': 'en',
     ta: 'en',
@@ -234,7 +209,6 @@
     'ml-in': 'en',
     pa: 'en',
     'pa-in': 'en',
-    // Southeast Asian
     fil: 'en',
     'fil-ph': 'en',
     tl: 'en',
@@ -243,13 +217,11 @@
     my: 'en',
     ne: 'en',
     si: 'en',
-    // African languages
     sw: 'en',
     'sw-ke': 'en',
     zu: 'en',
     af: 'en',
     am: 'en',
-    // Central Asian
     az: 'az',
     'az-az': 'az',
     be: 'be',
@@ -263,14 +235,12 @@
     tg: 'ru',
     uz: 'uz',
     'uz-uz': 'uz',
-    // Baltic languages
     lt: 'en',
     'lt-lt': 'en',
     lv: 'en',
     'lv-lv': 'en',
     et: 'en',
     'et-ee': 'en',
-    // Others
     mk: 'ru',
     sq: 'en',
     bs: 'en',
@@ -448,20 +418,16 @@
 
   // Language mapping for common locale codes - extended to support all YouTube languages
   const languageMap = {
-    // Korean
     ko: 'kr',
     'ko-kr': 'kr',
-    // French
     fr: 'fr',
     'fr-fr': 'fr',
     'fr-ca': 'fr',
     'fr-be': 'fr',
     'fr-ch': 'fr',
-    // Dutch
     nl: 'du',
     'nl-nl': 'du',
     'nl-be': 'du',
-    // Chinese
     zh: 'cn',
     'zh-cn': 'cn',
     'zh-hans': 'cn',
@@ -469,23 +435,18 @@
     'zh-tw': 'tw',
     'zh-hk': 'tw',
     'zh-hant': 'tw',
-    // Japanese
     ja: 'jp',
     'ja-jp': 'jp',
-    // Turkish
     tr: 'tr',
     'tr-tr': 'tr',
-    // Russian
     ru: 'ru',
     'ru-ru': 'ru',
-    // English variants
     en: 'en',
     'en-us': 'en',
     'en-gb': 'en',
     'en-au': 'en',
     'en-ca': 'en',
     'en-in': 'en',
-    // For languages with fallbacks, use the fallback
     ...Object.fromEntries(
       Object.entries(LANGUAGE_FALLBACKS).map(([key, fallback]) => [key, fallback])
     ),

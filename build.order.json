@@ -27,5 +27,6 @@
   "end.js",
   "playall.js",
   "time.js",
-  "zoom.js"
+  "zoom.js",
+  "voting.js"
 ]

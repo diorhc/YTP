@@ -1400,10 +1400,7 @@
   function setupUrlChangeDetection() {
     let currentUrl = location.href;
 
-    const originalPushState = history.pushState;
-    const originalReplaceState = history.replaceState;
-
-    const popHandler = () => {
+    const onNavChange = () => {
       setTimeout(() => {
         if (!isEnabled()) return;
         if (location.href !== currentUrl) {
@@ -1421,39 +1418,15 @@
       scheduleProcessAll(120);
     };
 
-    history.pushState = function (...args) {
-      originalPushState.call(history, ...args);
-      setTimeout(() => {
-        if (!isEnabled()) return;
-        if (location.href !== currentUrl) {
-          currentUrl = location.href;
-          scheduleProcessAll(250);
-        }
-      }, 100);
-    };
-
-    history.replaceState = function (...args) {
-      originalReplaceState.call(history, ...args);
-      setTimeout(() => {
-        if (!isEnabled()) return;
-        if (location.href !== currentUrl) {
-          currentUrl = location.href;
-          scheduleProcessAll(250);
-        }
-      }, 100);
-    };
-
-    window.addEventListener('popstate', popHandler);
-    // YouTube is a SPA; use the navigation event instead of tight polling.
+    // Use centralized pushState/replaceState event from utils.js
+    window.addEventListener('ytp-history-navigate', onNavChange);
+    window.addEventListener('popstate', onNavChange);
     window.addEventListener('yt-navigate-finish', ytNavigateHandler);
 
     return () => {
       try {
-        history.pushState = originalPushState;
-        history.replaceState = originalReplaceState;
-      } catch {}
-      try {
-        window.removeEventListener('popstate', popHandler);
+        window.removeEventListener('ytp-history-navigate', onNavChange);
+        window.removeEventListener('popstate', onNavChange);
         window.removeEventListener('yt-navigate-finish', ytNavigateHandler);
       } catch {}
     };

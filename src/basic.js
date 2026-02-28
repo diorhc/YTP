@@ -986,6 +986,12 @@ const YouTubeUtils = (() => {
 
   // Global error handler for uncaught errors
   window.addEventListener('error', event => {
+    const message = String(event?.message || '');
+    const errorMessage = String(event?.error?.message || '');
+    if (message.includes('ResizeObserver loop') || errorMessage.includes('ResizeObserver loop')) {
+      return;
+    }
+
     // Only log errors from our script
     if (event.filename && event.filename.includes('youtube')) {
       logError(
@@ -1120,17 +1126,19 @@ if (typeof window !== 'undefined') {
     for (const k of Object.keys(YouTubeUtils)) {
       if (existing[k] === undefined) existing[k] = YouTubeUtils[k];
     }
-  } catch {}
+  } catch (e) {
+    console.error('[YouTube+] Failed to merge core utilities:', e);
+  }
 
   // Add initialization health check (non-intrusive)
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.4.2] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.4.3] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.4.2',
+    version: '2.4.3',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1161,7 +1169,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.4.2 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.4.3 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1183,6 +1191,7 @@ if (typeof window !== 'undefined') {
       currentSpeed: 1,
       activeAnimationId: null,
       storageKey: 'youtube_playback_speed',
+      availableSpeeds: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0],
     },
 
     _initialized: false,
@@ -1190,6 +1199,11 @@ if (typeof window !== 'undefined') {
     // Settings
     settings: {
       enableSpeedControl: true,
+      speedControlHotkeys: {
+        decrease: 'g',
+        increase: 'h',
+        reset: 'b',
+      },
       enableScreenshot: true,
       enableDownload: true,
 
@@ -1200,11 +1214,13 @@ if (typeof window !== 'undefined') {
         immersiveSearch: true,
         hideVoiceSearch: true,
         transparentHeader: true,
-        hideSideGuide: false,
+        hideSideGuide: true,
         cleanSideGuide: false,
         fixFeedLayout: true,
         betterCaptions: true,
         playerBlur: true,
+        theaterEnhancements: true,
+        misc: true,
       },
 
       // Enhanced features (advanced tab)
@@ -1318,6 +1334,32 @@ if (typeof window !== 'undefined') {
 
       try {
         this.loadSettings();
+        this.settings.speedControlHotkeys = this.settings.speedControlHotkeys || {};
+        this.settings.speedControlHotkeys.decrease = this.normalizeSpeedHotkey(
+          this.settings.speedControlHotkeys.decrease,
+          'g'
+        );
+        this.settings.speedControlHotkeys.increase = this.normalizeSpeedHotkey(
+          this.settings.speedControlHotkeys.increase,
+          'h'
+        );
+        this.settings.speedControlHotkeys.reset = this.normalizeSpeedHotkey(
+          this.settings.speedControlHotkeys.reset,
+          'b'
+        );
+
+        // Restore saved playback speed from localStorage
+        try {
+          const savedSpeed = localStorage.getItem(this.speedControl.storageKey);
+          if (savedSpeed !== null) {
+            const parsed = Number(savedSpeed);
+            if (Number.isFinite(parsed) && parsed > 0 && parsed <= 16) {
+              this.speedControl.currentSpeed = parsed;
+            }
+          }
+        } catch (e) {
+          console.warn('[YouTube+] Speed restore error:', e);
+        }
       } catch (error) {
         console.warn('[YouTube+][Basic]', 'Failed to load settings during init:', error);
       }
@@ -1345,18 +1387,7 @@ if (typeof window !== 'undefined') {
           if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
 
           // Ignore when focus is on editable elements
-          const active = document.activeElement;
-          if (active) {
-            const tag = (active.tagName || '').toLowerCase();
-            if (
-              tag === 'input' ||
-              tag === 'textarea' ||
-              tag === 'select' ||
-              active.isContentEditable
-            ) {
-              return;
-            }
-          }
+          if (this.isEditableTarget(document.activeElement)) return;
 
           if (!this.settings.enableScreenshot) return;
 
@@ -1380,6 +1411,87 @@ if (typeof window !== 'undefined') {
           YouTubeUtils.logError('Basic', 'Failed to register screenshot keyboard shortcut', e);
         }
       }
+
+      // Keyboard shortcuts: adjust speed (decrease/increase)
+      try {
+        const speedHotkeyHandler = e => {
+          if (!this.settings.enableSpeedControl || !e || !e.key) return;
+          if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+          if (this.isEditableTarget(document.activeElement)) return;
+
+          const key = String(e.key).toLowerCase();
+          const decreaseKey = this.normalizeSpeedHotkey(
+            this.settings.speedControlHotkeys?.decrease,
+            'g'
+          );
+          const increaseKey = this.normalizeSpeedHotkey(
+            this.settings.speedControlHotkeys?.increase,
+            'h'
+          );
+          const resetKey = this.normalizeSpeedHotkey(this.settings.speedControlHotkeys?.reset, 'b');
+
+          if (key === decreaseKey) {
+            e.preventDefault();
+            this.adjustSpeedByStep(-1);
+          } else if (key === increaseKey) {
+            e.preventDefault();
+            this.adjustSpeedByStep(1);
+          } else if (key === resetKey) {
+            e.preventDefault();
+            this.changeSpeed(1);
+          }
+        };
+
+        YouTubeUtils.cleanupManager.registerListener(document, 'keydown', speedHotkeyHandler, true);
+      } catch (e) {
+        if (YouTubeUtils && YouTubeUtils.logError) {
+          YouTubeUtils.logError('Basic', 'Failed to register speed keyboard shortcuts', e);
+        }
+      }
+    },
+
+    isEditableTarget(target) {
+      const active = /** @type {HTMLElement | null | undefined} */ (target);
+      if (!active) return false;
+      const tag = (active.tagName || '').toLowerCase();
+      return (
+        tag === 'input' ||
+        tag === 'textarea' ||
+        tag === 'select' ||
+        Boolean(active.isContentEditable)
+      );
+    },
+
+    normalizeSpeedHotkey(value, fallback) {
+      const candidate = typeof value === 'string' ? value.trim().toLowerCase() : '';
+      if (candidate) return candidate.slice(0, 1);
+      return (
+        String(fallback || '')
+          .trim()
+          .toLowerCase()
+          .slice(0, 1) || 'g'
+      );
+    },
+
+    adjustSpeedByStep(direction) {
+      const speeds = this.speedControl.availableSpeeds;
+      if (!Array.isArray(speeds) || !speeds.length) return;
+      const current = Number(this.speedControl.currentSpeed);
+
+      let closestIndex = 0;
+      let closestDelta = Number.POSITIVE_INFINITY;
+      for (let i = 0; i < speeds.length; i += 1) {
+        const delta = Math.abs(speeds[i] - current);
+        if (delta < closestDelta) {
+          closestDelta = delta;
+          closestIndex = i;
+        }
+      }
+
+      const step = direction > 0 ? 1 : -1;
+      const nextIndex = Math.max(0, Math.min(speeds.length - 1, closestIndex + step));
+      if (nextIndex === closestIndex) return;
+      this.changeSpeed(speeds[nextIndex]);
     },
 
     saveSettings() {
@@ -1396,7 +1508,9 @@ if (typeof window !== 'undefined') {
             detail: this.settings,
           })
         );
-      } catch {}
+      } catch (e) {
+        console.warn('[YouTube+] Settings broadcast error:', e);
+      }
     },
 
     updatePageBasedOnSettings() {
@@ -1447,24 +1561,32 @@ if (typeof window !== 'undefined') {
     },
 
     insertStyles() {
-      // Glassmorphism styles for modal and controls
-      const styles = `:root{--yt-accent:#ff0000;--yt-accent-hover:#cc0000;--yt-radius-sm:6px;--yt-radius-md:10px;--yt-radius-lg:16px;--yt-transition:all .2s ease;--yt-space-xs:4px;--yt-space-sm:8px;  --yt-space-md:16px;--yt-space-lg:24px;--yt-glass-blur:blur(18px) saturate(180%);--yt-glass-blur-light:blur(12px) saturate(160%);--yt-glass-blur-heavy:blur(24px) saturate(200%);}
+      // === CRITICAL CSS: variables, player controls, speed, notifications ===
+      // Injected synchronously — minimal set needed before first paint
+      const criticalStyles = `:root{--yt-accent:#ff0000;--yt-accent-hover:#cc0000;--yt-radius-sm:6px;--yt-radius-md:10px;--yt-radius-lg:16px;--yt-transition:all .2s ease;--yt-space-xs:4px;--yt-space-sm:8px;--yt-space-md:16px;--yt-space-lg:24px;--yt-glass-blur:blur(18px) saturate(180%);--yt-glass-blur-light:blur(12px) saturate(160%);--yt-glass-blur-heavy:blur(24px) saturate(200%);}
         html[dark],html:not([dark]):not([light]){--yt-bg-primary:rgba(15,15,15,.85);--yt-bg-secondary:rgba(28,28,28,.85);--yt-bg-tertiary:rgba(34,34,34,.85);--yt-text-primary:#fff;--yt-text-secondary:#aaa;--yt-border-color:rgba(255,255,255,.2);--yt-hover-bg:rgba(255,255,255,.1);--yt-shadow:0 4px 12px rgba(0,0,0,.25);--yt-glass-bg:rgba(255,255,255,.1);--yt-glass-border:rgba(255,255,255,.2);--yt-glass-shadow:0 8px 32px rgba(0,0,0,.2);--yt-modal-bg:rgba(0,0,0,.75);--yt-notification-bg:rgba(28,28,28,.9);--yt-panel-bg:rgba(34,34,34,.3);--yt-header-bg:rgba(20,20,20,.6);--yt-input-bg:rgba(255,255,255,.1);--yt-button-bg:rgba(255,255,255,.2);--yt-text-stroke:white;}
         html[light]{--yt-bg-primary:rgba(255,255,255,.85);--yt-bg-secondary:rgba(248,248,248,.85);--yt-bg-tertiary:rgba(240,240,240,.85);--yt-text-primary:#030303;--yt-text-secondary:#606060;--yt-border-color:rgba(0,0,0,.2);--yt-hover-bg:rgba(0,0,0,.05);--yt-shadow:0 4px 12px rgba(0,0,0,.15);--yt-glass-bg:rgba(255,255,255,.7);--yt-glass-border:rgba(0,0,0,.1);--yt-glass-shadow:0 8px 32px rgba(0,0,0,.1);--yt-modal-bg:rgba(0,0,0,.5);--yt-notification-bg:rgba(255,255,255,.95);--yt-panel-bg:rgba(255,255,255,.7);--yt-header-bg:rgba(248,248,248,.8);--yt-input-bg:rgba(0,0,0,.05);--yt-button-bg:rgba(0,0,0,.1);--yt-text-stroke:#030303;}
         .ytp-screenshot-button,.ytp-cobalt-button,.ytp-pip-button{position:relative;width:44px;height:100%;display:inline-flex;align-items:center;justify-content:center;vertical-align:top;transition:opacity .15s,transform .15s;}
         .ytp-screenshot-button:hover,.ytp-cobalt-button:hover,.ytp-pip-button:hover{transform:scale(1.1);}
         .speed-control-btn{width:4em!important;position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;text-align:center!important;border-radius:var(--yt-radius-sm);font-size:13px;color:var(--yt-text-primary);cursor:pointer;user-select:none;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;transition:color .2s;}
         .speed-control-btn:hover{color:var(--yt-accent);font-weight:bold;}
-        .speed-options{position:fixed!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;border-radius:var(--yt-radius-md)!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:0!important;transform:translate(-50%,12px)!important;width:92px!important;z-index:2147483647!important;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);opacity:0;pointer-events:none!important;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box;}
-        .speed-options.visible{opacity:1;pointer-events:auto!important;transform:translate(-50%,0)!important;}
+        .speed-options{position:fixed!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;border-radius:var(--yt-radius-md)!important;display:flex!important;flex-direction:column!important;align-items:stretch!important;gap:0!important;transform:translate(-50%,12px)!important;width:92px!important;z-index:2147483647!important;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;opacity:0;pointer-events:none!important;transition:opacity .18s ease,transform .18s ease;box-sizing:border-box;}
+        .speed-options.visible{opacity:1;pointer-events:auto!important;transform:translate(-50%,0)!important;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);}
         .speed-option-item{cursor:pointer!important;height:28px!important;line-height:28px!important;font-size:12px!important;text-align:center!important;transition:background-color .15s,color .15s;}
         .speed-option-active,.speed-option-item:hover{color:var(--yt-accent)!important;font-weight:bold!important;background:var(--yt-hover-bg)!important;}
-        #speed-indicator{position:absolute!important;margin:auto!important;top:0!important;right:0!important;bottom:0!important;left:0!important;border-radius:24px!important;font-size:30px!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;z-index:99999!important;width:80px!important;height:80px!important;line-height:80px!important;text-align:center!important;display:none;box-shadow:var(--yt-glass-shadow);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);border:1px solid var(--yt-glass-border);}
+        #speed-indicator{position:absolute!important;margin:auto!important;top:0!important;right:0!important;bottom:0!important;left:0!important;border-radius:24px!important;font-size:30px!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;z-index:99999!important;width:80px!important;height:80px!important;line-height:80px!important;text-align:center!important;display:none;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);}
         .youtube-enhancer-notification-container{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;z-index:2147483647;pointer-events:none;max-width:calc(100% - 32px);width:100%;box-sizing:border-box;padding:0 16px;}
-        .youtube-enhancer-notification{position:relative;max-width:700px;width:auto;background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:8px 14px;font-size:13px;border-radius:var(--yt-radius-md);z-index:inherit;transition:opacity .35s,transform .32s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur); -webkit-backdrop-filter:var(--yt-glass-blur);font-weight:500;box-sizing:border-box;display:flex;align-items:center;gap:10px;pointer-events:auto;}
+        .youtube-enhancer-notification{position:relative;max-width:700px;width:auto;background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:8px 14px;font-size:13px;border-radius:var(--yt-radius-md);z-index:inherit;transition:opacity .35s,transform .32s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);font-weight:500;box-sizing:border-box;display:flex;align-items:center;gap:10px;pointer-events:auto;}
         .ytp-plus-settings-button{background:transparent;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:var(--yt-space-sm);margin-right:var(--yt-space-sm);border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background-color .2s,transform .2s;}
         .ytp-plus-settings-button svg{width:24px;height:24px;}
         .ytp-plus-settings-button:hover{background:var(--yt-hover-bg);transform:rotate(30deg);color:var(--yt-text-secondary);}
+        .ytp-download-button{position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;padding:0 10px!important;cursor:pointer!important;}
+        @keyframes ytEnhanceFadeIn{from{opacity:0;}to{opacity:1;}}
+        @keyframes ytEnhanceScaleIn{from{opacity:0;transform:scale(.92) translateY(10px);}to{opacity:1;transform:scale(1) translateY(0);}}
+        .ytSearchboxComponentInputBox { background: transparent !important; }`;
+      // === NON-CRITICAL CSS: settings modal, voting, glass utilities ===
+      // Deferred via requestIdleCallback — only needed when user opens settings
+      const nonCriticalStyles = `
         .ytp-plus-settings-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:100000;backdrop-filter:blur(8px) saturate(140%);-webkit-backdrop-filter:blur(8px) saturate(140%);animation:ytEnhanceFadeIn .25s ease-out;contain:layout style paint;}
         .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:20px;width:760px;max-width:94%;max-height:60vh;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.45);animation:ytEnhanceScaleIn .28s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-glass-border);will-change:transform,opacity;display:flex;flex-direction:row;contain:layout style paint;}
         .ytp-plus-settings-sidebar{width:240px;background:var(--yt-header-bg);border-right:1px solid var(--yt-glass-border);display:flex;flex-direction:column;backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
@@ -1511,8 +1633,6 @@ if (typeof window !== 'undefined') {
         .ytp-plus-button-primary{background:transparent;border:1px solid var(--yt-glass-border);color:var(--yt-text-primary);}
         .ytp-plus-button-primary:hover{background:var(--yt-accent);color:#fff;box-shadow:0 6px 16px rgba(255,0,0,.35);transform:translateY(-2px);}
         .app-icon{fill:var(--yt-text-primary);stroke:var(--yt-text-primary);transition:all .3s;}
-        @keyframes ytEnhanceFadeIn{from{opacity:0;}to{opacity:1;}}
-        @keyframes ytEnhanceScaleIn{from{opacity:0;transform:scale(.92) translateY(10px);}to{opacity:1;transform:scale(1) translateY(0);}}
         @media(max-width:768px){.ytp-plus-settings-panel{width:95%;max-height:80vh;flex-direction:column;}
         .ytp-plus-settings-sidebar{width:100%;max-height:120px;flex-direction:row;overflow-x:auto;}
         .ytp-plus-settings-nav{display:flex;flex-direction:row;padding:0;}
@@ -1521,21 +1641,29 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-item{padding:10px 12px;}}
         .ytp-plus-settings-section h1{margin:-95px 90px 8px;font-family:'Montserrat',sans-serif;font-size:52px;font-weight:600;color:transparent;-webkit-text-stroke-width:1px;-webkit-text-stroke-color:var(--yt-text-stroke);cursor:pointer;transition:color .2s;}
         .ytp-plus-settings-section h1:hover{color:var(--yt-accent);-webkit-text-stroke-width:1px;-webkit-text-stroke-color:transparent;}
-        .download-options{position:fixed;background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-md);width:150px;z-index:2147483647;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;transform:translateY(8px);box-sizing:border-box;}
-        .download-options.visible{opacity:1;pointer-events:auto;transform:translateY(0);}
+        .download-options{position:fixed;background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-md);width:150px;z-index:2147483647;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;transform:translateY(8px);box-sizing:border-box;}
+        .download-options.visible{opacity:1;pointer-events:auto;transform:translateY(0);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);}
         .download-options-list{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;}
         .download-option-item{cursor:pointer;padding:12px;text-align:center;transition:background .2s,color .2s;width:100%;}
         .download-option-item:hover{background:var(--yt-hover-bg);color:var(--yt-accent);}
-        .ytp-download-button{position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;padding:0 10px!important;cursor:pointer!important;}
-        .glass-panel{background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);box-shadow:var(--yt-glass-shadow);}
-        .glass-card{background:var(--yt-panel-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);padding:var(--yt-space-md);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);box-shadow:var(--yt-shadow);}
-        .glass-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--yt-modal-bg);display:flex;align-items:center;justify-content:center;z-index:99999;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);}
-        .glass-button{background:var(--yt-button-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);padding:var(--yt-space-sm) var(--yt-space-md);color:var(--yt-text-primary);cursor:pointer;transition:all .2s ease;backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
+        .glass-panel{background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);box-shadow:var(--yt-glass-shadow);}
+        .glass-card{background:var(--yt-panel-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);padding:var(--yt-space-md);box-shadow:var(--yt-shadow);}
+        .glass-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--yt-modal-bg);display:flex;align-items:center;justify-content:center;z-index:99999;}
+        .glass-button{background:var(--yt-button-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);padding:var(--yt-space-sm) var(--yt-space-md);color:var(--yt-text-primary);cursor:pointer;transition:all .2s ease;}
         .glass-button:hover{background:var(--yt-hover-bg);transform:translateY(-1px);box-shadow:var(--yt-shadow);}
         .download-submenu{margin:4px 0 12px 12px;}
         .download-submenu-container{display:flex;flex-direction:column;gap:8px;}
         .style-submenu{margin:4px 0 12px 12px;}
         .style-submenu-container{display:flex;flex-direction:column;gap:8px;}
+        .speed-submenu{margin:4px 0 12px 12px;}
+        .speed-submenu-container{display:flex;flex-direction:column;gap:8px;}
+        .speed-hotkeys-row{flex-direction:column!important;align-items:stretch!important;gap:6px;}
+        .speed-hotkeys-info{display:flex;flex-direction:column;gap:4px;}
+        .speed-hotkeys-fields{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-top:12px;width:100%;}
+        .speed-hotkey-field{display:flex;flex-direction:column;align-items:center;gap:8px;font-size:12px;color:var(--yt-text-secondary);flex:1;min-width:80px;}
+        .speed-hotkey-field span{text-align:center;width:100%;}
+        .speed-hotkey-input{width:100%;height:36px;border-radius:8px;border:1px solid var(--yt-glass-border);background:var(--yt-glass-bg);color:var(--yt-text-primary);text-align:center;font-size:14px;font-weight:600;text-transform:lowercase;outline:none;}
+        .speed-hotkey-input:focus{border-color:var(--yt-accent);background:var(--yt-hover-bg);}
         .download-site-option{display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:10px;border-radius:var(--yt-radius-md);transition:background .2s;}
         .download-site-option:hover{background:var(--yt-hover-bg);}
         .download-site-header{display:flex;flex-direction:row;align-items:center;justify-content:space-between;width:100%;gap:12px;}
@@ -1551,16 +1679,11 @@ if (typeof window !== 'undefined') {
         .download-site-option .ytp-plus-settings-checkbox{margin:0;}
         .download-site-name{font-weight:500;font-size:15px;color:var(--yt-text-primary);}
         .download-site-desc{font-size:12px;color:var(--yt-text-secondary);margin-top:2px;opacity:0.8;}
-        /* Ensure custom YouTube searchbox input backgrounds are transparent to match theme */
-        .ytSearchboxComponentInputBox { background: transparent !important; }
-        /* Fix native select/option contrast inside settings modal */
         .ytp-plus-settings-panel select,
         .ytp-plus-settings-panel select option {background: var(--yt-panel-bg) !important; color: var(--yt-text-primary) !important;}
-        /* Improve select appearance and ensure options are legible */
         .ytp-plus-settings-panel select {-webkit-appearance: menulist !important; appearance: menulist !important; padding: 6px 8px !important; border-radius: 6px !important; border: 1px solid var(--yt-glass-border) !important;}
-        /* Shared glass-dropdown styles used by settings components */
         .glass-dropdown{position:relative;display:inline-block;min-width:110px}
-        .glass-dropdown__toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:6px 8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));color:inherit;border:1px solid rgba(255,255,255,0.06);backdrop-filter:blur(8px) saturate(120%);-webkit-backdrop-filter:blur(8px) saturate(120%);cursor:pointer}
+        .glass-dropdown__toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:6px 8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));color:inherit;border:1px solid rgba(255,255,255,0.06);cursor:pointer}
         .glass-dropdown__toggle:focus{outline:2px solid rgba(255,255,255,0.06)}
         .glass-dropdown__label{font-size:12px}
         .glass-dropdown__chev{opacity:0.9}
@@ -1568,10 +1691,86 @@ if (typeof window !== 'undefined') {
         .glass-dropdown__item{padding:8px 10px;border-radius:6px;margin:4px 0;cursor:pointer;color:inherit;font-size:13px}
         .glass-dropdown__item:hover{background:rgba(255,255,255,0.04)}
         .glass-dropdown__item[aria-selected="true"]{background:linear-gradient(90deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));box-shadow:inset 0 0 0 1px rgba(255,255,255,0.02)}
-        `;
+        .ytp-plus-settings-voting-header{margin-bottom:var(--yt-space-lg);}
+        .ytp-plus-settings-voting-header h3{font-size:18px;font-weight:500;margin:0 0 8px 0;color:var(--yt-text-primary);}
+        .ytp-plus-settings-voting-desc{font-size:13px;color:var(--yt-text-secondary);margin:0;}
+        .ytp-plus-voting{display:flex;flex-direction:column;gap:12px;}
+        .ytp-plus-voting-header{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;}
+        .ytp-plus-voting-list{display:flex;flex-direction:column;gap:12px;}
+        .ytp-plus-voting-item{display:flex;align-items:flex-start;justify-content:space-between;padding:16px;background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);transition:all .2s ease;gap:12px;}
+        .ytp-plus-voting-item:hover{background:var(--yt-hover-bg);transform:translateX(4px);}
+        .ytp-plus-voting-item-content{flex:1;padding-right:16px;}
+        .ytp-plus-voting-item-title{font-size:14px;font-weight:500;color:var(--yt-text-primary);margin-bottom:4px;}
+        .ytp-plus-voting-item-desc{font-size:12px;color:var(--yt-text-secondary);line-height:1.4;}
+        .ytp-plus-voting-item-status{font-size:11px;padding:2px 8px;border-radius:10px;display:inline-block;margin-top:8px;background:rgba(255,255,255,0.1);color:var(--yt-text-secondary);}
+        .ytp-plus-voting-item-status.completed{background:rgba(76,175,80,0.2);color:#4caf50;}
+        .ytp-plus-voting-item-status.in-progress{background:rgba(255,193,7,0.2);color:#ffc107;}
+        .ytp-plus-voting-item-votes{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:120px;}
+        .ytp-plus-voting-score{display:flex;align-items:baseline;gap:8px;justify-content:center;}
+        .ytp-plus-vote-total{font-size:12px;color:var(--yt-text-secondary);}
+        .ytp-plus-voting-buttons{position:relative;display:flex;justify-content:center;gap:0;border:1px solid var(--yt-glass-border);border-radius:20px;overflow:hidden;}
+        .ytp-plus-voting-buttons-track{position:absolute;top:0;left:0;width:100%;height:100%;z-index:0;transition:background .4s ease;border-radius:20px;pointer-events:none;}
+        .ytp-plus-vote-btn{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;width:42px;height:32px;border:none;background:transparent;cursor:pointer;transition:color .15s ease,opacity .15s ease;color:var(--yt-text-secondary);opacity:.95}
+        .ytp-plus-vote-btn:first-of-type{border-right:1px solid var(--yt-glass-border)}
+        .ytp-plus-vote-btn:hover{color:var(--yt-text-primary);opacity:1}
+        .ytp-plus-vote-btn.active{color:#fff;opacity:1}
+        .ytp-plus-vote-icon{width:20px;height:20px;fill:currentColor;opacity:.92}
+        .ytp-plus-vote-btn.active .ytp-plus-vote-icon,.ytp-plus-vote-btn:hover .ytp-plus-vote-icon{opacity:1}
+        .ytp-plus-voting-loading,.ytp-plus-voting-empty{text-align:center;padding:24px;color:var(--yt-text-secondary);font-size:13px;}
+        .ytp-plus-voting-add-btn{background:var(--yt-accent);color:#fff;border:none;padding:8px 16px;border-radius:18px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s ease;}
+        .ytp-plus-voting-add-btn:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(255,0,0,.3);}
+        .ytp-plus-voting-add-form{margin-top:16px;padding:16px;background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);border-radius:var(--yt-radius-md);}
+        .ytp-plus-voting-add-form input,.ytp-plus-voting-add-form textarea{width:100%;padding:10px 12px;margin-bottom:12px;background:var(--yt-header-bg);border:1px solid var(--yt-glass-border);border-radius:8px;color:var(--yt-text-primary);font-size:13px;box-sizing:border-box;}
+        .ytp-plus-voting-add-form input:focus,.ytp-plus-voting-add-form textarea:focus{border-color:var(--yt-accent);outline:none;}
+        .ytp-plus-voting-add-form textarea{min-height:80px;resize:vertical;}
+        .ytp-plus-voting-form-actions{display:flex;gap:8px;justify-content:flex-end;}
+        .ytp-plus-voting-cancel{background:transparent;border:1px solid var(--yt-glass-border);color:var(--yt-text-primary);padding:8px 16px;border-radius:18px;font-size:13px;cursor:pointer;transition:all .2s ease;}
+        .ytp-plus-voting-cancel:hover{background:var(--yt-hover-bg);}
+        .ytp-plus-voting-submit{background:var(--yt-accent);color:#fff;border:none;padding:8px 16px;border-radius:18px;font-size:13px;font-weight:500;cursor:pointer;transition:all .2s ease;}
+        .ytp-plus-voting-submit:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(255,0,0,.3);}
+        @media (max-width: 680px){.ytp-plus-voting-item{flex-direction:column;align-items:stretch}.ytp-plus-voting-item-content{padding-right:0}.ytp-plus-voting-item-votes{min-width:0;width:100%}}
+        .ytp-plus-voting-preview{margin-bottom:20px;}
+        .ytp-plus-ba-container{position:relative;width:100%;height:260px;overflow:hidden;border-radius:var(--yt-radius-md);border:1px solid var(--yt-glass-border);user-select:none;cursor:ew-resize;background:#000;}
+        .ytp-plus-ba-before,.ytp-plus-ba-after{position:absolute;top:0;left:0;width:100%;height:100%;overflow:hidden;}
+        .ytp-plus-ba-before img,.ytp-plus-ba-after img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;}
+        .ytp-plus-ba-after{clip-path:inset(0 0 0 50%);}
+        .ytp-plus-ba-divider{position:absolute;top:0;left:50%;transform:translateX(-50%);width:8px;height:100%;background:transparent;pointer-events:auto;z-index:3;cursor:ew-resize;transition:left .6s linear}
+        .ytp-plus-ba-divider::after{content:'';position:absolute;left:50%;top:0;transform:translateX(-50%);width:2px;height:100%;background:var(--yt-accent,#f00);}        
+        .ytp-plus-ba-divider.autoplay{animation:ytpPlusSlideDivider 6s linear infinite}
+        @keyframes ytpPlusSlideDivider{0%{left:10%}50%{left:90%}100%{left:10%}}
+        .ytp-plus-ba-label{position:absolute;top:10px;padding:4px 10px;border-radius:4px;font-size:12px;font-weight:600;color:#fff;background:rgba(0,0,0,.55);pointer-events:none;z-index:5;}
+        .ytp-plus-ba-label-before{left:10px;}
+        .ytp-plus-ba-label-after{right:10px;}
+        .ytp-plus-vote-bar-section{margin-top:12px;display:flex;flex-direction:column;align-items:center;gap:6px;}
+        .ytp-plus-vote-bar-buttons{position:relative;display:flex;gap:0;border-radius:20px;overflow:hidden;border:1px solid var(--yt-glass-border);}
+        .ytp-plus-vote-bar-track{position:absolute;top:0;left:0;width:100%;height:100%;z-index:0;transition:background .4s ease;background:linear-gradient(to right, #4caf50 50%, #f44336 50%);border-radius:20px;}
+        .ytp-plus-vote-bar-btn{position:relative;z-index:1;display:inline-flex;align-items:center;justify-content:center;padding:8px 18px;background:transparent;border:none;color:var(--yt-text-secondary);cursor:pointer;transition:color .15s;font-size:14px;}
+        .ytp-plus-vote-bar-btn:first-of-type{border-right:1px solid var(--yt-glass-border);}
+        .ytp-plus-vote-bar-btn:hover{color:var(--yt-text-primary);}
+        .ytp-plus-vote-bar-btn.active{color:#fff;}
+        .ytp-plus-vote-bar-btn svg{fill:currentColor;}
+        .ytp-plus-vote-bar-count{font-size:12px;color:var(--yt-text-secondary);}`;
 
-      if (!document.getElementById('yt-enhancer-styles')) {
-        YouTubeUtils.StyleManager.add('yt-enhancer-main', styles);
+      const injectNonCritical = () => {
+        if (!document.getElementById('yt-enhancer-nc-styles')) {
+          const ncEl = document.createElement('style');
+          ncEl.id = 'yt-enhancer-nc-styles';
+          ncEl.textContent = nonCriticalStyles;
+          (document.head || document.documentElement).appendChild(ncEl);
+        }
+      };
+      this.ensureNonCriticalStyles = injectNonCritical;
+
+      if (!document.getElementById('yt-enhancer-main')) {
+        // Inject critical CSS immediately
+        YouTubeUtils.StyleManager.add('yt-enhancer-main', criticalStyles);
+      }
+
+      // Defer non-critical CSS (settings modal, voting, glass utilities)
+      if (typeof requestIdleCallback === 'function') {
+        requestIdleCallback(injectNonCritical, { timeout: 5000 });
+      } else {
+        setTimeout(injectNonCritical, 1000);
       }
     },
 
@@ -1709,13 +1908,15 @@ if (typeof window !== 'undefined') {
                   ? `.download-submenu[data-submenu="${submenuKey}"]`
                   : submenuKey === 'style'
                     ? `.style-submenu[data-submenu="${submenuKey}"]`
-                    : submenuKey === 'pip'
-                      ? `.pip-submenu[data-submenu="${submenuKey}"]`
-                      : submenuKey === 'timecode'
-                        ? `.timecode-submenu[data-submenu="${submenuKey}"]`
-                        : submenuKey === 'enhanced'
-                          ? `.enhanced-submenu[data-submenu="${submenuKey}"]`
-                          : `[data-submenu="${submenuKey}"]`;
+                    : submenuKey === 'speed'
+                      ? `.speed-submenu[data-submenu="${submenuKey}"]`
+                      : submenuKey === 'pip'
+                        ? `.pip-submenu[data-submenu="${submenuKey}"]`
+                        : submenuKey === 'timecode'
+                          ? `.timecode-submenu[data-submenu="${submenuKey}"]`
+                          : submenuKey === 'enhanced'
+                            ? `.enhanced-submenu[data-submenu="${submenuKey}"]`
+                            : `[data-submenu="${submenuKey}"]`;
             const submenuEl = panel.querySelector(submenuSelector);
             if (!(submenuEl instanceof HTMLElement)) return;
 
@@ -1813,6 +2014,26 @@ if (typeof window !== 'undefined') {
       // Input event delegation
       modal.addEventListener('input', e => {
         const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
+        if (target.classList.contains('speed-hotkey-input')) {
+          const keyType = target.dataset?.speedHotkey;
+          if (keyType !== 'decrease' && keyType !== 'increase' && keyType !== 'reset') return;
+
+          const input = /** @type {HTMLInputElement} */ (target);
+          const fallback = keyType === 'decrease' ? 'g' : keyType === 'increase' ? 'h' : 'b';
+          const normalized = this.normalizeSpeedHotkey(input.value, fallback);
+
+          this.settings.speedControlHotkeys = this.settings.speedControlHotkeys || {
+            decrease: 'g',
+            increase: 'h',
+            reset: 'b',
+          };
+          this.settings.speedControlHotkeys[keyType] = normalized;
+          input.value = normalized;
+          markDirty();
+          this.saveSettings();
+          return;
+        }
+
         if (target.classList.contains('download-site-input')) {
           const { dataset } = /** @type {HTMLElement} */ (target);
           const { site, field } = dataset;
@@ -1851,13 +2072,15 @@ if (typeof window !== 'undefined') {
                   ? `.download-submenu[data-submenu="${key}"]`
                   : key === 'style'
                     ? `.style-submenu[data-submenu="${key}"]`
-                    : key === 'pip'
-                      ? `.pip-submenu[data-submenu="${key}"]`
-                      : key === 'timecode'
-                        ? `.timecode-submenu[data-submenu="${key}"]`
-                        : key === 'enhanced'
-                          ? `.enhanced-submenu[data-submenu="${key}"]`
-                          : `[data-submenu="${key}"]`;
+                    : key === 'speed'
+                      ? `.speed-submenu[data-submenu="${key}"]`
+                      : key === 'pip'
+                        ? `.pip-submenu[data-submenu="${key}"]`
+                        : key === 'timecode'
+                          ? `.timecode-submenu[data-submenu="${key}"]`
+                          : key === 'enhanced'
+                            ? `.enhanced-submenu[data-submenu="${key}"]`
+                            : `[data-submenu="${key}"]`;
             const submenuEl = modal.querySelector(submenuSelector);
             if (submenuEl instanceof HTMLElement) {
               const isExpanded = !!expanded;
@@ -1901,7 +2124,26 @@ if (typeof window !== 'undefined') {
     openSettingsModal() {
       const existingModal = this.getElement('.ytp-plus-settings-modal', false);
       if (existingModal) existingModal.remove();
+      if (typeof this.ensureNonCriticalStyles === 'function') {
+        this.ensureNonCriticalStyles();
+      }
       document.body.appendChild(this.createSettingsModal());
+      // Initialize voting system
+      if (window.YouTubePlus?.Voting) {
+        const votingContainer = document.getElementById('ytp-plus-voting-container');
+        if (votingContainer) {
+          window.YouTubePlus.Voting.init();
+          window.YouTubePlus.Voting.createUI(votingContainer);
+          window.YouTubePlus.Voting.loadFeatures();
+        }
+        // If voting section is already visible (saved as last active), init slider
+        const votingSection = document.querySelector(
+          '.ytp-plus-settings-section[data-section="voting"]'
+        );
+        if (votingSection && !votingSection.classList.contains('hidden')) {
+          requestAnimationFrame(() => window.YouTubePlus.Voting?.initSlider?.());
+        }
+      }
       // Notify modules that settings modal is now in DOM
       try {
         document.dispatchEvent(
@@ -1987,7 +2229,7 @@ if (typeof window !== 'undefined') {
         hideDropdown();
       };
 
-      [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 2.0, 3.0].forEach(speed => {
+      this.speedControl.availableSpeeds.forEach(speed => {
         const option = document.createElement('div');
         option.className = `speed-option-item${Number(speed) === this.speedControl.currentSpeed ? ' speed-option-active' : ''}`;
         option.textContent = `${speed}x`;
@@ -2337,8 +2579,12 @@ if (typeof window !== 'undefined') {
           }
         }
       });
-      if (document.body) {
-        videoObserver.observe(document.body, { childList: true, subtree: true });
+      const playerRoot =
+        document.querySelector('#movie_player') ||
+        document.querySelector('ytd-player') ||
+        document.body;
+      if (playerRoot) {
+        videoObserver.observe(playerRoot, { childList: true, subtree: true });
       }
       YouTubeUtils.cleanupManager.registerObserver(videoObserver);
     },

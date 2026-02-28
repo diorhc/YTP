@@ -1,6 +1,7 @@
 // ==UserScript==
 // @name                YouTube +
 // @name:ar             YouTube +
+// @name:az             YouTube +
 // @name:be             YouTube +
 // @name:bg             YouTube +
 // @name:zh-CN          YouTube +
@@ -24,10 +25,11 @@
 // @name:uz             YouTube +
 // @name:vi             YouTube +
 // @namespace           by
-// @version             2.4.2
+// @version             2.4.3
 // @author              diorhc
 // @description         Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:ar      Tabview YouTube and download and other features ↴
+// @description:az      Tabview YouTube və yükləmə və digər xüsusiyyətlər ↴
 // @description:be      Tabview YouTube і загрузка і іншыя функцыі ↴
 // @description:bg      Tabview YouTube и изтегляне и други функции ↴
 // @description:zh-CN   标签视图 YouTube、下载及其他功能 ↴

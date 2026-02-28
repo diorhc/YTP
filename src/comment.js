@@ -69,8 +69,14 @@
     initialized: false,
   };
 
-  const COMMENT_HISTORY_URL =
-    'https://myactivity.google.com/page?hl=ru&utm_medium=web&utm_source=youtube&page=youtube_comments';
+  const COMMENT_HISTORY_URL = (() => {
+    let lang = 'en';
+    try {
+      if (window.YouTubePlusI18n?.getLanguage) lang = window.YouTubePlusI18n.getLanguage();
+      else if (document.documentElement.lang) lang = document.documentElement.lang.split('-')[0];
+    } catch {}
+    return `https://myactivity.google.com/page?hl=${encodeURIComponent(lang)}&utm_medium=web&utm_source=youtube&page=youtube_comments`;
+  })();
 
   const isMyActivityCommentsPage = () => {
     try {
@@ -134,32 +140,17 @@
     },
   };
 
-  // Utility functions: use shared debounce when available
+  // Use shared debounce from YouTubeUtils (loaded before this module)
   const debounce = (func, wait) => {
-    try {
-      const utilDebounce = window.YouTubeUtils && window.YouTubeUtils.debounce;
-      if (typeof utilDebounce === 'function') {
-        // Call the util to get a debounced function (instead of returning the util itself)
-        const debounced = utilDebounce(func, wait);
-        if (typeof debounced === 'function') return debounced;
-        // If utilDebounce didn't return a function, fall back to local implementation
-      }
-
-      return ((f, w) => {
-        let timeout;
-        return (...args) => {
-          clearTimeout(timeout);
-          timeout = setTimeout(() => f(...args), w);
-        };
-      })(func, wait);
-    } catch {
-      // fallback
-      let timeout;
-      return (...args) => {
-        clearTimeout(timeout);
-        timeout = setTimeout(() => func(...args), wait);
-      };
+    if (window.YouTubeUtils?.debounce) {
+      const d = window.YouTubeUtils.debounce(func, wait);
+      if (typeof d === 'function') return d;
     }
+    let timeout;
+    return (...args) => {
+      clearTimeout(timeout);
+      timeout = setTimeout(() => func(...args), wait);
+    };
   };
 
   /**
@@ -198,16 +189,19 @@
    * @param {string} context - Error context for debugging
    * @returns {T} Wrapped function
    */
+  // Use shared withErrorBoundary from YouTubeErrorBoundary
   const withErrorBoundary = (fn, context) => {
     if (window.YouTubeErrorBoundary?.withErrorBoundary) {
-      return /** @type {T} */ (window.YouTubeErrorBoundary.withErrorBoundary(fn, 'CommentManager'));
+      return /** @type {any} */ (
+        window.YouTubeErrorBoundary.withErrorBoundary(fn, 'CommentManager')
+      );
     }
     return /** @type {any} */ (
       (...args) => {
         try {
           return fn(...args);
-        } catch (error) {
-          logError(context, error);
+        } catch (e) {
+          logError(context, e);
           return null;
         }
       }

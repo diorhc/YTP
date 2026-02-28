@@ -184,9 +184,16 @@
       _ssList.style.display = _ssList.style.display === 'none' ? '' : 'none';
     });
 
-    document.addEventListener('click', e => {
-      if (!subtitleSelect.contains(e.target)) _ssList.style.display = 'none';
-    });
+    const _ac = new AbortController();
+    document.addEventListener(
+      'click',
+      e => {
+        if (!subtitleSelect.contains(e.target)) _ssList.style.display = 'none';
+      },
+      { signal: _ac.signal }
+    );
+
+    subtitleSelect.destroy = () => _ac.abort();
 
     return subtitleSelect;
   }
@@ -1794,6 +1801,9 @@
   function closeModal() {
     if (!_modalElements) return;
     try {
+      // Clean up subtitle select listener to prevent document click leak
+      const ss = _modalElements.overlay?.querySelector('[role="listbox"]');
+      if (ss && typeof ss.destroy === 'function') ss.destroy();
       if (_modalElements.overlay && _modalElements.overlay.parentNode) {
         _modalElements.overlay.parentNode.removeChild(_modalElements.overlay);
       }

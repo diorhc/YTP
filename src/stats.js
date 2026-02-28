@@ -1247,7 +1247,13 @@
 
     // Get title and escape for XSS prevention
     const title = (pageStats && pageStats.title) || document.title || '';
-    const escapeHtml = window.YouTubeSecurityUtils?.escapeHtml || (s => s);
+    const escapeHtml =
+      window.YouTubeSecurityUtils?.escapeHtml ||
+      (s => {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+      });
     const safeTitle = escapeHtml(title);
     const titleHtml = safeTitle ? `<div class="stats-thumb-title-centered">${safeTitle}</div>` : '';
 
@@ -1837,7 +1843,13 @@
     const { liveViewer, title, thumbUrl } = fields;
 
     // Escape title for XSS prevention
-    const escapeHtml = window.YouTubeSecurityUtils?.escapeHtml || (s => s);
+    const escapeHtml =
+      window.YouTubeSecurityUtils?.escapeHtml ||
+      (s => {
+        const d = document.createElement('div');
+        d.textContent = s;
+        return d.innerHTML;
+      });
     const safeTitle = escapeHtml(title);
     const titleHtml = safeTitle ? `<div class="stats-thumb-title-centered">${safeTitle}</div>` : '';
     const defs = getVideoStatDefinitions(fields);
@@ -2233,26 +2245,8 @@
       checkAndAddMenu();
     }
 
-    history.pushState = (function (f) {
-      /** @this {any} */
-      return function (...args) {
-        const fAny = /** @type {any} */ (f);
-        const result = fAny.call(this, ...args);
-        checkUrlChange();
-        return result;
-      };
-    })(history.pushState);
-
-    history.replaceState = (function (f) {
-      /** @this {any} */
-      return function (...args) {
-        const fAny = /** @type {any} */ (f);
-        const result = fAny.call(this, ...args);
-        checkUrlChange();
-        return result;
-      };
-    })(history.replaceState);
-
+    // Use centralized pushState/replaceState event from utils.js instead of wrapping independently
+    window.addEventListener('ytp-history-navigate', checkUrlChange);
     window.addEventListener('popstate', checkUrlChange);
 
     if (isChannelPage(location.href)) {
@@ -2323,29 +2317,12 @@
 (function () {
   'use strict';
 
-  // DOM Cache Helper - reduces repeated queries
+  // Reuse shared helpers (separate IIFE scope requires local aliases)
   const getCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
-  /**
-   * Query single element with optional caching
-   * @param {string} sel - CSS selector
-   * @param {Element|Document} [ctx] - Context element
-   * @returns {Element|null}
-   */
   const $ = (sel, ctx) =>
     getCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
-  /**
-   * Query all elements with optional caching
-   * @param {string} sel - CSS selector
-   * @param {Element|Document} [ctx] - Context element
-   * @returns {Element[]}
-   */
   const $$ = (sel, ctx) =>
     getCache()?.querySelectorAll(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
-  /**
-   * Get element by ID with optional caching
-   * @param {string} id - Element ID
-   * @returns {Element|null}
-   */
   const byId = id => getCache()?.getElementById(id) || document.getElementById(id);
 
   // Do not run this module inside YouTube Studio (studio.youtube.com)
@@ -2365,17 +2342,16 @@
 
   if (isStudioPageCount()) return;
 
-  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
+  // i18n alias
   const t = (key, params = {}) => {
     if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
     if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    // Fallback for initialization phase
     if (!key) return '';
-    let result = String(key);
+    let r = String(key);
     for (const [k, v] of Object.entries(params || {})) {
-      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+      r = r.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
     }
-    return result;
+    return r;
   };
 
   // Enhanced configuration with better defaults
@@ -4145,7 +4121,7 @@
     window.YouTubeStats = {
       init,
       cleanup,
-      version: '2.4.2',
+      version: '2.4.3',
     };
   }
 

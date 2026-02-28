@@ -336,7 +336,11 @@
     toggleCaptions: () => {
       // Try to click a captions/subtitles button first
       try {
-        const buttons = document.querySelectorAll('button[aria-label]');
+        const container =
+          document.querySelector(
+            'ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player'
+          ) || document;
+        const buttons = container.querySelectorAll('button[aria-label]');
         for (const b of buttons) {
           const aria = (b.getAttribute('aria-label') || '').toLowerCase();
           if (
@@ -410,7 +414,11 @@
 
       // Try to click a visible mute/volume button so the player UI updates its icon
       try {
-        const buttons = document.querySelectorAll('button[aria-label]');
+        const container =
+          document.querySelector(
+            'ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player'
+          ) || document;
+        const buttons = container.querySelectorAll('button[aria-label]');
         for (const b of buttons) {
           const aria = (b.getAttribute('aria-label') || '').toLowerCase();
           if (

@@ -279,6 +279,26 @@ const handleSimpleSettingToggle = (
     }
   }
 
+  // Show/hide submenu for Speed Control
+  if (setting === 'enableSpeedControl') {
+    const submenu = modal.querySelector('.speed-submenu');
+    if (submenu) {
+      submenu.style.display = checked ? 'block' : 'none';
+    }
+    const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="speed"]');
+    if (toggleBtn instanceof HTMLElement) {
+      if (checked) {
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+        toggleBtn.style.display = 'inline-flex';
+      } else {
+        toggleBtn.setAttribute('disabled', '');
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.style.display = 'none';
+      }
+    }
+  }
+
   // Show/hide submenu for Enhanced Features
   if (setting === 'enableEnhanced') {
     const submenu = modal.querySelector('.enhanced-submenu');
@@ -583,6 +603,12 @@ const handleSidebarNavigation = (navItem, modal) => {
     `.ytp-plus-settings-section[data-section="${section}"]`
   );
   if (targetSection) targetSection.classList.remove('hidden');
+
+  // Init before/after slider when voting section becomes visible
+  if (section === 'voting' && window.YouTubePlus?.Voting?.initSlider) {
+    // Use rAF so the section is truly visible before measuring dimensions
+    requestAnimationFrame(() => window.YouTubePlus.Voting.initSlider());
+  }
 
   // Persist active nav section so it can be restored on next modal open
   try {

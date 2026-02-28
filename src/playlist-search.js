@@ -93,22 +93,20 @@
     }
   };
 
-  // Utility functions for performance optimization
+  // Use shared debounce/throttle from YouTubeUtils
   const debounce = (func, wait) => {
+    if (window.YouTubeUtils?.debounce) return window.YouTubeUtils.debounce(func, wait);
     let timeout;
-    return function executedFunction(...args) {
-      const later = () => {
-        clearTimeout(timeout);
-        func(...args);
-      };
+    return (...args) => {
       clearTimeout(timeout);
-      timeout = setTimeout(later, wait);
+      timeout = setTimeout(() => func(...args), wait);
     };
   };
 
   const throttle = (func, limit) => {
+    if (window.YouTubeUtils?.throttle) return window.YouTubeUtils.throttle(func, limit);
     let inThrottle;
-    return function executedFunction(...args) {
+    return (...args) => {
       if (!inThrottle) {
         func(...args);
         inThrottle = true;
@@ -767,16 +765,19 @@
    * @param {string} context - Error context for debugging
    * @returns {T} Wrapped function
    */
+  // Use shared withErrorBoundary from YouTubeErrorBoundary
   const withErrorBoundary = (fn, context) => {
     if (window.YouTubeErrorBoundary?.withErrorBoundary) {
-      return /** @type {T} */ (window.YouTubeErrorBoundary.withErrorBoundary(fn, 'PlaylistSearch'));
+      return /** @type {any} */ (
+        window.YouTubeErrorBoundary.withErrorBoundary(fn, 'PlaylistSearch')
+      );
     }
     return /** @type {any} */ (
       (...args) => {
         try {
           return fn(...args);
-        } catch (error) {
-          logError(context, error);
+        } catch (e) {
+          logError(context, e);
           return null;
         }
       }

@@ -38,7 +38,9 @@ const onDomReady = (() => {
       const cb = queue.shift();
       try {
         cb();
-      } catch {}
+      } catch (e) {
+        console.warn('[YouTube+] DOMReady callback error:', e);
+      }
     }
   };
 
@@ -93,7 +95,9 @@ const onDomReady = (() => {
           const parsed = JSON.parse(settings);
           return parsed.enableScrollToTopButton !== false;
         }
-      } catch {}
+      } catch (e) {
+        console.warn('[YouTube+] Config read error:', e);
+      }
       return true;
     })(),
     storageKey: 'youtube_top_button_settings',
@@ -711,19 +715,28 @@ const onDomReady = (() => {
       // For YouTube Music/Studio: listen on multiple scroll targets
       // since the actual scrollable container may differ per page
       if (host === 'music.youtube.com' || host === 'studio.youtube.com') {
+        // Cache music containers to avoid repeated DOM queries on every scroll event
+        let _musicContainersCache = null;
+        let _musicCacheTime = 0;
+        const getMusicContainers = () => {
+          const now = Date.now();
+          if (_musicContainersCache && now - _musicCacheTime < 5000) return _musicContainersCache;
+          _musicContainersCache = [
+            document.querySelector('ytmusic-app-layout #layout'),
+            document.querySelector('ytmusic-app-layout'),
+            document.querySelector('ytmusic-browse-response #contents'),
+            document.querySelector('ytmusic-section-list-renderer'),
+            scrollContainer !== window ? scrollContainer : null,
+          ].filter(Boolean);
+          _musicCacheTime = now;
+          return _musicContainersCache;
+        };
+
         const musicScrollCheck = debounceFunc(() => {
-          // Check multiple containers for any scroll offset
           let anyScrolled = window.scrollY > 100;
           if (!anyScrolled) {
-            const containers = [
-              document.querySelector('ytmusic-app-layout #layout'),
-              document.querySelector('ytmusic-app-layout'),
-              document.querySelector('ytmusic-browse-response #contents'),
-              document.querySelector('ytmusic-section-list-renderer'),
-              scrollContainer !== window ? scrollContainer : null,
-            ];
-            for (const c of containers) {
-              if (c && c.scrollTop > 100) {
+            for (const c of getMusicContainers()) {
+              if (c.scrollTop > 100) {
                 anyScrolled = true;
                 break;
               }
@@ -1581,7 +1594,9 @@ const onDomReady = (() => {
         if (shouldInitReturnDislike()) {
           try {
             initReturnDislike();
-          } catch {}
+          } catch (e) {
+            console.warn('[YouTube+] initReturnDislike error:', e);
+          }
         }
 
         // Watch-specific UI only initializes on /watch
@@ -1629,7 +1644,7 @@ const onDomReady = (() => {
 
   const scheduleInit = () => {
     if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(init, { timeout: 2000 });
+      requestIdleCallback(init, { timeout: 4000 });
     } else {
       setTimeout(init, 0);
     }
@@ -1681,11 +1696,13 @@ const onDomReady = (() => {
         immersiveSearch: true,
         hideVoiceSearch: true,
         transparentHeader: true,
-        hideSideGuide: false,
+        hideSideGuide: true,
         cleanSideGuide: false,
         fixFeedLayout: true,
         betterCaptions: true,
         playerBlur: true,
+        theaterEnhancements: true,
+        misc: true,
       },
     };
 
@@ -1695,7 +1712,9 @@ const onDomReady = (() => {
       try {
         const raw = localStorage.getItem(SETTINGS_KEY);
         if (raw) parsed = JSON.parse(raw);
-      } catch {}
+      } catch (e) {
+        console.warn('[YouTube+] Zen settings parse error:', e);
+      }
 
       const merged = {
         ...DEFAULTS,
@@ -1769,11 +1788,7 @@ const onDomReady = (() => {
       `,
       fixFeedLayout: `
         /* Fix new feed layout */
-        @media only screen and (min-width: 1400px) { ytd-rich-item-renderer[rendered-from-rich-grid] { --ytd-rich-grid-items-per-row: 4 !important; } }
-        @media only screen and (min-width: 1700px) { ytd-rich-item-renderer[rendered-from-rich-grid] { --ytd-rich-grid-items-per-row: 5 !important; } }
-        @media only screen and (min-width: 2180px) { ytd-rich-item-renderer[rendered-from-rich-grid] { --ytd-rich-grid-items-per-row: 6 !important; } }
-        ytd-rich-item-renderer[is-in-first-column=""] { margin-left: calc(var(--ytd-rich-grid-item-margin) / 2) !important; }
-        #contents { padding-left: calc(var(--ytd-rich-grid-item-margin) / 2 + var(--ytd-rich-grid-gutter-margin)) !important; }
+        ytd-rich-item-renderer[rendered-from-rich-grid] {  @media only screen and (min-width: 1400px) { --ytd-rich-grid-items-per-row: 4 !important; @media only screen and (min-width: 1700px) { --ytd-rich-grid-items-per-row: 5 !important; @media only screen and (min-width: 2180px) {--ytd-rich-grid-items-per-row: 6 !important;}}}} ytd-rich-item-renderer[is-in-first-column="\"] { margin-left: calc(var(--ytd-rich-grid-item-margin) / 2) !important;}#contents { padding-left: calc(var(--ytd-rich-grid-item-margin) / 2 + var(--ytd-rich-grid-gutter-margin)) !important;}
       `,
       betterCaptions: `
         /* Better captions */
@@ -1794,6 +1809,64 @@ const onDomReady = (() => {
         .ytPlayerQuickActionButtonsHostCompactControls,
         .ytPlayerQuickActionButtonsHostDisableBackdropFilter { backdrop-filter: blur(5px) !important; background-color: #0004 !important; }
         .ytp-popup { backdrop-filter: blur(10px) !important; background-color: #0007 !important; }
+      `,
+      theaterEnhancements: `
+        /* Zen view comments (from zeninternet) */
+        /* Hide secondary column visually but break containment so fixed children can escape */
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #columns #secondary { display: block !important;width: 0 !important;min-width: 0 !important;max-width: 0 !important;padding: 0 !important;margin: 0 !important;border: 0 !important;overflow: visible !important;pointer-events: none !important;flex: 0 0 0px !important;contain: none !important;
+        }
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #secondary-inner { overflow: visible !important;contain: none !important;position: static !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #secondary-inner secondary-wrapper,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #secondary-inner .tabview-secondary-wrapper { contain: none !important;overflow: visible !important;position: static !important;max-height: none !important;height: auto !important;padding: 0 !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #right-tabs { display: block !important;overflow: visible !important;contain: none !important;position: static !important;width: 0 !important;height: 0 !important;padding: 0 !important;margin: 0 !important;border: 0 !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #right-tabs > header { display: none !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #right-tabs .tab-content { display: block !important;overflow: visible !important;contain: none !important;position: static !important;width: 0 !important;height: 0 !important;padding: 0 !important;margin: 0 !important;border: 0 !important;}
+        /* Break containment on tab-comments so its fixed-position child can escape */
+        /* Extra .tab-content-hidden selector to beat main.js specificity (line 5169) */
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-comments,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-comments.tab-content-hidden,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-comments.tab-content-cld { contain: none !important;overflow: visible !important;position: static !important;display: block !important;visibility: visible !important;width: 0 !important;height: 0 !important;padding: 0 !important;margin: 0 !important;z-index: auto !important;pointer-events: none !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-comments.tab-content-hidden ytd-comments#comments > ytd-item-section-renderer#sections,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-comments.tab-content-hidden ytd-comments#comments > ytd-item-section-renderer#sections > #contents,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-comments.tab-content-hidden ytd-comments#comments #contents { contain: none !important;width: auto !important;height: auto !important;max-height: none !important;overflow: visible !important;visibility: visible !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-comments.tab-content-hidden ytd-comments#comments #contents > * { display: block !important;}
+        /* Hide other tabs content */
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-info,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-videos,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #tab-list { display: none !important;}
+        /* Comments overlay panel */
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) ytd-comments { visibility: visible !important;display: block !important;background-color: var(--yt-live-chat-shimmer-background-color) !important;backdrop-filter: blur(20px) !important;padding: 0 2em !important;border-radius: 2em 0 0 2em !important;max-height: calc(100vh - 120px) !important;overflow-y: auto !important;position: fixed !important;z-index: 2000 !important;top: 3vh !important;right: -42em !important;width: 40em !important;height: 90vh !important;opacity: 0 !important;pointer-events: auto !important;transition: opacity 0.4s ease, right 0.4s ease !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) ytd-comments:hover { opacity: 1 !important;right: 0 !important;}
+        /* Transparent overlay chat — fixed panel */
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) [tyt-chat-container],
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #chat-container { contain: none !important;overflow: visible !important;position: static !important;display: block !important;pointer-events: none !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #chat { visibility: visible !important;display: block !important;position: fixed !important;top: 3vh !important;right: 0 !important;width: 400px !important;height: calc(100vh - 120px) !important;max-height: calc(100vh - 120px) !important;z-index: 2001 !important;opacity: 0.85 !important;pointer-events: auto !important;border-radius: 2em 0 0 2em !important;overflow: hidden !important;backdrop-filter: blur(20px) !important;transition: opacity 0.4s ease !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #chat[collapsed] { visibility: visible !important;display: block !important;position: fixed !important;top: 3vh !important;right: 0 !important;width: 400px !important;height: calc(100vh - 120px) !important;max-height: calc(100vh - 120px) !important;z-index: 2001 !important;opacity: 0.85 !important;pointer-events: auto !important;overflow: hidden !important;border-radius: 2em 0 0 2em !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #chat[collapsed] > #show-hide-button,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #chat[collapsed] > .ytd-live-chat-frame#show-hide-button { display: none !important;visibility: hidden !important;opacity: 0 !important;pointer-events: none !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #chat[collapsed] iframe { display: block !important;visibility: visible !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #chat iframe { height: 100% !important;width: 100% !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) yt-live-chat-renderer { background: transparent !important;}
+        /* Ambient mode: fix black bars in theater */
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #cinematics-container,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #cinematics { position: absolute !important;top: 0 !important;left: 0 !important;width: 100% !important;height: 100% !important;overflow: hidden !important;pointer-events: none !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #cinematics canvas,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #cinematics video { position: absolute !important;top: 50% !important;left: 50% !important;transform: translate(-50%, -50%) scale(1.2) !important;min-width: 100% !important;min-height: 100% !important;object-fit: cover !important;}
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #player-full-bleed-container { overflow: hidden !important;}
+        ytd-watch-flexy[fullscreen] ytd-live-chat-frame { background-color: var(--app-drawer-content-container-background-color) !important;}
+      `,
+      misc: `
+        /* Compact feed – reduced spacing, hover menus, inline details */
+        ytd-rich-item-renderer { margin-bottom: 15px !important;}
+        ytd-rich-item-renderer[rendered-from-rich-grid] { --ytd-rich-item-row-usable-width: calc(100% - var(--ytd-rich-grid-gutter-margin) * 1) !important;}
+        ytd-rich-item-renderer #metadata.ytd-video-meta-block { flex-direction: row !important;}
+        ytd-rich-item-renderer #metadata.ytd-video-meta-block #metadata-line span:nth-child(3) { height: 1em !important;margin-left: 1em !important;}
+        ytd-rich-grid-media { border-radius: 1.2em;height: 100% !important;}
+        ytd-rich-grid-media ytd-menu-renderer #button { opacity: 0 !important;transition: opacity 0.3s ease-in-out !important;}
+        ytd-rich-grid-media:hover ytd-menu-renderer #button { opacity: 1 !important;}
+        /* Show video meta on hover */
+        #content #dismissible:hover ytd-video-meta-block { opacity: 1 !important;}
+        #frosted-glass { display: none !important;}
       `,
       // CLS Prevention styles - always loaded to reserve space for dynamic elements
       clsPrevention: `
@@ -1817,6 +1890,9 @@ const onDomReady = (() => {
       let css = CSS_BLOCKS.clsPrevention; // Always include CLS prevention
       if (z.hideSideGuide) css += CSS_BLOCKS.hideSideGuide;
       if (z.fixFeedLayout) css += CSS_BLOCKS.fixFeedLayout;
+      // theaterEnhancements in critical so overlay CSS applies immediately on DOMContentLoaded
+      // (previously non-critical, could take up to 5s to appear on theater mode switch)
+      if (z.theaterEnhancements) css += CSS_BLOCKS.theaterEnhancements;
       return css.trim();
     };
 
@@ -1830,6 +1906,7 @@ const onDomReady = (() => {
       if (z.cleanSideGuide) css += CSS_BLOCKS.cleanSideGuide;
       if (z.betterCaptions) css += CSS_BLOCKS.betterCaptions;
       if (z.playerBlur) css += CSS_BLOCKS.playerBlur;
+      if (z.misc) css += CSS_BLOCKS.misc;
       return css.trim();
     };
 
@@ -1913,7 +1990,7 @@ const onDomReady = (() => {
           }
           if (typeof requestIdleCallback === 'function') {
             nonCriticalTimer = requestIdleCallback(() => applyNonCriticalStyles(nonCriticalCss), {
-              timeout: 2000,
+              timeout: 5000,
             });
           } else {
             nonCriticalTimer = setTimeout(() => applyNonCriticalStyles(nonCriticalCss), 200);
@@ -1941,7 +2018,7 @@ const onDomReady = (() => {
       }
       if (typeof requestIdleCallback === 'function') {
         nonCriticalTimer = requestIdleCallback(() => applyNonCriticalStyles(nonCriticalCss), {
-          timeout: 2000,
+          timeout: 5000,
         });
       } else {
         nonCriticalTimer = setTimeout(() => applyNonCriticalStyles(nonCriticalCss), 200);
@@ -1966,6 +2043,227 @@ const onDomReady = (() => {
   }
 })();
 
+// Theater overlay runtime fixes
+// 1) Auto-expand live chat in theater overlay (avoid "Show chat" placeholder)
+// 2) Preload comments content so Zen comments panel is not empty
+(function () {
+  'use strict';
+
+  const host = typeof location === 'undefined' ? '' : location.hostname;
+  if (!host) return;
+  if (!/(^|\.)youtube\.com$/.test(host) && !/\.youtube\.google/.test(host)) return;
+
+  const SETTINGS_KEY = 'youtube_plus_settings';
+  const PRELOADED_ATTR = 'data-ytp-zen-comments-preloaded';
+
+  const isWatchPage = () => location.pathname === '/watch';
+
+  const readSettings = () => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw);
+    } catch {
+      return null;
+    }
+  };
+
+  const isTheaterEnhancementEnabled = () => {
+    const settings = readSettings();
+    if (!settings) return true;
+    if (settings.enableZenStyles === false) return false;
+    if (settings.zenStyles && settings.zenStyles.theaterEnhancements === false) return false;
+    return true;
+  };
+
+  const clickElement = element => {
+    if (!element) return;
+    try {
+      element.dispatchEvent(
+        new window.MouseEvent('click', { bubbles: true, cancelable: true, view: window })
+      );
+    } catch {
+      try {
+        element.click();
+      } catch {}
+    }
+  };
+
+  const preloadCommentsInBackground = flexy => {
+    const commentsTab = document.querySelector('#tab-comments');
+    const commentsBtn = document.querySelector('#material-tabs a[tyt-tab-content="#tab-comments"]');
+    if (!commentsTab || !commentsBtn || commentsTab.getAttribute(PRELOADED_ATTR) === '1') return;
+
+    // Disable tiny pre-load mode CSS from main.js for theater overlay comments.
+    if (flexy && !flexy.hasAttribute('keep-comments-scroller')) {
+      flexy.setAttribute('keep-comments-scroller', '');
+    }
+
+    const activeBtn = document.querySelector('#material-tabs a[tyt-tab-content].active');
+    clickElement(commentsBtn);
+
+    requestAnimationFrame(() => {
+      commentsTab.setAttribute(PRELOADED_ATTR, '1');
+      if (activeBtn && activeBtn !== commentsBtn && activeBtn.isConnected) {
+        clickElement(activeBtn);
+      }
+    });
+  };
+
+  // Re-enabled: now safe because ytBtnCancelTheater() in main.js is guarded by
+  // isZenTheaterOverlayActive() — it won't exit theater when zen overlay CSS is active.
+  // Without this JS step, the iframe inside #chat doesn't load when [collapsed].
+  let expandAttempts = 0;
+  const MAX_EXPAND_ATTEMPTS = 3;
+
+  const expandLiveChat = () => {
+    const chat = document.querySelector('ytd-live-chat-frame#chat');
+    if (!chat) return;
+
+    // Step 1: Uncollapse the chat element if it has [collapsed] attribute
+    if (chat.hasAttribute('collapsed')) {
+      if (expandAttempts >= MAX_EXPAND_ATTEMPTS) return;
+      expandAttempts++;
+
+      // Method 1: Polymer internal API (same approach as main.js ytBtnExpandChat)
+      let expanded = false;
+      try {
+        const cnt =
+          chat.polymerController ||
+          (typeof chat.__data !== 'undefined' ? chat : null) ||
+          (chat.inst ? chat.inst : null);
+        if (cnt && typeof cnt.setCollapsedState === 'function') {
+          cnt.setCollapsedState({
+            setLiveChatCollapsedStateAction: { collapsed: false },
+          });
+          expanded = cnt.collapsed === false;
+        }
+        if (!expanded && cnt && typeof cnt.collapsed === 'boolean') {
+          cnt.collapsed = false;
+          if (cnt.isHiddenByUser === true) cnt.isHiddenByUser = false;
+          expanded = cnt.collapsed === false;
+        }
+      } catch {}
+
+      // Method 2: click the "Show chat" button as fallback
+      if (!expanded) {
+        const showBtn = chat.querySelector(
+          '#show-hide-button div.yt-spec-touch-feedback-shape, ' +
+            '#show-hide-button ytd-toggle-button-renderer, ' +
+            '#show-hide-button button'
+        );
+        if (showBtn) clickElement(showBtn);
+      }
+    }
+
+    // Step 2: Ensure the iframe has its src loaded.
+    // YouTube's Polymer binding may not fire when we uncollapse programmatically,
+    // leaving the iframe empty. Manually set src from the element's URL property.
+    const iframe = chat.querySelector('iframe#chatframe');
+    if (iframe && !iframe.src && chat.url) {
+      iframe.src = chat.url;
+    }
+  };
+
+  const runOverlayFixes = () => {
+    if (!isWatchPage()) return;
+    if (!isTheaterEnhancementEnabled()) return;
+
+    const flexy = document.querySelector('ytd-watch-flexy');
+    if (!flexy || flexy.hasAttribute('fullscreen')) return;
+    const isTheaterLike =
+      flexy.hasAttribute('theater') ||
+      flexy.hasAttribute('full-bleed-player') ||
+      flexy.hasAttribute('theater-requested_');
+    if (!isTheaterLike) return;
+
+    expandLiveChat();
+    preloadCommentsInBackground(flexy);
+  };
+
+  let debounceTimer = 0;
+  const scheduleRun = () => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(runOverlayFixes, 150);
+  };
+
+  // --- Targeted observers (NOT document.body subtree — that fires hundreds of times during page parse) ---
+  const setupOverlayObservers = () => {
+    // Observer 1: watch ytd-watch-flexy for theater / fullscreen attribute changes
+    const flexyObserver = new MutationObserver(scheduleRun);
+    let observedFlexy = null;
+
+    const attachFlexyObserver = () => {
+      const flexy = document.querySelector('ytd-watch-flexy');
+      if (flexy && flexy !== observedFlexy) {
+        if (observedFlexy) flexyObserver.disconnect();
+        flexyObserver.observe(flexy, {
+          attributes: true,
+          attributeFilter: ['theater', 'full-bleed-player', 'theater-requested_', 'fullscreen'],
+        });
+        observedFlexy = flexy;
+      }
+    };
+
+    // Observer 2: watch #chat for [collapsed] changes
+    // (CSS handles display; observer just schedules overlay fixes like comment preloading)
+    const chatObserver = new MutationObserver(scheduleRun);
+    let observedChat = null;
+
+    const attachChatObserver = () => {
+      const chat = document.querySelector('ytd-live-chat-frame#chat');
+      if (chat && chat !== observedChat) {
+        if (observedChat) chatObserver.disconnect();
+        chatObserver.observe(chat, {
+          attributes: true,
+          attributeFilter: ['collapsed'],
+        });
+        observedChat = chat;
+      }
+    };
+
+    attachFlexyObserver();
+    attachChatObserver();
+
+    // Re-attach after SPA navigation (new flexy/chat elements are created)
+    window.addEventListener(
+      'yt-navigate-finish',
+      () => {
+        expandAttempts = 0; // reset on navigation so chat can expand on new page
+        setTimeout(() => {
+          attachFlexyObserver();
+          attachChatObserver();
+          scheduleRun();
+        }, 180);
+      },
+      { passive: true }
+    );
+
+    try {
+      if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
+        window.YouTubeUtils.cleanupManager.registerObserver(flexyObserver);
+        window.YouTubeUtils.cleanupManager.registerObserver(chatObserver);
+      }
+    } catch {}
+  };
+
+  // Defer observer setup to after DOMContentLoaded so it does NOT fire during page parse
+  // (observing document.documentElement at document-start fires hundreds of times and hurts LCP)
+  if (document.readyState === 'loading') {
+    document.addEventListener(
+      'DOMContentLoaded',
+      () => {
+        scheduleRun();
+        setupOverlayObservers();
+      },
+      { once: true }
+    );
+  } else {
+    scheduleRun();
+    setupOverlayObservers();
+  }
+})();
+
 // Comment Translation Button
 // Restores the "Translate to ..." button that YouTube removed from comments
 (function () {
@@ -1981,14 +2279,91 @@ const onDomReady = (() => {
   const TRANSLATED_ATTR = 'data-ytp-translated';
   const ORIGINAL_ATTR = 'data-ytp-original-text';
 
-  /** Detect user's preferred language */
+  /**
+   * Map YouTube+/YouTube locale codes → Google Translate BCP-47 codes.
+   * Google Translate uses mostly ISO 639-1 with some regional variants.
+   */
+  const LANG_MAP = {
+    // YouTube+ internal codes
+    cn: 'zh-CN',
+    tw: 'zh-TW',
+    kr: 'ko',
+    jp: 'ja',
+    ng: 'en',
+    du: 'nl',
+    be: 'be',
+    bg: 'bg',
+    kk: 'kk',
+    ky: 'ky',
+    uz: 'uz',
+    uk: 'uk',
+    // YouTube locale codes → ISO 639-1
+    'zh-hans': 'zh-CN',
+    'zh-hant': 'zh-TW',
+    'zh-cn': 'zh-CN',
+    'zh-tw': 'zh-TW',
+    'zh-hk': 'zh-TW',
+    iw: 'he', // YouTube uses 'iw' for Hebrew
+    jv: 'jw', // Javanese
+    'sr-latn': 'sr',
+    'pt-br': 'pt',
+    'pt-pt': 'pt',
+    // Pass-through for standard ISO 639-1 codes
+    ar: 'ar',
+    az: 'az',
+    cs: 'cs',
+    da: 'da',
+    de: 'de',
+    el: 'el',
+    en: 'en',
+    es: 'es',
+    fi: 'fi',
+    fr: 'fr',
+    hi: 'hi',
+    hr: 'hr',
+    hu: 'hu',
+    id: 'id',
+    it: 'it',
+    lt: 'lt',
+    lv: 'lv',
+    ms: 'ms',
+    nl: 'nl',
+    no: 'no',
+    pl: 'pl',
+    ro: 'ro',
+    ru: 'ru',
+    sk: 'sk',
+    sl: 'sl',
+    sq: 'sq',
+    sv: 'sv',
+    th: 'th',
+    tr: 'tr',
+    vi: 'vi',
+  };
+
+  /** Normalise any locale/YouTube+ code to a Google-Translate-compatible code */
+  const toGoogleLang = code => {
+    if (!code) return 'en';
+    const lower = code.toLowerCase();
+    if (LANG_MAP[lower]) return LANG_MAP[lower];
+    // Strip region suffix for unknown codes (e.g. 'es-419' → 'es')
+    const base = lower.split('-')[0];
+    return LANG_MAP[base] || base || 'en';
+  };
+
+  /** Detect user's preferred language (returns Google-Translate-compatible code) */
   const getUserLanguage = () => {
     try {
-      if (window.YouTubePlusI18n?.getLanguage) return window.YouTubePlusI18n.getLanguage();
+      // 1. YouTube+ i18n internal code (e.g. 'cn', 'kr', 'jp')
+      if (window.YouTubePlusI18n?.getLanguage) {
+        return toGoogleLang(window.YouTubePlusI18n.getLanguage());
+      }
+      // 2. <html lang="..."> attribute set by YouTube
       const htmlLang = document.documentElement.lang;
-      if (htmlLang) return htmlLang.split('-')[0];
+      if (htmlLang) return toGoogleLang(htmlLang);
     } catch {}
-    return navigator.language?.split('-')[0] || 'en';
+    // 3. Browser navigator.language
+    return toGoogleLang(navigator.language) || 'en';
   };
 
   /** Translate text using Google Translate (free endpoint) */
@@ -1996,6 +2371,7 @@ const onDomReady = (() => {
     try {
       const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
       const resp = await fetch(url);
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (Array.isArray(data) && Array.isArray(data[0])) {
         return data[0].map(s => (s && s[0]) || '').join('');

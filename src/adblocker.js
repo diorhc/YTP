@@ -248,7 +248,9 @@
           if (video.duration && isFinite(video.duration) && video.duration > 0) {
             try {
               video.currentTime = Math.max(video.duration - 0.1, 0);
-            } catch {}
+            } catch (e) {
+              console.warn('[YouTube+] Ad seek error:', e);
+            }
           }
         }
 
@@ -495,7 +497,9 @@
           }
         };
         document.addEventListener('playing', handleVideoPlay, { capture: true, passive: true });
-      } catch {}
+      } catch (e) {
+        console.warn('[YouTube+] Ad play listener error:', e);
+      }
 
       // Navigation handling
       const handleNavigation = () => {
@@ -503,13 +507,8 @@
         AdBlocker.cache.lastCacheTime = 0; // Reset cache
       };
 
-      // Override pushState for SPA navigation
-      const originalPushState = history.pushState;
-      history.pushState = function () {
-        const result = originalPushState.apply(this, arguments);
-        setTimeout(handleNavigation, 50);
-        return result;
-      };
+      // Use centralized pushState/replaceState event from utils.js
+      window.addEventListener('ytp-history-navigate', () => setTimeout(handleNavigation, 50));
 
       // Settings modal integration — use event instead of MutationObserver
       document.addEventListener('youtube-plus-settings-modal-opened', () => {

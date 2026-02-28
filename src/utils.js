@@ -990,6 +990,36 @@
     };
   })();
 
+  // Centralized history.pushState/replaceState wrapping.
+  // Dispatches 'ytp-history-navigate' so modules can listen instead of each wrapping independently.
+  if (typeof window !== 'undefined' && !window.__ytp_history_wrapped) {
+    window.__ytp_history_wrapped = true;
+    const _origPush = history.pushState;
+    const _origReplace = history.replaceState;
+    history.pushState = function () {
+      const result = _origPush.apply(this, arguments);
+      try {
+        window.dispatchEvent(
+          new CustomEvent('ytp-history-navigate', { detail: { type: 'pushState' } })
+        );
+      } catch (e) {
+        console.warn('[YouTube+] pushState event error:', e);
+      }
+      return result;
+    };
+    history.replaceState = function () {
+      const result = _origReplace.apply(this, arguments);
+      try {
+        window.dispatchEvent(
+          new CustomEvent('ytp-history-navigate', { detail: { type: 'replaceState' } })
+        );
+      } catch (e) {
+        console.warn('[YouTube+] replaceState event error:', e);
+      }
+      return result;
+    };
+  }
+
   // Expose a global YouTubeUtils if not present (non-destructive)
   if (typeof window !== 'undefined') {
     /** @type {any} */ (window).YouTubeUtils = /** @type {any} */ (window).YouTubeUtils || {};

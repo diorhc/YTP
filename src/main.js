@@ -19,8 +19,8 @@ try {
 }
 
 if (trustHTMLErr) {
-  console.log(`trustHTMLErr`, trustHTMLErr);
-  trustHTMLErr(); // exit userscript
+  console.error(`trustHTMLErr`, trustHTMLErr);
+  throw trustHTMLErr; // exit userscript
 }
 
 // -----------------------------------------------------------------------------------------------------------------------------
@@ -51,8 +51,8 @@ const executionScript = () => {
   }
 
   if (trustHTMLErr) {
-    console.log(`trustHTMLErr`, trustHTMLErr);
-    trustHTMLErr(); // exit userscript
+    console.error(`trustHTMLErr`, trustHTMLErr);
+    throw trustHTMLErr; // exit userscript
   }
 
   try {
@@ -718,11 +718,12 @@ const executionScript = () => {
       uk: true,
       uz: true,
       vi: true,
+      ng: true,
     };
 
     /**
      * Get the current UI language code.
-     * Delegates to the centralized i18n system so all 24 languages (and their
+     * Delegates to the centralized i18n system so all shipped languages (and their
      * locale variants) are resolved correctly. Falls back to a minimal inline map
      * for the brief window before i18n initialises.
      */
@@ -735,7 +736,7 @@ const executionScript = () => {
         }
       } catch {}
 
-      // Inline fallback covers all 24 supported languages so early callers
+      // Inline fallback covers all shipped supported languages so early callers
       // (before i18n is ready) still get a correct code.
       const htmlLang = ((document || 0).documentElement || 0).lang || '';
       const localMap = {
@@ -810,6 +811,11 @@ const executionScript = () => {
         // Indonesian
         id: 'id',
         'id-id': 'id',
+        // Nigerian (Pidgin)
+        ng: 'ng',
+        'en-ng': 'ng',
+        pcm: 'ng',
+        'pcm-ng': 'ng',
         // Turkish
         tr: 'tr',
         'tr-tr': 'tr',
@@ -1273,7 +1279,24 @@ const executionScript = () => {
       return ytdFlexyElm && ytdFlexyElm.hasAttribute000('theater');
     }
 
+    /** Check if zen theater overlay CSS is active (chat/comments become fixed overlays) */
+    function isZenTheaterOverlayActive() {
+      try {
+        const raw = localStorage.getItem('youtube_plus_settings');
+        if (!raw) return true; // defaults enable zen theater enhancements
+        const s = JSON.parse(raw);
+        if (s?.enableZenStyles === false) return false;
+        if (s?.zenStyles?.theaterEnhancements === false) return false;
+        return true;
+      } catch {
+        return true;
+      }
+    }
+
     function ytBtnCancelTheater() {
+      // When zen theater overlay is active, chat/comments are fixed overlays.
+      // Do NOT programmatically exit theater — the user controls it via 't' key.
+      if (isZenTheaterOverlayActive()) return;
       if (isTheater()) {
         const sizeBtn = qs('ytd-watch-flexy #ytd-player button.ytp-size-button');
         if (sizeBtn) sizeBtn.click();
@@ -1325,6 +1348,9 @@ const executionScript = () => {
     }
 
     function ytBtnCollapseChat() {
+      // When zen theater overlay is active, don't programmatically collapse chat —
+      // it should remain visible as a transparent overlay panel.
+      if (isZenTheaterOverlayActive() && isTheater()) return;
       const dom = getSuitableElement('ytd-live-chat-frame#chat');
       const cnt = insp(dom);
       if (cnt && typeof cnt.collapsed === 'boolean') {
@@ -2527,12 +2553,10 @@ const executionScript = () => {
       const ytdFlexyCnt = insp(ytdFlexyElm);
       if (ytdFlexyCnt && typeof ytdFlexyCnt.videoId === 'string') return ytdFlexyCnt.videoId;
       if (ytdFlexyElm && typeof ytdFlexyElm.videoId === 'string') return ytdFlexyElm.videoId;
-      console.log('video id not found');
       return '';
     };
 
     const _holdInlineExpanderAlwaysExpanded = inlineExpanderCnt => {
-      console.log('holdInlineExpanderAlwaysExpanded');
       if (inlineExpanderCnt.alwaysShowExpandButton === true) {
         inlineExpanderCnt.alwaysShowExpandButton = false;
       }
@@ -2861,7 +2885,6 @@ const executionScript = () => {
         if (t instanceof Element) return t;
         if (i > 0) {
           // try later
-          console.log('ytd-live-chat-frame::attached - delayPn(200)');
           await delayPn(200);
         }
       }
@@ -3217,7 +3240,8 @@ const executionScript = () => {
           elements.related = null;
           hostElement.removeAttribute000('tyt-videos-list');
         }
-        console.log('ytd-watch-next-secondary-results-renderer::detached', hostElement);
+        DEBUG_5084 &&
+          console.log('ytd-watch-next-secondary-results-renderer::detached', hostElement);
       },
 
       settingCommentsVideoId: hostElement => {
@@ -3355,7 +3379,6 @@ const executionScript = () => {
         if (!hostElement || hostElement.id !== 'comments') return;
         // if (!hostElement || hostElement.closest('[hidden]')) return;
         elements.comments = hostElement;
-        console.log('ytd-comments::attached');
         Promise.resolve(hostElement).then(eventMap['settingCommentsVideoId']).catch(console.warn);
 
         aoComment.observe(hostElement, { attributes: true });
@@ -3715,7 +3738,6 @@ const executionScript = () => {
           !hostElement.matches('[tyt-main-info]')
         ) {
           elements.infoExpander = hostElement;
-          console.log(128384, elements.infoExpander);
 
           // console.log(1299, hostElement.parentNode, isRightTabsInserted)
 
@@ -3731,7 +3753,6 @@ const executionScript = () => {
 
           if (elements.infoExpander !== hostElement) return;
           if (hostElement.isConnected === false) return;
-          console.log(7932, 'infoExpander');
 
           elements.infoExpander.classList.add('tyt-main-info'); // add a classname for it
 
@@ -4035,7 +4056,6 @@ const executionScript = () => {
         // if (hostElement.__connectedFlg__ !== 4) return;
         // hostElement.__connectedFlg__ = 5;
         if (!hostElement || hostElement.id !== 'chat') return;
-        console.log('ytd-live-chat-frame::attached');
 
         const lockId = lockSet['ytdLiveAttachedLock'];
         const chatElem = await getGeneralChatElement();
@@ -4068,7 +4088,7 @@ const executionScript = () => {
           }, 320);
           Promise.resolve(lockSet['layoutFixLock']).then(layoutFix);
         } else {
-          console.log('Issue found in ytd-live-chat-frame::attached', chatElem, hostElement);
+          console.warn('Issue found in ytd-live-chat-frame::attached', chatElem, hostElement);
         }
       },
 
@@ -4080,7 +4100,6 @@ const executionScript = () => {
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
         // hostElement.__connectedFlg__ = 9;
-        console.log('ytd-live-chat-frame::detached');
         if (hostElement.hasAttribute000('tyt-active-chat-frame')) {
           aoChat.disconnect();
           aoChat.takeRecords();
@@ -4328,11 +4347,9 @@ const executionScript = () => {
       relatedElementProvided: target => {
         if (target.closest('[hidden]')) return;
         elements.related = target;
-        console.log('relatedElementProvided');
         videosElementProvidedPromise.resolve();
       },
       onceInfoExpanderElementProvidedPromised: () => {
-        console.log('hide-default-text-inline-expander');
         const ytdFlexyElm = elements.flexy;
         if (ytdFlexyElm) {
           ytdFlexyElm.setAttribute111('hide-default-text-inline-expander', '');
@@ -4473,6 +4490,7 @@ const executionScript = () => {
           secondaryWrapper.classList.add('tabview-secondary-wrapper');
           secondaryWrapper.id = 'secondary-inner-wrapper';
           const secondaryInner = qs('#secondary-inner.style-scope.ytd-watch-flexy');
+          if (!secondaryInner) return;
 
           inPageRearrange = true;
           secondaryWrapper.replaceChildren000(...secondaryInner.childNodes);
@@ -4582,7 +4600,6 @@ const executionScript = () => {
         const isExitingFullscreen = (p & 64) === 64 && (q & 64) === 0;
 
         if (p !== q) {
-          console.log(388, p, q);
           let actioned = false;
           let special = 0;
           if (plugin['external.ytlstm'].activated) {
@@ -4871,22 +4888,17 @@ const executionScript = () => {
           }
 
           if (shouldDoAutoFix) {
-            console.log(388, 'd');
             if (lastPanel === 'chat') {
-              console.log(388, 'd1c');
               ytBtnExpandChat();
               actioned = true;
             } else if (lastPanel === 'playlist') {
-              console.log(388, 'd1p');
               ytBtnOpenPlaylist();
               actioned = true;
             } else if (lastTab) {
-              console.log(388, 'd2t');
               switchToTab(lastTab);
               actioned = true;
             } else if (resetForPanelDisappeared) {
               // if lastTab is undefined
-              console.log(388, 'd2d');
               Promise.resolve(lockSet['fixInitialTabStateLock'])
                 .then(eventMap['fixInitialTabStateFn'])
                 .catch(console.warn);
@@ -5143,8 +5155,7 @@ const executionScript = () => {
 
     _executionFinished = 1;
   } catch (e) {
-    console.log('error 0xF491');
-    console.error(e);
+    console.error('error 0xF491', e);
   }
 };
 const styles = {
@@ -5223,7 +5234,7 @@ const styles = {
   [tyt-chat="+"] { --tyt-chat-grow: 1;}
   [tyt-chat="+"] secondary-wrapper>[tyt-chat-container]{flex-grow:var(--tyt-chat-grow);flex-shrink:0;display:flex;flex-direction:column;}
   [tyt-chat="+"] secondary-wrapper>[tyt-chat-container]>#chat{flex-grow:var(--tyt-chat-grow);}
-  ytd-watch-flexy[is-two-columns_]:not([theater]) #columns.style-scope.ytd-watch-flexy{min-height:calc(100vh - var(--ytd-toolbar-height,56px));}
+  ytd-watch-flexy[is-two-columns_]:not([theater]):not([full-bleed-player]) #columns.style-scope.ytd-watch-flexy{min-height:calc(100vh - var(--ytd-toolbar-height,56px));}
   ytd-watch-flexy[is-two-columns_]:not([full-bleed-player]) ytd-live-chat-frame#chat{min-height:initial!important;height:initial!important;}
   ytd-watch-flexy[tyt-tab^="#"]:not([is-two-columns_]):not([tyt-chat="+"]) #right-tabs{min-height:var(--ytd-watch-flexy-chat-max-height);}
   body ytd-watch-flexy:not([is-two-columns_]) #chat.ytd-watch-flexy{margin-top:0;}
@@ -5311,11 +5322,11 @@ const styles = {
   #below ytd-watch-metadata ytd-watch-info-text#ytd-watch-info-text { font-size: inherit; line-height: inherit;}
   /* Fix: video tab thumbnails (yt-lockup-view-model) too large in side panel */
   #tab-videos yt-lockup-view-model{max-width:100%;contain:layout paint;}
-  #tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image,#tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image img,#tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image yt-image{max-width:168px;max-height:94px;width:168px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;}
+  #tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image,#tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image img,#tab-videos yt-lockup-view-model .yt-lockup-view-model__content-image yt-image{max-width:175px;max-height:94px;width:175px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;}
   #tab-videos yt-lockup-view-model .yt-lockup-view-model--horizontal{display:flex;gap:8px;align-items:flex-start;}
-  #tab-videos yt-lockup-view-model .yt-lockup-view-model--horizontal .yt-lockup-view-model__content-image{flex-shrink:0;width:168px;}
+  #tab-videos yt-lockup-view-model .yt-lockup-view-model--horizontal .yt-lockup-view-model__content-image{flex-shrink:0;width:175px;}
   #tab-videos yt-lockup-view-model .yt-lockup-view-model--horizontal .yt-lockup-view-model__metadata{flex:1;min-width:0;overflow:hidden;}
-  #tab-videos ytd-video-renderer[use-search-ui] #thumbnail.ytd-video-renderer,#tab-videos ytd-compact-video-renderer #thumbnail{max-width:168px;width:168px;flex-shrink:0;}
+  #tab-videos ytd-video-renderer[use-search-ui] #thumbnail.ytd-video-renderer,#tab-videos ytd-compact-video-renderer #thumbnail{max-width:175px;width:175px;flex-shrink:0;}
   /* ── LCP Performance: safe content-visibility hints (no contain:layout to preserve sticky) ── */
   ytd-browse[page-subtype="home"] #contents.ytd-rich-grid-renderer>ytd-rich-item-renderer:nth-child(n+9){content-visibility:auto;contain-intrinsic-size:auto 360px;}
   ytd-playlist-video-list-renderer #contents>ytd-playlist-video-renderer:nth-child(n+10){content-visibility:auto;contain-intrinsic-size:auto 90px;}

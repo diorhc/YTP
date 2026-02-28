@@ -514,19 +514,10 @@
         addButton();
       }
     };
-    // Intercept pushState/replaceState for SPA navigation on mobile
-    const origPush = history.pushState;
-    const origReplace = history.replaceState;
-    history.pushState = function () {
-      const result = origPush.apply(this, arguments);
-      setTimeout(checkUrlChange, 50);
-      return result;
-    };
-    history.replaceState = function () {
-      const result = origReplace.apply(this, arguments);
-      setTimeout(checkUrlChange, 50);
-      return result;
-    };
+    // Use centralized pushState/replaceState event from utils.js
+    window.addEventListener('ytp-history-navigate', () => setTimeout(checkUrlChange, 50), {
+      passive: true,
+    });
     window.addEventListener('popstate', checkUrlChange, { passive: true });
     // Initial call
     addButton();
@@ -772,7 +763,10 @@
       const header = playlistContainer.querySelector('h3 a');
       if (header && header.tagName === 'A') {
         const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
-        anchorHeader.innerHTML += ` <span class="ytp-badge ytp-random-badge">Play All <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`;
+        anchorHeader.insertAdjacentHTML(
+          'beforeend',
+          ` <span class="ytp-badge ytp-random-badge">Play All <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`
+        );
         anchorHeader.href = '#';
         const badge = anchorHeader.querySelector('.ytp-random-badge');
         if (badge) {

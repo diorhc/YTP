@@ -20,6 +20,7 @@ function createSettingsSidebar(t) {
         ${createNavItem('basic', t('basicTab'), createBasicIcon(), true)}
         ${createNavItem('advanced', t('advancedTab'), createAdvancedIcon())}
         ${createNavItem('experimental', t('experimentalTab'), createExperimentalIcon())}
+        ${createNavItem('voting', tr(t, 'votingTab', 'Voting'), createVotingIcon())}
         ${createNavItem('report', t('reportTab'), createReportIcon())}
         ${createNavItem('about', t('aboutTab'), createAboutIcon())}
       </div>
@@ -93,6 +94,15 @@ function createAboutIcon() {
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="12" cy="12" r="10"/>
       <path d="m9 12 2 2 4-4"/>
+    </svg>
+  `;
+}
+
+function createVotingIcon() {
+  return `
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <path d="M7 10v12"/>
+      <path d="M15 5.88 14 10h5.83a2 2 0 0 1 1.92 2.56l-2.33 8A2 2 0 0 1 17.5 22H4a2 2 0 0 1-2-2v-8a2 2 0 0 1 2-2h2.76a2 2 0 0 0 1.79-1.11L12 2h0a3.13 3.13 0 0 1 3 3.88Z"/>
     </svg>
   `;
 }
@@ -309,12 +319,96 @@ function createStyleSubmenu(settings, t) {
       key: 'zenStyles.playerBlur',
       value: settings.zenStyles?.playerBlur,
     },
+    {
+      label: tr(t, 'zenStyleTheaterEnhancementsLabel', 'Theater Enhancements'),
+      desc: tr(
+        t,
+        'zenStyleTheaterEnhancementsDesc',
+        'Floating comments panel and improved theater mode'
+      ),
+      key: 'zenStyles.theaterEnhancements',
+      value: settings.zenStyles?.theaterEnhancements,
+    },
+    {
+      label: tr(t, 'zenStyleMiscLabel', 'Misc Enhancements'),
+      desc: tr(t, 'zenStyleMiscDesc', 'Compact feed, hover menus, and other minor improvements'),
+      key: 'zenStyles.misc',
+      value: settings.zenStyles?.misc,
+    },
   ];
 
   return `
     <div class="style-submenu" data-submenu="style" style="display:${display};">
       <div class="glass-card style-submenu-container">
         ${rows.map(r => createSettingsItem(r.label, r.desc, r.key, r.value)).join('')}
+      </div>
+    </div>
+  `;
+}
+
+/**
+ * Creates the speed control submenu (hotkey customization)
+ * @param {Object} settings - Settings object
+ * @param {Function} t - Translation function
+ * @returns {string}
+ */
+function createSpeedControlSubmenu(settings, t) {
+  const display = settings.enableSpeedControl ? 'block' : 'none';
+  const decrease = (settings.speedControlHotkeys?.decrease || 'g').slice(0, 1).toLowerCase();
+  const increase = (settings.speedControlHotkeys?.increase || 'h').slice(0, 1).toLowerCase();
+  const reset = (settings.speedControlHotkeys?.reset || 'b').slice(0, 1).toLowerCase();
+
+  return `
+    <div class="speed-submenu" data-submenu="speed" style="display:${display};">
+      <div class="glass-card speed-submenu-container">
+        <div class="ytp-plus-settings-item speed-hotkeys-row">
+          <div class="speed-hotkeys-info">
+            <div class="ytp-plus-settings-item-label">${tr(t, 'speedHotkeysTitle', 'Keyboard hotkeys')}</div>
+            <div class="ytp-plus-settings-item-description">${tr(
+              t,
+              'speedHotkeysDesc',
+              'Use single-letter shortcuts to decrease/increase/reset playback speed'
+            )}</div>
+            <div class="speed-hotkeys-fields">
+              <label class="speed-hotkey-field">                
+                <input
+                  type="text"
+                  class="speed-hotkey-input"
+                  data-speed-hotkey="decrease"
+                  value="${decrease}"
+                  maxlength="1"
+                  autocomplete="off"
+                  spellcheck="false"
+                >
+                <span>${tr(t, 'decreaseSpeedHotkey', 'Decrease')}</span>
+              </label>
+              <label class="speed-hotkey-field">                
+                <input
+                  type="text"
+                  class="speed-hotkey-input"
+                  data-speed-hotkey="increase"
+                  value="${increase}"
+                  maxlength="1"
+                  autocomplete="off"
+                  spellcheck="false"
+                >
+                <span>${tr(t, 'increaseSpeedHotkey', 'Increase')}</span>
+              </label>
+              <label class="speed-hotkey-field">                
+                <input
+                  type="text"
+                  class="speed-hotkey-input"
+                  data-speed-hotkey="reset"
+                  value="${reset}"
+                  maxlength="1"
+                  autocomplete="off"
+                  spellcheck="false"
+                >
+                <span>${tr(t, 'resetButton', 'Reset')}</span>
+              </label>
+            </div>
+          </div>
+        </div>
       </div>
     </div>
   `;
@@ -329,6 +423,7 @@ function createStyleSubmenu(settings, t) {
 function createBasicSettingsSection(settings, t) {
   const downloadEnabled = !!settings.enableDownload;
   const styleEnabled = settings.enableZenStyles !== false;
+  const speedEnabled = !!settings.enableSpeedControl;
   return `
     <div class="ytp-plus-settings-section" data-section="basic">
       <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
@@ -364,7 +459,33 @@ function createBasicSettingsSection(settings, t) {
         </div>
       </div>
       ${createStyleSubmenu(settings, t)}
-      ${createSettingsItem(t('speedControl'), t('speedControlDesc'), 'enableSpeedControl', settings.enableSpeedControl)}
+      <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
+        <div>
+          <label class="ytp-plus-settings-item-label" for="ytp-plus-setting-enableSpeedControl">${t(
+            'speedControl'
+          )}</label>
+          <div class="ytp-plus-settings-item-description">${t('speedControlDesc')}</div>
+        </div>
+        <div class="ytp-plus-settings-item-actions">
+          <button
+            type="button"
+            class="ytp-plus-submenu-toggle"
+            data-submenu="speed"
+            aria-label="Toggle speed submenu"
+            aria-expanded="${speedEnabled ? 'true' : 'false'}"
+            ${speedEnabled ? '' : 'disabled'}
+            style="display:${speedEnabled ? 'inline-flex' : 'none'};"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <input type="checkbox" id="ytp-plus-setting-enableSpeedControl" class="ytp-plus-settings-checkbox" data-setting="enableSpeedControl" ${
+            speedEnabled ? 'checked' : ''
+          }>
+        </div>
+      </div>
+      ${createSpeedControlSubmenu(settings, t)}
       ${createSettingsItem(t('screenshotButton'), t('screenshotButtonDesc'), 'enableScreenshot', settings.enableScreenshot)}
       <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
         <div>
@@ -697,6 +818,52 @@ function createExperimentalSettingsSection(_settings, _t) {
 }
 
 /**
+ * Creates the voting section
+ * @param {Object} _settings - Settings object
+ * @param {Function} t - Translation function
+ * @returns {string} Voting section HTML
+ */
+function createVotingSection(_settings, t) {
+  return `
+    <div class="ytp-plus-settings-section hidden" data-section="voting">
+      <div class="ytp-plus-settings-voting-header">
+        <h3>${tr(t, 'votingTitle', 'Feature Requests')}</h3>
+        <p class="ytp-plus-settings-voting-desc">${tr(t, 'votingDesc', 'Vote for features you want to see in YouTube+')}</p>
+      </div>
+
+      <div class="ytp-plus-voting-preview">
+        <div class="ytp-plus-ba-container">
+          <div class="ytp-plus-ba-before">
+            <img src="https://i.imgur.com/FVW4tdH.jpeg" alt="Before" draggable="false" />
+            <span class="ytp-plus-ba-label ytp-plus-ba-label-before">Before</span>
+          </div>
+          <div class="ytp-plus-ba-after">
+            <img src="https://i.imgur.com/ljq1KeL.jpeg" alt="After" draggable="false" />
+            <span class="ytp-plus-ba-label ytp-plus-ba-label-after">After</span>
+          </div>
+          <div class="ytp-plus-ba-divider" role="separator" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
+        </div>
+
+        <div class="ytp-plus-vote-bar-section" id="ytp-plus-vote-bar-section">
+          <div class="ytp-plus-vote-bar-buttons">
+            <div class="ytp-plus-vote-bar-track" id="ytp-plus-vote-bar-fill"></div>
+            <button class="ytp-plus-vote-bar-btn" id="ytp-plus-vote-bar-up" type="button" aria-label="${tr(t, 'like', 'Like')}" data-vote="1">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>
+            </button>
+            <button class="ytp-plus-vote-bar-btn" id="ytp-plus-vote-bar-down" type="button" aria-label="${tr(t, 'dislike', 'Dislike')}" data-vote="-1">
+              <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
+            </button>
+          </div>
+          <div class="ytp-plus-vote-bar-count" id="ytp-plus-vote-bar-count">0</div>
+        </div>
+      </div>
+
+      <div id="ytp-plus-voting-container"></div>
+    </div>
+  `;
+}
+
+/**
  * Creates the main content area
  * @param {Object} settings - Settings object
  * @param {Function} t - Translation function
@@ -716,6 +883,7 @@ function createMainContent(settings, t) {
         ${createBasicSettingsSection(settings, t)}
         ${createAdvancedSettingsSection(settings, t)}
         ${createExperimentalSettingsSection(settings, t)}
+        ${createVotingSection(settings, t)}
         <div class="ytp-plus-settings-section hidden" data-section="report"></div>
         ${createAboutSection()}
       </div>
@@ -736,6 +904,7 @@ if (typeof window !== 'undefined') {
     createBasicSettingsSection,
     createAdvancedSettingsSection,
     createExperimentalSettingsSection,
+    createVotingSection,
     getMusicSettings,
   };
 }
