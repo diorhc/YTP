@@ -313,5 +313,19 @@
   "dislike": "Не падабаецца",
   "statusProposed": "Прапанавана",
   "statusInProgress": "У працы",
-  "statusCompleted": "Гатова"
+  "statusCompleted": "Гатова",
+  "enableLoopLabel": "Паўтор відэа",
+  "enableLoopDesc": "Уключыць паўтор відэа і карыстальніцкіх сегментаў (A → B)",
+  "loopHotkeysTitle": "Клавіятурныя спалучэнні паўтора",
+  "loopHotkeysDesc": "Выкарыстоўвайце аднабуквовыя клавішы для кіравання паўторам прайгравання",
+  "toggleLoopHotkey": "Пераключыць паўтор",
+  "loopSegmentTitle": "Паўтор A → B",
+  "loopSegmentDesc": "Паўтор карыстальніцкага сегмента відэа",
+  "setPointAHotkey": "Усталяваць A",
+  "setPointBHotkey": "Усталяваць B",
+  "loopEnabled": "Паўтор уключаны",
+  "loopDisabled": "Паўтор выключаны",
+  "loopPointASet": "Кропка A усталявана",
+  "loopPointBSet": "Кропка B усталявана",
+  "loopPointsReset": "Кропкі скінуты"
 }

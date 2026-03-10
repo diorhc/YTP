@@ -313,5 +313,19 @@
   "dislike": "嫌い",
   "statusProposed": "提案済み",
   "statusInProgress": "進行中",
-  "statusCompleted": "完了"
+  "statusCompleted": "完了",
+  "enableLoopLabel": "ループ再生",
+  "enableLoopDesc": "動画のループとカスタムセグメント（A→B）を有効にする",
+  "loopHotkeysTitle": "ループのキーボードショートカット",
+  "loopHotkeysDesc": "単一文字のキーでループ再生を操作します",
+  "toggleLoopHotkey": "ループ切り替え",
+  "loopSegmentTitle": "A→B ループ",
+  "loopSegmentDesc": "動画のカスタムセグメントをループ再生する",
+  "setPointAHotkey": "A を設定",
+  "setPointBHotkey": "B を設定",
+  "loopEnabled": "ループが有効になりました",
+  "loopDisabled": "ループが無効になりました",
+  "loopPointASet": "ポイントAを設定しました",
+  "loopPointBSet": "ポイントBを設定しました",
+  "loopPointsReset": "ループポイントがリセットされました"
 }

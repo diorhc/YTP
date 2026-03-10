@@ -313,5 +313,19 @@
   "dislike": "Не ми харесва",
   "statusProposed": "Предложено",
   "statusInProgress": "В процес",
-  "statusCompleted": "Завършено"
+  "statusCompleted": "Завършено",
+  "enableLoopLabel": "Повтор на видео",
+  "enableLoopDesc": "Активира повторение на видеото и потребителски сегменти (A → B)",
+  "loopHotkeysTitle": "Клавишни комбинации за повторение",
+  "loopHotkeysDesc": "Използвайте еднобуквени клавиши за управление на повторението",
+  "toggleLoopHotkey": "Превключи повтор",
+  "loopSegmentTitle": "Повтор A → B",
+  "loopSegmentDesc": "Повтор на потребителски сегмент от видеото",
+  "setPointAHotkey": "Задай точка A",
+  "setPointBHotkey": "Задай точка B",
+  "loopEnabled": "Повторът е включен",
+  "loopDisabled": "Повторът е изключен",
+  "loopPointASet": "Точка A е зададена",
+  "loopPointBSet": "Точка B е зададена",
+  "loopPointsReset": "Точките са нулирани"
 }

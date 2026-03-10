@@ -313,5 +313,19 @@
   "dislike": "Yoqmadi",
   "statusProposed": "Taklif qilingan",
   "statusInProgress": "Bajarilmoqda",
-  "statusCompleted": "Bajarildi"
+  "statusCompleted": "Bajarildi",
+  "enableLoopLabel": "Videoni takrorlash",
+  "enableLoopDesc": "Videoni va foydalanuvchi segmentlarini (A → B) takrorlashni yoqish",
+  "loopHotkeysTitle": "Takrorlash klaviatura yorliqlari",
+  "loopHotkeysDesc": "Ijro takrorlash halqasini boshqarish uchun bir harfli tugmalardan foydalaning",
+  "toggleLoopHotkey": "Takrorlash yoqish/ochirish",
+  "loopSegmentTitle": "A → B takrorlash",
+  "loopSegmentDesc": "Foydalanuvchi segmentini takrorlash",
+  "setPointAHotkey": "A nuqtasini o'rnatish",
+  "setPointBHotkey": "B nuqtasini o'rnatish",
+  "loopEnabled": "Takrorlash yoqilgan",
+  "loopDisabled": "Takrorlash o'chirilgan",
+  "loopPointASet": "A nuqtasi o'rnatildi",
+  "loopPointBSet": "B nuqtasi o'rnatildi",
+  "loopPointsReset": "Nuqtalar o'chirildi"
 }

@@ -313,5 +313,19 @@
   "dislike": "Dislike",
   "statusProposed": "Proposed",
   "statusInProgress": "In progress",
-  "statusCompleted": "Completed"
+  "statusCompleted": "Completed",
+  "enableLoopLabel": "Loop",
+  "enableLoopDesc": "Enable video loop and custom segment repeat (A → B)",
+  "loopHotkeysTitle": "Loop Hotkeys",
+  "loopHotkeysDesc": "Use single-letter shortcuts to control loop playback",
+  "toggleLoopHotkey": "Loop On/Off",
+  "loopSegmentTitle": "Loop A → B",
+  "loopSegmentDesc": "Repeat custom video segment",
+  "setPointAHotkey": "Set Point A",
+  "setPointBHotkey": "Set Point B",
+  "loopEnabled": "Loop enabled",
+  "loopDisabled": "Loop disabled",
+  "loopPointASet": "Point A set",
+  "loopPointBSet": "Point B set",
+  "loopPointsReset": "Loop points reset"
 }

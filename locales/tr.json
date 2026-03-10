@@ -313,5 +313,19 @@
   "dislike": "Beğenme",
   "statusProposed": "Önerildi",
   "statusInProgress": "Devam ediyor",
-  "statusCompleted": "Tamamlandı"
+  "statusCompleted": "Tamamlandı",
+  "enableLoopLabel": "Video tekrar",
+  "enableLoopDesc": "Video tekrarını ve özel segmentlerin (A → B) tekrarını etkinleştir",
+  "loopHotkeysTitle": "Tekrar Kısayolları",
+  "loopHotkeysDesc": "Oynatma döngüsünü kontrol etmek için tek harfli kısayollar kullanın",
+  "toggleLoopHotkey": "Tekrar aç/kapa",
+  "loopSegmentTitle": "A → B Tekrarı",
+  "loopSegmentDesc": "Kullanıcı tarafından belirlenen video segmentini tekrar et",
+  "setPointAHotkey": "A noktası belirle",
+  "setPointBHotkey": "B noktası belirle",
+  "loopEnabled": "Tekrar etkin",
+  "loopDisabled": "Tekrar devre dışı",
+  "loopPointASet": "A noktası ayarlandı",
+  "loopPointBSet": "B noktası ayarlandı",
+  "loopPointsReset": "Noktalar sıfırlandı"
 }

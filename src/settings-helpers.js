@@ -415,6 +415,72 @@ function createSpeedControlSubmenu(settings, t) {
 }
 
 /**
+ * Creates the loop control submenu (hotkey customization for A → B)
+ * @param {Object} settings - Settings object
+ * @param {Function} t - Translation function
+ * @returns {string}
+ */
+function createLoopSubmenu(settings, t) {
+  const display = settings.enableLoop ? 'block' : 'none';
+  const setPointA = (settings.loopHotkeys?.setPointA || 'k').slice(0, 1).toLowerCase();
+  const setPointB = (settings.loopHotkeys?.setPointB || 'l').slice(0, 1).toLowerCase();
+  const resetPoints = (settings.loopHotkeys?.resetPoints || 'o').slice(0, 1).toLowerCase();
+
+  return `
+    <div class="loop-submenu" data-submenu="loop" style="display:${display};margin:0 0 4px 0;">
+      <div class="ytp-plus-settings-item loop-hotkeys-row" style="margin-bottom:0;">
+        <div class="loop-hotkeys-info">
+          <div class="ytp-plus-settings-item-label">${tr(t, 'loopSegmentTitle', 'Loop A → B')}</div>
+          <div class="ytp-plus-settings-item-description">${tr(
+            t,
+            'loopSegmentDesc',
+            'Repeat a custom segment of the video (A → B)'
+          )}</div>
+          <div class="loop-hotkeys-fields" style="margin-top:12px;">
+            <label class="loop-hotkey-field">                
+              <input
+                type="text"
+                class="loop-hotkey-input"
+                data-loop-hotkey="setPointA"
+                value="${setPointA}"
+                maxlength="1"
+                autocomplete="off"
+                spellcheck="false"
+              >
+              <span>${tr(t, 'setPointAHotkey', 'Set Point A')}</span>
+            </label>
+            <label class="loop-hotkey-field">                
+              <input
+                type="text"
+                class="loop-hotkey-input"
+                data-loop-hotkey="setPointB"
+                value="${setPointB}"
+                maxlength="1"
+                autocomplete="off"
+                spellcheck="false"
+              >
+              <span>${tr(t, 'setPointBHotkey', 'Set Point B')}</span>
+            </label>
+            <label class="loop-hotkey-field">                
+              <input
+                type="text"
+                class="loop-hotkey-input"
+                data-loop-hotkey="resetPoints"
+                value="${resetPoints}"
+                maxlength="1"
+                autocomplete="off"
+                spellcheck="false"
+              >
+              <span>${tr(t, 'resetButton', 'Reset')}</span>
+            </label>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+/**
  * Creates the basic settings section
  * @param {Object} settings - Settings object
  * @param {Function} t - Translation function
@@ -724,6 +790,18 @@ function createAdvancedSettingsSection(settings, t) {
               'enableScrollToTopButton',
               enhancedSettings.enableScrollToTopButton
             )}
+            <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu" style="margin-top:4px;">
+              <div>
+                <label class="ytp-plus-settings-item-label">${tr(t, 'enableLoopLabel', 'Loop')}</label>
+                <div class="ytp-plus-settings-item-description">${tr(t, 'enableLoopDesc', 'Enable looping of videos and custom segments (A → B)')}</div>
+              </div>
+              <div class="ytp-plus-settings-item-actions">
+                <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableLoop" ${
+                  settings.enableLoop ? 'checked' : ''
+                }>
+              </div>
+            </div>
+            ${createLoopSubmenu(settings, t)}
           </div>
         </div>
 

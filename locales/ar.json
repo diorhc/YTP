@@ -313,5 +313,19 @@
   "dislike": "عدم إعجاب",
   "statusProposed": "مقترح",
   "statusInProgress": "قيد التنفيذ",
-  "statusCompleted": "مكتمل"
+  "statusCompleted": "مكتمل",
+  "enableLoopLabel": "تكرار الفيديو",
+  "enableLoopDesc": "تمكين تكرار الفيديو والمقاطع المخصصة (A → B)",
+  "loopHotkeysTitle": "اختصارات تكرار لوحة المفاتيح",
+  "loopHotkeysDesc": "استخدم مفاتيح حرف واحد للتحكم في التكرار",
+  "toggleLoopHotkey": "تبديل التكرار",
+  "loopSegmentTitle": "تكرار A → B",
+  "loopSegmentDesc": "تكرار مقطع فيديو مخصص",
+  "setPointAHotkey": "تعيين النقطة A",
+  "setPointBHotkey": "تعيين النقطة B",
+  "loopEnabled": "التكرار ممكّن",
+  "loopDisabled": "التكرار معطّل",
+  "loopPointASet": "تم تعيين النقطة A",
+  "loopPointBSet": "تم تعيين النقطة B",
+  "loopPointsReset": "تمت إعادة تعيين النقاط"
 }

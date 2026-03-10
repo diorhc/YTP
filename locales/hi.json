@@ -313,5 +313,19 @@
   "dislike": "नापसंद",
   "statusProposed": "प्रस्तावित",
   "statusInProgress": "प्रगति में",
-  "statusCompleted": "पूर्ण"
+  "statusCompleted": "पूर्ण",
+  "enableLoopLabel": "वीडियो दोहराएँ",
+  "enableLoopDesc": "वीडियो और कस्टम सेगमेंट (A → B) का दोहराव सक्षम करें",
+  "loopHotkeysTitle": "लूप कीबोर्ड शॉर्टकट",
+  "loopHotkeysDesc": "प्लेबैक लूप को नियंत्रित करने के लिए एक अक्षर के शॉर्टकट का उपयोग करें",
+  "toggleLoopHotkey": "लूप चालू/बंद",
+  "loopSegmentTitle": "A → B दोहराव",
+  "loopSegmentDesc": "वीडियो के कस्टम सेगमेंट का दोहराव",
+  "setPointAHotkey": "A सेट करें",
+  "setPointBHotkey": "B सेट करें",
+  "loopEnabled": "लूप सक्षम",
+  "loopDisabled": "लूप अक्षम",
+  "loopPointASet": "बिंदु A सेट किया गया",
+  "loopPointBSet": "बिंदु B सेट किया गया",
+  "loopPointsReset": "बिंदु रीसेट किए गए"
 }

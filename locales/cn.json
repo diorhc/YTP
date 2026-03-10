@@ -313,5 +313,19 @@
   "dislike": "踩",
   "statusProposed": "已建议",
   "statusInProgress": "进行中",
-  "statusCompleted": "已完成"
+  "statusCompleted": "已完成",
+  "enableLoopLabel": "启用循环播放",
+  "enableLoopDesc": "启用视频循环以及自定义片段（A → B）",
+  "loopHotkeysTitle": "循环快捷键",
+  "loopHotkeysDesc": "使用单字母快捷键来控制循环播放",
+  "toggleLoopHotkey": "切换循环",
+  "loopSegmentTitle": "A → B 循环",
+  "loopSegmentDesc": "循环视频的自定义片段",
+  "setPointAHotkey": "设置点 A",
+  "setPointBHotkey": "设置点 B",
+  "loopEnabled": "循环已启用",
+  "loopDisabled": "循环已禁用",
+  "loopPointASet": "已设置点 A",
+  "loopPointBSet": "已设置点 B",
+  "loopPointsReset": "循环点已重置"
 }

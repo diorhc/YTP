@@ -313,5 +313,19 @@
   "dislike": "Non mi piace",
   "statusProposed": "Proposto",
   "statusInProgress": "In corso",
-  "statusCompleted": "Completato"
+  "statusCompleted": "Completato",
+  "enableLoopLabel": "Ripeti video",
+  "enableLoopDesc": "Abilita il loop del video e dei segmenti personalizzati (A → B)",
+  "loopHotkeysTitle": "Scorciatoie loop",
+  "loopHotkeysDesc": "Usa scorciatoie a una sola lettera per controllare il loop di riproduzione",
+  "toggleLoopHotkey": "Attiva/Disattiva ripetizione",
+  "loopSegmentTitle": "Ripetizione A → B",
+  "loopSegmentDesc": "Ripeti un segmento personalizzato del video",
+  "setPointAHotkey": "Imposta A",
+  "setPointBHotkey": "Imposta B",
+  "loopEnabled": "Ripetizione attivata",
+  "loopDisabled": "Ripetizione disattivata",
+  "loopPointASet": "Punto A impostato",
+  "loopPointBSet": "Punto B impostato",
+  "loopPointsReset": "Punti ripristinati"
 }

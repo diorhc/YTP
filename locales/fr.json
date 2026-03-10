@@ -313,5 +313,19 @@
   "dislike": "Je n'aime pas",
   "statusProposed": "Proposé",
   "statusInProgress": "En cours",
-  "statusCompleted": "Terminé"
+  "statusCompleted": "Terminé",
+  "enableLoopLabel": "Boucle vidéo",
+  "enableLoopDesc": "Activer la lecture en boucle de la vidéo et des segments personnalisés (A → B)",
+  "loopHotkeysTitle": "Raccourcis clavier de la boucle",
+  "loopHotkeysDesc": "Utilisez des raccourcis d'une seule touche pour contrôler la boucle de lecture",
+  "toggleLoopHotkey": "Activer/désactiver la boucle",
+  "loopSegmentTitle": "Répétition A → B",
+  "loopSegmentDesc": "Répéter un segment personnalisé de la vidéo",
+  "setPointAHotkey": "Définir A",
+  "setPointBHotkey": "Définir B",
+  "loopEnabled": "Boucle activée",
+  "loopDisabled": "Boucle désactivée",
+  "loopPointASet": "Point A défini",
+  "loopPointBSet": "Point B défini",
+  "loopPointsReset": "Points réinitialisés"
 }

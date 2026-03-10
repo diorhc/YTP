@@ -3,19 +3,17 @@
 
 <!-- GREASYFORK_INSTALLS:START -->
 
-
 <p align="center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-2218-blue?style=flat-square" height="25" />
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-2250-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="version" src="https://img.shields.io/badge/version-2.4.3-blue?style=flat-square" height="25" />
+    <img alt="version" src="https://img.shields.io/badge/version-2.4.4-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
     <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
   </a>
 </p>
-
 
 <!-- GREASYFORK_INSTALLS:END -->
 
@@ -32,6 +30,7 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 - Block ads (optional, can be downloaded from [Firefox](https://addons.mozilla.org/addon/ublock-origin/), [Edge](https://microsoftedge.microsoft.com/addons/detail/ublock-origin/odfafepnkmbhccpbejgmiehpchacaeak), [Opera](https://addons.opera.com/extensions/details/ublock/), [Chrome](https://chrome.google.com/webstore/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm))
 - Take a screenshot of the current frame and save it locally.
 - Support for zoom in the player.
+- Repeat video from user-defined segments (A → B) — via hotkey.
 - Speed control for videos (hotkeys).
 - Comment translation button (YouTube removed this feature).
 - "Statistics" button on video page — quick access to views/subscribers/engagement.
@@ -62,6 +61,8 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
             Add current timecode to description/comment                 ... + T
             Take screenshot of frame                                    S
             Open comment manager                                        C
+            Enable/disable video repeat                                 R
+            Set A/B points for repeat and reset                         K / L / O
             Speed up/slow down/reset video speed                        G / H / B
             Show hotkey reference                                       Shift + /
             Zoom in/out video in player                                 Shift + Mouse Wheel

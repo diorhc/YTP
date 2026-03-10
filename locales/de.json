@@ -313,5 +313,19 @@
   "dislike": "Gefällt mir nicht",
   "statusProposed": "Vorgeschlagen",
   "statusInProgress": "In Bearbeitung",
-  "statusCompleted": "Abgeschlossen"
+  "statusCompleted": "Abgeschlossen",
+  "enableLoopLabel": "Video wiederholen",
+  "enableLoopDesc": "Wiederholung des Videos und benutzerdefinierter Segmente (A → B) aktivieren",
+  "loopHotkeysTitle": "Wiederholungs-Tastenkombinationen",
+  "loopHotkeysDesc": "Verwenden Sie Einzelbuchstaben-Tasten, um die Wiedergabeschleife zu steuern",
+  "toggleLoopHotkey": "Wiederholung ein-/aus",
+  "loopSegmentTitle": "Wiederholung A → B",
+  "loopSegmentDesc": "Wiederholung eines benutzerdefinierten Videosegments",
+  "setPointAHotkey": "Punkt A setzen",
+  "setPointBHotkey": "Punkt B setzen",
+  "loopEnabled": "Wiederholung aktiviert",
+  "loopDisabled": "Wiederholung deaktiviert",
+  "loopPointASet": "Punkt A gesetzt",
+  "loopPointBSet": "Punkt B gesetzt",
+  "loopPointsReset": "Punkte zurückgesetzt"
 }

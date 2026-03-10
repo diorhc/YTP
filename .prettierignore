@@ -6,3 +6,5 @@ youtube.user.js
 *.min.js
 .github/
 docs/
+
+src/i18n.js

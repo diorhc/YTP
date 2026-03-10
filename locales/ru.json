@@ -313,5 +313,19 @@
   "dislike": "Не нравится",
   "statusProposed": "Предложено",
   "statusInProgress": "В работе",
-  "statusCompleted": "Готово"
+  "statusCompleted": "Готово",
+  "enableLoopLabel": "Повтор видео",
+  "enableLoopDesc": "Включить повтор видео и пользовательских сегментов (A → B)",
+  "loopHotkeysTitle": "Горячие клавиши Повтора",
+  "loopHotkeysDesc": "Используйте однобуквенные клавиши для управления петлей воспроизведения",
+  "toggleLoopHotkey": "Повтор вкл/выкл",
+  "loopSegmentTitle": "Повтор A → B",
+  "loopSegmentDesc": "Повтор пользовательского сегмента видео",
+  "setPointAHotkey": "Установить A",
+  "setPointBHotkey": "Установить B",
+  "loopEnabled": "Повтор включён",
+  "loopDisabled": "Повтор выключен",
+  "loopPointASet": "Точка A установлена",
+  "loopPointBSet": "Точка B установлена",
+  "loopPointsReset": "Точки сброшены"
 }

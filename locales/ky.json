@@ -313,5 +313,19 @@
   "dislike": "Жакпады",
   "statusProposed": "Сунушталды",
   "statusInProgress": "Аткарылууда",
-  "statusCompleted": "Бүттү"
+  "statusCompleted": "Бүттү",
+  "enableLoopLabel": "Видеону кайталоо",
+  "enableLoopDesc": "Видеону жана колдонуучунун сегменттерин (A → B) кайталоону иштетүү",
+  "loopHotkeysTitle": "Кайталоо үчүн ыссык баскычтар",
+  "loopHotkeysDesc": "Ойноп жаткан кайталоону башкаруу үчүн бир тамгалуу баскычтарды колдонуңуз",
+  "toggleLoopHotkey": "Кайталоону күйгүзүү/өчүрүү",
+  "loopSegmentTitle": "A → B сегментин кайталоо",
+  "loopSegmentDesc": "Видео колдонуучунун сегментин кайталоо",
+  "setPointAHotkey": "A чекитти орнотуу",
+  "setPointBHotkey": "B чекитти орнотуу",
+  "loopEnabled": "Кайталоо иштетилди",
+  "loopDisabled": "Кайталоо өчүрүлдү",
+  "loopPointASet": "A чекит орнотулду",
+  "loopPointBSet": "B чекит орнотулду",
+  "loopPointsReset": "Чекиттер өчүрүлдү"
 }

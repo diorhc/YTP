@@ -318,6 +318,26 @@ const handleSimpleSettingToggle = (
       }
     }
   }
+
+  // Show/hide submenu for Loop
+  if (setting === 'enableLoop') {
+    const submenu = modal.querySelector('.loop-submenu');
+    if (submenu) {
+      submenu.style.display = checked ? 'block' : 'none';
+    }
+    const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="loop"]');
+    if (toggleBtn instanceof HTMLElement) {
+      if (checked) {
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+        toggleBtn.style.display = 'inline-flex';
+      } else {
+        toggleBtn.setAttribute('disabled', '');
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.style.display = 'none';
+      }
+    }
+  }
 };
 
 /**

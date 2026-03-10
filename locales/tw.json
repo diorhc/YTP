@@ -313,5 +313,19 @@
   "dislike": "踩",
   "statusProposed": "已建議",
   "statusInProgress": "進行中",
-  "statusCompleted": "已完成"
+  "statusCompleted": "已完成",
+  "enableLoopLabel": "重複播放",
+  "enableLoopDesc": "啟用影片重複與自訂片段（A → B）",
+  "loopHotkeysTitle": "重複鍵盤快捷鍵",
+  "loopHotkeysDesc": "使用單個字母快捷鍵來控制重複播放",
+  "toggleLoopHotkey": "切換重複播放",
+  "loopSegmentTitle": "重複 A → B",
+  "loopSegmentDesc": "重複自訂影片片段",
+  "setPointAHotkey": "設定 A 點",
+  "setPointBHotkey": "設定 B 點",
+  "loopEnabled": "重複：開啟",
+  "loopDisabled": "重複：關閉",
+  "loopPointASet": "A 點已設定",
+  "loopPointBSet": "B 點已設定",
+  "loopPointsReset": "點位已重設"
 }

@@ -313,5 +313,19 @@
   "dislike": "Tidak Suka",
   "statusProposed": "Diusulkan",
   "statusInProgress": "Sedang berlangsung",
-  "statusCompleted": "Selesai"
+  "statusCompleted": "Selesai",
+  "enableLoopLabel": "Ulangi video",
+  "enableLoopDesc": "Aktifkan pengulangan video dan segmen kustom (A → B)",
+  "loopHotkeysTitle": "Pintasan Pengulangan",
+  "loopHotkeysDesc": "Gunakan tombol satu huruf untuk mengendalikan pengulangan pemutaran",
+  "toggleLoopHotkey": "Aktifkan/Nonaktifkan pengulangan",
+  "loopSegmentTitle": "Ulangi A → B",
+  "loopSegmentDesc": "Ulangi segmen video kustom",
+  "setPointAHotkey": "Atur titik A",
+  "setPointBHotkey": "Atur titik B",
+  "loopEnabled": "Pengulangan aktif",
+  "loopDisabled": "Pengulangan nonaktif",
+  "loopPointASet": "Titik A ditetapkan",
+  "loopPointBSet": "Titik B ditetapkan",
+  "loopPointsReset": "Titik diatur ulang"
 }

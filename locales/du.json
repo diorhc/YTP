@@ -313,5 +313,19 @@
   "dislike": "Vind ik niet leuk",
   "statusProposed": "Voorgesteld",
   "statusInProgress": "In uitvoering",
-  "statusCompleted": "Voltooid"
+  "statusCompleted": "Voltooid",
+  "enableLoopLabel": "Video herhalen",
+  "enableLoopDesc": "Schakel herhaling van video en aangepaste segmenten (A → B) in",
+  "loopHotkeysTitle": "Herhaal-sneltoetsen",
+  "loopHotkeysDesc": "Gebruik éénletterige sneltoetsen om de herhaling te bedienen",
+  "toggleLoopHotkey": "Herhaling aan/uit",
+  "loopSegmentTitle": "Herhaal A → B",
+  "loopSegmentDesc": "Herhaal een aangepast segment van de video",
+  "setPointAHotkey": "Punt A instellen",
+  "setPointBHotkey": "Punt B instellen",
+  "loopEnabled": "Herhaling ingeschakeld",
+  "loopDisabled": "Herhaling uitgeschakeld",
+  "loopPointASet": "Punt A ingesteld",
+  "loopPointBSet": "Punt B ingesteld",
+  "loopPointsReset": "Punten gereset"
 }

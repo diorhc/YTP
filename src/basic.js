@@ -1134,11 +1134,11 @@ if (typeof window !== 'undefined') {
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.4.3] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.4.4] Core utilities merged');
 
   // Expose debug info
   /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.4.3',
+    version: '2.4.4',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1169,7 +1169,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.4.3 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.4.4 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1192,6 +1192,15 @@ if (typeof window !== 'undefined') {
       activeAnimationId: null,
       storageKey: 'youtube_playback_speed',
       availableSpeeds: [0.25, 0.5, 0.75, 1.0, 1.25, 1.5, 1.75, 2.0, 2.25, 2.5, 2.75, 3.0],
+    },
+
+    // Loop control variables
+    loopControl: {
+      enabled: false,
+      pointA: null,
+      pointB: null,
+      storageKey: 'youtube_loop_state',
+      timeUpdateListener: null,
     },
 
     _initialized: false,
@@ -1231,6 +1240,15 @@ if (typeof window !== 'undefined') {
       enableThumbnail: true,
       enablePlaylistSearch: true,
       enableScrollToTopButton: true,
+
+      // Loop settings
+      enableLoop: true,
+      loopHotkeys: {
+        toggleLoop: 'r',
+        setPointA: 'k',
+        setPointB: 'l',
+        resetPoints: 'o',
+      },
 
       // Состояние сайтов внутри сабменю кнопки Download (ytdl всегда включён)
       downloadSites: {
@@ -1334,6 +1352,34 @@ if (typeof window !== 'undefined') {
 
       try {
         this.loadSettings();
+        // Migrate legacy loop hotkey values to new defaults when they match previous defaults
+        try {
+          const lh = this.settings.loopHotkeys || {};
+          let migrated = false;
+          // previous defaults: setPointA: 'l', setPointB: 'o', resetPoints: 'k'
+          if (lh.setPointA === 'l') {
+            lh.setPointA = 'k';
+            migrated = true;
+          }
+          if (lh.setPointB === 'o') {
+            lh.setPointB = 'l';
+            migrated = true;
+          }
+          if (lh.resetPoints === 'k') {
+            lh.resetPoints = 'o';
+            migrated = true;
+          }
+          if (migrated) {
+            this.settings.loopHotkeys = lh;
+            try {
+              this.saveSettings();
+            } catch (e) {
+              console.warn('[YouTube+] Failed to save migrated loop hotkeys', e);
+            }
+          }
+        } catch {
+          /* ignore migration errors */
+        }
         this.settings.speedControlHotkeys = this.settings.speedControlHotkeys || {};
         this.settings.speedControlHotkeys.decrease = this.normalizeSpeedHotkey(
           this.settings.speedControlHotkeys.decrease,
@@ -1360,6 +1406,28 @@ if (typeof window !== 'undefined') {
         } catch (e) {
           console.warn('[YouTube+] Speed restore error:', e);
         }
+
+        // Initialize loop hotkeys
+        this.settings.loopHotkeys = this.settings.loopHotkeys || {};
+        this.settings.loopHotkeys.toggleLoop = this.normalizeSpeedHotkey(
+          this.settings.loopHotkeys.toggleLoop,
+          'r'
+        );
+        this.settings.loopHotkeys.setPointA = this.normalizeSpeedHotkey(
+          this.settings.loopHotkeys.setPointA,
+          'k'
+        );
+        this.settings.loopHotkeys.setPointB = this.normalizeSpeedHotkey(
+          this.settings.loopHotkeys.setPointB,
+          'l'
+        );
+        this.settings.loopHotkeys.resetPoints = this.normalizeSpeedHotkey(
+          this.settings.loopHotkeys.resetPoints,
+          'o'
+        );
+
+        // Restore loop state from localStorage
+        this.loadLoopState();
       } catch (error) {
         console.warn('[YouTube+][Basic]', 'Failed to load settings during init:', error);
       }
@@ -1448,6 +1516,47 @@ if (typeof window !== 'undefined') {
           YouTubeUtils.logError('Basic', 'Failed to register speed keyboard shortcuts', e);
         }
       }
+
+      // Keyboard shortcuts: loop control
+      try {
+        const loopHotkeyHandler = e => {
+          if (!this.settings.enableLoop || !e || !e.key) return;
+          if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+          if (this.isEditableTarget(document.activeElement)) return;
+
+          const key = String(e.key).toLowerCase();
+          const toggleLoopKey = this.normalizeSpeedHotkey(
+            this.settings.loopHotkeys?.toggleLoop,
+            'r'
+          );
+          const setPointAKey = this.normalizeSpeedHotkey(this.settings.loopHotkeys?.setPointA, 'k');
+          const setPointBKey = this.normalizeSpeedHotkey(this.settings.loopHotkeys?.setPointB, 'l');
+          const resetPointsKey = this.normalizeSpeedHotkey(
+            this.settings.loopHotkeys?.resetPoints,
+            'o'
+          );
+
+          if (key === toggleLoopKey) {
+            e.preventDefault();
+            this.toggleLoop();
+          } else if (key === setPointAKey) {
+            e.preventDefault();
+            this.setLoopPoint('A');
+          } else if (key === setPointBKey) {
+            e.preventDefault();
+            this.setLoopPoint('B');
+          } else if (key === resetPointsKey) {
+            e.preventDefault();
+            this.resetLoopPoints();
+          }
+        };
+
+        YouTubeUtils.cleanupManager.registerListener(document, 'keydown', loopHotkeyHandler, true);
+      } catch (e) {
+        if (YouTubeUtils && YouTubeUtils.logError) {
+          YouTubeUtils.logError('Basic', 'Failed to register loop keyboard shortcuts', e);
+        }
+      }
     },
 
     isEditableTarget(target) {
@@ -1493,6 +1602,325 @@ if (typeof window !== 'undefined') {
       if (nextIndex === closestIndex) return;
       this.changeSpeed(speeds[nextIndex]);
     },
+
+    // ==================== Loop Functions ====================
+
+    /**
+     * Toggle loop on/off
+     */
+    toggleLoop() {
+      if (!this.settings.enableLoop) return;
+
+      this.loopControl.enabled = !this.loopControl.enabled;
+
+      const video = document.querySelector('video');
+      if (!video) {
+        this.saveLoopState();
+        return;
+      }
+
+      if (this.loopControl.enabled) {
+        // If no A-B points set, just enable normal loop
+        if (this.loopControl.pointA === null && this.loopControl.pointB === null) {
+          video.loop = true;
+        } else {
+          video.loop = false;
+          this.setupLoopListener(video);
+        }
+        YouTubeUtils.NotificationManager.show(t('loopEnabled') || 'Loop enabled', {
+          duration: 1500,
+          type: 'success',
+        });
+      } else {
+        video.loop = false;
+        this.removeLoopListener();
+        YouTubeUtils.NotificationManager.show(t('loopDisabled') || 'Loop disabled', {
+          duration: 1500,
+          type: 'info',
+        });
+      }
+
+      this.updateLoopProgressBar();
+      this.saveLoopState();
+    },
+
+    /**
+     * Set loop point A or B
+     * @param {string} point - 'A' or 'B'
+     */
+    setLoopPoint(point) {
+      if (!this.settings.enableLoop) return;
+
+      const video = document.querySelector('video');
+      if (!video) return;
+
+      const currentTime = video.currentTime;
+
+      if (point === 'A') {
+        this.loopControl.pointA = currentTime;
+        YouTubeUtils.NotificationManager.show(
+          `${t('loopPointASet') || 'Point A set'}: ${this.formatTime(currentTime)}`,
+          { duration: 1500, type: 'success' }
+        );
+      } else if (point === 'B') {
+        this.loopControl.pointB = currentTime;
+        YouTubeUtils.NotificationManager.show(
+          `${t('loopPointBSet') || 'Point B set'}: ${this.formatTime(currentTime)}`,
+          { duration: 1500, type: 'success' }
+        );
+      }
+
+      // If both points are set and loop is enabled, update listener
+      if (
+        this.loopControl.enabled &&
+        this.loopControl.pointA !== null &&
+        this.loopControl.pointB !== null
+      ) {
+        const video = document.querySelector('video');
+        if (video) {
+          video.loop = false;
+          this.setupLoopListener(video);
+        }
+      }
+
+      this.updateLoopProgressBar();
+      this.saveLoopState();
+    },
+
+    /**
+     * Reset loop points A and B
+     */
+    resetLoopPoints() {
+      if (!this.settings.enableLoop) return;
+
+      this.loopControl.pointA = null;
+      this.loopControl.pointB = null;
+
+      // If loop is enabled, switch back to normal loop
+      if (this.loopControl.enabled) {
+        const video = document.querySelector('video');
+        if (video) {
+          video.loop = true;
+          this.removeLoopListener();
+        }
+      }
+
+      YouTubeUtils.NotificationManager.show(t('loopPointsReset') || 'Loop points reset', {
+        duration: 1500,
+        type: 'info',
+      });
+
+      this.updateLoopProgressBar();
+      this.saveLoopState();
+    },
+
+    /**
+     * Setup timeupdate listener for A-B loop
+     * @param {HTMLVideoElement} video
+     */
+    setupLoopListener(video) {
+      this.removeLoopListener();
+
+      if (this.loopControl.pointA === null || this.loopControl.pointB === null) return;
+
+      const startTime = Math.min(this.loopControl.pointA, this.loopControl.pointB);
+      const endTime = Math.max(this.loopControl.pointA, this.loopControl.pointB);
+
+      this.loopControl.timeUpdateListener = () => {
+        if (this.loopControl.enabled && video.currentTime >= endTime) {
+          video.currentTime = startTime;
+        }
+      };
+
+      video.addEventListener('timeupdate', this.loopControl.timeUpdateListener);
+    },
+
+    /**
+     * Remove timeupdate listener
+     */
+    removeLoopListener() {
+      if (this.loopControl.timeUpdateListener) {
+        const video = document.querySelector('video');
+        if (video) {
+          video.removeEventListener('timeupdate', this.loopControl.timeUpdateListener);
+        }
+        this.loopControl.timeUpdateListener = null;
+      }
+    },
+
+    /**
+     * Update loop progress bar indicator
+     */
+    updateLoopProgressBar() {
+      // If neither point is set, remove any existing indicator
+      if (this.loopControl.pointA === null && this.loopControl.pointB === null) {
+        const existingIndicator = document.querySelector('.ytp-plus-loop-indicator');
+        if (existingIndicator) existingIndicator.remove();
+        return;
+      }
+
+      const video = document.querySelector('video');
+      if (!video || !video.duration) return;
+
+      // Try to find progress bar in YouTube player
+      let progressBar =
+        document.querySelector('.ytp-progress-bar-container') ||
+        document.querySelector('.ytp-scrubber-container') ||
+        document.querySelector('[role="slider"][aria-label*="video"]') ||
+        document.querySelector('.html5-progress-bar');
+
+      if (!progressBar) {
+        const playbackUI = document.querySelector('.html5-video-player');
+        if (playbackUI) {
+          progressBar = playbackUI.querySelector('[role="slider"]');
+        }
+      }
+
+      if (!progressBar) return;
+
+      // Get or create loop indicator
+      let indicator = document.querySelector('.ytp-plus-loop-indicator');
+      if (!indicator) {
+        indicator = document.createElement('div');
+        indicator.className = 'ytp-plus-loop-indicator';
+        // ensure positioned inside the progress bar
+        try {
+          const compStyle = window.getComputedStyle(progressBar);
+          if (!compStyle || compStyle.position === 'static') {
+            progressBar.style.position = 'relative';
+          }
+        } catch {}
+        // append indicator after ensuring positioning
+        progressBar.appendChild(indicator);
+        // enforce overlay styles so it appears above built-in played bars
+        indicator.style.position = 'absolute';
+        indicator.style.top = '0';
+        indicator.style.height = '100%';
+        indicator.style.pointerEvents = 'none';
+        indicator.style.zIndex = '1000';
+      }
+
+      // If only point A is set, show a narrow marker at A
+      if (this.loopControl.pointA !== null && this.loopControl.pointB === null) {
+        const startPercent = (this.loopControl.pointA / video.duration) * 100;
+        indicator.style.left = `${startPercent}%`;
+        indicator.style.width = `2px`;
+        // Blue marker for A
+        indicator.style.background = 'linear-gradient(90deg,#1976d2,#42a5f5)';
+        indicator.style.borderLeft = '2px solid #1976d2';
+        indicator.style.borderRight = '2px solid #1976d2';
+        indicator.style.display = 'block';
+        return;
+      }
+
+      // If only point B is set (rare), show a narrow marker at B
+      if (this.loopControl.pointB !== null && this.loopControl.pointA === null) {
+        const bPercent = (this.loopControl.pointB / video.duration) * 100;
+        indicator.style.left = `${bPercent}%`;
+        indicator.style.width = `2px`;
+        indicator.style.background = 'linear-gradient(90deg,#1976d2,#42a5f5)';
+        indicator.style.borderLeft = '2px solid #1976d2';
+        indicator.style.borderRight = '2px solid #1976d2';
+        indicator.style.display = 'block';
+        return;
+      }
+
+      // Both A and B set: draw the range and color it blue
+      const startTime = Math.min(this.loopControl.pointA, this.loopControl.pointB);
+      const endTime = Math.max(this.loopControl.pointA, this.loopControl.pointB);
+
+      // Calculate percentage positions
+      const startPercent = (startTime / video.duration) * 100;
+      const endPercent = (endTime / video.duration) * 100;
+
+      indicator.style.left = `${startPercent}%`;
+      indicator.style.width = `${Math.max(0.2, endPercent - startPercent)}%`;
+      // Blue gradient for A->B ranges
+      indicator.style.background =
+        'linear-gradient(90deg,rgba(25,118,210,0.28) 0%,rgba(66,165,245,0.4) 50%,rgba(25,118,210,0.28) 100%)';
+      indicator.style.borderLeft = '2px solid #1976d2';
+      indicator.style.borderRight = '2px solid #1976d2';
+      indicator.style.display = 'block';
+    },
+
+    /**
+     * Apply saved loop state to current video element.
+     */
+    applyLoopStateToCurrentVideo() {
+      const video = document.querySelector('video');
+      if (!video) return;
+
+      this.removeLoopListener();
+
+      if (!this.settings.enableLoop || !this.loopControl.enabled) {
+        video.loop = false;
+        this.updateLoopProgressBar();
+        return;
+      }
+
+      if (this.loopControl.pointA !== null && this.loopControl.pointB !== null) {
+        video.loop = false;
+        this.setupLoopListener(video);
+      } else {
+        video.loop = true;
+      }
+
+      this.updateLoopProgressBar();
+    },
+
+    /**
+     * Save loop state to localStorage
+     */
+    saveLoopState() {
+      try {
+        const state = {
+          enabled: this.loopControl.enabled,
+          pointA: this.loopControl.pointA,
+          pointB: this.loopControl.pointB,
+        };
+        localStorage.setItem(this.loopControl.storageKey, JSON.stringify(state));
+      } catch (e) {
+        console.warn('[YouTube+] Failed to save loop state:', e);
+      }
+    },
+
+    /**
+     * Load loop state from localStorage
+     */
+    loadLoopState() {
+      try {
+        const saved = localStorage.getItem(this.loopControl.storageKey);
+        if (saved) {
+          const state = JSON.parse(saved);
+          this.loopControl.enabled = Boolean(state?.enabled);
+          this.loopControl.pointA =
+            typeof state?.pointA === 'number' && Number.isFinite(state.pointA)
+              ? state.pointA
+              : null;
+          this.loopControl.pointB =
+            typeof state?.pointB === 'number' && Number.isFinite(state.pointB)
+              ? state.pointB
+              : null;
+
+          setTimeout(() => this.applyLoopStateToCurrentVideo(), 1000);
+        }
+      } catch (e) {
+        console.warn('[YouTube+] Failed to load loop state:', e);
+      }
+    },
+
+    /**
+     * Format time in MM:SS format
+     * @param {number} seconds
+     * @returns {string}
+     */
+    formatTime(seconds) {
+      const mins = Math.floor(seconds / 60);
+      const secs = Math.floor(seconds % 60);
+      return `${mins}:${secs.toString().padStart(2, '0')}`;
+    },
+
+    // ==================== End Loop Functions ====================
 
     saveSettings() {
       localStorage.setItem(this.settings.storageKey, JSON.stringify(this.settings));
@@ -1554,6 +1982,7 @@ if (typeof window !== 'undefined') {
           this.addCustomButtons();
           this.setupVideoObserver();
           this.applyCurrentSpeed();
+          this.applyLoopStateToCurrentVideo();
           this.updatePageBasedOnSettings();
           this.refreshDownloadButton();
         })
@@ -1577,10 +2006,11 @@ if (typeof window !== 'undefined') {
         #speed-indicator{position:absolute!important;margin:auto!important;top:0!important;right:0!important;bottom:0!important;left:0!important;border-radius:24px!important;font-size:30px!important;background:var(--yt-glass-bg)!important;color:var(--yt-text-primary)!important;z-index:99999!important;width:80px!important;height:80px!important;line-height:80px!important;text-align:center!important;display:none;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);}
         .youtube-enhancer-notification-container{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);display:flex;flex-direction:column;align-items:center;gap:10px;z-index:2147483647;pointer-events:none;max-width:calc(100% - 32px);width:100%;box-sizing:border-box;padding:0 16px;}
         .youtube-enhancer-notification{position:relative;max-width:700px;width:auto;background:var(--yt-glass-bg);color:var(--yt-text-primary);padding:8px 14px;font-size:13px;border-radius:var(--yt-radius-md);z-index:inherit;transition:opacity .35s,transform .32s;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);font-weight:500;box-sizing:border-box;display:flex;align-items:center;gap:10px;pointer-events:auto;}
-        .ytp-plus-settings-button{background:transparent;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:var(--yt-space-sm);margin-right:var(--yt-space-sm);border-radius:50%;display:flex;align-items:center;justify-content:center;transition:background-color .2s,transform .2s;}
+        .ytp-plus-loop-indicator{position:absolute;height:100%;background:linear-gradient(90deg,rgba(25,118,210,0.28) 0%,rgba(66,165,245,0.4) 50%,rgba(25,118,210,0.28) 100%);border-left:2px solid #1976d2;border-right:2px solid #1976d2;display:none;pointer-events:none;top:0;z-index:1000;box-shadow:inset 0 0 4px rgba(25,118,210,0.25);}
+        .ytp-plus-settings-button{background:transparent;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:var(--yt-space-sm);margin-right:var(--yt-space-sm);border:none;display:flex;align-items:center;justify-content:center;transition:background-color .2s,transform .2s;}
         .ytp-plus-settings-button svg{width:24px;height:24px;}
-        .ytp-plus-settings-button:hover{background:var(--yt-hover-bg);transform:rotate(30deg);color:var(--yt-text-secondary);}
-        .ytp-download-button{position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;padding:0 10px!important;cursor:pointer!important;}
+        .ytp-plus-settings-button:hover{transform:rotate(30deg);color:var(--yt-text-secondary);}
+        .ytp-download-button{position:relative!important;display:inline-flex!important;align-items:center!important;justify-content:center!important;height:100%!important;vertical-align:top!important;cursor:pointer!important;}
         @keyframes ytEnhanceFadeIn{from{opacity:0;}to{opacity:1;}}
         @keyframes ytEnhanceScaleIn{from{opacity:0;transform:scale(.92) translateY(10px);}to{opacity:1;transform:scale(1) translateY(0);}}
         .ytSearchboxComponentInputBox { background: transparent !important; }`;
@@ -1624,7 +2054,7 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-checkbox:focus-visible{outline:2px solid var(--yt-accent);outline-offset:2px;}
         .ytp-plus-settings-checkbox:hover{background:var(--yt-hover-bg);transform:scale(1.1);}
         .ytp-plus-settings-checkbox::before{content:"";width:5px;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(45deg);top:6px;left:3px;transition:width 100ms ease 50ms,opacity 50ms;transform-origin:0% 0%;opacity:0;}
-        .ytp-plus-settings-checkbox::after{content:"";width:0;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(305deg);top:11px;left:7px;transition:width 100ms ease,opacity 50ms;transform-origin:0% 0%;opacity:0;}
+        .ytp-plus-settings-checkbox::after{content:"";width:0;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(305deg);top:12px;left:7px;transition:width 100ms ease,opacity 50ms;transform-origin:0% 0%;opacity:0;}
         .ytp-plus-settings-checkbox:checked{transform:rotate(0deg) scale(1.15);}
         .ytp-plus-settings-checkbox:checked::before{width:9px;opacity:1;background:#fff;transition:width 150ms ease 100ms,opacity 150ms ease 100ms;}
         .ytp-plus-settings-checkbox:checked::after{width:16px;opacity:1;background:#fff;transition:width 150ms ease 250ms,opacity 150ms ease 250ms;}
@@ -1662,8 +2092,16 @@ if (typeof window !== 'undefined') {
         .speed-hotkeys-fields{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-top:12px;width:100%;}
         .speed-hotkey-field{display:flex;flex-direction:column;align-items:center;gap:8px;font-size:12px;color:var(--yt-text-secondary);flex:1;min-width:80px;}
         .speed-hotkey-field span{text-align:center;width:100%;}
-        .speed-hotkey-input{width:100%;height:36px;border-radius:8px;border:1px solid var(--yt-glass-border);background:var(--yt-glass-bg);color:var(--yt-text-primary);text-align:center;font-size:14px;font-weight:600;text-transform:lowercase;outline:none;}
-        .speed-hotkey-input:focus{border-color:var(--yt-accent);background:var(--yt-hover-bg);}
+        .speed-hotkey-input{width:100%;height:36px;border-radius:8px;border:1px solid var(--yt-glass-border);background:var(--yt-glass-bg);color:var(--yt-text-primary);text-align:center;text-transform:uppercase;}
+        .speed-hotkey-input:focus{background:var(--yt-hover-bg);}
+        .loop-submenu-container{display:flex;flex-direction:column;gap:8px;}
+        .loop-hotkeys-row{flex-direction:column!important;align-items:stretch!important;gap:6px;}
+        .loop-hotkeys-info{display:flex;flex-direction:column;gap:4px;}
+        .loop-hotkeys-fields{display:flex;align-items:flex-start;gap:16px;flex-wrap:wrap;margin-top:12px;width:100%;}
+        .loop-hotkey-field{display:flex;flex-direction:column;align-items:center;gap:8px;font-size:12px;color:var(--yt-text-secondary);flex:1;min-width:80px;}
+        .loop-hotkey-field span{text-align:center;width:100%;}
+        .loop-hotkey-input{width:100%;height:36px;border-radius:8px;border:1px solid var(--yt-glass-border);background:var(--yt-glass-bg);color:var(--yt-text-primary);text-align:center;text-transform:uppercase;}
+        .loop-hotkey-input:focus{background:var(--yt-hover-bg);}
         .download-site-option{display:flex;flex-direction:column;align-items:stretch;gap:8px;padding:10px;border-radius:var(--yt-radius-md);transition:background .2s;}
         .download-site-option:hover{background:var(--yt-hover-bg);}
         .download-site-header{display:flex;flex-direction:row;align-items:center;justify-content:space-between;width:100%;gap:12px;}
@@ -1782,7 +2220,7 @@ if (typeof window !== 'undefined') {
             settingsButton.className = 'ytp-plus-settings-button';
             settingsButton.setAttribute('title', t('youtubeSettings'));
             settingsButton.innerHTML = `
-                <svg width="24" height="24" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <svg width="24" height="24" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M39.23,26a16.52,16.52,0,0,0,.14-2,16.52,16.52,0,0,0-.14-2l4.33-3.39a1,1,0,0,0,.25-1.31l-4.1-7.11a1,1,0,0,0-1.25-.44l-5.11,2.06a15.68,15.68,0,0,0-3.46-2l-.77-5.43a1,1,0,0,0-1-.86H19.9a1,1,0,0,0-1,.86l-.77,5.43a15.36,15.36,0,0,0-3.46,2L9.54,9.75a1,1,0,0,0-1.25.44L4.19,17.3a1,1,0,0,0,.25,1.31L8.76,22a16.66,16.66,0,0,0-.14,2,16.52,16.52,0,0,0,.14,2L4.44,29.39a1,1,0,0,0-.25,1.31l4.1,7.11a1,1,0,0,0,1.25.44l5.11-2.06a15.68,15.68,0,0,0,3.46,2l.77,5.43a1,1,0,0,0,1,.86h8.2a1,1,0,0,0,1-.86l.77-5.43a15.36,15.36,0,0,0,3.46-2l5.11,2.06a1,1,0,0,0,1.25-.44l4.1-7.11a1,1,0,0,0-.25-1.31ZM24,31.18A7.18,7.18,0,1,1,31.17,24,7.17,7.17,0,0,1,24,31.18Z"/>
                 </svg>
               `;
@@ -1910,13 +2348,15 @@ if (typeof window !== 'undefined') {
                     ? `.style-submenu[data-submenu="${submenuKey}"]`
                     : submenuKey === 'speed'
                       ? `.speed-submenu[data-submenu="${submenuKey}"]`
-                      : submenuKey === 'pip'
-                        ? `.pip-submenu[data-submenu="${submenuKey}"]`
-                        : submenuKey === 'timecode'
-                          ? `.timecode-submenu[data-submenu="${submenuKey}"]`
-                          : submenuKey === 'enhanced'
-                            ? `.enhanced-submenu[data-submenu="${submenuKey}"]`
-                            : `[data-submenu="${submenuKey}"]`;
+                      : submenuKey === 'loop'
+                        ? `.loop-submenu[data-submenu="${submenuKey}"]`
+                        : submenuKey === 'pip'
+                          ? `.pip-submenu[data-submenu="${submenuKey}"]`
+                          : submenuKey === 'timecode'
+                            ? `.timecode-submenu[data-submenu="${submenuKey}"]`
+                            : submenuKey === 'enhanced'
+                              ? `.enhanced-submenu[data-submenu="${submenuKey}"]`
+                              : `[data-submenu="${submenuKey}"]`;
             const submenuEl = panel.querySelector(submenuSelector);
             if (!(submenuEl instanceof HTMLElement)) return;
 
@@ -2011,26 +2451,24 @@ if (typeof window !== 'undefined') {
         );
       });
 
-      // Input event delegation
+      // Input event delegation - allow free editing
       modal.addEventListener('input', e => {
         const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
         if (target.classList.contains('speed-hotkey-input')) {
           const keyType = target.dataset?.speedHotkey;
           if (keyType !== 'decrease' && keyType !== 'increase' && keyType !== 'reset') return;
-
-          const input = /** @type {HTMLInputElement} */ (target);
-          const fallback = keyType === 'decrease' ? 'g' : keyType === 'increase' ? 'h' : 'b';
-          const normalized = this.normalizeSpeedHotkey(input.value, fallback);
-
-          this.settings.speedControlHotkeys = this.settings.speedControlHotkeys || {
-            decrease: 'g',
-            increase: 'h',
-            reset: 'b',
-          };
-          this.settings.speedControlHotkeys[keyType] = normalized;
-          input.value = normalized;
+          // Allow free editing on input, normalize on blur
           markDirty();
-          this.saveSettings();
+          return;
+        }
+
+        if (target.classList.contains('loop-hotkey-input')) {
+          const keyType = target.dataset?.loopHotkey;
+          if (keyType !== 'setPointA' && keyType !== 'setPointB' && keyType !== 'resetPoints') {
+            return;
+          }
+          // Allow free editing on input, normalize on blur
+          markDirty();
           return;
         }
 
@@ -2041,6 +2479,55 @@ if (typeof window !== 'undefined') {
           handlers.handleDownloadSiteInput(target, site, field, this.settings, markDirty, t);
         }
       });
+
+      // Blur event delegation - normalize hotkey inputs when editing ends
+      modal.addEventListener(
+        'blur',
+        e => {
+          const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
+          if (target.classList.contains('speed-hotkey-input')) {
+            const keyType = target.dataset?.speedHotkey;
+            if (keyType !== 'decrease' && keyType !== 'increase' && keyType !== 'reset') return;
+
+            const input = /** @type {HTMLInputElement} */ (target);
+            const fallback = keyType === 'decrease' ? 'g' : keyType === 'increase' ? 'h' : 'b';
+            const normalized = this.normalizeSpeedHotkey(input.value, fallback);
+
+            this.settings.speedControlHotkeys = this.settings.speedControlHotkeys || {
+              decrease: 'g',
+              increase: 'h',
+              reset: 'b',
+            };
+            this.settings.speedControlHotkeys[keyType] = normalized;
+            input.value = normalized;
+            this.saveSettings();
+            return;
+          }
+
+          if (target.classList.contains('loop-hotkey-input')) {
+            const keyType = target.dataset?.loopHotkey;
+            if (keyType !== 'setPointA' && keyType !== 'setPointB' && keyType !== 'resetPoints') {
+              return;
+            }
+
+            const input = /** @type {HTMLInputElement} */ (target);
+            const fallback = keyType === 'setPointA' ? 'k' : keyType === 'setPointB' ? 'l' : 'o';
+            const normalized = this.normalizeSpeedHotkey(input.value, fallback);
+
+            this.settings.loopHotkeys = this.settings.loopHotkeys || {
+              toggleLoop: 'r',
+              setPointA: 'k',
+              setPointB: 'l',
+              resetPoints: 'o',
+            };
+            this.settings.loopHotkeys[keyType] = normalized;
+            input.value = normalized;
+            this.saveSettings();
+            return;
+          }
+        },
+        true
+      );
 
       // Allow report module to populate settings
       try {
@@ -2181,8 +2668,9 @@ if (typeof window !== 'undefined') {
       button.className = 'ytp-button ytp-screenshot-button';
       button.setAttribute('title', t('takeScreenshot'));
       button.innerHTML = `
-          <svg width="24" height="24" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M19.83,8.77l-2.77,2.84H6.29A1.79,1.79,0,0,0,4.5,13.4V36.62a1.8,1.8,0,0,0,1.79,1.8H41.71a1.8,1.8,0,0,0,1.79-1.8V13.4a1.79,1.79,0,0,0-1.79-1.79H30.94L28.17,8.77Zm18.93,5.74a1.84,1.84,0,1,1,0,3.68A1.84,1.84,0,0,1,38.76,14.51ZM24,17.71a8.51,8.51,0,1,1-8.51,8.51A8.51,8.51,0,0,1,24,17.71Z"/>
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:auto;vertical-align:middle;">
+            <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
+            <circle cx="12" cy="13" r="4"></circle>
           </svg>
         `;
       button.addEventListener('click', this.captureFrame.bind(this));
@@ -2548,10 +3036,14 @@ if (typeof window !== 'undefined') {
 
       // Event-driven speed control instead of polling every 1s
       const applySpeed = () => this.applyCurrentSpeed();
+      const updateLoopBar = () => this.updateLoopProgressBar();
+      const applyLoop = () => this.applyLoopStateToCurrentVideo();
       const attachSpeedListeners = video => {
         if (video._ytpSpeedListenerAttached) return;
         video._ytpSpeedListenerAttached = true;
         video.addEventListener('loadedmetadata', applySpeed);
+        video.addEventListener('loadedmetadata', updateLoopBar);
+        video.addEventListener('loadedmetadata', applyLoop);
         video.addEventListener('playing', applySpeed);
         video.addEventListener('ratechange', () => {
           // YouTube's hold-to-2× temporarily raises playbackRate above the

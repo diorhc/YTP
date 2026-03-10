@@ -79,8 +79,8 @@
 
   // Glassmorphism styles for stats button and menu (shorts-keyboard-feedback look)
   const styles = `
-        .videoStats{width:36px;height:36px;border-radius:50%;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-left:8px;background:rgba(255,255,255,0.12);box-shadow:0 12px 30px rgba(0,0,0,0.32);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1.25px solid rgba(255,255,255,0.12);transition:transform .18s ease,background .18s}
-        html[dark] .videoStats{background:rgba(24,24,24,0.68);border:1.25px solid rgba(255,255,255,0.08)}html:not([dark]) .videoStats{background:rgba(255,255,255,0.12);border:1.25px solid rgba(0,0,0,0.06)}.videoStats:hover{transform:translateY(-2px)}.videoStats svg{width:18px;height:18px;fill:var(--yt-spec-text-primary,#030303)}html[dark] .videoStats svg{fill:#fff}html:not([dark]) .videoStats svg{fill:#222}
+        .videoStats{width:36px;height:36px;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-left:8px;margin-right:8px;background:transparent;backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:none;transition:transform .18s ease,background .18s}
+        html[dark] .videoStats{background:transparent;border:none}html:not([dark]) .videoStats{background:transparent;border:none}.videoStats:hover{transform:translateY(-2px)}.videoStats svg{width:18px;height:18px;fill:var(--yt-spec-text-primary,#030303)}html[dark] .videoStats svg{fill:#fff}html:not([dark]) .videoStats svg{fill:#222}
         .shortsStats{display:flex;align-items:center;justify-content:center;margin-top:16px;margin-bottom:16px;width:48px;height:48px;border-radius:50%;cursor:pointer;background:rgba(255,255,255,0.12);box-shadow:0 12px 30px rgba(0,0,0,0.32);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1.25px solid rgba(255,255,255,0.12);transition:transform .22s ease}html[dark] .shortsStats{background:rgba(24,24,24,0.68);border:1.25px solid rgba(255,255,255,0.08)}html:not([dark]) .shortsStats{background:rgba(255,255,255,0.12);border:1.25px solid rgba(0,0,0,0.06)}
         .shortsStats:hover{transform:translateY(-3px)}.shortsStats svg{width:24px;height:24px;fill:#222}html[dark] .shortsStats svg{fill:#fff}html:not([dark]) .shortsStats svg{fill:#222}
         .stats-menu-container{position:relative;display:inline-block}.stats-horizontal-menu{position:absolute;display:flex;left:100%;top:0;height:100%;visibility:hidden;opacity:0;transition:visibility 0s,opacity 0.2s linear;z-index:100}.stats-menu-container:hover .stats-horizontal-menu{visibility:visible;opacity:1}.stats-menu-button{margin-left:8px;white-space:nowrap}
@@ -100,13 +100,14 @@
         /* Modal body */
         .stats-modal-body{padding:16px;overflow:visible;flex:1;display:flex;flex-direction:column}
         /* Thumbnail preview */
-        .stats-thumb-title-centered{font-size:16px;font-weight:600;color:#fff;margin:0 0 12px 0;text-align:center}
+        .stats-thumb-title-centered{font-size:16px;font-weight:600;color:#fff;margin:0 0 15px 0;text-align:center}
         html:not([dark]) .stats-thumb-title-centered{color:#111}
         .stats-thumb-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
         .stats-thumb-img{width:36vw;max-width:420px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid rgba(255,255,255,0.06);max-height:44vh}
         html:not([dark]) .stats-thumb-img{border:1px solid rgba(0,0,0,0.06)}
         /* ensure the grid takes remaining horizontal space */
         .stats-thumb-row .stats-grid{flex:1;min-width:0}
+        .stats-side-column{flex:1;min-width:280px;display:flex;flex-direction:column}
         .stats-thumb-left{display:flex;flex-direction:column;align-items:center;gap:8px}
         .stats-thumb-left .stats-thumb-sub{font-size:13px;color:rgba(255,255,255,0.65)}
         html:not([dark]) .stats-thumb-left .stats-thumb-sub{color:rgba(0,0,0,0.6)}
@@ -158,7 +159,15 @@
         @keyframes spin{to{transform:rotate(360deg)}}
         @keyframes dash{0%{stroke-dashoffset:80}50%{stroke-dashoffset:10}100%{stroke-dashoffset:80}}            
         /* Responsive */
-        @media(max-width:768px){.stats-modal-container{width:95vw}.stats-grid{grid-template-columns:1fr}.stats-card{padding:16px}}
+        @media(max-width:768px){.stats-modal-container{width:95vw}.stats-grid{grid-template-columns:1fr}.stats-card{padding:16px}.stats-side-column{min-width:0;width:100%}}
+        /* Centered large author handle (preferred) */
+        .stats-author-big{display:block;text-align:center;margin-top:13px;padding-inline:8px}
+        .stats-author-name-big{display:block;color:rgba(255,255,255,0.9);font-weight:600;font-size:16px}
+        .stats-author-handle-big{display:inline-block;color:#ffffff;font-weight:700;font-size:20px;text-decoration:none;padding:6px 10px;border-radius:6px}
+        .stats-author-handle-big:hover{color:#e6f0ff;text-decoration:underline}
+        html:not([dark]) .stats-author-name-big{color:rgba(0,0,0,0.8)}
+        html:not([dark]) .stats-author-handle-big{color:#0b61d6}
+        html:not([dark]) .stats-author-handle-big:hover{color:#0647a6}
         `;
 
   // Settings state
@@ -773,9 +782,16 @@
     const details = data.videoDetails || {};
     const microformat = data.microformat?.playerMicroformatRenderer || {};
 
+    // Extract channel handle from ownerProfileUrl (e.g. "/@handle" → "@handle")
+    const ownerProfileUrl = microformat.ownerProfileUrl || microformat.ownerUrls?.[0] || '';
+    const handleMatch = ownerProfileUrl.match(/\/@([\w.-]+)/);
+    const authorHandle = handleMatch ? `@${handleMatch[1]}` : null;
+
     return {
       videoId: details.videoId,
       title: details.title,
+      author: details.author || null,
+      authorHandle: authorHandle,
       views: details.viewCount ? parseInt(details.viewCount, 10) : null,
       likes: null, // Will be fetched separately
       thumbnail: extractThumbnailUrl(details),
@@ -1052,6 +1068,29 @@
             return {};
           }
         },
+        extractAuthor() {
+          try {
+            // Try to get the @handle from the owner link
+            const handleEl =
+              $('ytd-video-owner-renderer #channel-handle') ||
+              $('ytd-video-owner-renderer yt-formatted-string.ytd-channel-name a') ||
+              $('#owner ytd-channel-name a') ||
+              $('ytd-video-owner-renderer #owner-name a');
+            const handleText = handleEl?.textContent?.trim() || '';
+            // Some links contain the @handle, others contain the channel name
+            const handle = handleText.startsWith('@') ? handleText : null;
+            const nameEl =
+              $('ytd-video-owner-renderer #channel-name') ||
+              $('ytd-video-owner-renderer #owner-name');
+            const authorName = nameEl?.textContent?.trim() || null;
+            if (handle || authorName) {
+              return { authorHandle: handle, author: authorName };
+            }
+            return {};
+          } catch {
+            return {};
+          }
+        },
       };
 
       const use = helpers && helpers.extractViews ? helpers : fallbackHelpers;
@@ -1065,7 +1104,8 @@
         use.extractComments?.() || {},
         use.extractSubscribers?.() || {},
         use.extractThumbnail?.() || {},
-        use.extractTitle?.() || {}
+        use.extractTitle?.() || {},
+        use.extractAuthor?.() || {}
       );
 
       return Object.keys(result).length > 0 ? result : null;
@@ -1375,6 +1415,8 @@
       country: getFirstAvailableField(stats, 'country'),
       monetized: stats?.monetized ?? null,
       duration: getFirstAvailableField(stats, 'duration'),
+      author: getFirstAvailableField(stats, 'author'),
+      authorHandle: getFirstAvailableField(stats, 'authorHandle'),
     };
   }
 
@@ -1411,6 +1453,8 @@
       duration: getValue('duration'),
       country: getValue('country'),
       monetized: getValue('monetized', 'isMonetized', 'monetization'),
+      author: getValue('author'),
+      authorHandle: getValue('authorHandle'),
     };
   }
 
@@ -1903,12 +1947,28 @@
         ? `<div class="stats-card-pair">${likesHtml}${dislikesHtml}</div>`
         : '';
 
+    // Build centered large author/handle display (placed below stats grid)
+    const { author, authorHandle } = fields;
+    const safeAuthor = author ? escapeHtml(String(author)) : '';
+    const safeHandle = authorHandle ? escapeHtml(String(authorHandle)) : '';
+    const authorBigHtml =
+      safeHandle || safeAuthor
+        ? `<div class="stats-author-big">${
+            safeHandle
+              ? `<a class="stats-author-handle-big" href="https://www.youtube.com/${encodeURIComponent(
+                  authorHandle
+                )}" target="_blank" rel="noopener noreferrer">${safeHandle}</a>`
+              : `<span class="stats-author-name-big">${safeAuthor}</span>`
+          }</div>`
+        : '';
+
     const parts = [viewsHtml, pairHtml, commentsHtml].filter(Boolean);
 
     const liveViewerCard = createLiveViewerCard(liveViewer);
     if (liveViewerCard) parts.push(liveViewerCard);
 
     const gridHtml = `<div class="stats-grid">${parts.join('')}</div>`;
+    const sideColumnHtml = `<div class="stats-side-column">${gridHtml}${authorBigHtml}</div>`;
 
     if (thumbUrl) {
       const extras = getVideoExtras(stats, null);
@@ -1917,9 +1977,9 @@
         ? `<div class="stats-thumb-extras" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${metaCardsHtml}</div>`
         : '';
       const leftHtml = `<div class="stats-thumb-left"><img class="stats-thumb-img" src="${thumbUrl}" alt="thumbnail">${metaExtrasHtml}</div>`;
-      container.innerHTML = `${titleHtml}<div class="stats-thumb-row">${leftHtml}${gridHtml}</div>`;
+      container.innerHTML = `${titleHtml}<div class="stats-thumb-row">${leftHtml}${sideColumnHtml}</div>`;
     } else {
-      container.innerHTML = `${titleHtml}${gridHtml}`;
+      container.innerHTML = `${titleHtml}${sideColumnHtml}`;
     }
 
     // Set up error handlers for country flag images
@@ -4121,7 +4181,7 @@
     window.YouTubeStats = {
       init,
       cleanup,
-      version: '2.4.3',
+      version: '2.4.4',
     };
   }
 

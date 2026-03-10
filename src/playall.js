@@ -5,6 +5,8 @@
   let featureEnabled = true;
   let stopRandomPlayTimers = null;
   let scheduleApplyRandomPlay = null;
+  let addButtonRetryTimer = null;
+  let addButtonRetryAttempts = 0;
   const loadFeatureEnabled = () => {
     try {
       const settings = localStorage.getItem('youtube_plus_settings');
@@ -22,11 +24,16 @@
         removeButton();
       } catch {}
       try {
+        if (addButtonRetryTimer) clearTimeout(addButtonRetryTimer);
+        addButtonRetryTimer = null;
+        addButtonRetryAttempts = 0;
+      } catch {}
+      try {
         if (typeof stopRandomPlayTimers === 'function') stopRandomPlayTimers();
       } catch {}
     } else {
       try {
-        addButton();
+        queueDesktopAddButton();
       } catch {}
       try {
         if (typeof scheduleApplyRandomPlay === 'function') scheduleApplyRandomPlay();
@@ -496,6 +503,58 @@
     }
   };
 
+  const stopAddButtonRetries = () => {
+    if (addButtonRetryTimer) clearTimeout(addButtonRetryTimer);
+    addButtonRetryTimer = null;
+    addButtonRetryAttempts = 0;
+  };
+
+  const queueDesktopAddButton = (reset = true) => {
+    if (location.host === 'm.youtube.com') {
+      addButton();
+      return;
+    }
+
+    if (reset) {
+      stopAddButtonRetries();
+    }
+
+    const run = () => {
+      if (!featureEnabled) {
+        stopAddButtonRetries();
+        return;
+      }
+
+      if (
+        !(
+          window.location.pathname.endsWith('/videos') ||
+          window.location.pathname.endsWith('/shorts') ||
+          window.location.pathname.endsWith('/streams')
+        )
+      ) {
+        stopAddButtonRetries();
+        return;
+      }
+
+      addButton();
+
+      if (document.querySelector('.ytp-play-all-btn')) {
+        stopAddButtonRetries();
+        return;
+      }
+
+      if (addButtonRetryAttempts >= 14) {
+        stopAddButtonRetries();
+        return;
+      }
+
+      addButtonRetryAttempts += 1;
+      addButtonRetryTimer = setTimeout(run, 350);
+    };
+
+    run();
+  };
+
   // Removing the button prevents it from still existing when switching between "Videos", "Shorts", and "Live"
   // This is necessary due to the mobile Interval requiring a check for an already existing button
   const removeButton = () => {
@@ -522,12 +581,23 @@
     // Initial call
     addButton();
   } else {
-    window.addEventListener('yt-navigate-start', removeButton);
-    window.addEventListener('yt-navigate-finish', addButton);
+    window.addEventListener('yt-navigate-start', () => {
+      stopAddButtonRetries();
+      removeButton();
+    });
+    window.addEventListener('yt-navigate-finish', () =>
+      setTimeout(() => queueDesktopAddButton(), 120)
+    );
+    window.addEventListener('pageshow', () => setTimeout(() => queueDesktopAddButton(), 120));
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        queueDesktopAddButton();
+      }
+    });
     // Also attempt to add buttons on initial script run in case the SPA navigation event
     // already happened before this script was loaded (some browsers/firefox timing).
     try {
-      setTimeout(addButton, 300);
+      setTimeout(() => queueDesktopAddButton(), 300);
     } catch {}
   }
 

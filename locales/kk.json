@@ -313,5 +313,19 @@
   "dislike": "Ұнамайды",
   "statusProposed": "Ұсынылған",
   "statusInProgress": "Орындалуда",
-  "statusCompleted": "Аяқталды"
+  "statusCompleted": "Аяқталды",
+  "enableLoopLabel": "Бейнені қайталау",
+  "enableLoopDesc": "Бейнені және пайдаланушы сегменттерін (A → B) қайталауды қосу",
+  "loopHotkeysTitle": "Қайталау пернелер тіркесімі",
+  "loopHotkeysDesc": "Ойнатуды қайталау функциясын басқару үшін бір әріптік пернелерді қолданыңыз",
+  "toggleLoopHotkey": "Қайталауды қосу/өшіру",
+  "loopSegmentTitle": "A → B қайталау",
+  "loopSegmentDesc": "Бейнедегі пайдаланушы сегментін қайталау",
+  "setPointAHotkey": "A нүктесін орнату",
+  "setPointBHotkey": "B нүктесін орнату",
+  "loopEnabled": "Қайталау қосулы",
+  "loopDisabled": "Қайталау өшірілген",
+  "loopPointASet": "A нүктесі орнатылды",
+  "loopPointBSet": "B нүктесі орнатылды",
+  "loopPointsReset": "Нүктелер қалпына келтірілді"
 }

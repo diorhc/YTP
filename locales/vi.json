@@ -313,5 +313,19 @@
   "dislike": "Không thích",
   "statusProposed": "Đề xuất",
   "statusInProgress": "Đang tiến hành",
-  "statusCompleted": "Hoàn thành"
+  "statusCompleted": "Hoàn thành",
+  "enableLoopLabel": "Lặp lại video",
+  "enableLoopDesc": "Bật lặp lại video và các đoạn tùy chỉnh (A → B)",
+  "loopHotkeysTitle": "Phím tắt lặp lại",
+  "loopHotkeysDesc": "Sử dụng phím một ký tự để điều khiển lặp phát",
+  "toggleLoopHotkey": "Bật/Tắt lặp",
+  "loopSegmentTitle": "Lặp A → B",
+  "loopSegmentDesc": "Lặp lại đoạn video tùy chỉnh",
+  "setPointAHotkey": "Đặt điểm A",
+  "setPointBHotkey": "Đặt điểm B",
+  "loopEnabled": "Lặp đã bật",
+  "loopDisabled": "Lặp đã tắt",
+  "loopPointASet": "Đã đặt điểm A",
+  "loopPointBSet": "Đã đặt điểm B",
+  "loopPointsReset": "Đã đặt lại các điểm"
 }
