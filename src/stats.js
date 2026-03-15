@@ -2586,7 +2586,7 @@
       OPTIONS: ['subscribers', 'views', 'videos'],
       FONT_LINK: 'https://fonts.googleapis.com/css2?family=Rubik:wght@400;700&display=swap',
       STATS_API_URL: 'https://api.livecounts.io/youtube-live-subscriber-counter/stats/',
-      DEFAULT_UPDATE_INTERVAL: 2000,
+      DEFAULT_UPDATE_INTERVAL: 5000,
       DEFAULT_OVERLAY_OPACITY: 0.75,
       MAX_RETRIES: 3,
       CACHE_DURATION: 300000, // 5 minutes
@@ -2615,6 +2615,16 @@
       previousUrl: location.href,
       isChecking: false,
       documentListenerKeys: new Set(),
+    };
+
+    // LRU-evicting set helper for bounded Maps (max 50 entries)
+    const MAX_CACHE_ENTRIES = 50;
+    const boundedCacheSet = (map, key, value) => {
+      if (map.size >= MAX_CACHE_ENTRIES) {
+        const firstKey = map.keys().next().value;
+        map.delete(firstKey);
+      }
+      map.set(key, value);
     };
 
     // Utility functions
@@ -3499,7 +3509,7 @@
 
       if (typeof channelName === 'string' && /^UC[\w-]{22}$/.test(channelName)) {
         state.currentChannelId = channelName;
-        if (cacheKey) state.channelIdCache.set(cacheKey, channelName);
+        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, channelName);
         return channelName;
       }
 
@@ -3507,7 +3517,7 @@
       const metaTag = $('meta[itemprop="channelId"]');
       if (metaTag && metaTag.content) {
         state.currentChannelId = metaTag.content;
-        if (cacheKey) state.channelIdCache.set(cacheKey, metaTag.content);
+        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, metaTag.content);
         return metaTag.content;
       }
 
@@ -3515,7 +3525,7 @@
       const urlMatch = window.location.href.match(/channel\/(UC[\w-]+)/);
       if (urlMatch && urlMatch[1]) {
         state.currentChannelId = urlMatch[1];
-        if (cacheKey) state.channelIdCache.set(cacheKey, urlMatch[1]);
+        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, urlMatch[1]);
         return urlMatch[1];
       }
 
@@ -3523,7 +3533,7 @@
       const channelInfo = await getChannelInfo(window.location.href);
       if (channelInfo && channelInfo.channelId) {
         state.currentChannelId = channelInfo.channelId;
-        if (cacheKey) state.channelIdCache.set(cacheKey, channelInfo.channelId);
+        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, channelInfo.channelId);
         return channelInfo.channelId;
       }
 
@@ -4250,7 +4260,12 @@
         clearInterval(state.intervalId);
       }
       const debouncedUpdate = createDebouncedUpdate(overlay, channelName);
-      state.intervalId = setInterval(debouncedUpdate, state.updateInterval);
+      // Pause updates when the tab is not visible to save API calls
+      const visibilityAwareUpdate = () => {
+        if (document.visibilityState === 'hidden') return;
+        debouncedUpdate();
+      };
+      state.intervalId = setInterval(visibilityAwareUpdate, state.updateInterval);
       YouTubeUtils.cleanupManager.registerInterval(state.intervalId);
     }
 
@@ -4338,77 +4353,31 @@
     }
 
     /**
-     * Cleanup observer timeout
-     * @param {MutationObserver} observer - Observer instance
-     * @returns {void}
-     */
-    function clearObserverTimeout(observer) {
-      if (/** @type {any} */ (observer)._timeout) {
-        YouTubeUtils.cleanupManager.unregisterTimeout(/** @type {any} */ (observer)._timeout);
-        clearTimeout(/** @type {any} */ (observer)._timeout);
-      }
-    }
-
-    /**
-     * Setup observer for monitoring page changes
-     * @param {MutationObserver} observer - Observer instance
-     * @returns {void}
-     */
-    function setupObserver(observer) {
-      const observerConfig = {
-        childList: true,
-        subtree: true,
-        attributes: false,
-      };
-
-      // Scope to #page-manager or #content instead of full document.body
-      const startObserver = () => {
-        const target =
-          document.querySelector('#page-manager') ||
-          document.querySelector('#content') ||
-          document.body;
-        observer.observe(target, observerConfig);
-      };
-
-      if (document.body) {
-        startObserver();
-      } else {
-        document.addEventListener('DOMContentLoaded', startObserver, { once: true });
-      }
-    }
-
-    /**
      * Observe page changes and update banner overlay
      * @returns {MutationObserver|undefined} Observer instance
+     */
+    /**
+     * Observe page changes and update banner overlay.
+     * Uses the yt-navigate-finish event (already fired by YouTube SPA navigation)
+     * instead of an expensive MutationObserver with subtree: true.
+     * @returns {undefined}
      */
     function observePageChanges() {
       if (!state.enabled) return undefined;
 
-      const observer = new MutationObserver(_mutations => {
-        clearObserverTimeout(observer);
+      const debouncedBannerUpdate = YouTubeUtils.debounce
+        ? YouTubeUtils.debounce(handleBannerUpdate, 150)
+        : handleBannerUpdate;
 
-        /** @type {any} */ (observer)._timeout = YouTubeUtils.cleanupManager.registerTimeout(
-          setTimeout(handleBannerUpdate, 100)
-        );
-      });
-
-      setupObserver(observer);
-
-      // Store timeout reference for cleanup
-      /** @type {any} */ (observer)._timeout = null;
-
-      // Store observer for cleanup on page unload
-      if (typeof state.observers === 'undefined') {
-        state.observers = [];
-      }
-      state.observers.push(observer);
-      // Also register with global cleanupManager and ObserverRegistry
-      if (_cm2?.registerObserver) _cm2.registerObserver(observer);
-      if (window.YouTubeUtils?.ObserverRegistry?.track) {
-        window.YouTubeUtils.ObserverRegistry.track();
+      if (_cm2?.registerListener) {
+        _cm2.registerListener(document, 'yt-navigate-finish', debouncedBannerUpdate);
+        _cm2.registerListener(document, 'yt-page-data-updated', debouncedBannerUpdate);
+      } else {
+        document.addEventListener('yt-navigate-finish', debouncedBannerUpdate);
+        document.addEventListener('yt-page-data-updated', debouncedBannerUpdate);
       }
 
-      return observer;
+      return undefined;
     }
 
     function addNavigationListener() {

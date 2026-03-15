@@ -5089,8 +5089,9 @@ const executionScript = () => {
       YouTubeUtils.cleanupManager.registerObserver(moOverall);
     }
 
-    // Performance: observing the entire document subtree is expensive on home/feed/playlist.
-    // Enable it only when the watch player exists.
+    // Performance: observe only document.head (where YouTube injects <script>) instead
+    // of the entire document subtree. This is the main path for _yt_player detection.
+    // Falls back to document.documentElement if head is not yet available.
     let moOverallActive = false;
     const shouldActivateMoOverall = () => {
       try {
@@ -5101,7 +5102,8 @@ const executionScript = () => {
     };
     const activateMoOverall = () => {
       if (moOverallActive) return;
-      moOverall.observe(document, { subtree: true, childList: true });
+      const target = document.head || document.documentElement || document;
+      moOverall.observe(target, { subtree: true, childList: true });
       moOverallActive = true;
     };
     const deactivateMoOverall = () => {

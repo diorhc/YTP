@@ -3102,20 +3102,31 @@ if (typeof window !== 'undefined') {
         video.addEventListener('loadedmetadata', updateLoopBar);
         video.addEventListener('loadedmetadata', applyLoop);
         video.addEventListener('playing', applySpeed);
+        let _settingRate = false;
         video.addEventListener('ratechange', () => {
+          // Prevent re-entrant ratechange → set → ratechange loops
+          if (_settingRate) return;
           // YouTube's hold-to-2× temporarily raises playbackRate above the
           // user-chosen speed while the left mouse button is held. Skip the
           // reset so YouTube's native feature isn't cancelled.
           if (this._mouseButtonHeld && video.playbackRate > this.speedControl.currentSpeed) return;
           if (video.playbackRate !== this.speedControl.currentSpeed) {
+            _settingRate = true;
             video.playbackRate = this.speedControl.currentSpeed;
+            _settingRate = false;
           }
         });
         applySpeed();
       };
 
-      // Attach to existing videos
-      document.querySelectorAll('video').forEach(attachSpeedListeners);
+      // Attach to existing main player videos only (skip thumbnail hover previews)
+      const mainPlayer =
+        document.querySelector('#movie_player') || document.querySelector('ytd-player');
+      if (mainPlayer) {
+        mainPlayer.querySelectorAll('video').forEach(attachSpeedListeners);
+      } else {
+        document.querySelectorAll('video').forEach(attachSpeedListeners);
+      }
 
       // Watch for new video elements
       const videoObserver = new MutationObserver(mutations => {
