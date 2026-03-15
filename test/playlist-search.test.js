@@ -17,9 +17,9 @@ describe('Playlist Search Module', () => {
       pathname: '/watch',
     });
 
-    // Mock localStorage
-    global.Storage.prototype.getItem = jest.fn();
-    global.Storage.prototype.setItem = jest.fn();
+    // Mock localStorage methods for this test
+    localStorage.getItem = jest.fn(() => null);
+    localStorage.setItem = jest.fn();
   });
 
   describe('Playlist ID Validation', () => {
