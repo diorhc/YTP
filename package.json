@@ -1,7 +1,7 @@
 {
   "$schema": "https://json.schemastore.org/package.json",
   "name": "youtubeplus",
-  "version": "2.4.4",
+  "version": "2.4.5",
   "description": "Professional-grade YouTube enhancement userscript with modular architecture, comprehensive error handling, performance monitoring, and automated testing",
   "private": true,
   "author": "diorhc",
@@ -56,6 +56,9 @@
     "test:coverage": "jest --coverage",
     "test:coverage:report": "jest --coverage && open coverage/index.html",
     "test:smoke": "node test/smoke.js",
+    "test:e2e": "npx playwright test",
+    "test:e2e:headed": "npx playwright test --headed",
+    "test:e2e:report": "npx playwright show-report e2e-report",
     "test:all": "npm run typecheck && npm run test",
     "test:ci": "jest --ci --coverage --maxWorkers=2",
     "security:audit": "npm audit --audit-level=moderate",
@@ -97,6 +100,7 @@
   },
   "devDependencies": {
     "@microsoft/eslint-formatter-sarif": "^3.1.0",
+    "@playwright/test": "^1.58.2",
     "@types/jest": "^30.0.0",
     "@types/node": "^24.7.2",
     "chokidar": "^4.0.3",

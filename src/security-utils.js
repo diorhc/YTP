@@ -198,11 +198,13 @@
 
   /**
    * Rate limiter for preventing abuse
+   * Includes FIFO eviction to prevent unbounded Map growth
    */
   class RateLimiter {
-    constructor(maxRequests = 10, timeWindow = 60000) {
+    constructor(maxRequests = 10, timeWindow = 60000, maxKeys = 100) {
       this.maxRequests = maxRequests;
       this.timeWindow = timeWindow;
+      this.maxKeys = maxKeys;
       this.requests = new Map();
     }
 
@@ -227,6 +229,17 @@
 
       recentRequests.push(now);
       this.requests.set(key, recentRequests);
+
+      // FIFO eviction: if map exceeds maxKeys, delete oldest entries
+      if (this.requests.size > this.maxKeys) {
+        const keysToDelete = this.requests.size - this.maxKeys;
+        const iter = this.requests.keys();
+        for (let i = 0; i < keysToDelete; i++) {
+          const oldest = iter.next().value;
+          if (oldest !== key) this.requests.delete(oldest);
+        }
+      }
+
       return true;
     }
 
@@ -295,5 +308,7 @@
       fetchWithTimeout,
       validateJSONSchema,
     };
+    // Alias for basic.js compatibility
+    window.YouTubePlusSecurity = window.YouTubeSecurityUtils;
   }
 })();

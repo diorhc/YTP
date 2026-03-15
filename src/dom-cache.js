@@ -117,9 +117,13 @@
       const elements = Array.from(context.querySelectorAll(selector));
       this.multiCache.set(cacheKey, elements);
 
-      // Auto-cleanup after maxAge or nullMaxAge
+      // Auto-cleanup after maxAge or nullMaxAge — track timeout for cleanup
       const ttl = elements.length > 0 ? this.maxAge : this.nullMaxAge;
-      setTimeout(() => this.multiCache.delete(cacheKey), ttl);
+      const timeoutId = setTimeout(() => this.multiCache.delete(cacheKey), ttl);
+      // Register timeout with cleanupManager if available
+      if (typeof window !== 'undefined' && window.YouTubeUtils?.cleanupManager?.registerTimeout) {
+        window.YouTubeUtils.cleanupManager.registerTimeout(timeoutId);
+      }
 
       return elements;
     }
@@ -225,6 +229,11 @@
           cleanupFn();
         }
       }, 5000); // Run every 5 seconds
+
+      // Register with cleanupManager for SPA lifecycle
+      if (window.YouTubeUtils?.cleanupManager?.registerInterval) {
+        window.YouTubeUtils.cleanupManager.registerInterval(this.cleanupInterval);
+      }
     }
 
     /**
@@ -272,8 +281,11 @@
           for (const callback of this.observerCallbacks) {
             try {
               callback();
-            } catch {
-              // Ignore callback errors to avoid breaking other observers
+            } catch (e) {
+              // Log callback errors for diagnostics but don't break other observers
+              if (typeof window !== 'undefined' && window.YouTubeUtils?.logError) {
+                window.YouTubeUtils.logError('DOMCache', 'Observer callback error', e);
+              }
             }
           }
         };

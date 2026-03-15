@@ -1,4 +1,4 @@
-﻿/**
+/**
  * YouTube+ Internationalization (i18n) System - v3.2
  * Unified i18n system with integrated loader
  * Supports all major YouTube interface languages
@@ -30,7 +30,7 @@
   const AVAILABLE_LANGUAGES = ['en', 'ru', 'kr', 'fr', 'du', 'cn', 'tw', 'jp', 'tr', 'es', 'pt', 'de', 'it', 'pl', 'uk', 'ar', 'hi', 'id', 'vi', 'uz', 'kk', 'ky', 'be', 'bg', 'az'];
 
   const LANGUAGE_NAMES = {
-    en: 'English', ru: 'Русский', kr: '한국어', fr: 'Français', du: 'Nederlands', cn: '简体中文', tw: '繁體中文', jp: '日本語', tr: 'Türkçe', es: 'Español', pt: 'Português', de: 'Deutsch', it: 'Italiano', pl: 'Polski', uk: 'Українська', sv: 'Svenska', no: 'Norsk', da: 'Dansk', fi: 'Suomi', cs: 'Čeština', sk: 'Slovenčina', hu: 'Magyar', ro: 'Română', bg: 'Български', hr: 'Hrvatski', sr: 'Српски', sl: 'Slovenščina', el: 'Ελληνικά', lt: 'Lietuvių', lv: 'Latviešu', et: 'Eesti', mk: 'Македонски', sq: 'Shqip', bs: 'Bosanski', is: 'Íslenska', ca: 'Català', eu: 'Euskara', gl: 'Galego', ar: 'العربية', he: 'עברית', fa: 'فارسی', sw: 'Kiswahili', zu: 'isiZulu', af: 'Afrikaans', am: 'አማርኛ', hi: 'हिन्दी', th: 'ไทย', vi: 'Tiếng Việt', id: 'Bahasa Indonesia', ms: 'Bahasa Melayu', bn: 'বাংলা', ta: 'தமிழ்', te: 'తెలుగు', mr: 'मराठी', gu: 'ગુજરાતી', kn: 'ಕನ್ನಡ', ml: 'മലയാളം', pa: 'ਪੰਜਾਬੀ', fil: 'Filipino', km: 'ភាសាខ្មែរ', lo: 'ລາວ', my: 'မြန်မာ', ne: 'नेपाली', si: 'සිංහල', az: 'Azərbaycanca', be: 'Беларуская', hy: 'Հայերեն', ka: 'ქართული', kk: 'Қазақ', ky: 'Кыргызча', mn: 'Монгол', tg: 'Тоҷикӣ', uz: 'Oʻzbekcha',
+    en: 'English', ru: '???????', kr: '???', fr: 'Fran�ais', du: 'Nederlands', cn: '????', tw: '????', jp: '???', tr: 'T�rk�e', es: 'Espa�ol', pt: 'Portugu�s', de: 'Deutsch', it: 'Italiano', pl: 'Polski', uk: '??????????', sv: 'Svenska', no: 'Norsk', da: 'Dansk', fi: 'Suomi', cs: 'Ce�tina', sk: 'Slovencina', hu: 'Magyar', ro: 'Rom�na', bg: '?????????', hr: 'Hrvatski', sr: '??????', sl: 'Sloven�cina', el: '????????', lt: 'Lietuviu', lv: 'Latvie�u', et: 'Eesti', mk: '??????????', sq: 'Shqip', bs: 'Bosanski', is: '�slenska', ca: 'Catal�', eu: 'Euskara', gl: 'Galego', ar: '???????', he: '?????', fa: '?????', sw: 'Kiswahili', zu: 'isiZulu', af: 'Afrikaans', am: '????', hi: '??????', th: '???', vi: 'Ti?ng Vi?t', id: 'Bahasa Indonesia', ms: 'Bahasa Melayu', bn: '?????', ta: '?????', te: '??????', mr: '?????', gu: '???????', kn: '?????', ml: '??????', pa: '??????', fil: 'Filipino', km: '?????????', lo: '???', my: '??????', ne: '??????', si: '?????', az: 'Az?rbaycanca', be: '??????????', hy: '???????', ka: '???????', kk: '?????', ky: '????????', mn: '??????', tg: '??????', uz: 'O?zbekcha',
   };
 
   const LANGUAGE_FALLBACKS = {
@@ -65,7 +65,7 @@
       console.warn('[YouTube+][i18n]', 'Error reading embedded translations', e);
     }
 
-    // Try raw GitHub first — often contains the latest changes and avoids
+    // Try raw GitHub first � often contains the latest changes and avoids
     // CDN caching delays. If that fails, fall back to jsDelivr with a
     // lightweight cache-bust query param to reduce the chance of stale
     // responses from the CDN.
@@ -278,7 +278,7 @@
           const mapped = mapToSupportedLanguage(hlParam);
           return mapped;
         }
-      } catch {}
+      } catch { /* empty */ }
 
       // Try to get YouTube's internal language setting
       try {
@@ -290,7 +290,7 @@
             return mapped;
           }
         }
-      } catch {}
+      } catch { /* empty */ }
 
       // Fallback to browser language
       const browserLang = navigator.language || navigator.userLanguage || 'en';
@@ -325,7 +325,7 @@
         translations = await loadTranslationsFromLoader(currentLanguage);
         // Ensure we always have English fallback available (best-effort).
         // Skip the async fetch when embedded English translations are already
-        // bundled — this avoids a network round-trip on every page load.
+        // bundled � this avoids a network round-trip on every page load.
         if (!fallbackTranslationsEn || Object.keys(fallbackTranslationsEn).length === 0) {
           try {
             const embeddedEn =
@@ -347,7 +347,7 @@
           YouTubeUtils.logger.debug &&
           YouTubeUtils.logger.debug(
             '[YouTube+][i18n]',
-            `✓ Loaded ${Object.keys(translations).length} translations for ${currentLanguage}`
+            `? Loaded ${Object.keys(translations).length} translations for ${currentLanguage}`
           );
         return true;
       } catch (error) {

@@ -1,19 +1,10 @@
 // Shorts Keyboard controls
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
-  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    // Fallback for initialization phase
-    if (!key) return '';
-    let result = String(key);
-    for (const [k, v] of Object.entries(params || {})) {
-      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
-    }
-    return result;
-  };
+  // Shared translation helper from YouTubeUtils
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   // Configuration - Using lazy getters for translations to avoid early loading
   const config = {
@@ -480,7 +471,7 @@
       panel.tabIndex = -1;
 
       const render = () => {
-        panel.innerHTML = `
+        panel.innerHTML = _createHTML(`
             <div class="help-header">
               <h3>${t('keyboardShortcuts')}</h3>
               <button class="ytp-plus-settings-close help-close" type="button" aria-label="${t('closeButton')}">
@@ -503,7 +494,7 @@
             <div class="help-footer">
               <button class="ytp-plus-button ytp-plus-button-primary reset-all-shortcuts">${t('resetAll')}</button>
             </div>
-          `;
+          `);
 
         panel.querySelector('.help-close').onclick = () => helpPanel.hide();
         panel.querySelector('.reset-all-shortcuts').onclick = () => {
@@ -579,14 +570,14 @@
     dialog.className = 'glass-modal shortcut-edit-dialog';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
-    dialog.innerHTML = `
+    dialog.innerHTML = _createHTML(`
         <div class="glass-panel shortcut-edit-content">
           <h4>${t('editShortcut')}: ${config.shortcuts[actionKey].description}</h4>
           <p>${t('pressAnyKey')}</p>
           <div class="current-shortcut">${t('current')}: <kbd>${currentKey === ' ' ? 'Space' : currentKey}</kbd></div>
           <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">${t('cancel')}</button>
         </div>
-      `;
+      `);
 
     document.body.appendChild(dialog);
     state.editingShortcut = actionKey;
@@ -623,7 +614,7 @@
       // target is expected to be an Element here
       if (target === dialog) cleanup();
     };
-    document.addEventListener('keydown', handleKey, true);
+    YouTubeUtils.cleanupManager.registerListener(document, 'keydown', handleKey, true);
   };
 
   /**
@@ -757,7 +748,7 @@
     };
     YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler);
 
-    document.addEventListener('keydown', e => {
+    YouTubeUtils.cleanupManager.registerListener(document, 'keydown', e => {
       if (e.key === 'Escape' && state.helpVisible) {
         e.preventDefault();
         helpPanel.hide();
@@ -796,6 +787,12 @@
         childList: true,
         subtree: false,
       });
+      if (YouTubeUtils.cleanupManager?.registerObserver) {
+        YouTubeUtils.cleanupManager.registerObserver(state.routeObserver);
+      }
+      if (YouTubeUtils.ObserverRegistry?.track) {
+        YouTubeUtils.ObserverRegistry.track();
+      }
     }
   };
 

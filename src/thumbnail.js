@@ -1,45 +1,19 @@
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
-  // DOM cache helpers with fallback
-  const qs = selector => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
-      return window.YouTubeDOMCache.get(selector);
-    }
-    return document.querySelector(selector);
-  };
-  const qsAll = selector => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.getAll === 'function') {
-      return window.YouTubeDOMCache.getAll(selector);
-    }
-    return document.querySelectorAll(selector);
-  };
+  // Shared DOM helpers from YouTubeUtils
+  const qs = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+  const qsAll = sel => window.YouTubeUtils?.$$(sel) || Array.from(document.querySelectorAll(sel));
 
-  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    // Fallback for initialization phase
-    if (!key) return '';
-    let result = String(key);
-    for (const [k, v] of Object.entries(params || {})) {
-      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
-    }
-    return result;
-  };
+  // Shared translation helper from YouTubeUtils
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
-  const SETTINGS_KEY = 'youtube_plus_settings';
-  const DEFAULT_ENABLE_THUMBNAIL = true;
+  const _SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
+  const _DEFAULT_ENABLE_THUMBNAIL = true;
 
   function loadEnableThumbnail() {
-    try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      if (!raw) return DEFAULT_ENABLE_THUMBNAIL;
-      const parsed = JSON.parse(raw);
-      return parsed?.enableThumbnail !== false;
-    } catch {
-      return DEFAULT_ENABLE_THUMBNAIL;
-    }
+    return window.YouTubeUtils?.loadFeatureEnabled?.('enableThumbnail') ?? true;
   }
 
   let thumbnailFeatureEnabled = loadEnableThumbnail();
@@ -187,8 +161,15 @@
    * @param {HTMLImageElement} img - Image element
    */
   function cleanupImageElement(img) {
-    if (img.parentNode) {
-      document.body.removeChild(img);
+    try {
+      img.onload = null;
+      img.onerror = null;
+      img.src = ''; // Cancel any in-flight loading
+      if (img.parentNode) {
+        img.parentNode.removeChild(img);
+      }
+    } catch {
+      // Element may already be removed
     }
   }
 
@@ -206,6 +187,10 @@
         cleanupImageElement(img);
         resolve(false);
       }, 3000);
+      // Register timeout with cleanupManager so SPA navigation can cancel it
+      if (window.YouTubeUtils?.cleanupManager?.registerTimeout) {
+        window.YouTubeUtils.cleanupManager.registerTimeout(timeout);
+      }
 
       img.onload = () => {
         clearTimeout(timeout);
@@ -266,17 +251,7 @@
 
     spinner.style.animation = 'spin 1s linear infinite';
 
-    if (!qs('#spinner-keyframes')) {
-      const style = document.createElement('style');
-      style.id = 'spinner-keyframes';
-      style.textContent = `
-                @keyframes spin {
-                    from { transform: rotate(0deg); }
-                    to { transform: rotate(360deg); }
-                }
-            `;
-      (document.head || document.documentElement).appendChild(style);
-    }
+    // spin keyframe is defined in shared-keyframes (basic.js)
 
     return spinner;
   }
@@ -439,8 +414,7 @@
         .thumbnail-modal-option-btn { background: var(--thumbnail-modal-btn-bg); color: var(--thumbnail-modal-btn-color); border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s; margin-bottom: 6px; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
         .thumbnail-modal-option-btn:hover { background: var(--thumbnail-modal-btn-hover-bg); color: var(--thumbnail-modal-btn-hover-color); }
         .thumbnail-modal-title { font-size: 18px; font-weight: 600; color: var(--thumbnail-modal-title); margin-bottom: 10px; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-        @keyframes fadeInModal { from { opacity: 0; } to { opacity: 1; } }
-        @keyframes scaleInModal { from { transform: scale(0.95); } to { transform: scale(1); } }
+        /* fadeInModal, scaleInModal defined in shared-keyframes (basic.js) */
       `;
 
       if (
@@ -473,13 +447,17 @@
       if (window.YouTubeUtils?.StyleManager?.remove) {
         window.YouTubeUtils.StyleManager.remove('thumbnail-viewer-styles');
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     const el = document.getElementById('ytplus-thumbnail-styles');
     if (el) {
       try {
         el.remove();
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }
 
     thumbnailStylesInjected = false;
@@ -538,7 +516,9 @@
   function createCloseButton(overlay) {
     const closeBtn = document.createElement('button');
     closeBtn.className = 'thumbnail-modal-close thumbnail-modal-action-btn';
-    closeBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `;
+    closeBtn.innerHTML = _createHTML(
+      `\n            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `
+    );
     closeBtn.title = t('close');
     closeBtn.setAttribute('aria-label', t('close'));
     closeBtn.addEventListener('click', e => {
@@ -557,7 +537,9 @@
   function createNewTabButton(img) {
     const newTabBtn = document.createElement('button');
     newTabBtn.className = 'thumbnail-modal-open thumbnail-modal-action-btn';
-    newTabBtn.innerHTML = `\n            <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">\n        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>\n        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>\n        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>\n      </svg>\n        `;
+    newTabBtn.innerHTML = _createHTML(
+      `\n            <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">\n        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>\n        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>\n        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>\n      </svg>\n        `
+    );
     newTabBtn.title = t('clickToOpen');
     newTabBtn.setAttribute('aria-label', t('clickToOpen'));
     newTabBtn.addEventListener('click', e => {
@@ -603,7 +585,9 @@
   function createDownloadButton(img) {
     const downloadBtn = document.createElement('button');
     downloadBtn.className = 'thumbnail-modal-download thumbnail-modal-action-btn';
-    downloadBtn.innerHTML = `\n            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>\n                <polyline points="7 10 12 15 17 10"/>\n                <line x1="12" y1="15" x2="12" y2="3"/>\n            </svg>\n        `;
+    downloadBtn.innerHTML = _createHTML(
+      `\n            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>\n                <polyline points="7 10 12 15 17 10"/>\n                <line x1="12" y1="15" x2="12" y2="3"/>\n            </svg>\n        `
+    );
     downloadBtn.title = t('download');
     downloadBtn.setAttribute('aria-label', t('download'));
     downloadBtn.addEventListener('click', async e => {
@@ -661,6 +645,9 @@
 
       const overlay = document.createElement('div');
       overlay.className = 'thumbnail-modal-overlay';
+      overlay.setAttribute('role', 'dialog');
+      overlay.setAttribute('aria-modal', 'true');
+      overlay.setAttribute('aria-label', 'Thumbnail preview');
 
       const content = document.createElement('div');
       content.className = 'thumbnail-modal-content';
@@ -699,6 +686,22 @@
       setupImageErrorHandler(img, content);
 
       document.body.appendChild(overlay);
+
+      // Focus trap and initial focus
+      requestAnimationFrame(() => {
+        const focusTarget = overlay.querySelector('button, [tabindex="0"]');
+        if (focusTarget) /** @type {HTMLElement} */ (focusTarget).focus();
+      });
+      if (window.YouTubePlusModalHandlers && window.YouTubePlusModalHandlers.createFocusTrap) {
+        const removeTrap = window.YouTubePlusModalHandlers.createFocusTrap(overlay);
+        const obs = new MutationObserver(() => {
+          if (!overlay.isConnected) {
+            removeTrap();
+            obs.disconnect();
+          }
+        });
+        obs.observe(document.body, { childList: true });
+      }
     } catch (error) {
       console.error('[YouTube+][Thumbnail]', 'Error showing modal:', error);
     }
@@ -802,25 +805,35 @@
 
       // Add hover and focus behaviour so overlay becomes fully visible when interacted with
       overlay.tabIndex = 0; // make focusable for keyboard users
+      overlay.setAttribute('role', 'button');
+      overlay.setAttribute('aria-label', 'Show thumbnail preview');
       overlay.onmouseenter = () => {
         try {
           overlay.style.opacity = '0.5';
-        } catch {}
+        } catch {
+          /* empty */
+        }
       };
       overlay.onmouseleave = () => {
         try {
           overlay.style.opacity = '0';
-        } catch {}
+        } catch {
+          /* empty */
+        }
       };
       overlay.onfocus = () => {
         try {
           overlay.style.opacity = '0.5';
-        } catch {}
+        } catch {
+          /* empty */
+        }
       };
       overlay.onblur = () => {
         try {
           overlay.style.opacity = '0';
-        } catch {}
+        } catch {
+          /* empty */
+        }
       };
       // allow Enter/Space to open the thumbnail
       overlay.addEventListener('keydown', e => {
@@ -1380,6 +1393,10 @@
         childList: true,
         subtree: target !== document.body,
       });
+      // Register with cleanupManager for SPA lifecycle
+      if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
+        window.YouTubeUtils.cleanupManager.registerObserver(mutationObserver);
+      }
     };
 
     if (document.body) {
@@ -1393,7 +1410,9 @@
     if (!mutationObserver) return;
     try {
       mutationObserver.disconnect();
-    } catch {}
+    } catch {
+      /* empty */
+    }
     mutationObserver = null;
   }
 
@@ -1428,21 +1447,29 @@
         window.removeEventListener('ytp-history-navigate', onNavChange);
         window.removeEventListener('popstate', onNavChange);
         window.removeEventListener('yt-navigate-finish', ytNavigateHandler);
-      } catch {}
+      } catch {
+        /* empty */
+      }
     };
   }
 
   function removeInjectedUi() {
     try {
       qsAll('.thumbnail-modal-overlay').forEach(m => m.remove());
-    } catch {}
+    } catch {
+      /* empty */
+    }
     try {
       qsAll('.thumb-overlay, .avatar-overlay, .banner-overlay').forEach(el => el.remove());
-    } catch {}
+    } catch {
+      /* empty */
+    }
     try {
       const playerOverlay = qs('#thumbnailPreview-player-overlay');
       if (playerOverlay) playerOverlay.remove();
-    } catch {}
+    } catch {
+      /* empty */
+    }
   }
 
   function stop() {
@@ -1454,14 +1481,18 @@
         clearTimeout(processAllTimerId);
         processAllTimerId = null;
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     teardownMutationObserver();
 
     if (urlChangeCleanup) {
       try {
         urlChangeCleanup();
-      } catch {}
+      } catch {
+        /* empty */
+      }
       urlChangeCleanup = null;
     }
 

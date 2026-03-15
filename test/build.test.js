@@ -38,20 +38,21 @@ describe('Build System', () => {
     });
   });
 
-  test('utils.js should be first in build order', () => {
+  test('logger.js should be first in build order', () => {
     const buildOrder = JSON.parse(fs.readFileSync(BUILD_ORDER_PATH, 'utf8'));
-    expect(buildOrder[0]).toBe('utils.js');
+    expect(buildOrder[0]).toBe('logger.js');
   });
 
   test('infrastructure modules should come early in build order', () => {
     const buildOrder = JSON.parse(fs.readFileSync(BUILD_ORDER_PATH, 'utf8'));
     // Check that infrastructure modules are in the first 5
     const firstFive = buildOrder.slice(0, 5);
+    expect(firstFive).toContain('logger.js');
+    expect(firstFive).toContain('module-registry.js');
     expect(firstFive).toContain('utils.js');
-    expect(firstFive).toContain('error-boundary.js');
-    expect(firstFive).toContain('performance.js');
-    // utils.js should always be first
-    expect(buildOrder[0]).toBe('utils.js');
+    // logger.js should always be first, then module-registry.js, then utils.js
+    expect(buildOrder[0]).toBe('logger.js');
+    expect(buildOrder.indexOf('utils.js')).toBeGreaterThan(buildOrder.indexOf('logger.js'));
   });
 
   test('source files should have valid JavaScript syntax', () => {

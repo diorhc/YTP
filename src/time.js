@@ -4,16 +4,8 @@
 
   let featureEnabled = true;
   let activeCleanup = null;
-  const loadFeatureEnabled = () => {
-    try {
-      const settings = localStorage.getItem('youtube_plus_settings');
-      if (settings) {
-        const parsed = JSON.parse(settings);
-        return parsed.enableResumeTime !== false;
-      }
-    } catch {}
-    return true;
-  };
+  const loadFeatureEnabled = () =>
+    window.YouTubeUtils?.loadFeatureEnabled?.('enableResumeTime') ?? true;
   const setFeatureEnabled = nextEnabled => {
     featureEnabled = nextEnabled !== false;
     if (!featureEnabled) {
@@ -21,28 +13,31 @@
       if (existingOverlay) {
         try {
           existingOverlay.remove();
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
       if (typeof activeCleanup === 'function') {
         try {
           activeCleanup();
-        } catch {}
+        } catch {
+          /* empty */
+        }
         activeCleanup = null;
       }
     } else {
       try {
         initResume();
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }
   };
 
   featureEnabled = loadFeatureEnabled();
 
-  // DOM helpers
-  const _getDOMCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
-  const $ = (sel, ctx) =>
-    _getDOMCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
-  const byId = id => _getDOMCache()?.getElementById(id) || document.getElementById(id);
+  // Shared DOM helpers from YouTubeUtils
+  const { $, byId } = window.YouTubeUtils || {};
   const onDomReady = (() => {
     let ready = document.readyState !== 'loading';
     const queue = [];
@@ -52,7 +47,9 @@
         const cb = queue.shift();
         try {
           cb();
-        } catch {}
+        } catch (e) {
+          console.error('[YouTube+] DOMReady callback error:', e);
+        }
       }
     };
     if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
@@ -91,26 +88,35 @@
           }
         });
       } else {
-        document.addEventListener(
-          'click',
-          ev => {
-            const target = ev.target?.closest?.('.ytp-resume-btn');
-            if (target) handler(ev, target);
-          },
-          true
-        );
-        document.addEventListener(
-          'keydown',
-          ev => {
-            const target = ev.target?.closest?.('.ytp-resume-btn');
-            if (!target) return;
-            if (ev.key === 'Enter' || ev.key === ' ') {
-              ev.preventDefault();
-              handler(ev, target);
-            }
-          },
-          true
-        );
+        const clickHandler = ev => {
+          const target = ev.target?.closest?.('.ytp-resume-btn');
+          if (target) handler(ev, target);
+        };
+        const keyHandler = ev => {
+          const target = ev.target?.closest?.('.ytp-resume-btn');
+          if (!target) return;
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            handler(ev, target);
+          }
+        };
+        if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+          window.YouTubeUtils.cleanupManager.registerListener(
+            document,
+            'click',
+            clickHandler,
+            true
+          );
+          window.YouTubeUtils.cleanupManager.registerListener(
+            document,
+            'keydown',
+            keyHandler,
+            true
+          );
+        } else {
+          document.addEventListener('click', clickHandler, true);
+          document.addEventListener('keydown', keyHandler, true);
+        }
       }
     };
   })();
@@ -127,14 +133,13 @@
   };
 
   const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-
+    // Prefer centralized i18n
+    const U = window.YouTubeUtils;
+    if (U?.t) return U.t(key, params);
     // Fallback to local tiny map for this module's critical keys
     const htmlLang = document.documentElement.lang || 'en';
     const lang = htmlLang.startsWith('ru') ? 'ru' : 'en';
     const val = _localFallback[key]?.[lang] || _localFallback[key]?.en || key;
-
     if (!params || Object.keys(params).length === 0) return val;
     let result = val;
     for (const [k, v] of Object.entries(params)) {
@@ -154,7 +159,9 @@
   const writeStorage = obj => {
     try {
       localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(obj));
-    } catch {}
+    } catch (e) {
+      console.warn('[YouTube+] Failed to save resume time:', e);
+    }
   };
 
   // Get current video id from the page (works on standard watch pages)
@@ -200,6 +207,8 @@
     if (byId(OVERLAY_ID)) return null;
     const wrap = document.createElement('div');
     wrap.id = OVERLAY_ID;
+    wrap.setAttribute('role', 'alertdialog');
+    wrap.setAttribute('aria-label', t('resumePlayback') || 'Resume playback');
 
     // Try to insert overlay inside the player so it appears above the progress bar
     const player = $('#movie_player');
@@ -229,7 +238,9 @@
         s.textContent = resumeOverlayStyles;
         (document.head || document.documentElement).appendChild(s);
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[YouTube+] Failed to inject resume overlay styles:', e);
+    }
 
     if (inPlayer) {
       try {
@@ -238,7 +249,9 @@
           /** @type {Element} */ (/** @type {unknown} */ (player))
         );
         if (playerStyle.position === 'static') player.style.position = 'relative';
-      } catch {}
+      } catch {
+        /* Intentional: player element may be detached */
+      }
 
       // Position centered inside the player
       wrap.className = 'ytp-resume-overlay';
@@ -280,7 +293,9 @@
       }
       try {
         wrap.remove();
-      } catch {}
+      } catch {
+        /* empty */
+      }
     };
 
     const handleRestart = () => {
@@ -291,7 +306,9 @@
       }
       try {
         wrap.remove();
-      } catch {}
+      } catch {
+        /* empty */
+      }
     };
 
     setupResumeDelegation();
@@ -313,12 +330,16 @@
       requestAnimationFrame(() => {
         btnResume.focus();
       });
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     const to = setTimeout(() => {
       try {
         wrap.remove();
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }, AUTO_HIDE_MS);
 
     // Return function to cancel timeout
@@ -329,10 +350,14 @@
       YouTubeUtils.cleanupManager.register(() => {
         try {
           cancel();
-        } catch {}
+        } catch {
+          /* empty */
+        }
         try {
           wrap.remove();
-        } catch {}
+        } catch {
+          /* empty */
+        }
       });
     }
 
@@ -388,7 +413,9 @@
             writeStorage(s);
             lastSavedAt = now;
           }
-        } catch {}
+        } catch (e) {
+          console.warn('[YouTube+] Error saving playback time:', e);
+        }
       };
       videoEl.addEventListener('timeupdate', timeUpdateHandler, { passive: true });
 
@@ -397,7 +424,9 @@
         YouTubeUtils.cleanupManager.register(() => {
           try {
             videoEl.removeEventListener('timeupdate', timeUpdateHandler);
-          } catch {}
+          } catch {
+            /* Intentional: element may be detached */
+          }
         });
       }
     };
@@ -406,7 +435,9 @@
       if (!timeUpdateHandler) return;
       try {
         videoEl.removeEventListener('timeupdate', timeUpdateHandler);
-      } catch {}
+      } catch {
+        /* Intentional: element may be detached */
+      }
       timeUpdateHandler = null;
       lastSavedAt = 0;
     };
@@ -419,13 +450,17 @@
           try {
             videoEl.currentTime = saved;
             videoEl.play();
-          } catch {}
+          } catch (e) {
+            console.error('[YouTube+] Failed to resume playback:', e);
+          }
         },
         () => {
           try {
             videoEl.currentTime = 0;
             videoEl.play();
-          } catch {}
+          } catch (e) {
+            console.error('[YouTube+] Failed to start over:', e);
+          }
         }
       );
 
@@ -433,7 +468,9 @@
       try {
         const overlayEl = byId(OVERLAY_ID);
         if (overlayEl && vid) overlayEl.dataset.vid = vid;
-      } catch {}
+      } catch {
+        /* empty */
+      }
 
       // register cleanup for overlay timeout
       if (window.YouTubeUtils && YouTubeUtils.cleanupManager && cancelTimeout) {
@@ -496,7 +533,9 @@
       if (existingOverlay) {
         try {
           existingOverlay.remove();
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
       return;
     }
@@ -523,7 +562,9 @@
       } catch {
         try {
           existingOverlay.remove();
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
     }
 
@@ -553,13 +594,23 @@
     }
   }
 
-  window.addEventListener('youtube-plus-settings-updated', e => {
+  const settingsUpdatedHandler = e => {
     try {
       const nextEnabled = e?.detail?.enableResumeTime !== false;
       if (nextEnabled === featureEnabled) return;
       setFeatureEnabled(nextEnabled);
     } catch {
+      /* empty */
       setFeatureEnabled(loadFeatureEnabled());
     }
-  });
+  };
+  if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+    YouTubeUtils.cleanupManager.registerListener(
+      window,
+      'youtube-plus-settings-updated',
+      settingsUpdatedHandler
+    );
+  } else {
+    window.addEventListener('youtube-plus-settings-updated', settingsUpdatedHandler);
+  }
 })();

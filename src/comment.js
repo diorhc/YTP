@@ -5,6 +5,7 @@
  */
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   /**
    * Translation helper - uses centralized i18n system
@@ -12,21 +13,7 @@
    * @param {Object} params - Interpolation parameters
    * @returns {string} Translated string
    */
-  function t(key, params = {}) {
-    try {
-      if (typeof window !== 'undefined') {
-        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
-          return window.YouTubePlusI18n.t(key, params);
-        }
-        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
-          return window.YouTubeUtils.t(key, params);
-        }
-      }
-    } catch {
-      // Fallback to key if central i18n unavailable
-    }
-    return key;
-  }
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   /**
    * Configuration object for comment manager
@@ -74,7 +61,9 @@
     try {
       if (window.YouTubePlusI18n?.getLanguage) lang = window.YouTubePlusI18n.getLanguage();
       else if (document.documentElement.lang) lang = document.documentElement.lang.split('-')[0];
-    } catch {}
+    } catch {
+      /* empty */
+    }
     return `https://myactivity.google.com/page?hl=${encodeURIComponent(lang)}&utm_medium=web&utm_source=youtube&page=youtube_comments`;
   })();
 
@@ -94,7 +83,9 @@
       if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
         YouTubeUtils.cleanupManager.registerObserver(observer);
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   const registerListenerSafe = (target, event, handler, options) => {
@@ -102,10 +93,14 @@
       if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
         return YouTubeUtils.cleanupManager.registerListener(target, event, handler, options);
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
     try {
       target.addEventListener(event, handler, options);
-    } catch {}
+    } catch {
+      /* empty */
+    }
     return null;
   };
 
@@ -115,14 +110,18 @@
         YouTubeUtils.StyleManager.add('comment-delete-styles', cssText);
         return;
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
     try {
       if (document.getElementById('comment-delete-styles')) return;
       const style = document.createElement('style');
       style.id = 'comment-delete-styles';
       style.textContent = cssText;
       (document.head || document.documentElement).appendChild(style);
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   // Optimized settings
@@ -131,42 +130,33 @@
       try {
         const saved = localStorage.getItem(CONFIG.storageKey);
         if (saved) CONFIG.enabled = JSON.parse(saved).enabled ?? true;
-      } catch {}
+      } catch {
+        /* empty */
+      }
     },
     save: () => {
       try {
         localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
-      } catch {}
+      } catch {
+        /* empty */
+      }
     },
   };
 
-  // Use shared debounce from YouTubeUtils (loaded before this module)
-  const debounce = (func, wait) => {
-    if (window.YouTubeUtils?.debounce) {
-      const d = window.YouTubeUtils.debounce(func, wait);
-      if (typeof d === 'function') return d;
-    }
-    let timeout;
-    return (...args) => {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func(...args), wait);
-    };
-  };
+  // Shared debounce from YouTubeUtils
+  const debounce =
+    window.YouTubeUtils?.debounce ||
+    ((fn, ms) => {
+      let t;
+      return (...a) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...a), ms);
+      };
+    });
 
-  /**
-   * Safely query a single element
-   * @param {string} selector - CSS selector
-   * @returns {HTMLElement|null} The first matching element or null
-   */
-  const $ = selector => /** @type {HTMLElement|null} */ (document.querySelector(selector));
-
-  /**
-   * Safely query multiple elements
-   * @param {string} selector - CSS selector
-   * @returns {NodeListOf<HTMLElement>} NodeList of matching elements
-   */
-  const $$ = selector =>
-    /** @type {NodeListOf<HTMLElement>} */ (document.querySelectorAll(selector));
+  // Shared DOM helpers from YouTubeUtils
+  const $ = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+  const $$ = sel => window.YouTubeUtils?.$$(sel) || Array.from(document.querySelectorAll(sel));
 
   /**
    * Log error with error boundary integration
@@ -294,11 +284,11 @@
     collapseButton.setAttribute('type', 'button');
     collapseButton.setAttribute('aria-expanded', String(!state.panelCollapsed));
     collapseButton.setAttribute('aria-label', t('togglePanel'));
-    collapseButton.innerHTML = `
+    collapseButton.innerHTML = _createHTML(`
         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
         </svg>
-      `;
+      `);
 
     const togglePanelState = collapsed => {
       state.panelCollapsed = collapsed;
@@ -476,7 +466,7 @@
 
     const settingsItem = document.createElement('div');
     settingsItem.className = 'ytp-plus-settings-item comment-manager-settings-item';
-    settingsItem.innerHTML = `
+    settingsItem.innerHTML = _createHTML(`
         <div>
           <label class="ytp-plus-settings-item-label">${t('commentManagement')}</label>
           <div class="ytp-plus-settings-item-description">${t('bulkDeleteDescription')}</div>
@@ -488,7 +478,7 @@
             <line x1="10" y1="14" x2="21" y2="3"/>
           </svg>
         </button>
-      `;
+      `);
 
     // Append to end (ensure it's the bottom-most item)
     experimentalSection.appendChild(settingsItem);
@@ -620,16 +610,29 @@
       if (!state.initialized && isRelevantRoute()) {
         scheduleInit();
       }
+      // Disconnect once initialized — no longer needed
+      if (state.initialized) {
+        navigationObserver.disconnect();
+        if (window.YouTubeUtils?.ObserverRegistry?.untrack) {
+          window.YouTubeUtils.ObserverRegistry.untrack();
+        }
+      }
     }, 300)
   );
 
-  // Watch for navigation changes
+  // Watch for navigation changes — register with cleanupManager for SPA lifecycle
   if (document.body) {
     navigationObserver.observe(document.body, {
       childList: true,
       subtree: false,
       attributes: false,
     });
+    if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
+      window.YouTubeUtils.cleanupManager.registerObserver(navigationObserver);
+    }
+    if (window.YouTubeUtils?.ObserverRegistry?.track) {
+      window.YouTubeUtils.ObserverRegistry.track();
+    }
   }
 
   // Start the module (lazy)

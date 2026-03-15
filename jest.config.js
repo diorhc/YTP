@@ -4,21 +4,20 @@ module.exports = {
     url: 'https://www.youtube.com/',
   },
   testMatch: ['**/test/**/*.test.js', '**/test/**/*.spec.js'],
+  testPathIgnorePatterns: ['/node_modules/', '/e2e/'],
   collectCoverageFrom: ['src/**/*.js', '!src/**/*.min.js', '!src/**/*.d.ts', '!node_modules/**'],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html', 'json-summary'],
   coveragePathIgnorePatterns: ['/node_modules/', '/test/', '/coverage/', 'youtube.user.js'],
-  // Note: Coverage thresholds disabled for unit tests with heavy mocking
-  // These are unit tests that mock most functionality, so actual coverage
-  // of source files is expected to be low. Use integration tests for real coverage.
-  // coverageThreshold: {
-  //   global: {
-  //     branches: 10,
-  //     functions: 10,
-  //     lines: 10,
-  //     statements: 10,
-  //   },
-  // },
+  // Coverage thresholds - aiming for ≥60% global coverage
+  coverageThreshold: {
+    global: {
+      branches: 15,
+      functions: 15,
+      lines: 20,
+      statements: 20,
+    },
+  },
   verbose: true,
   testTimeout: 10000,
   setupFilesAfterEnv: ['<rootDir>/test/setup.js'],

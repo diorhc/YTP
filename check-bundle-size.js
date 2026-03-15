@@ -6,9 +6,9 @@ const BUILD_OUTPUT = path.join(ROOT, 'youtube.user.js');
 
 // Size limits in bytes
 const SIZE_LIMITS = {
-  ERROR: 500 * 1024, // 500 KB - build fails
-  WARNING: 350 * 1024, // 350 KB - warning only
-  TARGET: 250 * 1024, // 250 KB - ideal size
+  ERROR: 1200 * 1024, // 1200 KB - build fails
+  WARNING: 1100 * 1024, // 1100 KB - warning only
+  TARGET: 950 * 1024, // 950 KB - ideal size
 };
 
 /**

@@ -1,42 +1,13 @@
 // Ad Blocker
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
-  // DOM cache helpers with fallback
-  const $ = selector => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
-      return window.YouTubeDOMCache.get(selector);
-    }
-    return document.querySelector(selector);
-  };
-  const $$ = selector => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.getAll === 'function') {
-      return window.YouTubeDOMCache.getAll(selector);
-    }
-    return document.querySelectorAll(selector);
-  };
-
-  /**
-   * Translation helper - uses centralized i18n system
-   * @param {string} key - Translation key
-   * @param {Object} params - Interpolation parameters
-   * @returns {string} Translated string
-   */
-  function t(key, params = {}) {
-    try {
-      if (typeof window !== 'undefined') {
-        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
-          return window.YouTubePlusI18n.t(key, params);
-        }
-        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
-          return window.YouTubeUtils.t(key, params);
-        }
-      }
-    } catch {
-      // Fallback to key if central i18n unavailable
-    }
-    return key;
-  }
+  // Shared helpers from YouTubeUtils (canonical in utils.js)
+  const U = window.YouTubeUtils || {};
+  const $ = (sel, ctx) => U.$(sel, ctx) || (ctx || document).querySelector(sel);
+  const $$ = (sel, ctx) => U.$$(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
+  const t = U.t || (key => key || '');
 
   /**
    * Ad blocking functionality for YouTube
@@ -392,9 +363,13 @@
           adElements.forEach(el => {
             try {
               el.remove();
-            } catch {}
+            } catch {
+              /* empty */
+            }
           });
-        } catch {}
+        } catch {
+          /* empty */
+        }
 
         // Remove ad-slot renderers
         const elements = document.querySelectorAll(AdBlocker.selectors.removal);
@@ -441,13 +416,13 @@
       try {
         const item = document.createElement('div');
         item.className = 'ytp-plus-settings-item ab-settings';
-        item.innerHTML = `
+        item.innerHTML = _createHTML(`
           <div>
             <label class="ytp-plus-settings-item-label">${t('adBlocker')}</label>
             <div class="ytp-plus-settings-item-description">${t('adBlockerDescription')}</div>
           </div>
           <input type="checkbox" class="ytp-plus-settings-checkbox" ${AdBlocker.config.enabled ? 'checked' : ''}>
-        `;
+        `);
 
         section.appendChild(item);
 
@@ -496,7 +471,14 @@
             setTimeout(AdBlocker.skipAd, 500);
           }
         };
-        document.addEventListener('playing', handleVideoPlay, { capture: true, passive: true });
+        if (YouTubeUtils.cleanupManager?.registerListener) {
+          YouTubeUtils.cleanupManager.registerListener(document, 'playing', handleVideoPlay, {
+            capture: true,
+            passive: true,
+          });
+        } else {
+          document.addEventListener('playing', handleVideoPlay, { capture: true, passive: true });
+        }
       } catch (e) {
         console.warn('[YouTube+] Ad play listener error:', e);
       }
@@ -508,12 +490,26 @@
       };
 
       // Use centralized pushState/replaceState event from utils.js
-      window.addEventListener('ytp-history-navigate', () => setTimeout(handleNavigation, 50));
+      const navHandler = () => setTimeout(handleNavigation, 50);
+      if (YouTubeUtils.cleanupManager?.registerListener) {
+        YouTubeUtils.cleanupManager.registerListener(window, 'ytp-history-navigate', navHandler);
+      } else {
+        window.addEventListener('ytp-history-navigate', navHandler);
+      }
 
       // Settings modal integration — use event instead of MutationObserver
-      document.addEventListener('youtube-plus-settings-modal-opened', () => {
+      const settingsHandler = () => {
         setTimeout(AdBlocker.addSettingsUI, 50);
-      });
+      };
+      if (YouTubeUtils.cleanupManager?.registerListener) {
+        YouTubeUtils.cleanupManager.registerListener(
+          document,
+          'youtube-plus-settings-modal-opened',
+          settingsHandler
+        );
+      } else {
+        document.addEventListener('youtube-plus-settings-modal-opened', settingsHandler);
+      }
 
       // Observe DOM for dynamically inserted ad slots and remove them
       // Use targeted observation rather than full subtree to reduce detection risk
@@ -558,8 +554,20 @@
           ].filter(Boolean);
 
           if (containers.length === 0) {
-            // Fallback to body with reduced scope
-            adSlotObserver.observe(document.body, { childList: true, subtree: true });
+            // Retry scoped containers before falling back to body
+            setTimeout(() => {
+              const retryContainers = [
+                document.querySelector('#content'),
+                document.querySelector('#page-manager'),
+              ].filter(Boolean);
+              if (retryContainers.length > 0) {
+                retryContainers.forEach(c =>
+                  adSlotObserver.observe(c, { childList: true, subtree: true })
+                );
+              } else {
+                adSlotObserver.observe(document.body, { childList: true, subtree: true });
+              }
+            }, 1000);
           } else {
             containers.forEach(container => {
               adSlotObserver.observe(container, { childList: true, subtree: true });

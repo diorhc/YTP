@@ -1,4 +1,6 @@
 [
+  "logger.js",
+  "module-registry.js",
   "utils.js",
   "security-utils.js",
   "basic.js",

@@ -6,6 +6,7 @@
 
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   const isRelevantRoute = () => {
     try {
@@ -24,19 +25,9 @@
     }
   };
 
-  // DOM cache helpers with fallback
-  const $ = selector => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
-      return window.YouTubeDOMCache.get(selector);
-    }
-    return document.querySelector(selector);
-  };
-  const $$ = selector => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.getAll === 'function') {
-      return window.YouTubeDOMCache.getAll(selector);
-    }
-    return document.querySelectorAll(selector);
-  };
+  // Shared DOM helpers from YouTubeUtils
+  const $ = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+  const $$ = sel => window.YouTubeUtils?.$$(sel) || Array.from(document.querySelectorAll(sel));
 
   // Check dependencies
   if (typeof YouTubeUtils === 'undefined') {
@@ -48,6 +39,9 @@
   function createSubtitleSelect() {
     const subtitleSelect = document.createElement('div');
     subtitleSelect.setAttribute('role', 'listbox');
+    subtitleSelect.setAttribute('aria-expanded', 'false');
+    subtitleSelect.setAttribute('aria-label', t('subtitleLanguage') || 'Subtitle language');
+    subtitleSelect.setAttribute('tabindex', '0');
     Object.assign(subtitleSelect.style, {
       position: 'relative',
       width: '100%',
@@ -130,13 +124,13 @@
     subtitleSelect.setPlaceholder = text => {
       _ssLabel.textContent = text || '';
       subtitleSelect._options = [];
-      _ssList.innerHTML = '';
+      _ssList.replaceChildren();
       subtitleSelect._value = '';
     };
 
     subtitleSelect.setOptions = options => {
       subtitleSelect._options = options || [];
-      _ssList.innerHTML = '';
+      _ssList.replaceChildren();
       subtitleSelect._options.forEach(opt => {
         const item = document.createElement('div');
         item.textContent = opt.text;
@@ -181,14 +175,48 @@
 
     _ssDisplay.addEventListener('click', () => {
       if (subtitleSelect._disabled) return;
-      _ssList.style.display = _ssList.style.display === 'none' ? '' : 'none';
+      const isOpen = _ssList.style.display !== 'none';
+      _ssList.style.display = isOpen ? 'none' : '';
+      subtitleSelect.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+    });
+
+    // Keyboard navigation for accessibility (#24)
+    subtitleSelect.addEventListener('keydown', e => {
+      if (subtitleSelect._disabled) return;
+      const isOpen = _ssList.style.display !== 'none';
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        _ssList.style.display = isOpen ? 'none' : '';
+        subtitleSelect.setAttribute('aria-expanded', isOpen ? 'false' : 'true');
+      } else if (e.key === 'Escape' && isOpen) {
+        e.preventDefault();
+        _ssList.style.display = 'none';
+        subtitleSelect.setAttribute('aria-expanded', 'false');
+      } else if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+        e.preventDefault();
+        if (!isOpen) {
+          _ssList.style.display = '';
+          subtitleSelect.setAttribute('aria-expanded', 'true');
+        }
+        const opts = subtitleSelect._options;
+        if (opts.length === 0) return;
+        const currentIdx = opts.findIndex(o => String(o.value) === subtitleSelect._value);
+        const nextIdx =
+          e.key === 'ArrowDown'
+            ? Math.min(currentIdx + 1, opts.length - 1)
+            : Math.max(currentIdx - 1, 0);
+        subtitleSelect.value = String(opts[nextIdx].value);
+      }
     });
 
     const _ac = new AbortController();
     document.addEventListener(
       'click',
       e => {
-        if (!subtitleSelect.contains(e.target)) _ssList.style.display = 'none';
+        if (!subtitleSelect.contains(e.target)) {
+          _ssList.style.display = 'none';
+          subtitleSelect.setAttribute('aria-expanded', 'false');
+        }
       },
       { signal: _ac.signal }
     );
@@ -200,30 +228,15 @@
 
   const { NotificationManager } = YouTubeUtils;
 
-  // Translation helper: dynamically resolve central i18n (embedded) at call time
-  // to avoid missing translations due to initialization order. Falls back to
-  // YouTubeUtils.t if present, otherwise returns the key (with simple params).
-  function t(key, params = {}) {
-    try {
-      if (typeof window !== 'undefined') {
-        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
-          return window.YouTubePlusI18n.t(key, params);
-        }
-        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
-          return window.YouTubeUtils.t(key, params);
-        }
-      }
-    } catch {
-      // ignore and fall back
-    }
-
-    // Minimal fallback: return key with simple interpolation
+  // Translation helper: resolve from centralized i18n with fallback
+  const t = (key, params = {}) => {
+    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
     const str = String(key || '');
     if (!params || Object.keys(params).length === 0) return str;
     let result = str;
     for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
     return result;
-  }
+  };
 
   // Initialize logger (logger is defined in build order before this module)
   /* global YouTubePlusLogger */
@@ -252,8 +265,7 @@
       'Content-Type': 'application/json',
       Origin: 'https://mp3yt.is',
       Accept: '*/*',
-      'User-Agent':
-        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/142.0.0.0 Safari/537.36',
+      'User-Agent': typeof navigator !== 'undefined' ? navigator.userAgent : '',
     },
 
     // Available video qualities (144p to 4K)
@@ -469,6 +481,8 @@
 
         const ctx = canvas.getContext('2d');
         if (!ctx) {
+          canvas.width = 0;
+          canvas.height = 0;
           reject(new Error('Failed to get canvas context'));
           return;
         }
@@ -479,6 +493,9 @@
 
         canvas.toBlob(
           blob => {
+            // Release canvas memory after blob is created
+            canvas.width = 0;
+            canvas.height = 0;
             if (blob) resolve(blob);
             else reject(new Error('Failed to create blob'));
           },
@@ -1110,6 +1127,7 @@
 
   function createTabButtons(onTabChange) {
     const tabContainer = document.createElement('div');
+    tabContainer.setAttribute('role', 'tablist');
     Object.assign(tabContainer.style, {
       display: 'flex',
       gap: '8px',
@@ -1146,9 +1164,10 @@
       });
       // Accessibility & artifact prevention
       btn.type = 'button';
+      btn.setAttribute('role', 'tab');
+      btn.setAttribute('aria-selected', 'false');
       btn.style.outline = 'none';
       btn.style.userSelect = 'none';
-      btn.setAttribute('aria-pressed', 'false');
     });
 
     function setActive(btn) {
@@ -1158,7 +1177,7 @@
         b.style.color = '#666';
         b.style.border = '1px solid rgba(255,255,255,0.06)';
         b.style.boxShadow = 'none';
-        b.setAttribute('aria-pressed', 'false');
+        b.setAttribute('aria-selected', 'false');
       });
 
       // Active look: green for main, white text.
@@ -1168,7 +1187,7 @@
         border: '1px solid rgba(0,0,0,0.06)',
         boxShadow: '0 1px 0 rgba(0,0,0,0.04) inset',
       });
-      btn.setAttribute('aria-pressed', 'true');
+      btn.setAttribute('aria-selected', 'true');
 
       // Notify consumer about tab change (guarded to avoid throwing during early render)
       try {
@@ -1193,6 +1212,21 @@
     tabContainer.appendChild(videoTab);
     tabContainer.appendChild(audioTab);
     tabContainer.appendChild(subTab);
+
+    // Arrow key navigation for tab buttons (accessibility)
+    tabContainer.addEventListener('keydown', e => {
+      if (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight') return;
+      const tabs = [videoTab, audioTab, subTab];
+      const idx = tabs.indexOf(/** @type {HTMLButtonElement} */ (document.activeElement));
+      if (idx < 0) return;
+      e.preventDefault();
+      const next =
+        e.key === 'ArrowRight'
+          ? tabs[(idx + 1) % tabs.length]
+          : tabs[(idx - 1 + tabs.length) % tabs.length];
+      next.focus();
+      next.click();
+    });
 
     // Set initial active tab after buttons are appended to DOM to avoid first-render artifacts
     // setTimeout 0 yields the same-tick deferred execution without blocking
@@ -1256,6 +1290,8 @@
     ['srt', 'txt', 'xml'].forEach(fmt => {
       const btn = document.createElement('button');
       btn.type = 'button';
+      btn.setAttribute('role', 'radio');
+      btn.setAttribute('aria-checked', 'false');
       btn.dataset.value = fmt;
       btn.textContent = fmt.toUpperCase();
       Object.assign(btn.style, {
@@ -1273,10 +1309,12 @@
           c.style.background = 'transparent';
           c.style.color = '#fff';
           c.style.border = '1px solid rgba(255,255,255,0.08)';
+          if (c.setAttribute) c.setAttribute('aria-checked', 'false');
         });
         btn.style.background = '#111';
         btn.style.color = '#10c56a';
         btn.style.border = '1px solid rgba(16,197,106,0.15)';
+        btn.setAttribute('aria-checked', 'true');
         formatSelect.value = fmt;
       });
       formatSelect.appendChild(btn);
@@ -1291,6 +1329,7 @@
     subtitleWrapper.appendChild(formatSelect);
 
     const cancelBtn = document.createElement('button');
+    cancelBtn.type = 'button';
     cancelBtn.textContent = t('cancel');
     Object.assign(cancelBtn.style, {
       padding: '8px 16px',
@@ -1303,6 +1342,7 @@
     });
 
     const downloadBtn = document.createElement('button');
+    downloadBtn.type = 'button';
     downloadBtn.textContent = t('download');
     Object.assign(downloadBtn.style, {
       padding: '8px 20px',
@@ -1588,13 +1628,15 @@
       formParts.subtitleWrapper.style.display = 'none';
 
       // Render custom pill buttons for video qualities, split low/high and show VP9 label
-      formParts.qualitySelect.innerHTML = '';
+      formParts.qualitySelect.replaceChildren();
       const lowQuals = DownloadConfig.VIDEO_QUALITIES.filter(q => parseInt(q, 10) <= 1080);
       const highQuals = DownloadConfig.VIDEO_QUALITIES.filter(q => parseInt(q, 10) > 1080);
 
       function makeQualityButton(q) {
         const btn = document.createElement('button');
         btn.type = 'button';
+        btn.setAttribute('role', 'radio');
+        btn.setAttribute('aria-checked', 'false');
         btn.dataset.value = q;
         btn.textContent = `${q}p`;
         Object.assign(btn.style, {
@@ -1617,11 +1659,13 @@
               c.style.background = 'transparent';
               c.style.color = '#fff';
               c.style.border = '1px solid rgba(255,255,255,0.08)';
+              if (c.setAttribute) c.setAttribute('aria-checked', 'false');
             }
           });
           btn.style.background = '#111';
           btn.style.color = '#10c56a';
           btn.style.border = '1px solid rgba(16,197,106,0.15)';
+          btn.setAttribute('aria-checked', 'true');
           formParts.qualitySelect.value = q;
         });
 
@@ -1676,10 +1720,12 @@
     formParts.subtitleWrapper.style.display = 'none';
 
     // Render pill buttons for audio bitrates
-    formParts.qualitySelect.innerHTML = '';
+    formParts.qualitySelect.replaceChildren();
     DownloadConfig.AUDIO_BITRATES.forEach(b => {
       const btn = document.createElement('button');
       btn.type = 'button';
+      btn.setAttribute('role', 'radio');
+      btn.setAttribute('aria-checked', 'false');
       btn.dataset.value = b;
       btn.textContent = `${b} kbps`;
       Object.assign(btn.style, {
@@ -1701,10 +1747,12 @@
           c.style.background = 'transparent';
           c.style.color = '#fff';
           c.style.border = '1px solid rgba(255,255,255,0.08)';
+          if (c.setAttribute) c.setAttribute('aria-checked', 'false');
         });
         btn.style.background = '#111';
         btn.style.color = '#10c56a';
         btn.style.border = '1px solid rgba(16,197,106,0.15)';
+        btn.setAttribute('aria-checked', 'true');
         formParts.qualitySelect.value = b;
       });
 
@@ -1842,6 +1890,14 @@
           return resolve(undefined);
         }
       }, interval);
+      // Register with cleanupManager for safe SPA cleanup
+      try {
+        if (window.YouTubeUtils?.cleanupManager?.registerInterval) {
+          window.YouTubeUtils.cleanupManager.registerInterval(id);
+        }
+      } catch {
+        /* empty */
+      }
     });
 
   /**
@@ -1850,17 +1906,32 @@
    * @param {Function} tFn - Translation function
    * @param {Object} notificationMgr - Notification manager
    */
-  const fallbackCopyToClipboard = (text, tFn, notificationMgr) => {
-    const input = document.createElement('input');
-    input.value = text;
-    document.body.appendChild(input);
-    input.select();
-    document.execCommand('copy');
-    document.body.removeChild(input);
-    notificationMgr.show(tFn('copiedToClipboard'), {
-      duration: 2000,
-      type: 'success',
-    });
+  const fallbackCopyToClipboard = async (text, tFn, notificationMgr) => {
+    try {
+      if (navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(text);
+      } else {
+        const ta = document.createElement('textarea');
+        ta.value = text;
+        ta.style.position = 'fixed';
+        ta.style.left = '-9999px';
+        ta.style.opacity = '0';
+        document.body.appendChild(ta);
+        ta.select();
+        ta.setSelectionRange(0, text.length);
+        document.execCommand('copy');
+        document.body.removeChild(ta);
+      }
+      notificationMgr.show(tFn('copiedToClipboard'), {
+        duration: 2000,
+        type: 'success',
+      });
+    } catch {
+      notificationMgr.show(tFn('copyFailed') || 'Copy failed', {
+        duration: 2000,
+        type: 'error',
+      });
+    }
   };
 
   /**
@@ -1888,13 +1959,13 @@
     button.setAttribute('role', 'button');
     button.setAttribute('aria-haspopup', 'true');
     button.setAttribute('aria-expanded', 'false');
-    button.innerHTML = `
+    button.innerHTML = _createHTML(`
       <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:auto;vertical-align:middle;">
         <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
         <polyline points="7 10 12 15 17 10"></polyline>
         <line x1="12" y1="15" x2="12" y2="3"></line>
       </svg>
-    `;
+    `);
     return button;
   };
 
@@ -2430,7 +2501,9 @@
         YouTubeUtils.logger &&
         YouTubeUtils.logger.debug &&
         YouTubeUtils.logger.debug('[YouTube+ Download] Button manager available');
-    } catch {}
+    } catch {
+      /* empty */
+    }
   }
 
   // Export public API
@@ -2483,7 +2556,13 @@
     }
   };
 
-  onDomReady(ensureInit);
+  // Register with LazyLoader for deferred initialization
+  if (window.YouTubePlusLazyLoader) {
+    window.YouTubePlusLazyLoader.register('download', ensureInit, { priority: 2 });
+  } else {
+    // Fallback: direct initialization
+    onDomReady(ensureInit);
+  }
 
   if (window.YouTubeUtils?.cleanupManager?.registerListener) {
     YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', ensureInit, {

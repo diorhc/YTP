@@ -16,18 +16,14 @@
 
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   if (typeof location !== 'undefined' && location.hostname !== 'music.youtube.com') {
     return;
   }
 
-  // DOM cache helper with fallback
-  const qs = selector => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
-      return window.YouTubeDOMCache.get(selector);
-    }
-    return document.querySelector(selector);
-  };
+  // DOM cache helper from YouTubeUtils
+  const qs = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
 
   /**
    * Read YouTube Music settings from localStorage with defaults.
@@ -260,7 +256,9 @@
           musicStyleEl = /** @type {HTMLStyleElement} */ (el);
           try {
             musicStyleEl.id = 'youtube-plus-music-styles';
-          } catch {}
+          } catch {
+            /* style ID assignment optional */
+          }
         }
       }
     } catch {
@@ -283,8 +281,7 @@
    * @type {Object|null}
    * @private
    */
-  const _globalI18n_music =
-    typeof window !== 'undefined' && window.YouTubePlusI18n ? window.YouTubePlusI18n : null;
+  // i18n: prefer centralized YouTubeUtils.t
 
   /**
    * Get debounce utility from YouTubeUtils or provide fallback
@@ -313,27 +310,7 @@
    * @param {Object} [params={}] - Optional parameters for interpolation
    * @returns {string} Translated string or key if translation not found
    */
-  const t = (key, params = {}) => {
-    try {
-      if (_globalI18n_music && typeof _globalI18n_music.t === 'function') {
-        return _globalI18n_music.t(key, params);
-      }
-      if (
-        typeof window !== 'undefined' &&
-        window.YouTubeUtils &&
-        typeof window.YouTubeUtils.t === 'function'
-      ) {
-        return window.YouTubeUtils.t(key, params);
-      }
-    } catch {
-      // fallback
-    }
-    if (!key || typeof key !== 'string') return '';
-    if (Object.keys(params).length === 0) return key;
-    let result = key;
-    for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
-    return result;
-  };
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   /**
    * Create button element with attributes
@@ -348,8 +325,9 @@
     button.className = 'ytmusic-top-button top-button';
     button.title = t('scrollToTop');
     button.setAttribute('aria-label', t('scrollToTop'));
-    button.innerHTML =
-      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+    button.innerHTML = _createHTML(
+      '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
+    );
 
     // Add data attribute for debugging
     button.setAttribute('data-ytmusic-scroll-button', 'true');
@@ -530,10 +508,14 @@
       // Prevent other handlers or navigation from interfering
       try {
         ev.preventDefault?.();
-      } catch {}
+      } catch {
+        /* optional event method */
+      }
       try {
         ev.stopPropagation?.();
-      } catch {}
+      } catch {
+        /* optional event method */
+      }
 
       // Determine best candidate to scroll: provided sc, fallback to nearest scrollable in sidePanel, then walk from button
       let target = sc;
@@ -560,10 +542,14 @@
         try {
           window.YouTubeMusic = window.YouTubeMusic || {};
           window.YouTubeMusic._lastClickDebug = info;
-        } catch {}
+        } catch {
+          /* debug store non-critical */
+        }
         // Log via available logger or console
         window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'ScrollToTop click target', info);
-      } catch {}
+      } catch {
+        /* debug info collection non-critical */
+      }
 
       // Try smooth scroll then fallback to instant. Attempt multiple targets (target, sc, document)
       const tryScroll = el => {
@@ -1176,7 +1162,9 @@
       if (detachNavigationListeners) {
         try {
           detachNavigationListeners();
-        } catch {}
+        } catch {
+          /* teardown may fail safely */
+        }
         detachNavigationListeners = null;
       }
 
@@ -1184,12 +1172,16 @@
       if (button?._scrollCleanup) {
         try {
           button._scrollCleanup();
-        } catch {}
+        } catch {
+          /* cleanup may fail safely */
+        }
       }
       if (button?._positionCleanup) {
         try {
           button._positionCleanup();
-        } catch {}
+        } catch {
+          /* cleanup may fail safely */
+        }
       }
       if (button) button.remove();
     } catch (e) {
@@ -1268,6 +1260,11 @@
         console.error('[YouTube+][Music] Health check error:', error);
       }
     }, 30000);
+
+    // Register the health check interval with cleanupManager for SPA cleanup
+    if (window.YouTubeUtils?.cleanupManager?.registerInterval) {
+      window.YouTubeUtils.cleanupManager.registerInterval(healthCheckIntervalId);
+    }
   }
 
   function startIfEnabled() {
@@ -1301,7 +1298,9 @@
         document
           .querySelectorAll('#youtube-plus-music-styles')
           .forEach(el => el !== musicStyleEl && el.remove());
-      } catch {}
+      } catch {
+        /* stray element cleanup optional */
+      }
       musicStyleEl = null;
       return;
     }
@@ -1336,7 +1335,7 @@
       createScrollToTopButton,
       saveSettings,
       applySettingsChanges,
-      version: '2.4.1',
+      version: '2.4.5',
     };
   }
 
@@ -1374,10 +1373,12 @@
         applySettingsChanges();
       });
     }
-  } catch {}
+  } catch (e) {
+    console.warn('[YouTube+][Music] Settings listener registration error:', e);
+  }
 
   window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Module loaded (lazy)', {
-    version: '2.4.1',
+    version: '2.4.5',
     hostname: window.location.hostname,
     enabled:
       window.location.hostname === 'music.youtube.com' &&

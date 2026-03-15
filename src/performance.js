@@ -27,7 +27,7 @@
 
   const getConfiguredSampleRate = () => {
     try {
-      const cfg = /** @type {any} */ (window).YouTubePlusConfig;
+      const cfg = window.YouTubePlusConfig;
       const explicit =
         cfg?.performance?.sampleRate ??
         cfg?.performanceSampleRate ??
@@ -137,7 +137,9 @@
       if (typeof performance !== 'undefined' && performance.measure) {
         try {
           performance.measure(name, startMark, endMark);
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
 
       return duration;
@@ -424,13 +426,17 @@
 
     try {
       localStorage.removeItem(PerformanceConfig.storageKey);
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     if (typeof performance !== 'undefined' && performance.clearMarks) {
       try {
         performance.clearMarks();
         performance.clearMeasures();
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }
   };
 
@@ -968,7 +974,12 @@
         }, 500);
       };
 
-      window.addEventListener('yt-navigate-finish', scheduleObserve, { passive: true });
+      const _pCm = window.YouTubeUtils?.cleanupManager;
+      if (_pCm?.registerListener) {
+        _pCm.registerListener(window, 'yt-navigate-finish', scheduleObserve, { passive: true });
+      } else {
+        window.addEventListener('yt-navigate-finish', scheduleObserve, { passive: true });
+      }
       if (document.readyState !== 'loading') {
         scheduleObserve();
       } else {
@@ -1126,7 +1137,13 @@
      *    Reset and re-measure on YouTube SPA navigations.
      */
     const initNavigationTracking = () => {
-      window.addEventListener(
+      const _pCm2 = window.YouTubeUtils?.cleanupManager;
+      const _addL = (t, ev, fn, o) => {
+        if (_pCm2?.registerListener) _pCm2.registerListener(t, ev, fn, o);
+        else t.addEventListener(ev, fn, o);
+      };
+      _addL(
+        window,
         'yt-navigate-start',
         () => {
           mark('yt-navigate-start');
@@ -1134,7 +1151,8 @@
         { passive: true }
       );
 
-      window.addEventListener(
+      _addL(
+        window,
         'yt-navigate-finish',
         () => {
           mark('yt-navigate-finish');

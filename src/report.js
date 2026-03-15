@@ -7,31 +7,13 @@
  */
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   // Minimal guards for shared utils
-  const Y = /** @type {any} */ (window).YouTubeUtils || {};
+  const Y = window.YouTubeUtils || {};
 
-  /**
-   * Translation function - uses centralized i18n system
-   * @param {string} key - Translation key
-   * @param {Object} params - Interpolation parameters
-   * @returns {string} Translated text
-   */
-  function t(key, params = {}) {
-    try {
-      if (typeof window !== 'undefined') {
-        if (window.YouTubePlusI18n?.t && typeof window.YouTubePlusI18n.t === 'function') {
-          return window.YouTubePlusI18n.t(key, params);
-        }
-        if (window.YouTubeUtils?.t && typeof window.YouTubeUtils.t === 'function') {
-          return window.YouTubeUtils.t(key, params);
-        }
-      }
-    } catch {
-      // Fallback to key if central i18n unavailable
-    }
-    return key;
-  }
+  // Translation helper from centralized i18n
+  const t = Y.t || (key => key || '');
 
   /**
    * Create DOM element with properties and children
@@ -50,7 +32,7 @@
           el.innerHTML = window._ytplusCreateHTML(/** @type {string} */ (v));
         } else {
           // Fallback: sanitize and set
-          el.innerHTML = sanitizeHTML(/** @type {string} */ (v));
+          el.innerHTML = _createHTML(sanitizeHTML(/** @type {string} */ (v)));
         }
       } else if (k.startsWith('on') && typeof v === 'function') {
         el.addEventListener(k.substring(2).toLowerCase(), /** @type {EventListener} */ (v));
@@ -269,7 +251,7 @@
     if (!section) return;
 
     // Clear existing content and build a small form
-    section.innerHTML = '';
+    section.replaceChildren();
 
     const form = mk('div', {
       style:
@@ -445,9 +427,14 @@
           else openList();
         });
 
-        document.addEventListener('click', e => {
+        const _rDocClick = e => {
           if (!dropdown.contains(e.target)) closeList();
-        });
+        };
+        if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+          window.YouTubeUtils.cleanupManager.registerListener(document, 'click', _rDocClick);
+        } else {
+          document.addEventListener('click', _rDocClick);
+        }
 
         list.addEventListener('click', e => {
           const it = e.target.closest('.glass-dropdown__item');
@@ -515,7 +502,7 @@
           const d = getDebugInfo();
 
           // Clear previous content
-          debugPreview.innerHTML = '';
+          debugPreview.replaceChildren();
 
           // Header with important fields
           const header = mk(
@@ -586,7 +573,7 @@
 
           debugPreview.style.display = 'block';
         } else {
-          debugPreview.innerHTML = '';
+          debugPreview.replaceChildren();
           debugPreview.style.display = 'none';
         }
       } catch (err) {
@@ -802,9 +789,8 @@
 
   // Expose render function
   try {
-    /** @type {any} */ (window).youtubePlusReport =
-      /** @type {any} */ (window).youtubePlusReport || {};
-    /** @type {any} */ (window).youtubePlusReport.render = renderReportSection;
+    window.youtubePlusReport = window.youtubePlusReport || {};
+    window.youtubePlusReport.render = renderReportSection;
   } catch (e) {
     if (Y.logError) Y.logError('Report', 'Failed to attach report module to window', e);
   }

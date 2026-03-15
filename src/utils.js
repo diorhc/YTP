@@ -10,6 +10,101 @@
     return document.querySelector(selector);
   };
 
+  // --- Shared DOM helpers (canonical, used by all modules) ---
+  /**
+   * Query a single element via DOMCache with context support
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Optional context element
+   * @returns {Element|null}
+   */
+  const $ = (sel, ctx) => {
+    const cache = window.YouTubeDOMCache;
+    if (cache && typeof cache.querySelector === 'function') return cache.querySelector(sel, ctx);
+    if (cache && typeof cache.get === 'function' && !ctx) return cache.get(sel);
+    return (ctx || document).querySelector(sel);
+  };
+
+  /**
+   * Query all matching elements via DOMCache with context support
+   * @param {string} sel - CSS selector
+   * @param {Element|Document} [ctx] - Optional context element
+   * @returns {Element[]}
+   */
+  const $$ = (sel, ctx) => {
+    const cache = window.YouTubeDOMCache;
+    if (cache && typeof cache.querySelectorAll === 'function') {
+      return cache.querySelectorAll(sel, ctx);
+    }
+    if (cache && typeof cache.getAll === 'function' && !ctx) return cache.getAll(sel);
+    return Array.from((ctx || document).querySelectorAll(sel));
+  };
+
+  /**
+   * Get element by ID via DOMCache
+   * @param {string} id - Element ID
+   * @returns {Element|null}
+   */
+  const byId = id => {
+    const cache = window.YouTubeDOMCache;
+    if (cache && typeof cache.getElementById === 'function') return cache.getElementById(id);
+    return document.getElementById(id);
+  };
+
+  // --- Shared translation helper (canonical) ---
+  /**
+   * Translation helper with fallback interpolation
+   * @param {string} key - Translation key
+   * @param {Object<string, string|number>} [params] - Interpolation parameters
+   * @returns {string}
+   */
+  const t = (key, params = {}) => {
+    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
+    if (!key) return '';
+    let result = String(key);
+    for (const [k, v] of Object.entries(params || {})) {
+      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+    }
+    return result;
+  };
+
+  // --- Shared feature toggle loader ---
+  /**
+   * Shared constant for the settings localStorage key
+   * @type {string}
+   */
+  const SETTINGS_KEY = 'youtube_plus_settings';
+
+  /**
+   * Check if current page is YouTube Studio
+   * @returns {boolean}
+   */
+  const isStudioPage = () => {
+    try {
+      return location.hostname.includes('studio.youtube.com');
+    } catch {
+      return false;
+    }
+  };
+
+  /**
+   * Load a feature enabled state from youtube_plus_settings
+   * @param {string} featureKey - The key name (e.g. 'enableZoom', 'enablePlayAll')
+   * @param {boolean} [defaultValue=true] - Default value if not found
+   * @returns {boolean}
+   */
+  const loadFeatureEnabled = (featureKey, defaultValue = true) => {
+    try {
+      const settings = localStorage.getItem(SETTINGS_KEY);
+      if (settings) {
+        const parsed = JSON.parse(settings);
+        return parsed[featureKey] !== false;
+      }
+    } catch {
+      /* empty */
+    }
+    return defaultValue;
+  };
+
   /**
    * Logs an error message with module context
    * @param {string} module - The module name where the error occurred
@@ -55,7 +150,7 @@
           return false;
         }
         // Allow a global config object or a simple flag
-        const cfg = /** @type {any} */ (window).YouTubePlusConfig;
+        const cfg = window.YouTubePlusConfig;
         if (cfg && cfg.debug) {
           return true;
         }
@@ -323,9 +418,13 @@
                 elementObservers.set(el, set);
               }
               set.add(o);
-            } catch {}
+            } catch {
+              /* empty */
+            }
           }
-        } catch {}
+        } catch {
+          /* empty */
+        }
         return o;
       },
       registerListener(target, ev, fn, opts) {
@@ -380,7 +479,9 @@
           for (const o of observers) {
             try {
               if (o && typeof o.disconnect === 'function') o.disconnect();
-            } catch {}
+            } catch {
+              /* empty */
+            }
           }
           observers.clear();
 
@@ -388,11 +489,15 @@
           try {
             // We cannot iterate WeakMap keys; instead we iterate observers set already
             // which covers all observers registered via registerObserver above.
-          } catch {}
+          } catch {
+            /* empty */
+          }
           for (const keyEntry of listeners.values()) {
             try {
               keyEntry.target.removeEventListener(keyEntry.ev, keyEntry.fn, keyEntry.opts);
-            } catch {}
+            } catch {
+              /* empty */
+            }
           }
           listeners.clear();
           for (const id of intervals) clearInterval(id);
@@ -420,7 +525,9 @@
             try {
               if (o && typeof o.disconnect === 'function') o.disconnect();
               observers.delete(o);
-            } catch {}
+            } catch {
+              /* empty */
+            }
           }
           elementObservers.delete(el);
         } catch (e) {
@@ -436,14 +543,18 @@
           if (!o) return;
           try {
             if (typeof o.disconnect === 'function') o.disconnect();
-          } catch {}
+          } catch {
+            /* empty */
+          }
           observers.delete(o);
           // remove from any element sets
           try {
             // Can't iterate WeakMap directly; attempt best-effort sweep by checking
             // known element keys via listeners map as a hint (not comprehensive).
             // This is a noop if not found; primary removal is from observers set.
-          } catch {}
+          } catch {
+            /* empty */
+          }
         } catch (e) {
           logError('cleanupManager', 'disconnectObserver failed', e);
         }
@@ -491,7 +602,9 @@
         if (el) {
           try {
             obs.disconnect();
-          } catch {}
+          } catch {
+            /* empty */
+          }
           resolve(el);
         }
       });
@@ -499,7 +612,9 @@
       const id = setTimeout(() => {
         try {
           obs.disconnect();
-        } catch {}
+        } catch {
+          /* empty */
+        }
         reject(new Error('timeout'));
       }, timeout);
       cleanupManager.registerTimeout(id);
@@ -934,7 +1049,9 @@
         set.forEach(handler => {
           try {
             element.removeEventListener('scroll', handler);
-          } catch {}
+          } catch {
+            /* empty */
+          }
         });
 
         listeners.delete(element);
@@ -1020,10 +1137,199 @@
     };
   }
 
+  // --- Shared Retry Scheduler ---
+  // Used by modules to retry DOM element detection without each implementing their own timer loops.
+  /**
+   * Creates a retry scheduler that will invoke a check function until it succeeds or limits are hit.
+   * @param {Object} opts
+   * @param {() => boolean} opts.check - Return true to stop retrying
+   * @param {number} [opts.maxAttempts=20] - Maximum retry attempts
+   * @param {number} [opts.interval=250] - Delay between attempts (ms)
+   * @param {() => void} [opts.onGiveUp] - Called when max attempts reached
+   * @returns {{ stop: () => void }} Control handle
+   */
+  const createRetryScheduler = opts => {
+    const { check, maxAttempts = 20, interval = 250, onGiveUp, label } = opts;
+    let attempts = 0;
+    let timerId = null;
+    let stopped = false;
+    const _label = label || 'retry';
+    const _hasPerfApi =
+      typeof performance !== 'undefined' && typeof performance.mark === 'function';
+
+    const tick = () => {
+      if (stopped) return;
+      attempts++;
+      if (_hasPerfApi) {
+        try {
+          performance.mark(`ytp:${_label}:attempt:${attempts}`);
+        } catch {
+          /* empty */
+        }
+      }
+      try {
+        if (check()) {
+          stopped = true;
+          if (_hasPerfApi) {
+            try {
+              performance.mark(`ytp:${_label}:success`);
+            } catch {
+              /* empty */
+            }
+          }
+          return;
+        }
+      } catch (e) {
+        logError('RetryScheduler', 'check error', e);
+      }
+      if (attempts >= maxAttempts) {
+        stopped = true;
+        if (_hasPerfApi) {
+          try {
+            performance.mark(`ytp:${_label}:giveup`);
+          } catch {
+            /* empty */
+          }
+        }
+        if (typeof onGiveUp === 'function') {
+          try {
+            onGiveUp();
+          } catch {
+            /* empty */
+          }
+        }
+        return;
+      }
+      timerId = setTimeout(tick, interval);
+    };
+
+    // Start on next microtask
+    timerId = setTimeout(tick, 0);
+
+    return {
+      stop() {
+        stopped = true;
+        if (timerId) clearTimeout(timerId);
+        timerId = null;
+      },
+    };
+  };
+
+  // --- Observer Registry (dev-only diagnostics) ---
+  // Tracks active observers/listeners to detect monotonic growth.
+  const ObserverRegistry = (() => {
+    let _active = 0;
+    let _peak = 0;
+    let _created = 0;
+    let _disconnected = 0;
+
+    return {
+      /** Record observer creation */
+      track() {
+        _active++;
+        _created++;
+        if (_active > _peak) _peak = _active;
+      },
+      /** Record observer disconnection */
+      untrack() {
+        _active = Math.max(0, _active - 1);
+        _disconnected++;
+      },
+      /** Get snapshot of observer counts */
+      getStats() {
+        return { active: _active, peak: _peak, created: _created, disconnected: _disconnected };
+      },
+      /** Reset (for tests) */
+      reset() {
+        _active = 0;
+        _peak = 0;
+        _created = 0;
+        _disconnected = 0;
+      },
+      /** Dev-only: dump all diagnostics to console for field debugging */
+      dump() {
+        const stats = {
+          active: _active,
+          peak: _peak,
+          created: _created,
+          disconnected: _disconnected,
+        };
+        // Also include cleanupManager stats if available
+        const cmStats = cleanupManager
+          ? {
+              observers: cleanupManager.observers?.size ?? 'n/a',
+              intervals: cleanupManager.intervals?.size ?? 'n/a',
+              timeouts: cleanupManager.timeouts?.size ?? 'n/a',
+              listeners:
+                typeof cleanupManager.getListenerStats === 'function'
+                  ? cleanupManager.getListenerStats()
+                  : 'n/a',
+            }
+          : null;
+        console.warn('[YouTube+ Diagnostics] ObserverRegistry:', stats);
+        if (cmStats) console.warn('[YouTube+ Diagnostics] CleanupManager:', cmStats);
+        return { observers: stats, cleanup: cmStats };
+      },
+    };
+  })();
+
+  // --- FeatureToggle utility ---
+  // Unifies feature enable/disable patterns across modules.
+  // Provides a single source of truth for feature state with change event dispatch.
+  /**
+   * @param {string} featureKey - localStorage key within youtube_plus_settings (e.g. 'enableZoom')
+   * @param {boolean} [defaultEnabled=true] - Default state when not configured
+   * @returns {{ isEnabled: () => boolean, setEnabled: (v: boolean) => void, onChange: (cb: (enabled: boolean) => void) => () => void }}
+   */
+  const createFeatureToggle = (featureKey, defaultEnabled = true) => {
+    let _enabled = loadFeatureEnabled(featureKey, defaultEnabled);
+    /** @type {Set<(enabled: boolean) => void>} */
+    const _listeners = new Set();
+
+    return {
+      /** Current state */
+      isEnabled() {
+        return _enabled;
+      },
+      /** Update state, persist, and notify listeners */
+      setEnabled(value) {
+        const next = value !== false;
+        if (next === _enabled) return;
+        _enabled = next;
+        // Persist back to settings
+        try {
+          const raw = localStorage.getItem(SETTINGS_KEY);
+          const settings = raw ? JSON.parse(raw) : {};
+          settings[featureKey] = _enabled;
+          localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        } catch {
+          // Storage write failure — state still updated in memory
+        }
+        // Notify listeners
+        for (const cb of _listeners) {
+          try {
+            cb(_enabled);
+          } catch {
+            /* empty */
+          }
+        }
+      },
+      /** Subscribe to changes. Returns unsubscribe function */
+      onChange(cb) {
+        _listeners.add(cb);
+        return () => _listeners.delete(cb);
+      },
+      /** Re-read state from localStorage (e.g. after external change) */
+      reload() {
+        _enabled = loadFeatureEnabled(featureKey, defaultEnabled);
+      },
+    };
+  };
+
   // Expose a global YouTubeUtils if not present (non-destructive)
   if (typeof window !== 'undefined') {
-    /** @type {any} */ (window).YouTubeUtils = /** @type {any} */ (window).YouTubeUtils || {};
-    const U = /** @type {any} */ (window).YouTubeUtils;
+    window.YouTubeUtils = window.YouTubeUtils || {};
+    const U = window.YouTubeUtils;
     U.logError = U.logError || logError;
     U.debounce = U.debounce || debounce;
     U.throttle = U.throttle || throttle;
@@ -1045,6 +1351,77 @@
     U.isValidURL = U.isValidURL || isValidURL;
     U.logger = U.logger || createLogger();
     U.retryWithBackoff = U.retryWithBackoff || retryWithBackoff;
+    if (typeof U.createRetryScheduler !== 'function') {
+      U.createRetryScheduler = createRetryScheduler;
+    }
+    U.ObserverRegistry = U.ObserverRegistry || ObserverRegistry;
+    // Shared DOM helpers — modules can use YouTubeUtils.$ instead of local copies
+    U.$ = U.$ || $;
+    U.$$ = U.$$ || $$;
+    U.byId = U.byId || byId;
+    U.t = U.t || t;
+    U.loadFeatureEnabled = U.loadFeatureEnabled || loadFeatureEnabled;
+    U.createFeatureToggle = U.createFeatureToggle || createFeatureToggle;
+    U.SETTINGS_KEY = U.SETTINGS_KEY || SETTINGS_KEY;
+    U.isStudioPage = U.isStudioPage || isStudioPage;
+
+    // Dev-only diagnostics — call window.__ytpDiagnostics() in browser console
+    if (!window.__ytpDiagnostics) {
+      window.__ytpDiagnostics = function (verbose) {
+        const obs = ObserverRegistry.getStats();
+        const cm = {
+          observers: cleanupManager.observers.size,
+          listeners: cleanupManager.getListenerStats(),
+          intervals: cleanupManager.intervals.size,
+          timeouts: cleanupManager.timeouts.size,
+          animationFrames: cleanupManager.animationFrames.size,
+        };
+
+        // Retry scheduler performance metrics (dev-only)
+        let retryMetrics = null;
+        try {
+          if (
+            typeof performance !== 'undefined' &&
+            typeof performance.getEntriesByType === 'function'
+          ) {
+            const marks = performance
+              .getEntriesByType('mark')
+              .filter(m => m.name.startsWith('ytp:'));
+            const retryLabels = new Set();
+            const retryData = {};
+            for (const m of marks) {
+              const parts = m.name.split(':');
+              if (parts.length >= 3) {
+                const label = parts[1];
+                retryLabels.add(label);
+                if (!retryData[label]) {
+                  retryData[label] = { attempts: 0, success: false, giveup: false };
+                }
+                if (parts[2] === 'attempt') retryData[label].attempts++;
+                else if (parts[2] === 'success') retryData[label].success = true;
+                else if (parts[2] === 'giveup') retryData[label].giveup = true;
+              }
+            }
+            retryMetrics = { totalMarks: marks.length, schedulers: retryData };
+          }
+        } catch {
+          /* empty */
+        }
+
+        const report = {
+          observers: obs,
+          cleanupManager: cm,
+          retrySchedulers: retryMetrics,
+          timestamp: new Date().toISOString(),
+        };
+        console.warn('[YouTube+ Diagnostics] Observers:', obs);
+        console.warn('[YouTube+ Diagnostics] CleanupManager:', cm);
+        if (retryMetrics) console.warn('[YouTube+ Diagnostics] RetrySchedulers:', retryMetrics);
+        if (verbose) console.warn('[YouTube+ Diagnostics]', JSON.stringify(report, null, 2));
+        return report;
+      };
+    }
+
     // Provide lightweight channel stats helpers if not defined by other modules.
     U.channelStatsHelpers = U.channelStatsHelpers || null;
     // Wrap global timer functions to auto-register with cleanupManager for safe cleanup.
@@ -1059,7 +1436,9 @@
           const id = origSetTimeout(fn, ms, ...args);
           try {
             U.cleanupManager.registerTimeout(id);
-          } catch {}
+          } catch {
+            /* empty */
+          }
           return id;
         };
 
@@ -1067,7 +1446,9 @@
           const id = origSetInterval(fn, ms, ...args);
           try {
             U.cleanupManager.registerInterval(id);
-          } catch {}
+          } catch {
+            /* empty */
+          }
           return id;
         };
 
@@ -1076,7 +1457,9 @@
             const id = origRaf(cb);
             try {
               U.cleanupManager.registerAnimationFrame(id);
-            } catch {}
+            } catch {
+              /* empty */
+            }
             return id;
           };
         }
@@ -1113,7 +1496,9 @@
           try {
             if (!mapLike || typeof mapLike.set !== 'function') return;
             mapLike.set(channelId, stats);
-          } catch {}
+          } catch {
+            /* empty */
+          }
         },
         getCachedStats(mapLike, channelId, cacheDuration = 60000) {
           try {

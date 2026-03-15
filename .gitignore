@@ -72,3 +72,8 @@ eslint-output.json
 # Backup files
 *.bak
 *.backup
+
+# End-to-end testing
+e2e
+e2e-report
+playwright.config.js

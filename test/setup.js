@@ -64,83 +64,52 @@ global.console = {
 };
 
 // Helper function to mock window.location in jsdom
-// This works by using Object.defineProperty to avoid jsdom's navigation interception
+// Uses per-property Object.defineProperty since jsdom's window.location is non-configurable
 global.mockLocation = locationConfig => {
-  // Check if our mock is already installed (it has our custom methods)
-  // @ts-ignore - checking for jest mock property
-  const isOurMock =
-    // @ts-ignore - checking for jest mock property
-    window.location && typeof window.location.assign === 'function' && window.location.assign.mock;
+  const props = {
+    href: locationConfig.href || 'https://www.youtube.com/',
+    hostname: locationConfig.hostname || 'www.youtube.com',
+    pathname: locationConfig.pathname || '/',
+    search: locationConfig.search !== undefined ? locationConfig.search : '',
+    hash: locationConfig.hash !== undefined ? locationConfig.hash : '',
+    origin: locationConfig.origin || 'https://www.youtube.com',
+    protocol: locationConfig.protocol || 'https:',
+    host: locationConfig.host || locationConfig.hostname || 'www.youtube.com',
+    port: locationConfig.port !== undefined ? locationConfig.port : '',
+  };
 
-  if (isOurMock) {
-    // Our mock is already there, just update properties directly
-    window.location.href = locationConfig.href || 'https://www.youtube.com/';
-    window.location.hostname = locationConfig.hostname || 'www.youtube.com';
-    window.location.pathname = locationConfig.pathname || '/';
-    window.location.search = locationConfig.search !== undefined ? locationConfig.search : '';
-    window.location.hash = locationConfig.hash !== undefined ? locationConfig.hash : '';
-    // @ts-ignore - mocking read-only property
-    window.location.origin = locationConfig.origin || 'https://www.youtube.com';
-    window.location.protocol = locationConfig.protocol || 'https:';
-    window.location.host = locationConfig.host || 'www.youtube.com';
-    window.location.port = locationConfig.port !== undefined ? locationConfig.port : '';
-
-    // Apply any additional properties
-    Object.keys(locationConfig).forEach(key => {
-      if (!(key in window.location) || locationConfig[key] !== undefined) {
-        window.location[key] = locationConfig[key];
-      }
-    });
-  } else {
-    // First time setup - create the mock
+  // Define each property individually on the existing location object
+  // Individual properties of jsdom's Location ARE configurable, even though
+  // the location property on window is not
+  for (const [key, value] of Object.entries(props)) {
     try {
-      delete window.location;
-    } catch (e) {
-      // Can't delete, that's ok
-    }
-
-    const locationMock = {
-      href: locationConfig.href || 'https://www.youtube.com/',
-      hostname: locationConfig.hostname || 'www.youtube.com',
-      pathname: locationConfig.pathname || '/',
-      search: locationConfig.search !== undefined ? locationConfig.search : '',
-      hash: locationConfig.hash !== undefined ? locationConfig.hash : '',
-      origin: locationConfig.origin || 'https://www.youtube.com',
-      protocol: locationConfig.protocol || 'https:',
-      host: locationConfig.host || 'www.youtube.com',
-      port: locationConfig.port !== undefined ? locationConfig.port : '',
-      assign: jest.fn(),
-      replace: jest.fn(),
-      reload: jest.fn(),
-      toString() {
-        return this.href;
-      },
-    };
-
-    // Apply any additional properties from config
-    Object.keys(locationConfig).forEach(key => {
-      if (!(key in locationMock)) {
-        locationMock[key] = locationConfig[key];
-      }
-    });
-
-    // Debug: log what we're setting
-    if (process.env.DEBUG_LOCATION) {
-      console.log('[mockLocation] Creating new mock with href:', locationMock.href);
-    }
-
-    try {
-      Object.defineProperty(window, 'location', {
-        value: locationMock,
-        writable: true,
+      Object.defineProperty(window.location, key, {
+        get: () => value,
         configurable: true,
       });
-    } catch (defError) {
-      // Can't define - jsdom might have it locked
-      // This shouldn't happen but just in case
-      console.warn('Could not define location mock:', defError.message);
+    } catch {
+      // Fallback: direct assignment (works if our mock is already installed)
+      try {
+        window.location[key] = value;
+      } catch {
+        /* cannot set - ignore */
+      }
     }
   }
+
+  // Apply any additional custom properties
+  Object.keys(locationConfig).forEach(key => {
+    if (!(key in props) && locationConfig[key] !== undefined) {
+      try {
+        Object.defineProperty(window.location, key, {
+          get: () => locationConfig[key],
+          configurable: true,
+        });
+      } catch {
+        /* ignore */
+      }
+    }
+  });
 }; // Reset mocks before each test
 beforeEach(() => {
   localStorage.clear();

@@ -1,19 +1,10 @@
 // Update checker module
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
-  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    // Fallback for initialization phase
-    if (!key) return '';
-    let result = String(key);
-    for (const [k, v] of Object.entries(params || {})) {
-      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
-    }
-    return result;
-  };
+  // Shared translation helper from YouTubeUtils
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   // Language helper delegating to global i18n when available
   const getLanguage = () => {
@@ -27,7 +18,7 @@
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.4.4',
+    currentVersion: '2.4.5',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
@@ -399,6 +390,8 @@
       : '';
     const notification = document.createElement('div');
     notification.className = 'youtube-enhancer-notification update-notification';
+    notification.setAttribute('role', 'alertdialog');
+    notification.setAttribute('aria-label', t('updateAvailableTitle') || 'Update available');
     // Use centralized notification container for consistent placement. Keep visual styles but remove fixed positioning.
     notification.style.cssText = `
       z-index: 10001; max-width: 360px;
@@ -411,7 +404,7 @@
       animation: slideInFromBottom 0.4s ease-out;
     `;
 
-    notification.innerHTML = `
+    notification.innerHTML = _createHTML(`
         <div style="position: relative; display: flex; align-items: flex-start; gap: 12px;">
             ${iconHtml}
           <div style="flex: 1; min-width: 0;">
@@ -463,10 +456,10 @@
                       `<div style="font-size:12px; line-height:1.4; max-height:120px; overflow-y:auto; padding:8px; background: rgba(0,0,0,0.2); border-radius:6px; border:1px solid rgba(255,255,255,0.05); white-space:normal;">${listHtml}</div>`
                     );
                   })()
-                : `<div style="font-size: 12px; opacity: 0.85; margin-bottom: 12px;">${t('newFeatures')}</div>`
+                : `<div style="font-size: 12px); opacity: 0.85; margin-bottom: 12px;">${t('newFeatures')}</div>`
             }
             <div style="display: flex; gap: 8px;">
-              <button id="update-install-btn" style="
+              <button id="update-install-btn" type="button" style="
                 background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
                 color: #ff5a1a; border: 1px solid rgba(255,90,30,0.12);
                 padding: 8px 16px; border-radius: 8px; cursor: pointer;
@@ -474,7 +467,7 @@
                 box-shadow: 0 6px 18px rgba(90,30,0,0.12);
                 backdrop-filter: blur(6px);
               ">${t('installUpdate')}</button>
-              <button id="update-dismiss-btn" style="
+              <button id="update-dismiss-btn" type="button" style="
                 background: transparent; color: rgba(255,255,255,0.9);
                 border: 1px solid rgba(255,255,255,0.06); padding: 8px 12px;
                 border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.12s ease;
@@ -502,7 +495,7 @@
             background: rgba(255, 255, 255, 0.25);
           }
         </style>
-      `;
+      `);
 
     // Append into centralized notification container (created if missing)
     const _containerId = 'youtube-enhancer-notification-container';
@@ -737,7 +730,7 @@
 
       // Parse changelog from HTML
       // Look for version link followed by changelog span
-      // Structure: <a ...>v2.4.4</a> ... <span class="version-changelog">...</span>
+      // Structure: <a ...>v2.4.5</a> ... <span class="version-changelog">...</span>
       const escapedVersion = version.replace(/\./g, '\\.');
       // Match anchor tag content that contains the version number (handling prefixes like 'v', 'вер. ', etc.)
       const versionRegex = new RegExp(
@@ -882,7 +875,9 @@
             markUpdateDismissed(updateDetails);
             try {
               utils.showNotification(t('installing'));
-            } catch {}
+            } catch {
+              /* empty */
+            }
           } else {
             console.warn(
               '[YouTube+][Update] Auto-install could not be initiated for',
@@ -988,7 +983,7 @@
 
     const lastCheckTime = utils.formatTimeAgo(updateState.lastCheck);
 
-    updateContainer.innerHTML = `
+    updateContainer.innerHTML = _createHTML(`
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
           <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--yt-spec-text-primary);">
             ${t('enhancedExperience')}
@@ -1067,7 +1062,7 @@
           @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.7; transform: scale(1.1); } }
           @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
         </style>
-      `;
+      `);
 
     aboutSection.appendChild(updateContainer);
 
@@ -1082,19 +1077,19 @@
       const button = /** @type {HTMLElement} */ (target);
       const originalHTML = button.innerHTML;
 
-      button.innerHTML = `
+      button.innerHTML = _createHTML(`
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
                style="margin-right: 6px; animation: spin 1s linear infinite;">
             <path d="M21.5 2v6h-6M2.5 22v-6h6M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1"/>
           </svg>
           ${t('checkingForUpdates')}
-        `;
+        `);
       button.disabled = true;
 
       await checkForUpdates(true);
 
       setTimeout(() => {
-        button.innerHTML = originalHTML;
+        button.innerHTML = _createHTML(originalHTML);
         button.disabled = false;
       }, 1000);
     });
@@ -1127,7 +1122,13 @@
     // Periodic checks - register interval in cleanupManager
     const intervalId = setInterval(() => checkForUpdates(), UPDATE_CONFIG.checkInterval);
     YouTubeUtils.cleanupManager.registerInterval(intervalId);
-    window.addEventListener('beforeunload', () => clearInterval(intervalId));
+    if (YouTubeUtils.cleanupManager?.registerListener) {
+      YouTubeUtils.cleanupManager.registerListener(window, 'beforeunload', () =>
+        clearInterval(intervalId)
+      );
+    } else {
+      window.addEventListener('beforeunload', () => clearInterval(intervalId));
+    }
   };
 
   /**
@@ -1135,9 +1136,18 @@
    * @returns {void}
    */
   const setupSettingsObserver = () => {
-    document.addEventListener('youtube-plus-settings-modal-opened', () => {
+    const handler = () => {
       setTimeout(addUpdateSettings, 100);
-    });
+    };
+    if (YouTubeUtils.cleanupManager?.registerListener) {
+      YouTubeUtils.cleanupManager.registerListener(
+        document,
+        'youtube-plus-settings-modal-opened',
+        handler
+      );
+    } else {
+      document.addEventListener('youtube-plus-settings-modal-opened', handler);
+    }
   };
 
   /**
@@ -1172,14 +1182,19 @@
           updateAvailable: updateState.updateAvailable,
         });
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   /**
-   * Initialize update checker
+   * Initialize update checker (runs only once)
    * @returns {void}
    */
+  let _initDone = false;
   const init = () => {
+    if (_initDone) return;
+    _initDone = true;
     utils.loadSettings();
     setupUpdateChecks();
     setupSettingsObserver();

@@ -1,5 +1,6 @@
 const YouTubeUtils = (() => {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   // Import helper modules
   const Security = window.YouTubePlusSecurity || {};
@@ -13,19 +14,8 @@ const YouTubeUtils = (() => {
    * @param {Object} params - Parameters for interpolation
    * @returns {string} Translated string
    */
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t && window.YouTubeUtils.t !== t) {
-      return window.YouTubeUtils.t(key, params);
-    }
-    // Fallback for initialization phase
-    if (!key) return '';
-    let result = String(key);
-    for (const [k, v] of Object.entries(params || {})) {
-      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
-    }
-    return result;
-  };
+  // Shared translation helper from YouTubeUtils
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   /**
    * Error logging with module context (local reference)
@@ -113,17 +103,15 @@ const YouTubeUtils = (() => {
     },
   };
 
-  // Use performance helpers or fallback
+  // Shared debounce/throttle from YouTubeUtils (with fallback)
   const debounce =
+    window.YouTubeUtils?.debounce ||
     Performance?.debounce ||
     ((func, wait, options = {}) => {
       let timeout = null;
-      /** @this {any} */
       const debounced = function (...args) {
         if (timeout !== null) clearTimeout(timeout);
-        if (options.leading && timeout === null) {
-          func.call(this, ...args);
-        }
+        if (options.leading && timeout === null) func.call(this, ...args);
         timeout = setTimeout(() => {
           if (!options.leading) func.call(this, ...args);
           timeout = null;
@@ -137,10 +125,10 @@ const YouTubeUtils = (() => {
     });
 
   const throttle =
+    window.YouTubeUtils?.throttle ||
     Performance?.throttle ||
     ((func, limit) => {
       let inThrottle = false;
-      /** @this {any} */
       return function (...args) {
         if (!inThrottle) {
           func.call(this, ...args);
@@ -856,13 +844,17 @@ const YouTubeUtils = (() => {
         // ensure notification accepts pointer events (container is pointer-events:none)
         try {
           notification.style.pointerEvents = 'auto';
-        } catch {}
+        } catch {
+          /* style may be read-only */
+        }
         this.activeNotifications.add(notification);
 
         // Apply entry animation from bottom
         try {
           notification.style.animation = 'slideInFromBottom 0.38s ease-out forwards';
-        } catch {}
+        } catch {
+          /* animation may be unsupported */
+        }
 
         // Auto-dismiss
         if (duration > 0) {
@@ -950,6 +942,17 @@ const YouTubeUtils = (() => {
   `
   );
 
+  // Shared keyframes used across multiple modules (stats, thumbnail, timecode, etc.)
+  StyleManager.add(
+    'shared-keyframes',
+    `
+    @keyframes fadeInModal{from{opacity:0}to{opacity:1}}
+    @keyframes scaleInModal{from{transform:scale(0.95);opacity:0}to{transform:scale(1);opacity:1}}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    @keyframes dash{0%{stroke-dashoffset:80}50%{stroke-dashoffset:10}100%{stroke-dashoffset:80}}
+  `
+  );
+
   // Global cleanup on page unload
   window.addEventListener('beforeunload', () => {
     cleanupManager.cleanup();
@@ -979,13 +982,13 @@ const YouTubeUtils = (() => {
   cleanupManager.registerInterval(cacheCleanupInterval);
 
   // Global error handler for uncaught promise rejections
-  window.addEventListener('unhandledrejection', event => {
+  cleanupManager.registerListener(window, 'unhandledrejection', event => {
     logError('Global', 'Unhandled promise rejection', event.reason);
     event.preventDefault(); // Prevent console spam
   });
 
   // Global error handler for uncaught errors
-  window.addEventListener('error', event => {
+  cleanupManager.registerListener(window, 'error', event => {
     const message = String(event?.message || '');
     const errorMessage = String(event?.error?.message || '');
     if (message.includes('ResizeObserver loop') || errorMessage.includes('ResizeObserver loop')) {
@@ -1120,8 +1123,8 @@ const YouTubeUtils = (() => {
 // Make available globally
 if (typeof window !== 'undefined') {
   // Merge utilities into existing global YouTubeUtils without overwriting
-  /** @type {any} */ (window).YouTubeUtils = /** @type {any} */ (window).YouTubeUtils || {};
-  const existing = /** @type {any} */ (window).YouTubeUtils;
+  window.YouTubeUtils = window.YouTubeUtils || {};
+  const existing = window.YouTubeUtils;
   try {
     for (const k of Object.keys(YouTubeUtils)) {
       if (existing[k] === undefined) existing[k] = YouTubeUtils[k];
@@ -1134,11 +1137,11 @@ if (typeof window !== 'undefined') {
   window.YouTubeUtils &&
     YouTubeUtils.logger &&
     YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.4.4] Core utilities merged');
+    YouTubeUtils.logger.debug('[YouTube+ v2.4.5] Core utilities merged');
 
   // Expose debug info
-  /** @type {any} */ (window).YouTubePlusDebug = {
-    version: '2.4.4',
+  window.YouTubePlusDebug = {
+    version: '2.4.5',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
       YouTubeUtils.cleanupManager.listeners.size +
@@ -1169,7 +1172,7 @@ if (typeof window !== 'undefined') {
     sessionStorage.setItem('youtube_plus_started', 'true');
     setTimeout(() => {
       if (YouTubeUtils.NotificationManager) {
-        YouTubeUtils.NotificationManager.show('YouTube+ v2.4.4 loaded', {
+        YouTubeUtils.NotificationManager.show('YouTube+ v2.4.5 loaded', {
           type: 'success',
           duration: 2000,
           position: 'bottom-right',
@@ -1181,6 +1184,7 @@ if (typeof window !== 'undefined') {
 // YouTube enhancements module
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   // Local reference to translation function
   const { t } = YouTubeUtils;
@@ -1263,7 +1267,7 @@ if (typeof window !== 'undefined') {
             ? window.YouTubePlusConstants.DOWNLOAD_SITES.EXTERNAL_DOWNLOADER
             : { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
       },
-      storageKey: 'youtube_plus_settings',
+      storageKey: window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings',
       // runtime setting: hide left side guide/footer when true
       hideSideGuide: false,
     },
@@ -1440,7 +1444,7 @@ if (typeof window !== 'undefined') {
         this.setupCurrentPage();
       }
 
-      document.addEventListener('visibilitychange', () => {
+      YouTubeUtils.cleanupManager.registerListener(document, 'visibilitychange', () => {
         if (!document.hidden && location.href.includes('watch?v=')) {
           this.setupCurrentPage();
         }
@@ -1789,7 +1793,9 @@ if (typeof window !== 'undefined') {
           if (!compStyle || compStyle.position === 'static') {
             progressBar.style.position = 'relative';
           }
-        } catch {}
+        } catch {
+          /* getComputedStyle may fail on detached elements */
+        }
         // append indicator after ensuring positioning
         progressBar.appendChild(indicator);
         // enforce overlay styles so it appears above built-in played bars
@@ -2219,11 +2225,11 @@ if (typeof window !== 'undefined') {
             const settingsButton = document.createElement('div');
             settingsButton.className = 'ytp-plus-settings-button';
             settingsButton.setAttribute('title', t('youtubeSettings'));
-            settingsButton.innerHTML = `
+            settingsButton.innerHTML = _createHTML(`
                 <svg width="24" height="24" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
                   <path d="M39.23,26a16.52,16.52,0,0,0,.14-2,16.52,16.52,0,0,0-.14-2l4.33-3.39a1,1,0,0,0,.25-1.31l-4.1-7.11a1,1,0,0,0-1.25-.44l-5.11,2.06a15.68,15.68,0,0,0-3.46-2l-.77-5.43a1,1,0,0,0-1-.86H19.9a1,1,0,0,0-1,.86l-.77,5.43a15.36,15.36,0,0,0-3.46,2L9.54,9.75a1,1,0,0,0-1.25.44L4.19,17.3a1,1,0,0,0,.25,1.31L8.76,22a16.66,16.66,0,0,0-.14,2,16.52,16.52,0,0,0,.14,2L4.44,29.39a1,1,0,0,0-.25,1.31l4.1,7.11a1,1,0,0,0,1.25.44l5.11-2.06a15.68,15.68,0,0,0,3.46,2l.77,5.43a1,1,0,0,0,1,.86h8.2a1,1,0,0,0,1-.86l.77-5.43a15.36,15.36,0,0,0,3.46-2l5.11,2.06a1,1,0,0,0,1.25-.44l4.1-7.11a1,1,0,0,0-.25-1.31ZM24,31.18A7.18,7.18,0,1,1,31.17,24,7.17,7.17,0,0,1,24,31.18Z"/>
                 </svg>
-              `;
+              `);
 
             settingsButton.addEventListener('click', this.openSettingsModal.bind(this));
 
@@ -2298,7 +2304,9 @@ if (typeof window !== 'undefined') {
       // Use helper functions from settings-helpers.js
       const helpers = window.YouTubePlusSettingsHelpers;
       const handlers = window.YouTubePlusModalHandlers;
-      modal.innerHTML = `<div class="ytp-plus-settings-panel">${helpers.createSettingsSidebar(t)}${helpers.createMainContent(this.settings, t)}</div>`;
+      modal.innerHTML = _createHTML(
+        `<div class="ytp-plus-settings-panel">${helpers.createSettingsSidebar(t)}${helpers.createMainContent(this.settings, t)}</div>`
+      );
 
       // Track unsaved changes
       let dirty = false;
@@ -2376,7 +2384,9 @@ if (typeof window !== 'undefined') {
             } catch {
               // Ignore storage errors
             }
-          } catch {}
+          } catch (e) {
+            console.warn('[YouTube+] Submenu toggle error:', e);
+          }
           return;
         }
 
@@ -2533,11 +2543,11 @@ if (typeof window !== 'undefined') {
       try {
         if (
           typeof window !== 'undefined' &&
-          /** @type {any} */ (window).youtubePlusReport &&
-          typeof (/** @type {any} */ (window).youtubePlusReport.render) === 'function'
+          window.youtubePlusReport &&
+          typeof window.youtubePlusReport.render === 'function'
         ) {
           try {
-            /** @type {any} */ (window).youtubePlusReport.render(modal);
+            window.youtubePlusReport.render(modal);
           } catch (e) {
             YouTubeUtils.logError('Report', 'report.render failed', e);
           }
@@ -2547,8 +2557,9 @@ if (typeof window !== 'undefined') {
       }
 
       // Restore submenu expanded states from localStorage
+      let submenuStates = {};
       try {
-        const submenuStates = JSON.parse(localStorage.getItem('ytp-plus-submenu-states') || '{}');
+        submenuStates = JSON.parse(localStorage.getItem('ytp-plus-submenu-states') || '{}');
         Object.entries(submenuStates).forEach(([key, expanded]) => {
           const toggleBtn = modal.querySelector(`.ytp-plus-submenu-toggle[data-submenu="${key}"]`);
           if (toggleBtn instanceof HTMLElement && !toggleBtn.hasAttribute('disabled')) {
@@ -2578,6 +2589,46 @@ if (typeof window !== 'undefined') {
         });
       } catch {
         // Ignore storage errors
+      }
+
+      // Safety: if Advanced feature toggles are enabled and no explicit saved submenu state exists,
+      // ensure those submenus are visible so users see all available options.
+      try {
+        const advancedSection = modal.querySelector(
+          '.ytp-plus-settings-section[data-section="advanced"]'
+        );
+        if (advancedSection instanceof HTMLElement) {
+          const ensureVisibleWhenEnabled = (key, setting, submenuSelector) => {
+            if (Object.prototype.hasOwnProperty.call(submenuStates, key)) return;
+            const checkbox = advancedSection.querySelector(
+              `.ytp-plus-settings-checkbox[data-setting="${setting}"]`
+            );
+            const submenu = advancedSection.querySelector(submenuSelector);
+            const toggleBtn = advancedSection.querySelector(
+              `.ytp-plus-submenu-toggle[data-submenu="${key}"]`
+            );
+            if (
+              checkbox instanceof Element &&
+              checkbox.classList.contains('ytp-plus-settings-checkbox') &&
+              /** @type {HTMLInputElement} */ (checkbox).checked &&
+              submenu instanceof HTMLElement
+            ) {
+              submenu.style.display = '';
+              if (toggleBtn instanceof HTMLElement) {
+                toggleBtn.setAttribute('aria-expanded', 'true');
+              }
+            }
+          };
+
+          ensureVisibleWhenEnabled(
+            'enhanced',
+            'enableEnhanced',
+            '.enhanced-submenu[data-submenu="enhanced"]'
+          );
+          ensureVisibleWhenEnabled('music', 'enableMusic', '.music-submenu[data-submenu="music"]');
+        }
+      } catch {
+        // Ignore layout recovery errors
       }
 
       // Restore active nav section from localStorage
@@ -2667,12 +2718,13 @@ if (typeof window !== 'undefined') {
       const button = document.createElement('button');
       button.className = 'ytp-button ytp-screenshot-button';
       button.setAttribute('title', t('takeScreenshot'));
-      button.innerHTML = `
+      button.setAttribute('aria-label', t('takeScreenshot'));
+      button.innerHTML = _createHTML(`
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:auto;vertical-align:middle;">
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V7a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"></path>
             <circle cx="12" cy="13" r="4"></circle>
           </svg>
-        `;
+        `);
       button.addEventListener('click', this.captureFrame.bind(this));
       controls.insertBefore(button, controls.firstChild);
     },
@@ -2706,7 +2758,7 @@ if (typeof window !== 'undefined') {
       speedBtn.setAttribute('aria-label', t('speedControl'));
       speedBtn.setAttribute('aria-haspopup', 'true');
       speedBtn.setAttribute('aria-expanded', 'false');
-      speedBtn.innerHTML = `<span>${this.speedControl.currentSpeed}×</span>`;
+      speedBtn.innerHTML = _createHTML(`<span>${this.speedControl.currentSpeed}×</span>`);
 
       const speedOptions = document.createElement('div');
       speedOptions.className = 'speed-options';
@@ -2870,7 +2922,9 @@ if (typeof window !== 'undefined') {
         const btn = document.getElementById('ytplus-guide-toggle-btn');
         if (btn) {
           btn.setAttribute('aria-pressed', String(enabled));
-          btn.title = enabled ? 'Show side guide' : 'Hide side guide';
+          const label = enabled ? 'Show side guide' : 'Hide side guide';
+          btn.title = label;
+          btn.setAttribute('aria-label', label);
         }
       } catch (e) {
         console.warn('[YouTube+] applyGuideVisibility failed:', e);
@@ -2897,6 +2951,7 @@ if (typeof window !== 'undefined') {
         btn.style.cssText =
           'position:fixed;right:12px;bottom:12px;z-index:100000;background:var(--yt-spec-call-to-action);color:#fff;border:none;border-radius:8px;padding:8px 10px;box-shadow:0 6px 18px rgba(0,0,0,0.3);cursor:pointer;opacity:0.95;font-size:13px;';
         btn.setAttribute('aria-pressed', 'false');
+        btn.setAttribute('aria-label', 'Hide side guide');
         btn.title = 'Hide side guide';
         btn.textContent = 'Toggle Guide';
         btn.addEventListener('click', e => {
@@ -3018,14 +3073,16 @@ if (typeof window !== 'undefined') {
       if (!this._mouseHoldTracked) {
         this._mouseHoldTracked = true;
         this._mouseButtonHeld = false;
-        document.addEventListener(
+        YouTubeUtils.cleanupManager.registerListener(
+          document,
           'mousedown',
           e => {
             if (e.button === 0) this._mouseButtonHeld = true;
           },
           { passive: true, capture: true }
         );
-        document.addEventListener(
+        YouTubeUtils.cleanupManager.registerListener(
+          document,
           'mouseup',
           e => {
             if (e.button === 0) this._mouseButtonHeld = false;
@@ -3084,9 +3141,13 @@ if (typeof window !== 'undefined') {
     setupNavigationObserver() {
       let lastUrl = location.href;
 
-      document.addEventListener('fullscreenchange', this.handleFullscreenChange.bind(this));
+      YouTubeUtils.cleanupManager.registerListener(
+        document,
+        'fullscreenchange',
+        this.handleFullscreenChange.bind(this)
+      );
 
-      document.addEventListener('yt-navigate-finish', () => {
+      YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', () => {
         if (location.href.includes('watch?v=')) this.setupCurrentPage();
         this.addSettingsButtonToHeader();
       });
@@ -3103,8 +3164,8 @@ if (typeof window !== 'undefined') {
         }
       };
 
-      window.addEventListener('popstate', checkUrlChange);
-      document.addEventListener('yt-navigate-start', checkUrlChange);
+      YouTubeUtils.cleanupManager.registerListener(window, 'popstate', checkUrlChange);
+      YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-start', checkUrlChange);
     },
 
     showSpeedIndicator(speed) {

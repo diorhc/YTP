@@ -158,12 +158,18 @@
       if (element === window) return 'window';
       if (element === document.body) return 'body';
 
-      return (
-        element.id ||
-        element.className ||
-        element.tagName ||
-        `elem_${Math.random().toString(36).substr(2, 9)}`
-      );
+      // Use a WeakMap for stable, deterministic element keys
+      if (!this._elementKeyMap) {
+        this._elementKeyMap = new WeakMap();
+        this._elementKeyCounter = 0;
+      }
+      if (element.id) return element.id;
+      let key = this._elementKeyMap.get(element);
+      if (!key) {
+        key = `${element.tagName || 'ELEM'}_${++this._elementKeyCounter}`;
+        this._elementKeyMap.set(element, key);
+      }
+      return key;
     }
 
     /**
@@ -183,12 +189,20 @@
     clear() {
       for (const [parent, delegators] of this.registeredDelegators.entries()) {
         for (const [eventType, listener] of delegators.entries()) {
-          parent.removeEventListener(eventType, listener);
+          try {
+            parent.removeEventListener(eventType, listener);
+          } catch {
+            // Element may have been GC'd — safe to ignore
+          }
         }
       }
 
       this.delegatedHandlers.clear();
       this.registeredDelegators.clear();
+      if (this._elementKeyMap) {
+        this._elementKeyMap = new WeakMap();
+        this._elementKeyCounter = 0;
+      }
       this.stats = { totalDelegations: 0, totalHandlers: 0 };
     }
   }

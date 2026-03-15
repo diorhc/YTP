@@ -5,6 +5,7 @@
 
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   if (typeof window === 'undefined') return;
 
@@ -33,17 +34,15 @@
     });
   }
 
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    return key || '';
-  };
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   const tf = (key, fallback, params = {}) => {
     try {
       const value = t(key, params);
       if (typeof value === 'string' && value && value !== key) return value;
-    } catch {}
+    } catch {
+      /* empty */
+    }
     return fallback || key || '';
   };
 
@@ -74,7 +73,15 @@
   function getLocalUserId() {
     let userId = localStorage.getItem('ytp_voting_user_id');
     if (!userId) {
-      userId = 'user_' + Math.random().toString(36).substring(2, 15) + Date.now().toString(36);
+      // Use crypto.getRandomValues for stronger randomness instead of Math.random
+      const arr = new Uint8Array(16);
+      typeof globalThis.crypto !== 'undefined' && globalThis.crypto.getRandomValues
+        ? globalThis.crypto.getRandomValues(arr)
+        : arr.forEach((_, i, a) => {
+            a[i] = (Math.random() * 256) | 0;
+          });
+      const hex = Array.from(arr, b => b.toString(16).padStart(2, '0')).join('');
+      userId = 'user_' + hex + '_' + Date.now().toString(36);
       localStorage.setItem('ytp_voting_user_id', userId);
     }
     return userId;
@@ -203,6 +210,20 @@
   }
 
   async function submitFeature(title, description) {
+    const MAX_TITLE = 200;
+    const MAX_DESC = 2000;
+    const stripHTML = s =>
+      String(s || '')
+        .replace(/<[^>]*>/g, '')
+        .trim();
+
+    title = stripHTML(title).slice(0, MAX_TITLE);
+    description = stripHTML(description).slice(0, MAX_DESC);
+
+    if (!title) {
+      return { success: false, error: 'Title is required' };
+    }
+
     const userId = getLocalUserId();
     const { error } = await supabaseFetch('ytplus_feature_requests', {
       method: 'POST',
@@ -260,7 +281,7 @@
   }
 
   function createVotingUI(container) {
-    container.innerHTML = `
+    container.innerHTML = _createHTML(`
       <div class="ytp-plus-voting">
         <div class="ytp-plus-voting-header">
           <h3>${tf('featureRequests', 'Feature Requests')}</h3>
@@ -280,7 +301,7 @@
           </div>
         </div>
       </div>
-    `;
+    `);
   }
 
   async function loadFeatures() {
@@ -290,27 +311,29 @@
     const allFeaturesRaw = await getFeatures();
     const previewFeature = await ensurePreviewFeature(allFeaturesRaw);
     const features = (allFeaturesRaw || []).filter(f => !isPreviewFeature(f));
-    const allVotes = await getAllVotes();
-    const userVotes = await getUserVotes();
+    const [allVotes, userVotes] = await Promise.all([getAllVotes(), getUserVotes()]);
 
     const renderFeatures = [...features];
 
     if (renderFeatures.length === 0) {
-      listEl.innerHTML = `<div class="ytp-plus-voting-empty">${tf('noFeatures', 'No feature requests yet')}</div>`;
+      listEl.innerHTML = _createHTML(
+        `<div class="ytp-plus-voting-empty">${tf('noFeatures', 'No feature requests yet')}</div>`
+      );
       // Still update the aggregate vote bar even when there are no user features —
       // the preview feature in the DB tracks the overall like/dislike count.
       updateVoteBar(allVotes, userVotes, previewFeature?.id || null);
       return;
     }
 
-    listEl.innerHTML = renderFeatures
-      .map(f => {
-        const votes = allVotes[f.id] || { upvotes: 0, downvotes: 0 };
-        const userVote = userVotes[f.id] || 0;
-        const totalVotes = votes.upvotes + votes.downvotes;
-        const upPercent = totalVotes > 0 ? Math.round((votes.upvotes / totalVotes) * 100) : 50;
-        const statusMeta = getStatusMeta(f.status);
-        return `
+    listEl.innerHTML = _createHTML(
+      renderFeatures
+        .map(f => {
+          const votes = allVotes[f.id] || { upvotes: 0, downvotes: 0 };
+          const userVote = userVotes[f.id] || 0;
+          const totalVotes = votes.upvotes + votes.downvotes;
+          const upPercent = totalVotes > 0 ? Math.round((votes.upvotes / totalVotes) * 100) : 50;
+          const statusMeta = getStatusMeta(f.status);
+          return `
           <div class="ytp-plus-voting-item" data-feature-id="${f.id}">
             <div class="ytp-plus-voting-item-content">
               <div class="ytp-plus-voting-item-title">${escapeHtml(f.title)}</div>
@@ -333,8 +356,9 @@
             </div>
           </div>
         `;
-      })
-      .join('');
+        })
+        .join('')
+    );
 
     listEl.querySelectorAll('.ytp-plus-vote-btn').forEach(btn => {
       btn.addEventListener('click', async () => {
@@ -469,12 +493,19 @@
       setPosition(getPct(e.clientX), true);
       e.preventDefault();
     });
-    window.addEventListener('mousemove', e => {
+    const onMousemove = e => {
       if (dragging) setPosition(getPct(e.clientX), true);
-    });
-    window.addEventListener('mouseup', () => {
+    };
+    const onMouseup = () => {
       dragging = false;
-    });
+    };
+    if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+      YouTubeUtils.cleanupManager.registerListener(window, 'mousemove', onMousemove);
+      YouTubeUtils.cleanupManager.registerListener(window, 'mouseup', onMouseup);
+    } else {
+      window.addEventListener('mousemove', onMousemove);
+      window.addEventListener('mouseup', onMouseup);
+    }
 
     container.addEventListener(
       'touchstart',
@@ -485,16 +516,21 @@
       },
       { passive: true }
     );
-    window.addEventListener(
-      'touchmove',
-      e => {
-        if (dragging) setPosition(getPct(e.touches[0].clientX), true);
-      },
-      { passive: true }
-    );
-    window.addEventListener('touchend', () => {
+    const onTouchmove = e => {
+      if (dragging) setPosition(getPct(e.touches[0].clientX), true);
+    };
+    const onTouchend = () => {
       dragging = false;
-    });
+    };
+    if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+      YouTubeUtils.cleanupManager.registerListener(window, 'touchmove', onTouchmove, {
+        passive: true,
+      });
+      YouTubeUtils.cleanupManager.registerListener(window, 'touchend', onTouchend);
+    } else {
+      window.addEventListener('touchmove', onTouchmove, { passive: true });
+      window.addEventListener('touchend', onTouchend);
+    }
 
     divider.addEventListener('keydown', e => {
       pauseAutoplay();
@@ -524,7 +560,7 @@
     votingInitialized = true;
 
     // Vote bar aggregate buttons
-    document.addEventListener('click', async e => {
+    const voteBarHandler = async e => {
       const barBtn = e.target.closest('.ytp-plus-vote-bar-btn');
       if (barBtn) {
         if (voteRequestInFlight) return;
@@ -549,9 +585,9 @@
           setVoteControlsBusy(controlsRoot, false);
         }
       }
-    });
+    };
 
-    document.addEventListener('click', e => {
+    const addFeatureHandler = e => {
       const showAddBtn = e.target.closest('#ytp-plus-show-add-feature');
       const cancelBtn = e.target.closest('#ytp-plus-cancel-feature');
       const submitBtn = e.target.closest('#ytp-plus-submit-feature');
@@ -600,7 +636,16 @@
           }
         });
       }
-    });
+    };
+
+    // Register both click handlers with cleanupManager
+    if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+      YouTubeUtils.cleanupManager.registerListener(document, 'click', voteBarHandler);
+      YouTubeUtils.cleanupManager.registerListener(document, 'click', addFeatureHandler);
+    } else {
+      document.addEventListener('click', voteBarHandler);
+      document.addEventListener('click', addFeatureHandler);
+    }
   }
 
   const VotingSystem = {
@@ -618,4 +663,9 @@
     window.YouTubePlus = {};
   }
   window.YouTubePlus.Voting = VotingSystem;
+
+  // Register with LazyLoader for deferred initialization
+  if (window.YouTubePlusLazyLoader) {
+    window.YouTubePlusLazyLoader.register('voting', initVoting, { priority: 0 });
+  }
 })();

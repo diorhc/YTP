@@ -1,18 +1,11 @@
 // Playlist Search
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   let featureEnabled = true;
-  const loadFeatureEnabled = () => {
-    try {
-      const settings = localStorage.getItem('youtube_plus_settings');
-      if (settings) {
-        const parsed = JSON.parse(settings);
-        return parsed.enablePlaylistSearch !== false;
-      }
-    } catch {}
-    return true;
-  };
+  const loadFeatureEnabled = () =>
+    window.YouTubeUtils?.loadFeatureEnabled?.('enablePlaylistSearch') ?? true;
   const setFeatureEnabled = nextEnabled => {
     featureEnabled = nextEnabled !== false;
     if (!featureEnabled) {
@@ -29,39 +22,11 @@
   if (window._playlistSearchInitialized) return;
   window._playlistSearchInitialized = true;
 
-  // DOM cache helpers with fallback
-  const qs = selector => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
-      return window.YouTubeDOMCache.get(selector);
-    }
-    return document.querySelector(selector);
-  };
+  // Shared DOM helper from YouTubeUtils
+  const qs = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
 
-  /**
-   * Translation helper - uses centralized i18n system
-   * @param {string} key - Translation key
-   * @param {Object} params - Interpolation parameters
-   * @returns {string} Translated string
-   */
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    // Embedded English fallback (prevents showing raw keys during early init)
-    try {
-      const embeddedEn = window.YouTubePlusEmbeddedTranslations?.en;
-      if (embeddedEn && embeddedEn[key]) {
-        let text = embeddedEn[key];
-        if (params && Object.keys(params).length > 0) {
-          Object.keys(params).forEach(param => {
-            text = text.replace(new RegExp(`\\{${param}\\}`, 'g'), params[param]);
-          });
-        }
-        return text;
-      }
-    } catch {}
-    // Fallback for initialization phase
-    return key || '';
-  };
+  // Shared translation helper from YouTubeUtils
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   // This module targets playlist content on both /watch and /playlist pages.
   const shouldRunOnThisPage = () => {
@@ -93,27 +58,28 @@
     }
   };
 
-  // Use shared debounce/throttle from YouTubeUtils
-  const debounce = (func, wait) => {
-    if (window.YouTubeUtils?.debounce) return window.YouTubeUtils.debounce(func, wait);
-    let timeout;
-    return (...args) => {
-      clearTimeout(timeout);
-      timeout = setTimeout(() => func(...args), wait);
-    };
-  };
-
-  const throttle = (func, limit) => {
-    if (window.YouTubeUtils?.throttle) return window.YouTubeUtils.throttle(func, limit);
-    let inThrottle;
-    return (...args) => {
-      if (!inThrottle) {
-        func(...args);
-        inThrottle = true;
-        setTimeout(() => (inThrottle = false), limit);
-      }
-    };
-  };
+  // Shared debounce/throttle from YouTubeUtils
+  const debounce =
+    window.YouTubeUtils?.debounce ||
+    ((fn, ms) => {
+      let t;
+      return (...a) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...a), ms);
+      };
+    });
+  const throttle =
+    window.YouTubeUtils?.throttle ||
+    ((fn, ms) => {
+      let t;
+      return (...a) => {
+        if (!t) {
+          fn(...a);
+          t = true;
+          setTimeout(() => (t = false), ms);
+        }
+      };
+    });
 
   // Previously limited to specific lists (LL/WL). Now support any playlist id.
 
@@ -224,7 +190,9 @@
   // Load settings from localStorage
   const loadSettings = () => {
     try {
-      const globalSettings = localStorage.getItem('youtube_plus_settings');
+      const globalSettings = localStorage.getItem(
+        window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings'
+      );
       if (globalSettings) {
         const parsedGlobal = JSON.parse(globalSettings);
         if (typeof parsedGlobal.enablePlaylistSearch === 'boolean') {
@@ -597,6 +565,10 @@
       childList: true,
       subtree: itemsRoot ? false : true, // Only observe subtree if we couldn't find items container
     });
+    // Register with cleanupManager for SPA lifecycle
+    if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
+      window.YouTubeUtils.cleanupManager.registerObserver(state.mutationObserver);
+    }
   };
 
   /**
@@ -1082,8 +1054,9 @@
     toggleBtn.type = 'button';
     toggleBtn.className = 'ytplus-playlist-delete-toggle';
     toggleBtn.setAttribute('aria-pressed', 'false');
+    toggleBtn.setAttribute('aria-label', t('playlistDeleteMode'));
     toggleBtn.title = t('playlistDeleteMode');
-    toggleBtn.innerHTML = `
+    toggleBtn.innerHTML = _createHTML(`
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
            stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="3 6 5 6 21 6"/>
@@ -1091,7 +1064,7 @@
         <line x1="10" y1="11" x2="10" y2="17"/>
         <line x1="14" y1="11" x2="14" y2="17"/>
       </svg>
-    `;
+    `);
     toggleBtn.style.cssText = `
       background: transparent;
       border: 1px solid var(--yt-spec-10-percent-layer);
@@ -1212,23 +1185,16 @@
       .ytplus-playlist-item-checkbox:hover {
         opacity: 1;
       }
-      /* Use the shared settings checkbox styling for playlist item checkboxes */
-      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox{appearance:none;-webkit-appearance:none;-moz-appearance:none;width:20px;height:20px;min-width:20px;min-height:20px;margin-left:auto;border:2px solid var(--yt-glass-border);border-radius:50%;background:transparent;display:inline-flex;align-items:center;justify-content:center;transition:all 250ms cubic-bezier(.4,0,.23,1);cursor:pointer;position:relative;flex-shrink:0;color:#fff;box-sizing:border-box;}
-      html:not([dark]) .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox{border-color:rgba(0,0,0,.25);color:#222;}
-      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:focus-visible{outline:2px solid var(--yt-accent);outline-offset:2px;}
-      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:hover{background:var(--yt-hover-bg);transform:scale(1.1);}
-      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox::before{content:"";width:5px;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(45deg);top:6px;left:3px;transition:width 100ms ease 50ms,opacity 50ms;transform-origin:0% 0%;opacity:0;}
-      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox::after{content:"";width:0;height:2px;background:var(--yt-text-primary);position:absolute;transform:rotate(305deg);top:11px;left:7px;transition:width 100ms ease,opacity 50ms;transform-origin:0% 0%;opacity:0;}
-      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:checked{transform:rotate(0deg) scale(1.15);}
-      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:checked::before{width:9px;opacity:1;background:#fff;transition:width 150ms ease 100ms,opacity 150ms ease 100ms;}
-      .ytplus-playlist-item-checkbox.ytp-plus-settings-checkbox:checked::after{width:16px;opacity:1;background:#fff;transition:width 150ms ease 250ms,opacity 150ms ease 250ms;}
+      /* Checkbox base styles inherited from basic.js .ytp-plus-settings-checkbox — no need to duplicate */
     `;
     try {
       if (window.YouTubeUtils?.StyleManager) {
         window.YouTubeUtils.StyleManager.add('ytplus-playlist-delete-styles', css);
         return;
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
     const style = document.createElement('style');
     style.id = 'ytplus-playlist-delete-styles';
     style.textContent = css;

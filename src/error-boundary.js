@@ -209,7 +209,9 @@
       stored.push(errorInfo);
       if (stored.length > 20) stored.shift();
       localStorage.setItem(ErrorBoundaryConfig.storageKey, JSON.stringify(stored));
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   /**
@@ -538,7 +540,9 @@
     errorState.errors = [];
     try {
       localStorage.removeItem(ErrorBoundaryConfig.storageKey);
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   // Install global error handlers

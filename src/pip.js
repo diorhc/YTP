@@ -1,28 +1,10 @@
 // YouTube Picture-in-Picture settings
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
-  /**
-   * Translation helper - uses centralized i18n system
-   * @param {string} key - Translation key
-   * @param {Object} params - Interpolation parameters
-   * @returns {string} Translated string
-   */
-  function t(key, params = {}) {
-    try {
-      if (typeof window !== 'undefined') {
-        if (window.YouTubePlusI18n && typeof window.YouTubePlusI18n.t === 'function') {
-          return window.YouTubePlusI18n.t(key, params);
-        }
-        if (window.YouTubeUtils && typeof window.YouTubeUtils.t === 'function') {
-          return window.YouTubeUtils.t(key, params);
-        }
-      }
-    } catch {
-      // Fallback to key if central i18n unavailable
-    }
-    return key;
-  }
+  // Translation helper from centralized i18n
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   /**
    * PiP settings configuration
@@ -124,7 +106,9 @@
       } else {
         sessionStorage.removeItem(PIP_SESSION_KEY);
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   const wasSessionActive = () => {
@@ -246,10 +230,10 @@
    * @returns {void}
    */
   const addPipSettingsToModal = () => {
-    const advancedSection = YouTubeUtils.querySelector(
+    const advancedSection = document.querySelector(
       '.ytp-plus-settings-section[data-section="advanced"]'
     );
-    if (!advancedSection || YouTubeUtils.querySelector('.pip-settings-item')) return;
+    if (!advancedSection || advancedSection.querySelector('.pip-settings-item')) return false;
 
     const getSubmenuExpanded = () => {
       try {
@@ -257,7 +241,9 @@
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.pip === 'boolean') return parsed.pip;
-      } catch {}
+      } catch {
+        /* empty */
+      }
       return null;
     };
     const storedExpanded = getSubmenuExpanded();
@@ -276,7 +262,7 @@
     const enableItem = document.createElement('div');
     enableItem.className =
       'ytp-plus-settings-item pip-settings-item ytp-plus-settings-item--with-submenu';
-    enableItem.innerHTML = `
+    enableItem.innerHTML = _createHTML(`
         <div>
           <label class="ytp-plus-settings-item-label" for="pip-enable-checkbox">${t(
             'pipTitle'
@@ -299,7 +285,7 @@
           </button>
           <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enablePiP" id="pip-enable-checkbox" ${pipSettings.enabled ? 'checked' : ''}>
         </div>
-      `;
+      `);
     advancedSection.appendChild(enableItem);
 
     // Shortcut settings
@@ -338,7 +324,7 @@
                     ? 'shift'
                     : 'none';
 
-    shortcutItem.innerHTML = `
+    shortcutItem.innerHTML = _createHTML(`
         <div>
           <label class="ytp-plus-settings-item-label">${t('pipShortcutTitle')}</label>
           <div class="ytp-plus-settings-item-description">${t('pipShortcutDescription')}</div>
@@ -419,7 +405,7 @@
           <span>+</span>
           <input type="text" id="pip-key" value="${pipSettings.shortcut.key}" maxlength="1" style="width: 30px; text-align: center;">
         </div>
-      `;
+      `);
     submenuCard.appendChild(shortcutItem);
     submenuWrap.appendChild(submenuCard);
     advancedSection.appendChild(submenuWrap);
@@ -453,9 +439,14 @@
         else openList();
       });
 
-      document.addEventListener('click', e => {
+      const outsideClickHandler = e => {
         if (!dropdown.contains(e.target)) closeList();
-      });
+      };
+      if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+        YouTubeUtils.cleanupManager.registerListener(document, 'click', outsideClickHandler);
+      } else {
+        document.addEventListener('click', outsideClickHandler);
+      }
 
       // Arrow-key navigation and selection
       dropdown.addEventListener('keydown', e => {
@@ -551,13 +542,14 @@
     });
 
     document.getElementById('pip-key').addEventListener('keydown', e => e.stopPropagation());
+    return true;
   };
 
   // Initialize
   loadSettings();
 
-  // Event listeners
-  document.addEventListener('keydown', e => {
+  // Event listeners — register with cleanupManager for SPA cleanup
+  const pipKeydownHandler = e => {
     if (!pipSettings.enabled) return;
     const { shiftKey, altKey, ctrlKey, key } = pipSettings.shortcut;
     if (
@@ -572,13 +564,15 @@
       }
       e.preventDefault();
     }
-  });
+  };
+  YouTubeUtils.cleanupManager.registerListener(document, 'keydown', pipKeydownHandler);
 
-  window.addEventListener('storage', e => {
+  const storageHandler = e => {
     if (e.key === pipSettings.storageKey) {
       loadSettings();
     }
-  });
+  };
+  YouTubeUtils.cleanupManager.registerListener(window, 'storage', storageHandler);
 
   window.addEventListener('load', () => {
     if (!pipSettings.enabled || !wasSessionActive() || document.pictureInPictureElement) {
@@ -599,7 +593,9 @@
       if (!handler) return;
       try {
         document.removeEventListener('pointerdown', handler, true);
-      } catch {}
+      } catch {
+        /* empty */
+      }
     };
 
     const cleanupListeners = () => {
@@ -622,19 +618,43 @@
   });
 
   // Settings modal integration — use event instead of MutationObserver
-  document.addEventListener('youtube-plus-settings-modal-opened', () => {
-    setTimeout(addPipSettingsToModal, 100);
-  });
+  const ensurePipSettings = () => {
+    if (window.YouTubeUtils?.createRetryScheduler) {
+      window.YouTubeUtils.createRetryScheduler({
+        check: () => addPipSettingsToModal() === true,
+        maxAttempts: 20,
+        interval: 120,
+      });
+      return;
+    }
+    let attempts = 0;
+    const retry = () => {
+      attempts += 1;
+      if (addPipSettingsToModal() || attempts >= 20) return;
+      setTimeout(retry, 120);
+    };
+    retry();
+  };
 
-  document.addEventListener('leavepictureinpicture', () => {
+  const settingsModalHandler = () => {
+    setTimeout(ensurePipSettings, 50);
+  };
+  YouTubeUtils.cleanupManager.registerListener(
+    document,
+    'youtube-plus-settings-modal-opened',
+    settingsModalHandler
+  );
+
+  const leavePipHandler = () => {
     setSessionActive(false);
-  });
+  };
+  YouTubeUtils.cleanupManager.registerListener(document, 'leavepictureinpicture', leavePipHandler);
 
   const clickHandler = e => {
     const target = /** @type {EventTarget & HTMLElement} */ (e.target);
     if (target.classList && target.classList.contains('ytp-plus-settings-nav-item')) {
       if (target.dataset?.section === 'advanced') {
-        setTimeout(addPipSettingsToModal, 50);
+        setTimeout(ensurePipSettings, 25);
       }
     }
   };

@@ -5,13 +5,8 @@
 
 /* global GM_setValue, GM_getValue */
 
-// DOM cache helpers with fallback
-const qs = selector => {
-  if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
-    return window.YouTubeDOMCache.get(selector);
-  }
-  return document.querySelector(selector);
-};
+// DOM cache helper from YouTubeUtils
+const qs = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
 
 /**
  * Safely set a setting by path (supports dot notation)
@@ -110,7 +105,9 @@ const handleDownloadSiteToggle = (target, key, settings, markDirty, saveSettings
 
   try {
     markDirty();
-  } catch {}
+  } catch {
+    /* empty */
+  }
 
   toggleDownloadSiteControls(checkbox);
   rebuildDownloadDropdown(settings);
@@ -223,7 +220,9 @@ const handleSimpleSettingToggle = (
   // Mark modal as dirty
   try {
     markDirty();
-  } catch {}
+  } catch {
+    /* empty */
+  }
 
   // Apply settings immediately
   try {
@@ -452,7 +451,9 @@ const handleDownloadSiteInput = (target, site, field, settings, markDirty, t) =>
 
   try {
     markDirty();
-  } catch {}
+  } catch {
+    /* empty */
+  }
 
   if (field === 'name') {
     updateDownloadSiteName(target, site, t);
@@ -633,7 +634,9 @@ const handleSidebarNavigation = (navItem, modal) => {
   // Persist active nav section so it can be restored on next modal open
   try {
     localStorage.setItem('ytp-plus-active-nav-section', section);
-  } catch {}
+  } catch {
+    /* empty */
+  }
 };
 
 /**
@@ -672,7 +675,9 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
           if (parsed && typeof parsed === 'object') musicSettings = { ...musicSettings, ...parsed };
         }
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     try {
       const stored = localStorage.getItem('youtube-plus-music-settings');
@@ -680,7 +685,9 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
         const parsed = JSON.parse(stored);
         if (parsed && typeof parsed === 'object') musicSettings = { ...musicSettings, ...parsed };
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     musicSettings[setting] = /** @type {HTMLInputElement} */ (target).checked;
 
@@ -709,7 +716,9 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
           }
         }
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     // Save to localStorage
     localStorage.setItem('youtube-plus-music-settings', JSON.stringify(musicSettings));
@@ -719,7 +728,9 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
       if (typeof GM_setValue !== 'undefined') {
         GM_setValue('youtube-plus-music-settings', JSON.stringify(musicSettings));
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     // Apply changes if YouTubeMusic module is available
     if (typeof window !== 'undefined' && window.YouTubeMusic) {
@@ -761,6 +772,44 @@ const isMusicSetting = setting => {
 
 // Export handlers
 if (typeof window !== 'undefined') {
+  /**
+   * Create a focus trap within a container element.
+   * Cycles Tab/Shift+Tab through focusable elements inside `container`.
+   * Returns a cleanup function to remove the listener.
+   * @param {HTMLElement} container - The modal/dialog element to trap focus in
+   * @returns {() => void} Cleanup function
+   */
+  const createFocusTrap = container => {
+    const FOCUSABLE =
+      'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+    const handler = e => {
+      if (e.key !== 'Tab') return;
+      const focusable = Array.from(container.querySelectorAll(FOCUSABLE)).filter(
+        el => el.offsetParent !== null
+      );
+      if (focusable.length === 0) return;
+
+      const first = /** @type {HTMLElement} */ (focusable[0]);
+      const last = /** @type {HTMLElement} */ (focusable[focusable.length - 1]);
+
+      if (e.shiftKey) {
+        if (document.activeElement === first) {
+          e.preventDefault();
+          last.focus();
+        }
+      } else {
+        if (document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    };
+
+    container.addEventListener('keydown', handler);
+    return () => container.removeEventListener('keydown', handler);
+  };
+
   window.YouTubePlusModalHandlers = {
     handleDownloadSiteToggle,
     handleSimpleSettingToggle,
@@ -771,5 +820,6 @@ if (typeof window !== 'undefined') {
     applySettingLive,
     handleMusicSettingToggle,
     isMusicSetting,
+    createFocusTrap,
   };
 }

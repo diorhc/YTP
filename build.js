@@ -465,6 +465,69 @@ function _normalizeWhitespace(src) {
     .replace(REGEX_PATTERNS.surroundingWhitespace, '');
 }
 
+/**
+ * Minify CSS inside JavaScript template literals.
+ * Only targets template literals that are overwhelmingly CSS (>60% CSS-like lines).
+ * Uses safe transforms that won't break JS code inside template expressions.
+ * @param {string} code
+ * @returns {string}
+ */
+function minifyCSSInTemplateLiterals(code) {
+  return code.replace(/`([^`]{200,})`/g, (match, inner) => {
+    // Must have newlines (multi-line) and braces
+    if (!inner.includes('\n') || !inner.includes('{')) return match;
+    // Skip if has many template expressions (likely mixed JS/HTML)
+    const exprCount = (inner.match(/\$\{/g) || []).length;
+    if (exprCount > 15) return match;
+
+    // Count lines that look like CSS vs total non-empty lines
+    const lines = inner.split('\n').filter(l => l.trim().length > 0);
+    if (lines.length < 5) return match;
+
+    let cssLines = 0;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      // CSS patterns: selectors, properties, closing braces, @rules
+      if (
+        /^[.#@:[\w*>~+\-,\s]+\{/.test(trimmed) || // selector {
+        /^[a-z-]+\s*:\s*.+;/.test(trimmed) || // property: value;
+        /^\}/.test(trimmed) || // } closing
+        /^@(media|keyframes|font-face|import|supports)/.test(trimmed) || // @rules
+        /^(from|to|\d+%)\s*\{/.test(trimmed) || // keyframe steps
+        trimmed === ''
+      ) {
+        cssLines++;
+      }
+    }
+
+    const cssRatio = cssLines / lines.length;
+    if (cssRatio < 0.6) return match; // not enough CSS content, skip
+
+    let minified = inner;
+    // Remove CSS comments
+    minified = minified.replace(/\/\*[\s\S]*?\*\//g, '');
+    // Collapse newlines and leading whitespace, but preserve spaces around ${} expressions
+    minified = minified.replace(/\n\s*/g, ' ');
+    // Collapse whitespace around CSS braces only
+    minified = minified.replace(/\s*\{\s*/g, '{');
+    minified = minified.replace(/\s*\}\s*/g, '}');
+    minified = minified.replace(/\s*;\s*/g, ';');
+    // Only collapse around colons if it's clearly a CSS property (word-colon pattern)
+    minified = minified.replace(/([a-z-])\s*:\s*/gi, '$1:');
+    // Collapse around commas in selectors
+    minified = minified.replace(/\s*,\s*/g, ',');
+    // Clean up multiple spaces
+    minified = minified.replace(/  +/g, ' ');
+    minified = minified.trim();
+
+    // Only use minified if meaningfully shorter
+    if (minified.length < inner.length * 0.8) {
+      return '`' + minified + '`';
+    }
+    return match;
+  });
+}
+
 function simpleOptimize(code, headerBlock) {
   if (!code) return '';
 
@@ -472,6 +535,18 @@ function simpleOptimize(code, headerBlock) {
 
   const headerText = headerBlock || extractMeta(code) || '';
   let body = headerText ? code.replace(headerText, '') : code;
+
+  // minify CSS inside template literals FIRST (before comment removal collapses newlines)
+  startPerfTimer('minifyCSS');
+  const beforeCSS = body.length;
+  body = minifyCSSInTemplateLiterals(body);
+  const cssSaved = beforeCSS - body.length;
+  const cssDuration = endPerfTimer('minifyCSS');
+  if (verbose) {
+    console.log(
+      `  ⏱️  CSS minification: ${cssDuration.toFixed(2)}ms (saved ${(cssSaved / 1024).toFixed(1)}KB)`
+    );
+  }
 
   // remove comments safely (optimized)
   startPerfTimer('removeComments');
@@ -930,7 +1005,7 @@ async function optimizeOrMinify(code, outPath) {
     const isOptimized = optimized && !minify;
 
     if (isOptimized) {
-      return performSimpleOptimization(code, outPath);
+      return await performSimpleOptimization(code, outPath);
     }
 
     return await performTerserMinification(code, outPath);
@@ -943,29 +1018,109 @@ async function optimizeOrMinify(code, outPath) {
 
 /**
  * Performs simple optimization without mangling
+ * Uses Terser with compression (no mangling) for better size reduction while keeping readability
  * @param {string} code - Code to optimize
  * @param {string} outPath - Output file path
- * @returns {boolean} True if successful
+ * @returns {Promise<boolean>} True if successful
  */
-function performSimpleOptimization(code, outPath) {
-  if (verbose) console.log('Running simple optimizer (no mangling/compression)');
+async function performSimpleOptimization(code, outPath) {
+  if (verbose) console.log('Running optimized build (Terser compress, no mangle)');
 
   // Write unoptimized code for debugging
   const debugPath = outPath.replace('.js', '.unoptimized.js');
   fs.writeFileSync(debugPath, code, 'utf8');
   console.log(`✓ Wrote unoptimized code to ${path.basename(debugPath)} for debugging`);
 
-  const finalCode = simpleOptimize(code, header);
-  fs.writeFileSync(outPath, finalCode, 'utf8');
+  try {
+    const terser = require('terser');
 
-  const originalSize = Buffer.byteLength(code, 'utf8');
-  const optimizedSize = Buffer.byteLength(finalCode, 'utf8');
-  const savings = ((1 - optimizedSize / originalSize) * 100).toFixed(2);
+    // Remove metadata block that will be re-added via preamble
+    const codeToOptimize = code
+      .replace(REGEX_PATTERNS.stripLineMeta, '')
+      .replace(REGEX_PATTERNS.stripBlockMeta, '');
 
-  console.log(
-    `✓ Optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(optimizedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
-  );
-  return true;
+    const result = await terser.minify(codeToOptimize, {
+      compress: {
+        dead_code: true,
+        drop_debugger: true,
+        drop_console: false,
+        keep_classnames: true,
+        keep_fnames: true,
+        keep_infinity: true,
+        passes: 1,
+        pure_getters: true,
+        unsafe: false,
+        arrows: true,
+        booleans: true,
+        collapse_vars: false,
+        comparisons: true,
+        conditionals: true,
+        evaluate: true,
+        hoist_funs: false,
+        if_return: true,
+        inline: 1,
+        join_vars: false,
+        loops: true,
+        properties: true,
+        reduce_vars: true,
+        sequences: false,
+        side_effects: true,
+        switches: true,
+        typeofs: true,
+        unused: true,
+        toplevel: false,
+        keep_fargs: false,
+        global_defs: { DEBUG: false },
+      },
+      mangle: false, // No mangling — keep readable
+      format: {
+        comments:
+          /==UserScript==|==\/UserScript==|@name|@version|@description|@author|@license|@match|@grant|@namespace|@downloadURL|@updateURL|@supportURL|@homepageURL|@icon|@run-at|@require|@resource/,
+        preamble: header.trim(),
+        semicolons: true,
+        braces: true,
+        beautify: true,
+        indent_level: 0,
+        wrap_iife: true,
+        ecma: 2020,
+      },
+      parse: { ecma: 2020 },
+      ecma: 2020,
+      module: false,
+      toplevel: false,
+      keep_classnames: true,
+      keep_fnames: true,
+    });
+
+    if (result.error || !result.code) {
+      console.warn('[Build Warning] Terser optimization failed, falling back to simple optimizer');
+      const finalCode = simpleOptimize(code, header);
+      fs.writeFileSync(outPath, finalCode, 'utf8');
+      return true;
+    }
+
+    fs.writeFileSync(outPath, result.code, 'utf8');
+
+    const originalSize = Buffer.byteLength(code, 'utf8');
+    const optimizedSize = Buffer.byteLength(result.code, 'utf8');
+    const savings = ((1 - optimizedSize / originalSize) * 100).toFixed(2);
+
+    console.log(
+      `✓ Optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(optimizedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
+    );
+    return true;
+  } catch (e) {
+    console.warn('[Build Warning] Terser not available, using simple optimizer:', e.message);
+    const finalCode = simpleOptimize(code, header);
+    fs.writeFileSync(outPath, finalCode, 'utf8');
+    const originalSize = Buffer.byteLength(code, 'utf8');
+    const optimizedSize = Buffer.byteLength(finalCode, 'utf8');
+    const savings = ((1 - optimizedSize / originalSize) * 100).toFixed(2);
+    console.log(
+      `✓ Optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(optimizedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
+    );
+    return true;
+  }
 } /**
  * Creates Terser compression options with advanced optimizations
  * @returns {object|false} Compression options or false
@@ -978,12 +1133,12 @@ function getTerserCompressOptions() {
   return {
     // Remove dead code and unreachable code
     dead_code: true,
-    drop_console: false, // Keep console logs for userscript debugging
+    drop_console: minify, // Drop console in minified production build
     drop_debugger: true, // Remove debugger statements
 
-    // Keep names for better debugging and compatibility
-    keep_classnames: true,
-    keep_fnames: true,
+    // Keep names in non-minified modes for debugging
+    keep_classnames: !minify,
+    keep_fnames: !minify,
     keep_infinity: true,
 
     // Advanced optimizations - increase passes for better compression
@@ -1022,9 +1177,9 @@ function getTerserCompressOptions() {
     unused: true, // Drop unreferenced functions and variables
 
     // Additional size optimizations
-    toplevel: false, // Don't compress top-level scope for userscript compatibility
+    toplevel: minify, // Allow top-level compression in full minify mode
     keep_fargs: false, // Remove unused function arguments
-    drop_console: false, // Keep console for debugging (can change to true for production)
+    drop_console: minify, // Drop console only for full minified output
 
     // Global definitions (helps with dead code elimination)
     global_defs: {
@@ -1090,9 +1245,9 @@ async function performTerserMinification(code, outPath) {
     // Enable mangling for maximum compression (but keep function/class names for debugging)
     mangle: !minifyPretty && {
       properties: false, // Don't mangle property names
-      toplevel: false, // Don't mangle top-level names
-      keep_classnames: true,
-      keep_fnames: true,
+      toplevel: minify, // Mangle top-level names only in minify mode
+      keep_classnames: !minify,
+      keep_fnames: !minify,
       reserved: ['YouTubeUtils', 'YouTubePlusI18n', 'YouTubeEnhancer', 'window', 'document'], // Reserved names
     },
     format: getTerserFormatOptions(),
@@ -1106,11 +1261,11 @@ async function performTerserMinification(code, outPath) {
     // Additional optimization options
     ecma: 2020,
     module: false,
-    toplevel: false, // Don't compress top-level scope (needed for userscripts)
+    toplevel: minify, // Enable top-level compression in minify mode
     nameCache: null,
     ie8: false,
-    keep_classnames: true,
-    keep_fnames: true,
+    keep_classnames: !minify,
+    keep_fnames: !minify,
     safari10: false,
   };
 

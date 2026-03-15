@@ -1,14 +1,10 @@
 // YouTube End Screen Remover
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
-  // DOM helpers
-  const _getDOMCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
-  const $ = (sel, ctx) =>
-    _getDOMCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
-  const $$ = (sel, ctx) =>
-    _getDOMCache()?.querySelectorAll(sel, ctx) ||
-    Array.from((ctx || document).querySelectorAll(sel));
+  // Shared DOM helpers from YouTubeUtils
+  const { $, $$ } = window.YouTubeUtils || {};
   const onDomReady = (() => {
     let ready = document.readyState !== 'loading';
     const queue = [];
@@ -18,7 +14,9 @@
         const cb = queue.shift();
         try {
           cb();
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
     };
     if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
@@ -50,25 +48,16 @@
     settingsNavListenerKey: null,
   };
 
-  // High-performance utilities: use shared debounce when available
-  const debounce = (fn, ms) => {
-    try {
-      if (window.YouTubeUtils?.debounce) {
-        return window.YouTubeUtils.debounce(fn, ms);
-      }
-      let id;
-      return (...args) => {
-        clearTimeout(id);
-        id = setTimeout(() => fn(...args), ms);
+  // Shared debounce from YouTubeUtils
+  const debounce =
+    window.YouTubeUtils?.debounce ||
+    ((fn, ms) => {
+      let t;
+      return (...a) => {
+        clearTimeout(t);
+        t = setTimeout(() => fn(...a), ms);
       };
-    } catch {
-      let id;
-      return (...args) => {
-        clearTimeout(id);
-        id = setTimeout(() => fn(...args), ms);
-      };
-    }
-  };
+    });
 
   const fastRemove = elements => {
     const len = Math.min(elements.length, CONFIG.batchSize);
@@ -79,7 +68,9 @@
         try {
           el.remove();
           state.removeCount++;
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
     }
   };
@@ -98,7 +89,9 @@
     save: () => {
       try {
         localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
-      } catch {}
+      } catch {
+        /* empty */
+      }
       settings.apply();
     },
 
@@ -186,12 +179,27 @@
 
     YouTubeUtils.cleanupManager.registerObserver(state.observer);
 
-    const target = $('#movie_player') || document.body;
-    state.observer.observe(target, {
-      childList: true,
-      subtree: true,
-      attributeFilter: ['class', 'style'],
-    });
+    // Prefer #movie_player for a narrower observation scope
+    const observeTarget = (attempt = 0) => {
+      const target = $('#movie_player');
+      if (target) {
+        state.observer.observe(target, {
+          childList: true,
+          subtree: true,
+          attributeFilter: ['class', 'style'],
+        });
+      } else if (attempt < 3) {
+        setTimeout(() => observeTarget(attempt + 1), 500);
+      } else {
+        // Final fallback: observe body
+        state.observer.observe(document.body, {
+          childList: true,
+          subtree: true,
+          attributeFilter: ['class', 'style'],
+        });
+      }
+    };
+    observeTarget();
   };
 
   const cleanup = () => {
@@ -200,7 +208,9 @@
     if (state.styleEl) {
       try {
         YouTubeUtils.StyleManager.remove(state.styleEl);
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }
     state.styleEl = null;
     state.isActive = false;
@@ -240,14 +250,18 @@
           { passive: true }
         );
       } else {
-        document.addEventListener(
-          'change',
-          ev => {
-            const target = ev.target?.closest?.('.ytp-plus-settings-checkbox');
-            if (target) handler(ev, target);
-          },
-          { passive: true, capture: true }
-        );
+        const changeHandler = ev => {
+          const target = ev.target?.closest?.('.ytp-plus-settings-checkbox');
+          if (target) handler(ev, target);
+        };
+        if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+          YouTubeUtils.cleanupManager.registerListener(document, 'change', changeHandler, {
+            passive: true,
+            capture: true,
+          });
+        } else {
+          document.addEventListener('change', changeHandler, { passive: true, capture: true });
+        }
       }
     };
   })();
@@ -261,13 +275,13 @@
 
     const container = document.createElement('div');
     container.className = 'ytp-plus-settings-item endscreen-settings';
-    container.innerHTML = `
+    container.innerHTML = _createHTML(`
         <div>
           <label class="ytp-plus-settings-item-label">${YouTubeUtils.t('endscreenHideLabel')}</label>
           <div class="ytp-plus-settings-item-description">${YouTubeUtils.t('endscreenHideDesc')}${state.removeCount ? ` (${state.removeCount} ${YouTubeUtils.t('removedSuffix').replace('{n}', '')?.trim() || 'removed'})` : ''}</div>
         </div>
         <input type="checkbox" class="ytp-plus-settings-checkbox" ${CONFIG.enabled ? 'checked' : ''}>
-      `;
+      `);
 
     if (enhancedSlot) {
       enhancedSlot.replaceWith(container);
@@ -308,7 +322,11 @@
 
   // Settings modal integration — use event instead of MutationObserver
   const settingsModalHandler = () => setTimeout(addSettingsUI, 25);
-  document.addEventListener('youtube-plus-settings-modal-opened', settingsModalHandler);
+  YouTubeUtils.cleanupManager.registerListener(
+    document,
+    'youtube-plus-settings-modal-opened',
+    settingsModalHandler
+  );
 
   if (!state.settingsNavListenerKey) {
     state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(

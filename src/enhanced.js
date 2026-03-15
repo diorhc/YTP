@@ -1,32 +1,5 @@
-// Shared DOM helpers - defined at file scope for use across all IIFEs and functions
-const _getDOMCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
-
-/**
- * Query single element with optional caching
- * @param {string} sel - CSS selector
- * @param {Element|Document} [ctx] - Context element
- * @returns {Element|null}
- */
-const $ = (sel, ctx) =>
-  _getDOMCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
-
-/**
- * Query all elements with optional caching
- * @param {string} sel - CSS selector
- * @param {Element|Document} [ctx] - Context element
- * @returns {Element[]}
- */
-const $$ = (sel, ctx) =>
-  _getDOMCache()?.querySelectorAll(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
-
-/**
- * Get element by ID with optional caching
- * @param {string} id - Element ID
- * @returns {Element|null}
- */
-const byId = id => _getDOMCache()?.getElementById(id) || document.getElementById(id);
-
-// $, $$, byId are defined above and used throughout
+// Shared DOM helpers from YouTubeUtils — defined at file scope for use across all IIFEs
+const { $, $$, byId } = window.YouTubeUtils || {};
 
 const onDomReady = (() => {
   let ready = document.readyState !== 'loading';
@@ -60,6 +33,7 @@ const onDomReady = (() => {
 // Enhanced Tabviews
 (function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
   // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const _getLanguage = () => {
     if (window.YouTubePlusI18n?.getLanguage) return window.YouTubePlusI18n.getLanguage();
@@ -68,18 +42,8 @@ const onDomReady = (() => {
     return htmlLang.startsWith('ru') ? 'ru' : 'en';
   };
 
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    // Fallback for initialization phase
-    if (!key) return '';
-    let result = String(key);
-    for (const [k, v] of Object.entries(params || {})) {
-      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
-    }
-    return result;
-  };
-  // No local alias needed here; modules may use global YouTubeUtils.getLanguage when required
+  // Shared translation helper from YouTubeUtils
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   /**
    * Configuration object for scroll-to-top button
@@ -88,42 +52,56 @@ const onDomReady = (() => {
    * @property {string} storageKey - LocalStorage key for settings
    */
   const config = {
-    enabled: (() => {
-      try {
-        const settings = localStorage.getItem('youtube_plus_settings');
-        if (settings) {
-          const parsed = JSON.parse(settings);
-          return parsed.enableScrollToTopButton !== false;
-        }
-      } catch (e) {
-        console.warn('[YouTube+] Config read error:', e);
-      }
-      return true;
-    })(),
+    enabled: window.YouTubeUtils?.loadFeatureEnabled?.('enableScrollToTopButton') ?? true,
     storageKey: 'youtube_top_button_settings',
   };
 
   let universalScrollHandler = null;
   let universalScrollContainer = null;
+  const universalExtraScrollTargets = new Set();
+  let universalAttachTimeoutIds = [];
+
+  // --- Shared Music/Studio container resolver ---
+  // Caches results for a short TTL to avoid repeated DOM queries in hot paths.
+  let _musicContainersCache = null;
+  let _musicContainersCacheTime = 0;
+  const MUSIC_CACHE_TTL = 5000;
+
+  /**
+   * Resolves the primary YouTube Music scroll containers.
+   * Result is cached for MUSIC_CACHE_TTL ms.
+   * @returns {Element[]}
+   */
+  const resolveMusicContainers = () => {
+    const now = Date.now();
+    if (_musicContainersCache && now - _musicContainersCacheTime < MUSIC_CACHE_TTL) {
+      return _musicContainersCache;
+    }
+    _musicContainersCache = [
+      document.querySelector('ytmusic-app-layout #layout'),
+      document.querySelector('ytmusic-app-layout'),
+      document.querySelector('ytmusic-browse-response #contents'),
+      document.querySelector('ytmusic-section-list-renderer'),
+    ].filter(Boolean);
+    _musicContainersCacheTime = now;
+    return _musicContainersCache;
+  };
+
+  /** Invalidate music containers cache (call on SPA navigation) */
+  const invalidateMusicContainersCache = () => {
+    _musicContainersCache = null;
+    _musicContainersCacheTime = 0;
+  };
 
   const getUniversalScrollContainer = () => {
     try {
       const host = window.location.hostname;
       const candidates = [];
       if (host === 'music.youtube.com') {
-        // YouTube Music uses custom layout elements – try multiple containers
-        // The main scrollable area on YouTube Music is typically #layout or the app-layout itself
-        const appLayout = document.querySelector('ytmusic-app-layout');
-        if (appLayout) {
-          // Check the direct scroll container inside app-layout
-          const layoutContent = appLayout.querySelector('#layout');
-          if (layoutContent) candidates.push(layoutContent);
-          // Also try the app-layout itself (sometimes it's the scroll host)
-          candidates.push(appLayout);
-        }
+        // YouTube Music: use shared resolver + additional candidates
+        const musicContainers = resolveMusicContainers();
+        candidates.push(...musicContainers);
         candidates.push(
-          document.querySelector('ytmusic-browse-response #contents'),
-          document.querySelector('ytmusic-section-list-renderer'),
           document.querySelector('ytmusic-tabbed-page #content'),
           document.querySelector('ytmusic-app-layout #content'),
           document.querySelector('#content'),
@@ -151,7 +129,9 @@ const onDomReady = (() => {
       if (host === 'music.youtube.com' || host === 'studio.youtube.com') {
         return document.scrollingElement || document.documentElement;
       }
-    } catch {}
+    } catch (e) {
+      console.warn('[YouTube+] Error detecting scroll container:', e);
+    }
     return document.scrollingElement || document.documentElement;
   };
 
@@ -161,20 +141,49 @@ const onDomReady = (() => {
     try {
       const btn = byId('universal-top-button');
       if (btn) btn.remove();
-    } catch {}
+    } catch {
+      /* empty */
+    }
     try {
       if (universalScrollHandler && universalScrollContainer) {
         universalScrollContainer.removeEventListener('scroll', universalScrollHandler);
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
     try {
       if (universalWindowScrollHandler) {
         window.removeEventListener('scroll', universalWindowScrollHandler);
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
+    try {
+      if (universalWindowScrollHandler && universalExtraScrollTargets.size) {
+        for (const target of universalExtraScrollTargets) {
+          try {
+            target.removeEventListener('scroll', universalWindowScrollHandler);
+            if (target._ytpScrollAttached) target._ytpScrollAttached = false;
+          } catch {
+            /* empty */
+          }
+        }
+      }
+    } catch {
+      /* empty */
+    }
+    try {
+      if (universalAttachTimeoutIds.length) {
+        universalAttachTimeoutIds.forEach(id => clearTimeout(id));
+      }
+    } catch {
+      /* empty */
+    }
     universalScrollHandler = null;
     universalScrollContainer = null;
     universalWindowScrollHandler = null;
+    universalExtraScrollTargets.clear();
+    universalAttachTimeoutIds = [];
   };
 
   let musicSideScrollHandler = null;
@@ -198,7 +207,9 @@ const onDomReady = (() => {
       try {
         const el = document.querySelector(sel);
         if (el && el.scrollHeight > el.clientHeight + 30) return el;
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }
 
     // Try within specific roots
@@ -222,7 +233,9 @@ const onDomReady = (() => {
         try {
           const el = root.querySelector(sel);
           if (el && el.scrollHeight > el.clientHeight + 30) return el;
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
     }
     return null;
@@ -232,12 +245,16 @@ const onDomReady = (() => {
     try {
       const btn = byId('music-side-top-button');
       if (btn) btn.remove();
-    } catch {}
+    } catch {
+      /* empty */
+    }
     try {
       if (musicSideScrollHandler && musicSideScrollContainer) {
         musicSideScrollContainer.removeEventListener('scroll', musicSideScrollHandler);
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
     musicSideScrollHandler = null;
     musicSideScrollContainer = null;
   };
@@ -246,11 +263,15 @@ const onDomReady = (() => {
     try {
       const rightButton = byId('right-tabs-top-button');
       if (rightButton) rightButton.remove();
-    } catch {}
+    } catch {
+      /* empty */
+    }
     try {
       const playlistButton = byId('playlist-panel-top-button');
       if (playlistButton) playlistButton.remove();
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     removeMusicSideButton();
 
@@ -263,7 +284,9 @@ const onDomReady = (() => {
           tab._topButtonScrollHandler = null;
         }
       });
-    } catch {}
+    } catch (e) {
+      console.warn('[YouTube+] Error cleaning up tab scroll handlers:', e);
+    }
 
     try {
       // #right-tabs itself may be the scroll host on single-column layout
@@ -278,7 +301,9 @@ const onDomReady = (() => {
           rightTabsEl._scrollCleanup = null;
         }
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
 
     try {
       const playlistScroll = $('ytd-playlist-panel-renderer #items');
@@ -286,7 +311,9 @@ const onDomReady = (() => {
         playlistScroll.removeEventListener('scroll', playlistScroll._topButtonScrollHandler);
         playlistScroll._topButtonScrollHandler = null;
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   let tabChangesObserver = null;
@@ -332,7 +359,7 @@ const onDomReady = (() => {
           } else {
             scrollTarget.scrollTop = 0;
           }
-          button.setAttribute('aria-label', t('scrolledToTop') || 'Scrolled to top');
+          button.setAttribute('aria-label', 'Scrolled to top');
           setTimeout(() => {
             button.setAttribute('aria-label', t('scrollToTop'));
           }, 1000);
@@ -373,14 +400,7 @@ const onDomReady = (() => {
         // For YouTube Music: also scroll window and common inner containers
         if (isMusic) {
           window.scrollTo({ top: 0, behavior: 'smooth' });
-          // Scroll all potentially scrollable music containers
-          const musicContainers = [
-            document.querySelector('ytmusic-app-layout #layout'),
-            document.querySelector('ytmusic-app-layout'),
-            document.querySelector('ytmusic-browse-response #contents'),
-            document.querySelector('ytmusic-section-list-renderer'),
-          ];
-          for (const c of musicContainers) {
+          for (const c of resolveMusicContainers()) {
             if (c && c.scrollTop > 0) {
               scrollToTop(c);
             }
@@ -437,26 +457,26 @@ const onDomReady = (() => {
           }
         });
       } else {
-        document.addEventListener(
-          'click',
-          ev => {
-            const target = ev.target?.closest?.('.top-button');
-            if (isTopButton(target)) handleTopButtonActivate(target);
-          },
-          true
-        );
-        document.addEventListener(
-          'keydown',
-          ev => {
-            const target = ev.target?.closest?.('.top-button');
-            if (!isTopButton(target)) return;
-            if (ev.key === 'Enter' || ev.key === ' ') {
-              ev.preventDefault();
-              handleTopButtonActivate(target);
-            }
-          },
-          true
-        );
+        const _cm = window.YouTubeUtils?.cleanupManager;
+        const _clickHandler = ev => {
+          const target = ev.target?.closest?.('.top-button');
+          if (isTopButton(target)) handleTopButtonActivate(target);
+        };
+        const _keyHandler = ev => {
+          const target = ev.target?.closest?.('.top-button');
+          if (!isTopButton(target)) return;
+          if (ev.key === 'Enter' || ev.key === ' ') {
+            ev.preventDefault();
+            handleTopButtonActivate(target);
+          }
+        };
+        if (_cm?.registerListener) {
+          _cm.registerListener(document, 'click', _clickHandler, true);
+          _cm.registerListener(document, 'keydown', _keyHandler, true);
+        } else {
+          document.addEventListener('click', _clickHandler, true);
+          document.addEventListener('keydown', _keyHandler, true);
+        }
       }
     };
   })();
@@ -570,7 +590,9 @@ const onDomReady = (() => {
                 delete prevRtEl._scrollCleanup;
               }
             }
-          } catch {}
+          } catch (e) {
+            console.warn('[YouTube+] Error cleaning up right-tabs scroll handler:', e);
+          }
 
           // Always use direct DOM query — class-based ':not(.tab-content-hidden)' selectors
           // can return a stale cached element (the previously-active tab, which is still in
@@ -643,8 +665,9 @@ const onDomReady = (() => {
       button.className = 'top-button';
       button.title = t('scrollToTop');
       button.setAttribute('aria-label', t('scrollToTop'));
-      button.innerHTML =
-        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+      button.innerHTML = _createHTML(
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
+      );
 
       rightTabs.style.position = 'relative';
       rightTabs.appendChild(button);
@@ -678,8 +701,9 @@ const onDomReady = (() => {
       button.className = 'top-button';
       button.title = t('scrollToTop');
       button.setAttribute('aria-label', t('scrollToTop'));
-      button.innerHTML =
-        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+      button.innerHTML = _createHTML(
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
+      );
 
       // Ensure the button is above YouTube Music/Studio overlays
       const host = window.location.hostname;
@@ -715,21 +739,12 @@ const onDomReady = (() => {
       // For YouTube Music/Studio: listen on multiple scroll targets
       // since the actual scrollable container may differ per page
       if (host === 'music.youtube.com' || host === 'studio.youtube.com') {
-        // Cache music containers to avoid repeated DOM queries on every scroll event
-        let _musicContainersCache = null;
-        let _musicCacheTime = 0;
         const getMusicContainers = () => {
-          const now = Date.now();
-          if (_musicContainersCache && now - _musicCacheTime < 5000) return _musicContainersCache;
-          _musicContainersCache = [
-            document.querySelector('ytmusic-app-layout #layout'),
-            document.querySelector('ytmusic-app-layout'),
-            document.querySelector('ytmusic-browse-response #contents'),
-            document.querySelector('ytmusic-section-list-renderer'),
-            scrollContainer !== window ? scrollContainer : null,
-          ].filter(Boolean);
-          _musicCacheTime = now;
-          return _musicContainersCache;
+          const base = resolveMusicContainers();
+          if (scrollContainer !== window && !base.includes(scrollContainer)) {
+            return [...base, scrollContainer];
+          }
+          return base;
         };
 
         const musicScrollCheck = debounceFunc(() => {
@@ -759,13 +774,14 @@ const onDomReady = (() => {
             if (target && !target._ytpScrollAttached) {
               target._ytpScrollAttached = true;
               target.addEventListener('scroll', musicScrollCheck, { passive: true });
+              universalExtraScrollTargets.add(target);
             }
           }
         };
         attachMusicScrollListeners();
         // Re-attach after navigation
-        setTimeout(attachMusicScrollListeners, 1000);
-        setTimeout(attachMusicScrollListeners, 3000);
+        universalAttachTimeoutIds.push(setTimeout(attachMusicScrollListeners, 1000));
+        universalAttachTimeoutIds.push(setTimeout(attachMusicScrollListeners, 3000));
       }
     } catch (error) {
       console.error('[YouTube+][Enhanced] Error creating universal button:', error);
@@ -788,8 +804,9 @@ const onDomReady = (() => {
       button.className = 'top-button';
       button.title = t('scrollToTop');
       button.setAttribute('aria-label', t('scrollToTop'));
-      button.innerHTML =
-        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+      button.innerHTML = _createHTML(
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
+      );
 
       const scrollContainer = $('#items', playlistPanel);
       if (!scrollContainer) return;
@@ -861,7 +878,9 @@ const onDomReady = (() => {
           // On error, prefer hiding to avoid stray UI
           try {
             button.style.display = 'none';
-          } catch {}
+          } catch {
+            /* empty */
+          }
         }
       };
 
@@ -884,7 +903,9 @@ const onDomReady = (() => {
           attributes: true,
           attributeFilter: ['class', 'style', 'hidden'],
         });
-      } catch {}
+      } catch {
+        /* empty */
+      }
 
       // Initial visibility pass
       updateVisibility();
@@ -892,16 +913,20 @@ const onDomReady = (() => {
       // Register cleanup with YouTubeUtils.cleanupManager when available
       try {
         if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-          YouTubeUtils.cleanupManager.register(() => {
-            try {
-              if (ro) ro.disconnect();
-            } catch {}
-            try {
-              mo.disconnect();
-            } catch {}
-          });
+          YouTubeUtils.cleanupManager.registerObserver(mo, playlistPanel);
+          if (ro) {
+            YouTubeUtils.cleanupManager.register(() => {
+              try {
+                ro.disconnect();
+              } catch {
+                /* empty */
+              }
+            });
+          }
         }
-      } catch {}
+      } catch {
+        /* empty */
+      }
     } catch (error) {
       console.error('[YouTube+][Enhanced] Error creating playlist panel button:', error);
     }
@@ -920,13 +945,15 @@ const onDomReady = (() => {
 
       const panel = getMusicSidePanelContainer();
       if (!panel) {
-        // Retry after a delay since YouTube Music loads content dynamically
-        setTimeout(() => {
-          if (!byId('music-side-top-button') && config.enabled) {
-            const retryPanel = getMusicSidePanelContainer();
-            if (retryPanel) createMusicSidePanelButton();
-          }
-        }, 2000);
+        // Retry with scheduler since YouTube Music loads content dynamically
+        window.YouTubeUtils?.createRetryScheduler?.({
+          check: () => {
+            if (byId('music-side-top-button') || !config.enabled) return true;
+            return !!getMusicSidePanelContainer() && (createMusicSidePanelButton(), true);
+          },
+          maxAttempts: 8,
+          interval: 500,
+        });
         return;
       }
 
@@ -935,8 +962,9 @@ const onDomReady = (() => {
       button.className = 'top-button';
       button.title = t('scrollToTop');
       button.setAttribute('aria-label', t('scrollToTop'));
-      button.innerHTML =
-        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>';
+      button.innerHTML = _createHTML(
+        '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
+      );
 
       panel.style.position = panel.style.position || 'relative';
       button.style.position = 'absolute';
@@ -984,6 +1012,7 @@ const onDomReady = (() => {
         compactDisplay: 'short',
       }).format(Number(number) || 0);
     } catch {
+      // Intentional: Intl.NumberFormat may not support locale; fall back to plain string
       return String(number || 0);
     }
   };
@@ -1284,7 +1313,10 @@ const onDomReady = (() => {
     });
     try {
       dislikeObserver.observe(dislikeButton, { childList: true, subtree: true, attributes: true });
-    } catch {}
+      window.YouTubeUtils?.cleanupManager?.registerObserver?.(dislikeObserver, dislikeButton);
+    } catch {
+      /* empty */
+    }
   };
 
   const initReturnDislike = async () => {
@@ -1330,20 +1362,33 @@ const onDomReady = (() => {
       const targetEl = isShorts ? $('#shorts-container') : $('ytd-watch-flexy #below');
       if (targetEl) {
         dislikePollTimer.observe(targetEl, { childList: true, subtree: true });
+        window.YouTubeUtils?.cleanupManager?.registerObserver?.(dislikePollTimer, targetEl);
       } else {
-        // Fallback: use a short interval instead of expensive body observer
-        const pollId = setInterval(async () => {
+        // Fallback: observe document.body briefly for the container to appear,
+        // then switch to the targeted observer once found.
+        const fallbackObs = new MutationObserver(async () => {
           if (Date.now() - startTime > maxTime) {
-            clearInterval(pollId);
+            fallbackObs.disconnect();
             return;
           }
-          if (await checkButton()) clearInterval(pollId);
-        }, 500);
-        // Register so the global cleanup manager can stop it during navigation teardown
-        window.YouTubeUtils?.cleanupManager?.registerInterval?.(pollId);
+          const el = isShorts ? $('#shorts-container') : $('ytd-watch-flexy #below');
+          if (el) {
+            fallbackObs.disconnect();
+            if (await checkButton()) return;
+            // Container appeared but button not ready — observe it now
+            dislikePollTimer.observe(el, { childList: true, subtree: true });
+            window.YouTubeUtils?.cleanupManager?.registerObserver?.(dislikePollTimer, el);
+          }
+        });
+        if (document.body) {
+          // Prefer #page-manager over document.body for performance (narrower subtree)
+          const narrowTarget = document.querySelector('#page-manager') || document.body;
+          fallbackObs.observe(narrowTarget, { childList: true, subtree: true });
+          window.YouTubeUtils?.cleanupManager?.registerObserver?.(fallbackObs);
+        }
       }
-    } catch {
-      // ignore
+    } catch (e) {
+      console.warn('[YouTube+] Failed to initialize Return YouTube Dislike:', e);
     }
   };
 
@@ -1365,7 +1410,9 @@ const onDomReady = (() => {
       $$('#ytp-plus-dislike-text').forEach(el => {
         try {
           if (el.parentNode) el.parentNode.removeChild(el);
-        } catch {}
+        } catch {
+          /* empty */
+        }
       });
       // Clear cache to free memory
       dislikeCache.clear();
@@ -1398,6 +1445,13 @@ const onDomReady = (() => {
         }
       });
 
+      // Track observer for diagnostics
+      try {
+        window.YouTubeUtils?.ObserverRegistry?.track?.();
+      } catch {
+        /* empty */
+      }
+
       const rightTabs = $('#right-tabs');
       if (rightTabs) {
         observer.observe(rightTabs, {
@@ -1405,7 +1459,19 @@ const onDomReady = (() => {
           subtree: true,
           attributeFilter: ['class'],
         });
+        // Register for cleanup
+        try {
+          window.YouTubeUtils?.cleanupManager?.registerObserver?.(observer, rightTabs);
+        } catch {
+          /* empty */
+        }
         return observer;
+      }
+      // No target found — untrack
+      try {
+        window.YouTubeUtils?.ObserverRegistry?.untrack?.();
+      } catch {
+        /* empty */
       }
       return null;
     } catch (error) {
@@ -1503,19 +1569,53 @@ const onDomReady = (() => {
 
   const stopWatchEnhancements = () => {
     watchInitToken++;
-    tabCheckTimeoutId = clearTimeoutSafe(tabCheckTimeoutId);
-    playlistPanelCheckTimeoutId = clearTimeoutSafe(playlistPanelCheckTimeoutId);
+    // Stop retry schedulers (may be scheduler objects with .stop() or timer IDs)
+    try {
+      if (tabCheckTimeoutId && typeof tabCheckTimeoutId === 'object' && tabCheckTimeoutId.stop) {
+        tabCheckTimeoutId.stop();
+      } else {
+        tabCheckTimeoutId = clearTimeoutSafe(tabCheckTimeoutId);
+      }
+    } catch {
+      /* empty */
+    }
+    tabCheckTimeoutId = null;
+    try {
+      if (
+        playlistPanelCheckTimeoutId &&
+        typeof playlistPanelCheckTimeoutId === 'object' &&
+        playlistPanelCheckTimeoutId.stop
+      ) {
+        playlistPanelCheckTimeoutId.stop();
+      } else {
+        playlistPanelCheckTimeoutId = clearTimeoutSafe(playlistPanelCheckTimeoutId);
+      }
+    } catch {
+      /* empty */
+    }
+    playlistPanelCheckTimeoutId = null;
 
     try {
       tabChangesObserver?.disconnect?.();
-    } catch {}
+      if (tabChangesObserver) {
+        try {
+          window.YouTubeUtils?.ObserverRegistry?.untrack?.();
+        } catch {
+          /* empty */
+        }
+      }
+    } catch {
+      /* empty */
+    }
     tabChangesObserver = null;
 
     cleanupEvents();
 
     try {
       cleanupReturnDislike();
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   const startWatchEnhancements = () => {
@@ -1525,45 +1625,48 @@ const onDomReady = (() => {
     const token = ++watchInitToken;
     setupEvents();
 
-    const maxTabAttempts = 40;
-    const checkForTabs = (attempt = 0) => {
-      if (token !== watchInitToken) return;
-      if (!isWatchPage()) return;
-
-      if ($('#right-tabs')) {
-        createButton();
-        try {
-          tabChangesObserver?.disconnect?.();
-        } catch {}
-        tabChangesObserver = observeTabChanges();
-        return;
-      }
-
-      if (attempt >= maxTabAttempts) return;
-      tabCheckTimeoutId = setTimeout(() => checkForTabs(attempt + 1), 250);
-    };
-
-    const maxPlaylistPanelAttempts = 30;
-    const checkForPlaylistPanel = (attempt = 0) => {
-      if (token !== watchInitToken) return;
-      if (!isWatchPage()) return;
-
-      try {
-        const playlistPanel = $('ytd-playlist-panel-renderer');
-        if (playlistPanel && !byId('playlist-panel-top-button')) {
-          createPlaylistPanelButton();
-          return;
+    // Use shared RetryScheduler for tab detection
+    const tabScheduler = window.YouTubeUtils?.createRetryScheduler?.({
+      check: () => {
+        if (token !== watchInitToken || !isWatchPage()) return true; // stop
+        if ($('#right-tabs')) {
+          createButton();
+          try {
+            tabChangesObserver?.disconnect?.();
+          } catch {
+            /* empty */
+          }
+          tabChangesObserver = observeTabChanges();
+          return true; // done
         }
-      } catch (error) {
-        console.error('[YouTube+][Enhanced] Error checking for playlist panel:', error);
-      }
+        return false;
+      },
+      maxAttempts: 40,
+      interval: 250,
+    });
 
-      if (attempt >= maxPlaylistPanelAttempts) return;
-      playlistPanelCheckTimeoutId = setTimeout(() => checkForPlaylistPanel(attempt + 1), 300);
-    };
+    // Use shared RetryScheduler for playlist panel detection
+    const playlistScheduler = window.YouTubeUtils?.createRetryScheduler?.({
+      check: () => {
+        if (token !== watchInitToken || !isWatchPage()) return true;
+        try {
+          const playlistPanel = $('ytd-playlist-panel-renderer');
+          if (playlistPanel && !byId('playlist-panel-top-button')) {
+            createPlaylistPanelButton();
+            return true;
+          }
+        } catch (error) {
+          console.error('[YouTube+][Enhanced] Error checking for playlist panel:', error);
+        }
+        return false;
+      },
+      maxAttempts: 30,
+      interval: 300,
+    });
 
-    checkForTabs();
-    checkForPlaylistPanel();
+    // Store schedulers for cleanup
+    tabCheckTimeoutId = tabScheduler;
+    playlistPanelCheckTimeoutId = playlistScheduler;
   };
 
   /**
@@ -1589,6 +1692,7 @@ const onDomReady = (() => {
 
       const onNavigate = () => {
         stopWatchEnhancements();
+        invalidateMusicContainersCache();
         checkPageType();
 
         if (shouldInitReturnDislike()) {
@@ -1635,6 +1739,14 @@ const onDomReady = (() => {
             childList: true,
             subtree: true,
           });
+          try {
+            window.YouTubeUtils?.cleanupManager?.registerObserver?.(
+              sidePanelObserver,
+              observeTarget
+            );
+          } catch {
+            /* cleanup registration best-effort */
+          }
         }
       }
     } catch (error) {
@@ -1668,7 +1780,9 @@ const onDomReady = (() => {
         createMusicSidePanelButton();
       }
       startWatchEnhancements();
-    } catch {}
+    } catch {
+      /* empty */
+    }
   });
 
   onDomReady(scheduleInit);
@@ -1681,7 +1795,7 @@ const onDomReady = (() => {
     if (!host) return;
     if (!/(^|\.)youtube\.com$/.test(host) && !/\.youtube\.google/.test(host)) return;
 
-    const SETTINGS_KEY = 'youtube_plus_settings';
+    const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
     const STYLE_ELEMENT_ID = 'ytp-zen-features-style';
     const NON_CRITICAL_STYLE_ID = 'ytp-zen-features-style-noncritical';
     const STYLE_MANAGER_KEY = 'zen-features-style';
@@ -1915,13 +2029,17 @@ const onDomReady = (() => {
         if (window.YouTubeUtils?.StyleManager?.remove) {
           window.YouTubeUtils.StyleManager.remove(STYLE_MANAGER_KEY);
         }
-      } catch {}
+      } catch {
+        /* empty */
+      }
 
       if (nonCriticalTimer) {
         if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
           try {
             window.cancelIdleCallback(nonCriticalTimer);
-          } catch {}
+          } catch {
+            /* empty */
+          }
         } else {
           clearTimeout(nonCriticalTimer);
         }
@@ -1932,14 +2050,18 @@ const onDomReady = (() => {
       if (el) {
         try {
           el.remove();
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
 
       const ncEl = document.getElementById(NON_CRITICAL_STYLE_ID);
       if (ncEl) {
         try {
           ncEl.remove();
-        } catch {}
+        } catch {
+          /* empty */
+        }
       }
     };
 
@@ -1983,7 +2105,9 @@ const onDomReady = (() => {
             if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
               try {
                 window.cancelIdleCallback(nonCriticalTimer);
-              } catch {}
+              } catch {
+                /* empty */
+              }
             } else {
               clearTimeout(nonCriticalTimer);
             }
@@ -1997,7 +2121,9 @@ const onDomReady = (() => {
           }
           return;
         }
-      } catch {}
+      } catch {
+        /* empty */
+      }
 
       let el = document.getElementById(STYLE_ELEMENT_ID);
       if (!el) {
@@ -2011,7 +2137,9 @@ const onDomReady = (() => {
         if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
           try {
             window.cancelIdleCallback(nonCriticalTimer);
-          } catch {}
+          } catch {
+            /* empty */
+          }
         } else {
           clearTimeout(nonCriticalTimer);
         }
@@ -2053,7 +2181,7 @@ const onDomReady = (() => {
   if (!host) return;
   if (!/(^|\.)youtube\.com$/.test(host) && !/\.youtube\.google/.test(host)) return;
 
-  const SETTINGS_KEY = 'youtube_plus_settings';
+  const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
   const PRELOADED_ATTR = 'data-ytp-zen-comments-preloaded';
 
   const isWatchPage = () => location.pathname === '/watch';
@@ -2085,7 +2213,9 @@ const onDomReady = (() => {
     } catch {
       try {
         element.click();
-      } catch {}
+      } catch {
+        /* empty */
+      }
     }
   };
 
@@ -2143,7 +2273,9 @@ const onDomReady = (() => {
           if (cnt.isHiddenByUser === true) cnt.isHiddenByUser = false;
           expanded = cnt.collapsed === false;
         }
-      } catch {}
+      } catch {
+        /* empty */
+      }
 
       // Method 2: click the "Show chat" button as fallback
       if (!expanded) {
@@ -2244,7 +2376,9 @@ const onDomReady = (() => {
         window.YouTubeUtils.cleanupManager.registerObserver(flexyObserver);
         window.YouTubeUtils.cleanupManager.registerObserver(chatObserver);
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   // Defer observer setup to after DOMContentLoaded so it does NOT fire during page parse
@@ -2269,11 +2403,8 @@ const onDomReady = (() => {
 (function () {
   'use strict';
 
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    return key;
-  };
+  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   const TRANSLATE_BTN_CLASS = 'ytp-comment-translate-btn';
   const TRANSLATED_ATTR = 'data-ytp-translated';
@@ -2361,7 +2492,9 @@ const onDomReady = (() => {
       // 2. <html lang="..."> attribute set by YouTube
       const htmlLang = document.documentElement.lang;
       if (htmlLang) return toGoogleLang(htmlLang);
-    } catch {}
+    } catch {
+      /* empty */
+    }
     // 3. Browser navigator.language
     return toGoogleLang(navigator.language) || 'en';
   };
@@ -2413,7 +2546,9 @@ const onDomReady = (() => {
           window.YouTubeUtils.StyleManager.add('ytp-comment-translate-styles', css);
           return;
         }
-      } catch {}
+      } catch {
+        /* empty */
+      }
       const style = document.createElement('style');
       style.id = 'ytp-comment-translate-styles';
       style.textContent = css;
@@ -2446,7 +2581,7 @@ const onDomReady = (() => {
     const btn = document.createElement('button');
     btn.className = TRANSLATE_BTN_CLASS;
     btn.type = 'button';
-    btn.innerHTML = `${translateIcon} ${getTranslateLabel()}`;
+    btn.innerHTML = _createHTML(`${translateIcon} ${getTranslateLabel()}`);
     btn.setAttribute('aria-label', getTranslateLabel());
 
     btn.addEventListener('click', async e => {
@@ -2459,13 +2594,14 @@ const onDomReady = (() => {
         if (original) {
           contentEl.textContent = original;
           contentEl.removeAttribute(TRANSLATED_ATTR);
-          btn.innerHTML = `${translateIcon} ${getTranslateLabel()}`;
+          btn.innerHTML = _createHTML(`${translateIcon} ${getTranslateLabel()}`);
+          btn.setAttribute('aria-label', getTranslateLabel());
         }
         return;
       }
 
       btn.disabled = true;
-      btn.innerHTML = `${translateIcon} ...`;
+      btn.innerHTML = _createHTML(`${translateIcon} ...`);
 
       const originalText = contentEl.textContent || '';
       const translated = await translateText(originalText, userLang);
@@ -2474,9 +2610,11 @@ const onDomReady = (() => {
         contentEl.setAttribute(ORIGINAL_ATTR, originalText);
         contentEl.setAttribute(TRANSLATED_ATTR, 'true');
         contentEl.textContent = translated;
-        btn.innerHTML = `${translateIcon} ${getShowOriginalLabel()}`;
+        btn.innerHTML = _createHTML(`${translateIcon} ${getShowOriginalLabel()}`);
+        btn.setAttribute('aria-label', getShowOriginalLabel());
       } else {
-        btn.innerHTML = `${translateIcon} ${getTranslateLabel()}`;
+        btn.innerHTML = _createHTML(`${translateIcon} ${getTranslateLabel()}`);
+        btn.setAttribute('aria-label', getTranslateLabel());
       }
       btn.disabled = false;
     });
@@ -2546,7 +2684,9 @@ const onDomReady = (() => {
       if (window.YouTubeUtils?.cleanupManager) {
         window.YouTubeUtils.cleanupManager.registerObserver(observer);
       }
-    } catch {}
+    } catch {
+      /* empty */
+    }
   };
 
   // Lazy init on watch pages

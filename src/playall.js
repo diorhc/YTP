@@ -1,55 +1,54 @@
 // Play All
 (async function () {
   'use strict';
+  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   let featureEnabled = true;
   let stopRandomPlayTimers = null;
   let scheduleApplyRandomPlay = null;
   let addButtonRetryTimer = null;
   let addButtonRetryAttempts = 0;
-  const loadFeatureEnabled = () => {
-    try {
-      const settings = localStorage.getItem('youtube_plus_settings');
-      if (settings) {
-        const parsed = JSON.parse(settings);
-        return parsed.enablePlayAll !== false;
-      }
-    } catch {}
-    return true;
-  };
+  const loadFeatureEnabled = () =>
+    window.YouTubeUtils?.loadFeatureEnabled?.('enablePlayAll') ?? true;
   const setFeatureEnabled = nextEnabled => {
     featureEnabled = nextEnabled !== false;
     if (!featureEnabled) {
       try {
         removeButton();
-      } catch {}
+      } catch {
+        /* feature disable cleanup */
+      }
       try {
         if (addButtonRetryTimer) clearTimeout(addButtonRetryTimer);
         addButtonRetryTimer = null;
         addButtonRetryAttempts = 0;
-      } catch {}
+      } catch {
+        /* timer cleanup safe to ignore */
+      }
       try {
         if (typeof stopRandomPlayTimers === 'function') stopRandomPlayTimers();
-      } catch {}
+      } catch {
+        /* timer cleanup safe to ignore */
+      }
     } else {
       try {
         queueDesktopAddButton();
-      } catch {}
+      } catch {
+        /* feature enable may fail */
+      }
       try {
         if (typeof scheduleApplyRandomPlay === 'function') scheduleApplyRandomPlay();
-      } catch {}
+      } catch {
+        /* feature enable may fail */
+      }
     }
   };
 
   featureEnabled = loadFeatureEnabled();
 
-  // DOM helpers
-  const _getDOMCache = () => typeof window !== 'undefined' && window.YouTubeDOMCache;
-  const $ = (sel, ctx) =>
-    _getDOMCache()?.querySelector(sel, ctx) || (ctx || document).querySelector(sel);
-  const $$ = (sel, ctx) =>
-    _getDOMCache()?.querySelectorAll(sel, ctx) ||
-    Array.from((ctx || document).querySelectorAll(sel));
+  // Shared DOM helpers from YouTubeUtils
+  const { $, $$ } = window.YouTubeUtils || {};
+  const _cm = window.YouTubeUtils?.cleanupManager;
   const onDomReady = (() => {
     let ready = document.readyState !== 'loading';
     const queue = [];
@@ -59,7 +58,9 @@
         const cb = queue.shift();
         try {
           cb();
-        } catch {}
+        } catch (e) {
+          console.warn('[Play All] DOMReady callback error:', e);
+        }
       }
     };
     if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
@@ -69,16 +70,14 @@
     };
   })();
 
-  const t = (key, params = {}) => {
-    if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
-    return key;
-  };
+  const t = window.YouTubeUtils?.t || (key => key || '');
 
   const hasTranslation = key => {
     try {
       if (window.YouTubePlusI18n?.hasTranslation) return window.YouTubePlusI18n.hasTranslation(key);
-    } catch {}
+    } catch {
+      /* i18n check optional */
+    }
     return false;
   };
 
@@ -93,6 +92,39 @@
   const getPlayAllAriaLabel = () => {
     const localized = t('enablePlayAllLabel');
     return localized && localized !== 'enablePlayAllLabel' ? localized : getPlayAllLabel();
+  };
+
+  const resolveChannelIdFromDom = () => {
+    try {
+      const metaChannel = document.querySelector('meta[itemprop="channelId"]');
+      const metaValue = metaChannel?.getAttribute('content');
+      if (metaValue && /^UC[a-zA-Z0-9_-]{22}$/.test(metaValue)) return metaValue;
+
+      const browseNode = document.querySelector('ytd-browse[page-subtype="channels"]');
+      const attrId =
+        browseNode?.getAttribute?.('channel-id') || browseNode?.getAttribute?.('external-id');
+      if (attrId && /^UC[a-zA-Z0-9_-]{22}$/.test(attrId)) return attrId;
+
+      const href = location.href;
+      const fromUrl = href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+      if (fromUrl?.[1]) return fromUrl[1];
+
+      const initialData = window.ytInitialData;
+      const headerId =
+        initialData?.header?.c4TabbedHeaderRenderer?.channelId ||
+        initialData?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.find?.(
+          p => /^UC[a-zA-Z0-9_-]{22}$/.test(p?.text?.content || '')
+        )?.text?.content;
+      if (headerId && /^UC[a-zA-Z0-9_-]{22}$/.test(headerId)) return headerId;
+
+      if (window.ytcfg?.get) {
+        const cfgId = window.ytcfg.get('CHANNEL_ID');
+        if (cfgId && /^UC[a-zA-Z0-9_-]{22}$/.test(cfgId)) return cfgId;
+      }
+    } catch (e) {
+      console.warn('[Play All] Failed to resolve channel ID from DOM:', e);
+    }
+    return null;
   };
 
   const scheduleNonCritical = fn => {
@@ -123,21 +155,18 @@
           'You are currently running a test version:',
           scriptVersion
         );
-    } catch {}
+    } catch {
+      /* logging non-critical */
+    }
   }
 
-  if (
-    Object.prototype.hasOwnProperty.call(window, 'trustedTypes') &&
-    !window.trustedTypes.defaultPolicy
-  ) {
-    window.trustedTypes.createPolicy('default', { createHTML: string => string });
-  }
+  // TrustedTypes default policy is registered in main.js — no duplicate needed here
 
   const insertStylesSafely = html => {
     try {
       const target = document.head || document.documentElement;
       if (target && typeof target.insertAdjacentHTML === 'function') {
-        target.insertAdjacentHTML('beforeend', html);
+        target.insertAdjacentHTML('beforeend', _createHTML(html));
         return;
       }
 
@@ -146,12 +175,16 @@
         try {
           const t = document.head || document.documentElement;
           if (t && typeof t.insertAdjacentHTML === 'function') {
-            t.insertAdjacentHTML('beforeend', html);
+            t.insertAdjacentHTML('beforeend', _createHTML(html));
           }
-        } catch {}
+        } catch {
+          /* DOM insertion may fail before head available */
+        }
       };
       onDomReady(onReady);
-    } catch {}
+    } catch (e) {
+      console.warn('[Play All] Style insertion error:', e);
+    }
   };
 
   scheduleNonCritical(() =>
@@ -317,7 +350,10 @@
         // Last resort: insert a wrapper at the top of the grid
         let existingContainer = grid.querySelector('.ytp-button-container');
         if (!existingContainer) {
-          grid.insertAdjacentHTML('afterbegin', '<div class="ytp-button-container"></div>');
+          grid.insertAdjacentHTML(
+            'afterbegin',
+            _createHTML('<div class="ytp-button-container"></div>')
+          );
           existingContainer = grid.querySelector('.ytp-button-container');
         }
         parent = existingContainer instanceof HTMLElement ? existingContainer : null;
@@ -336,7 +372,9 @@
           YouTubeUtils.logger &&
           YouTubeUtils.logger.debug &&
           YouTubeUtils.logger.debug('[Play All] Buttons already exist, skipping');
-      } catch {}
+      } catch {
+        /* logging non-critical */
+      }
       return;
     }
 
@@ -356,7 +394,9 @@
     // Insert button directly into the container (chip bar or fallback wrapper)
     parent.insertAdjacentHTML(
       'beforeend',
-      `<a class="ytp-btn ytp-play-all-btn" href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=random&ytp-random-initial=1" title="${getPlayAllAriaLabel()}" aria-label="${getPlayAllAriaLabel()}">${getPlayAllLabel()}</a>`
+      _createHTML(
+        `<a class="ytp-btn ytp-play-all-btn" href="/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=random&ytp-random-initial=1" title="${getPlayAllAriaLabel()}" aria-label="${getPlayAllAriaLabel()}">${getPlayAllLabel()}</a>`
+      )
     );
 
     const navigate = href => {
@@ -443,6 +483,13 @@
 
     // This check is necessary for the mobile Interval
     if ($('.ytp-play-all-btn')) {
+      return;
+    }
+
+    const resolvedFromDom = resolveChannelIdFromDom();
+    if (resolvedFromDom) {
+      id = resolvedFromDom;
+      apply();
       return;
     }
 
@@ -543,13 +590,13 @@
         return;
       }
 
-      if (addButtonRetryAttempts >= 14) {
+      if (addButtonRetryAttempts >= 30) {
         stopAddButtonRetries();
         return;
       }
 
       addButtonRetryAttempts += 1;
-      addButtonRetryTimer = setTimeout(run, 350);
+      addButtonRetryTimer = setTimeout(run, 300);
     };
 
     run();
@@ -574,34 +621,55 @@
       }
     };
     // Use centralized pushState/replaceState event from utils.js
-    window.addEventListener('ytp-history-navigate', () => setTimeout(checkUrlChange, 50), {
-      passive: true,
-    });
-    window.addEventListener('popstate', checkUrlChange, { passive: true });
+    const _ytpNavHandler = () => setTimeout(checkUrlChange, 50);
+    if (_cm?.registerListener) {
+      _cm.registerListener(window, 'ytp-history-navigate', _ytpNavHandler, { passive: true });
+      _cm.registerListener(window, 'popstate', checkUrlChange, { passive: true });
+    } else {
+      window.addEventListener('ytp-history-navigate', _ytpNavHandler, { passive: true });
+      window.addEventListener('popstate', checkUrlChange, { passive: true });
+    }
     // Initial call
     addButton();
   } else {
-    window.addEventListener('yt-navigate-start', () => {
+    const _navStartHandler = () => {
       stopAddButtonRetries();
       removeButton();
-    });
-    window.addEventListener('yt-navigate-finish', () =>
-      setTimeout(() => queueDesktopAddButton(), 120)
-    );
-    window.addEventListener('pageshow', () => setTimeout(() => queueDesktopAddButton(), 120));
-    document.addEventListener('visibilitychange', () => {
+      id = '';
+    };
+    const _navFinishHandler = () => {
+      setTimeout(() => queueDesktopAddButton(), 120);
+      setTimeout(() => queueDesktopAddButton(false), 800);
+    };
+    const _pageshowHandler = () => setTimeout(() => queueDesktopAddButton(), 120);
+    const _visChangeHandler = () => {
       if (document.visibilityState === 'visible') {
         queueDesktopAddButton();
       }
-    });
+    };
+    if (_cm?.registerListener) {
+      _cm.registerListener(window, 'yt-navigate-start', _navStartHandler);
+      _cm.registerListener(window, 'yt-navigate-finish', _navFinishHandler);
+      _cm.registerListener(document, 'yt-page-data-updated', _navFinishHandler);
+      _cm.registerListener(window, 'pageshow', _pageshowHandler);
+      _cm.registerListener(document, 'visibilitychange', _visChangeHandler);
+    } else {
+      window.addEventListener('yt-navigate-start', _navStartHandler);
+      window.addEventListener('yt-navigate-finish', _navFinishHandler);
+      document.addEventListener('yt-page-data-updated', _navFinishHandler);
+      window.addEventListener('pageshow', _pageshowHandler);
+      document.addEventListener('visibilitychange', _visChangeHandler);
+    }
     // Also attempt to add buttons on initial script run in case the SPA navigation event
     // already happened before this script was loaded (some browsers/firefox timing).
     try {
       setTimeout(() => queueDesktopAddButton(), 300);
-    } catch {}
+    } catch {
+      /* setTimeout unlikely to fail */
+    }
   }
 
-  window.addEventListener('youtube-plus-settings-updated', e => {
+  const _settingsUpdHandler = e => {
     try {
       const nextEnabled = e?.detail?.enablePlayAll !== false;
       if (nextEnabled === featureEnabled) return;
@@ -609,7 +677,12 @@
     } catch {
       setFeatureEnabled(loadFeatureEnabled());
     }
-  });
+  };
+  if (_cm?.registerListener) {
+    _cm.registerListener(window, 'youtube-plus-settings-updated', _settingsUpdHandler);
+  } else {
+    window.addEventListener('youtube-plus-settings-updated', _settingsUpdHandler);
+  }
 
   // Random play feature
   (() => {
@@ -717,7 +790,13 @@
     let progressIntervalId = null;
 
     stopRandomPlayTimers = () => {
-      if (applyRetryTimeoutId) clearTimeout(applyRetryTimeoutId);
+      if (applyRetryTimeoutId) {
+        if (typeof applyRetryTimeoutId === 'object' && applyRetryTimeoutId.stop) {
+          applyRetryTimeoutId.stop();
+        } else {
+          clearTimeout(applyRetryTimeoutId);
+        }
+      }
       applyRetryTimeoutId = null;
       // progressIntervalId is now a boolean or event listener, not a timer
       if (progressIntervalId && typeof progressIntervalId !== 'boolean') {
@@ -743,7 +822,7 @@
       if (headerContainer && !headerContainer.querySelector('.ytp-random-notice')) {
         headerContainer.insertAdjacentHTML(
           'beforeend',
-          `<span class="ytp-random-notice">Play All mode</span>`
+          _createHTML(`<span class="ytp-random-notice">Play All mode</span>`)
         );
       }
 
@@ -798,7 +877,9 @@
           const u = new URL(element.href, window.location.origin);
           u.searchParams.set('ytp-random', cfg.mode);
           element.href = u.toString();
-        } catch {}
+        } catch {
+          /* malformed URL ignored */
+        }
 
         element.setAttribute('data-ytp-random-link', 'true');
 
@@ -835,7 +916,9 @@
         const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
         anchorHeader.insertAdjacentHTML(
           'beforeend',
-          ` <span class="ytp-badge ytp-random-badge">Play All <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`
+          _createHTML(
+            ` <span class="ytp-badge ytp-random-badge">Play All <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`
+          )
         );
         anchorHeader.href = '#';
         const badge = anchorHeader.querySelector('.ytp-random-badge');
@@ -852,22 +935,23 @@
         }
       }
 
-      document.addEventListener(
-        'keydown',
-        event => {
-          // SHIFT + N
-          if (event.shiftKey && event.key.toLowerCase() === 'n') {
-            event.stopImmediatePropagation();
-            event.preventDefault();
+      const _keydownHandler = event => {
+        // SHIFT + N
+        if (event.shiftKey && event.key.toLowerCase() === 'n') {
+          event.stopImmediatePropagation();
+          event.preventDefault();
 
-            const videoId = getVideoId(location.href);
-            markWatched(cfg.storageKey, videoId);
-            // Unfortunately there is no workaround to YouTube redirecting to the next in line without a reload
-            playNextRandom(cfg, true);
-          }
-        },
-        true
-      );
+          const videoId = getVideoId(location.href);
+          markWatched(cfg.storageKey, videoId);
+          // Unfortunately there is no workaround to YouTube redirecting to the next in line without a reload
+          playNextRandom(cfg, true);
+        }
+      };
+      if (_cm?.registerListener) {
+        _cm.registerListener(document, 'keydown', _keydownHandler, true);
+      } else {
+        document.addEventListener('keydown', _keydownHandler, true);
+      }
 
       if (progressIntervalId) return;
 
@@ -916,7 +1000,7 @@
           // Replace with span to prevent anchor click events
           const newButton = document.createElement('span');
           newButton.className = nextButton.className;
-          newButton.innerHTML = nextButton.innerHTML;
+          newButton.innerHTML = _createHTML(nextButton.innerHTML);
           nextButton.replaceWith(newButton);
 
           newButton.setAttribute('ytp-random', 'applied');
@@ -931,30 +1015,38 @@
       progressIntervalId = true; // Mark as initialized
     };
 
-    scheduleApplyRandomPlay = (attempt = 0) => {
+    scheduleApplyRandomPlay = () => {
       if (!featureEnabled) return;
       stopRandomPlayTimers();
 
       if (!window.location.pathname.endsWith('/watch')) return;
 
-      const cfg = getRandomConfig();
-      if (!cfg) return;
+      const performApply = () => {
+        const cfg = getRandomConfig();
+        if (!cfg) return false;
 
-      // Storage needs to now be { [videoId]: bool }
-      try {
-        const current = localStorage.getItem(cfg.storageKey);
-        if (current && Array.isArray(JSON.parse(current))) {
+        // Storage needs to now be { [videoId]: bool }
+        try {
+          const current = localStorage.getItem(cfg.storageKey);
+          if (current && Array.isArray(JSON.parse(current))) {
+            localStorage.removeItem(cfg.storageKey);
+          }
+        } catch {
           localStorage.removeItem(cfg.storageKey);
         }
-      } catch {
-        localStorage.removeItem(cfg.storageKey);
-      }
 
-      applyRandomPlay(cfg);
+        applyRandomPlay(cfg);
+        // Consider done when playlist panel is found
+        return !!document.querySelector('#secondary ytd-playlist-panel-renderer[ytp-random]');
+      };
 
-      // If the playlist panel isn't ready yet, retry a few times (no always-on polling)
-      if (attempt >= 30) return;
-      applyRetryTimeoutId = setTimeout(() => scheduleApplyRandomPlay(attempt + 1), 250);
+      // Use shared retry scheduler instead of manual recursion
+      const scheduler = window.YouTubeUtils?.createRetryScheduler?.({
+        check: performApply,
+        maxAttempts: 30,
+        interval: 250,
+      });
+      if (scheduler) applyRetryTimeoutId = scheduler;
     };
 
     const onNavigate = () => {
@@ -967,7 +1059,12 @@
     };
 
     onNavigate();
-    window.addEventListener('yt-navigate-finish', () => setTimeout(onNavigate, 200));
+    const _navFinishRandom = () => setTimeout(onNavigate, 200);
+    if (_cm?.registerListener) {
+      _cm.registerListener(window, 'yt-navigate-finish', _navFinishRandom);
+    } else {
+      window.addEventListener('yt-navigate-finish', _navFinishRandom);
+    }
   })();
 })().catch(error =>
   console.error(
