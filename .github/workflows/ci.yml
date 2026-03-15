@@ -15,18 +15,21 @@ jobs:
   test:
     name: Test & Build
     runs-on: ubuntu-latest
+    env:
+      HUSKY: '0'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
 
     strategy:
       matrix:
-        node-version: [18.x, 20.x]
+        node-version: [20.x, 22.x]
       fail-fast: false
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
           cache: 'npm'
@@ -43,9 +46,17 @@ jobs:
       - name: Run format check
         run: npm run format:check
 
-      - name: Run security audit
-        run: npm audit --audit-level=moderate
-        continue-on-error: true
+      - name: Run security audit (non-blocking)
+        run: |
+          set +e
+          npm audit --audit-level=moderate
+          AUDIT_EXIT=$?
+          set -e
+          if [ $AUDIT_EXIT -ne 0 ]; then
+            echo "⚠️ npm audit reported vulnerabilities (non-blocking in CI test job)"
+          else
+            echo "✅ npm audit passed"
+          fi
 
       - name: Run unit tests with coverage
         run: npm run test:coverage
@@ -54,7 +65,7 @@ jobs:
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
-        if: matrix.node-version == '20.x'
+        if: matrix.node-version == '22.x'
         continue-on-error: true
         with:
           file: ./coverage/lcov.info
@@ -65,8 +76,8 @@ jobs:
         run: npm run build
 
       - name: Upload build artifact
-        uses: actions/upload-artifact@v4
-        if: matrix.node-version == '20.x'
+        uses: actions/upload-artifact@v5
+        if: matrix.node-version == '22.x'
         with:
           name: userscript
           path: youtube.user.js
@@ -77,15 +88,18 @@ jobs:
     needs: test
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    env:
+      HUSKY: '0'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
     permissions:
       contents: write
       
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20.x'
           cache: 'npm'
@@ -155,6 +169,9 @@ jobs:
   code-quality:
     name: Code Quality Analysis
     runs-on: ubuntu-latest
+    env:
+      HUSKY: '0'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
     permissions:
       checks: write
       contents: read
@@ -162,12 +179,12 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20.x'
           cache: 'npm'
@@ -202,7 +219,7 @@ jobs:
 
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Dependency Review
         uses: actions/dependency-review-action@v4

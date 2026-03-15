@@ -11,12 +11,15 @@ concurrency:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    env:
+      HUSKY: '0'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'

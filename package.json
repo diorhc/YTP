@@ -24,8 +24,8 @@
     "modular-architecture"
   ],
   "engines": {
-    "node": ">=18.0.0",
-    "npm": ">=8.0.0"
+    "node": ">=20.0.0",
+    "npm": ">=10.0.0"
   },
   "scripts": {
     "prepare": "husky install",
@@ -114,6 +114,9 @@
     "puppeteer": "^24.25.0",
     "terser": "^5.44.0",
     "typescript": "^5.9.3"
+  },
+  "overrides": {
+    "yauzl": "^3.2.1"
   },
   "lint-staged": {
     "src/**/*.js": [
