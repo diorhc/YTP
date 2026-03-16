@@ -1286,12 +1286,17 @@
         // Validate thumbnail URL is from a trusted domain to prevent attribute injection
         try {
           const parsed = new URL(pageStats.thumbnail);
+          const h = parsed.hostname;
           if (
             parsed.protocol === 'https:' &&
-            (parsed.hostname.endsWith('.ytimg.com') ||
-              parsed.hostname.endsWith('.ggpht.com') ||
-              parsed.hostname.endsWith('.googleusercontent.com') ||
-              parsed.hostname.endsWith('.youtube.com'))
+            (h === 'ytimg.com' ||
+              h.endsWith('.ytimg.com') ||
+              h === 'ggpht.com' ||
+              h.endsWith('.ggpht.com') ||
+              h === 'googleusercontent.com' ||
+              h.endsWith('.googleusercontent.com') ||
+              h === 'youtube.com' ||
+              h.endsWith('.youtube.com'))
           ) {
             return pageStats.thumbnail;
           }
@@ -1476,12 +1481,17 @@
         // Validate thumbnail URL is from a trusted domain to prevent attribute injection
         try {
           const parsed = new URL(raw);
+          const h = parsed.hostname;
           if (
             parsed.protocol === 'https:' &&
-            (parsed.hostname.endsWith('.ytimg.com') ||
-              parsed.hostname.endsWith('.ggpht.com') ||
-              parsed.hostname.endsWith('.googleusercontent.com') ||
-              parsed.hostname.endsWith('.youtube.com'))
+            (h === 'ytimg.com' ||
+              h.endsWith('.ytimg.com') ||
+              h === 'ggpht.com' ||
+              h.endsWith('.ggpht.com') ||
+              h === 'googleusercontent.com' ||
+              h.endsWith('.googleusercontent.com') ||
+              h === 'youtube.com' ||
+              h.endsWith('.youtube.com'))
           ) {
             return raw;
           }
@@ -1914,10 +1924,10 @@
           return d.innerHTML;
         });
       const countryValue = escapeHtml(extras.country || t('unknown'));
-      // Country codes must be 2-3 uppercase letters only (ISO 3166-1)
+      // Country codes must be exactly 2 uppercase letters (ISO 3166-1 alpha-2)
       const rawCode =
         extras.country && extras.country !== t('unknown') ? extras.country.toUpperCase() : '';
-      const countryCode = /^[A-Z]{2,3}$/.test(rawCode) ? rawCode : '';
+      const countryCode = /^[A-Z]{2}$/.test(rawCode) ? rawCode : '';
       const globeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
 
       if (countryCode) {
