@@ -5690,7 +5690,7 @@ const styles = {
               img._ytpDecoding = true;
             }
           }
-        } catch (_e) {
+        } catch {
           /* non-fatal */
         }
       };
@@ -5702,7 +5702,7 @@ const styles = {
       } else {
         document.addEventListener('DOMContentLoaded', promoteLCPImage, { once: true });
       }
-    } catch (_e) {
+    } catch {
       /* non-fatal */
     }
   })();
