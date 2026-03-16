@@ -17,9 +17,6 @@
  *   node build.js --minify     - Build with full minification
  */
 
-/* Allow console usage in build scripts (these are developer tools, not runtime code) */
-/* eslint-disable no-console */
-
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');

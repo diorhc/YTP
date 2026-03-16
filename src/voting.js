@@ -10,6 +10,9 @@
   if (typeof window === 'undefined') return;
 
   const SUPABASE_URL = 'https://ldpccocxlrdsyejfhrvc.supabase.co';
+  // This is a Supabase anonymous (public) key — intentionally embedded in client-side code.
+  // It has read-only / limited permissions enforced by Row Level Security (RLS) on the server.
+  // It is NOT a secret: https://supabase.com/docs/guides/api#api-keys
   const SUPABASE_KEY =
     'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImxkcGNjb2N4bHJkc3llamZocnZjIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzIyMTAyNDYsImV4cCI6MjA4Nzc4NjI0Nn0.QfwrAG4SMJBPLoP-Mcq3hETQXt0ezinoi0CpN57Zn90';
 

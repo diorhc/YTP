@@ -128,10 +128,9 @@
     if (!attrName || typeof attrName !== 'string') return null;
     if (attrValue === null || attrValue === undefined) return '';
 
-    // Block dangerous attributes
-    const dangerousAttrs = ['onload', 'onerror', 'onclick', 'onmouseover'];
-    if (dangerousAttrs.some(attr => attrName.toLowerCase().startsWith(attr))) {
-      console.warn(`[Security] Blocked dangerous attribute: ${attrName}`);
+    // Block all event handler attributes (on*)
+    if (/^on[a-z]/i.test(attrName)) {
+      console.warn(`[Security] Blocked event handler attribute: ${attrName}`);
       return null;
     }
 
@@ -139,9 +138,8 @@
 
     // Special handling for href and src
     if (attrName.toLowerCase() === 'href' || attrName.toLowerCase() === 'src') {
-      // Check for javascript protocol (security check, not script URL usage)
-      // eslint-disable-next-line no-script-url
-      if (valueStr.toLowerCase().startsWith('javascript:')) {
+      // Check for javascript protocol (security check)
+      if (/^javascript:/i.test(valueStr)) {
         console.warn(`[Security] Blocked javascript protocol in ${attrName}`);
         return null;
       }
