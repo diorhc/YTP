@@ -525,7 +525,18 @@
 
     // Fallback: fetch HTML and parse
     try {
-      const html = await (await fetch(location.href)).text();
+      const currentUrl = location.href;
+      // Only fetch YouTube pages to prevent SSRF
+      const parsedUrl = new URL(currentUrl);
+      if (
+        parsedUrl.hostname !== 'www.youtube.com' &&
+        parsedUrl.hostname !== 'youtube.com' &&
+        parsedUrl.hostname !== 'm.youtube.com'
+      ) {
+        console.warn('[Play All] Skipping fetch for non-YouTube URL');
+        return;
+      }
+      const html = await (await fetch(currentUrl)).text();
       const canonicalMatch = html.match(
         /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/
       );

@@ -398,8 +398,9 @@
 
     // Replace parameters
     if (Object.keys(params).length > 0) {
+      const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       Object.keys(params).forEach(param => {
-        text = text.replace(new RegExp(`\\{${param}\\}`, 'g'), params[param]);
+        text = text.replace(new RegExp(`\\{${escapeRegex(param)}\\}`, 'g'), params[param]);
       });
     }
 

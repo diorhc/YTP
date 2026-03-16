@@ -226,8 +226,9 @@
         return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
       }
 
+      const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const extractField = field =>
-        text.match(new RegExp(`@${field}\\s+([^\\r\\n]+)`))?.[1]?.trim();
+        text.match(new RegExp(`@${escapeRegex(field)}\\s+([^\\r\\n]+)`))?.[1]?.trim();
 
       let version = extractField('version');
       const description = extractField('description') || '';
@@ -731,7 +732,7 @@
       // Parse changelog from HTML
       // Look for version link followed by changelog span
       // Structure: <a ...>v2.4.5</a> ... <span class="version-changelog">...</span>
-      const escapedVersion = version.replace(/\./g, '\\.');
+      const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       // Match anchor tag content that contains the version number (handling prefixes like 'v', 'вер. ', etc.)
       const versionRegex = new RegExp(
         `>[^<]*?${escapedVersion}</a>[\\s\\S]*?class="version-changelog"[^>]*>([\\s\\S]*?)</span>`,

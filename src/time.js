@@ -132,6 +132,8 @@
     startOver: { en: 'Start over', ru: 'Начать сначала' },
   };
 
+  const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   const t = (key, params = {}) => {
     // Prefer centralized i18n
     const U = window.YouTubeUtils;
@@ -143,7 +145,7 @@
     if (!params || Object.keys(params).length === 0) return val;
     let result = val;
     for (const [k, v] of Object.entries(params)) {
-      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+      result = result.replace(new RegExp(`\\{${escapeRegex(k)}\\}`, 'g'), String(v));
     }
     return result;
   };

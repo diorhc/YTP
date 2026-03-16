@@ -326,6 +326,22 @@
      * @returns {Promise<string|null>} HTML content or null on error
      */
     async function fetchChannelHtml(url) {
+      // Validate URL is from YouTube domain before fetching
+      try {
+        const parsed = new URL(url);
+        const hostname = parsed.hostname.toLowerCase();
+        if (
+          hostname !== 'www.youtube.com' &&
+          hostname !== 'youtube.com' &&
+          hostname !== 'm.youtube.com'
+        ) {
+          console.warn('[YouTube+][Stats] Blocked fetch to non-YouTube URL:', hostname);
+          return null;
+        }
+      } catch {
+        return null;
+      }
+
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 10000); // 10 second timeout
 
@@ -1267,7 +1283,21 @@
      */
     function getThumbnailUrl(id, pageStats) {
       if (pageStats && pageStats.thumbnail) {
-        return pageStats.thumbnail;
+        // Validate thumbnail URL is from a trusted domain to prevent attribute injection
+        try {
+          const parsed = new URL(pageStats.thumbnail);
+          if (
+            parsed.protocol === 'https:' &&
+            (parsed.hostname.endsWith('.ytimg.com') ||
+              parsed.hostname.endsWith('.ggpht.com') ||
+              parsed.hostname.endsWith('.googleusercontent.com') ||
+              parsed.hostname.endsWith('.youtube.com'))
+          ) {
+            return pageStats.thumbnail;
+          }
+        } catch {
+          // Invalid URL - fall through to constructed URL
+        }
       }
       if (id) {
         return `https://i.ytimg.com/vi/${id}/hqdefault.jpg`;
@@ -1441,7 +1471,25 @@
      * @returns {string} Thumbnail URL
      */
     function getThumbnailUrl(stats, id) {
-      return stats?.thumbnail || (id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : '');
+      const raw = stats?.thumbnail;
+      if (raw) {
+        // Validate thumbnail URL is from a trusted domain to prevent attribute injection
+        try {
+          const parsed = new URL(raw);
+          if (
+            parsed.protocol === 'https:' &&
+            (parsed.hostname.endsWith('.ytimg.com') ||
+              parsed.hostname.endsWith('.ggpht.com') ||
+              parsed.hostname.endsWith('.googleusercontent.com') ||
+              parsed.hostname.endsWith('.youtube.com'))
+          ) {
+            return raw;
+          }
+        } catch {
+          // Invalid URL - fall through to constructed URL
+        }
+      }
+      return id ? `https://i.ytimg.com/vi/${id}/hqdefault.jpg` : '';
     }
 
     /**
@@ -1858,9 +1906,18 @@
      * @returns {string} HTML string
      */
     function createCountryCard(extras) {
-      const countryValue = extras.country || t('unknown');
-      const countryCode =
+      const escapeHtml =
+        window.YouTubeSecurityUtils?.escapeHtml ||
+        (s => {
+          const d = document.createElement('div');
+          d.textContent = s;
+          return d.innerHTML;
+        });
+      const countryValue = escapeHtml(extras.country || t('unknown'));
+      // Country codes must be 2-3 uppercase letters only (ISO 3166-1)
+      const rawCode =
         extras.country && extras.country !== t('unknown') ? extras.country.toUpperCase() : '';
+      const countryCode = /^[A-Z]{2,3}$/.test(rawCode) ? rawCode : '';
       const globeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
 
       if (countryCode) {
