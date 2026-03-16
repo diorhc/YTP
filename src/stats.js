@@ -3012,8 +3012,6 @@
         const toggle = fontDropdown.querySelector('.glass-dropdown__toggle');
         const list = fontDropdown.querySelector('.glass-dropdown__list');
         const label = fontDropdown.querySelector('.glass-dropdown__label');
-        // eslint-disable-next-line no-unused-vars
-        let items = Array.from(fontDropdown.querySelectorAll('.glass-dropdown__item'));
 
         const closeList = () => {
           fontDropdown.setAttribute('aria-expanded', 'false');
@@ -3023,7 +3021,6 @@
         const openList = () => {
           fontDropdown.setAttribute('aria-expanded', 'true');
           if (list) list.style.display = 'block';
-          items = Array.from(fontDropdown.querySelectorAll('.glass-dropdown__item'));
         };
 
         closeList();
