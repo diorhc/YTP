@@ -13,6 +13,9 @@ concurrency:
 jobs:
   update-badges:
     runs-on: ubuntu-latest
+    env:
+      HUSKY: '0'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
     
     permissions:
       contents: write
@@ -22,13 +25,13 @@ jobs:
         run: echo "Starting GreasyFork badges update..."
       
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
         with:
           token: ${{ secrets.GITHUB_TOKEN }}
           fetch-depth: 0
       
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'

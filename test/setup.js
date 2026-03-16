@@ -47,6 +47,32 @@ global.sessionStorage = {
   },
 };
 
+// Ensure fetch is available (some jsdom/Node combos lack it)
+if (typeof global.fetch !== 'function') {
+  global.fetch = jest.fn(() =>
+    Promise.resolve({
+      ok: true,
+      json: () => Promise.resolve({}),
+      text: () => Promise.resolve(''),
+    })
+  );
+}
+
+// Ensure structuredClone is available (Node < 17 / old jsdom)
+if (typeof global.structuredClone !== 'function') {
+  global.structuredClone = obj => JSON.parse(JSON.stringify(obj));
+}
+
+// Polyfill performance.mark/getEntriesByType/clearMarks for jsdom
+if (typeof global.performance.mark !== 'function') {
+  const _marks = [];
+  global.performance.mark = name => _marks.push({ name, entryType: 'mark', startTime: Date.now() });
+  global.performance.getEntriesByType = type => (type === 'mark' ? [..._marks] : []);
+  global.performance.clearMarks = () => {
+    _marks.length = 0;
+  };
+}
+
 // Mock userscript globals
 // expose GM_xmlhttpRequest on both global and window to match how code references it
 global.GM_xmlhttpRequest = jest.fn();
@@ -64,53 +90,45 @@ global.console = {
 };
 
 // Helper function to mock window.location in jsdom
-// Uses per-property Object.defineProperty since jsdom's window.location is non-configurable
+// Uses delete + reassign pattern for reliable cross-platform behavior
 global.mockLocation = locationConfig => {
-  const props = {
-    href: locationConfig.href || 'https://www.youtube.com/',
-    hostname: locationConfig.hostname || 'www.youtube.com',
-    pathname: locationConfig.pathname || '/',
-    search: locationConfig.search !== undefined ? locationConfig.search : '',
-    hash: locationConfig.hash !== undefined ? locationConfig.hash : '',
-    origin: locationConfig.origin || 'https://www.youtube.com',
-    protocol: locationConfig.protocol || 'https:',
-    host: locationConfig.host || locationConfig.hostname || 'www.youtube.com',
-    port: locationConfig.port !== undefined ? locationConfig.port : '',
+  const href = locationConfig.href || 'https://www.youtube.com/';
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(href);
+  } catch {
+    parsedUrl = new URL('https://www.youtube.com/');
+  }
+
+  const locationObj = {
+    href: locationConfig.href || parsedUrl.href,
+    hostname: locationConfig.hostname || parsedUrl.hostname,
+    pathname: locationConfig.pathname || parsedUrl.pathname,
+    search: locationConfig.search !== undefined ? locationConfig.search : parsedUrl.search,
+    hash: locationConfig.hash !== undefined ? locationConfig.hash : parsedUrl.hash,
+    origin: locationConfig.origin || parsedUrl.origin,
+    protocol: locationConfig.protocol || parsedUrl.protocol,
+    host: locationConfig.host || locationConfig.hostname || parsedUrl.host,
+    port: locationConfig.port !== undefined ? locationConfig.port : parsedUrl.port,
+    assign: jest.fn(),
+    replace: jest.fn(),
+    reload: jest.fn(),
+    toString: () => locationConfig.href || parsedUrl.href,
   };
 
-  // Define each property individually on the existing location object
-  // Individual properties of jsdom's Location ARE configurable, even though
-  // the location property on window is not
-  for (const [key, value] of Object.entries(props)) {
-    try {
-      Object.defineProperty(window.location, key, {
-        get: () => value,
-        configurable: true,
-      });
-    } catch {
-      // Fallback: direct assignment (works if our mock is already installed)
-      try {
-        window.location[key] = value;
-      } catch {
-        /* cannot set - ignore */
-      }
+  // Apply any additional custom properties from locationConfig
+  for (const key of Object.keys(locationConfig)) {
+    if (locationConfig[key] !== undefined) {
+      locationObj[key] = locationConfig[key];
     }
   }
 
-  // Apply any additional custom properties
-  Object.keys(locationConfig).forEach(key => {
-    if (!(key in props) && locationConfig[key] !== undefined) {
-      try {
-        Object.defineProperty(window.location, key, {
-          get: () => locationConfig[key],
-          configurable: true,
-        });
-      } catch {
-        /* ignore */
-      }
-    }
-  });
-}; // Reset mocks before each test
+  // Delete and recreate window.location (works in both jsdom versions)
+  delete window.location;
+  window.location = locationObj;
+};
+
+// Reset mocks before each test
 beforeEach(() => {
   localStorage.clear();
   sessionStorage.clear();

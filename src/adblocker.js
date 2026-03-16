@@ -182,7 +182,8 @@
 
       try {
         // Strategy 1: Click skip button if available (most natural user action)
-        const skipSelectors = [
+        // Single combined selector for all known skip buttons (1 DOM query instead of 12)
+        const SKIP_SELECTOR = [
           '.ytp-ad-skip-button',
           '.ytp-ad-skip-button-modern',
           '.ytp-skip-ad-button',
@@ -191,23 +192,18 @@
           '.ytp-ad-skip-button-slot button',
           '.ytp-ad-skip-button-container button',
           '.ytp-ad-skip-button-modern .ytp-ad-skip-button-container',
-          // 2025+ new skip button selectors
           '.ytp-skip-ad-button__text',
           'button[class*="skip"]',
           '.ytp-ad-skip-button-modern button',
           'ytd-button-renderer.ytp-ad-skip-button-renderer button',
-        ];
-        for (const sel of skipSelectors) {
-          const skipButton = document.querySelector(sel);
-          if (skipButton) {
-            // offsetParent is null for position:fixed elements (YouTube skip buttons)
-            // so use getBoundingClientRect width/height as the visibility check instead
-            const rect = skipButton.getBoundingClientRect();
-            if (rect.width > 0 && rect.height > 0) {
-              skipButton.click();
-              AdBlocker.state.retryCount = 0;
-              return;
-            }
+        ].join(',');
+        const skipButtons = document.querySelectorAll(SKIP_SELECTOR);
+        for (const skipButton of skipButtons) {
+          const rect = skipButton.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            skipButton.click();
+            AdBlocker.state.retryCount = 0;
+            return;
           }
         }
 
@@ -450,17 +446,51 @@
       }
 
       // Start optimized intervals with cleanup registration
-      // Use single combined interval instead of 3 separate ones
+      // Guard: only run heavy DOM queries if an ad is actually showing
+      const isAdActive = () => {
+        const mp = $('#movie_player');
+        return (
+          mp && (mp.classList.contains('ad-showing') || mp.classList.contains('ad-interrupting'))
+        );
+      };
+
       const combinedAdCheck = () => {
-        if (AdBlocker.config.enabled) {
+        if (!AdBlocker.config.enabled) return;
+        if (isAdActive()) {
           AdBlocker.skipAd();
-          AdBlocker.removeElements();
           AdBlocker.dismissAdBlockerWarning();
         }
+        // removeElements runs less frequently — only on navigation (see below)
       };
-      // Single interval for all ad-related checks (faster interval for responsive skip)
-      const adInterval = setInterval(combinedAdCheck, AdBlocker.config.skipInterval);
+
+      // Fallback polling interval (increased to 3s; the MutationObserver below handles fast detection)
+      const adInterval = setInterval(combinedAdCheck, 3000);
       YouTubeUtils.cleanupManager.registerInterval(adInterval);
+
+      // Fast ad-detection via MutationObserver on #movie_player class attribute
+      try {
+        const attachAdObserver = () => {
+          const moviePlayer = $('#movie_player');
+          if (!moviePlayer) {
+            // Retry once after short delay if player not yet in DOM
+            setTimeout(attachAdObserver, 1500);
+            return;
+          }
+          const adObserver = new MutationObserver(() => {
+            if (AdBlocker.config.enabled && isAdActive()) {
+              AdBlocker.skipAd();
+              AdBlocker.dismissAdBlockerWarning();
+            }
+          });
+          adObserver.observe(moviePlayer, { attributes: true, attributeFilter: ['class'] });
+          if (YouTubeUtils.cleanupManager?.registerObserver) {
+            YouTubeUtils.cleanupManager.registerObserver(adObserver);
+          }
+        };
+        attachAdObserver();
+      } catch (e) {
+        console.warn('[YouTube+] Ad observer setup error:', e);
+      }
 
       // Also monitor video play events for immediate ad detection
       try {
@@ -483,10 +513,11 @@
         console.warn('[YouTube+] Ad play listener error:', e);
       }
 
-      // Navigation handling
+      // Navigation handling — also run removeElements on page transitions
       const handleNavigation = () => {
         AdBlocker.state.isYouTubeShorts = location.pathname.startsWith('/shorts/');
         AdBlocker.cache.lastCacheTime = 0; // Reset cache
+        if (AdBlocker.config.enabled) AdBlocker.removeElements();
       };
 
       // Use centralized pushState/replaceState event from utils.js

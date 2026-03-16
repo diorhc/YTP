@@ -38,9 +38,9 @@ describe('Shorts Module', () => {
       },
     };
 
-    // Mock localStorage
-    Storage.prototype.getItem = jest.fn();
-    Storage.prototype.setItem = jest.fn();
+    // Mock localStorage methods for this test
+    localStorage.getItem = jest.fn(() => null);
+    localStorage.setItem = jest.fn();
 
     // Clear console mocks
     jest.spyOn(console, 'error').mockImplementation(() => {});
@@ -111,8 +111,8 @@ describe('Shorts Module', () => {
   });
   describe('Settings Management', () => {
     test('should have localStorage access', () => {
-      expect(Storage.prototype.getItem).toBeDefined();
-      expect(Storage.prototype.setItem).toBeDefined();
+      expect(localStorage.getItem).toBeDefined();
+      expect(localStorage.setItem).toBeDefined();
     });
 
     test('should handle JSON parsing', () => {

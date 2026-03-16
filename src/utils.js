@@ -57,12 +57,14 @@
    * @param {Object<string, string|number>} [params] - Interpolation parameters
    * @returns {string}
    */
+  const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   const t = (key, params = {}) => {
     if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
     if (!key) return '';
     let result = String(key);
     for (const [k, v] of Object.entries(params || {})) {
-      result = result.replace(new RegExp(`\\{${k}\\}`, 'g'), String(v));
+      result = result.replace(new RegExp(`\\{${escapeRegex(k)}\\}`, 'g'), String(v));
     }
     return result;
   };

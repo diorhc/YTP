@@ -17,19 +17,8 @@ describe('Stats Module', () => {
       search: '?v=dQw4w9WgXcQ',
     });
 
-    // Mock localStorage with proper Storage interface
-    const localStorageMock = {
-      getItem: jest.fn(),
-      setItem: jest.fn(),
-      removeItem: jest.fn(),
-      clear: jest.fn(),
-      length: 0,
-      key: jest.fn(),
-    };
-    Object.defineProperty(global, 'localStorage', {
-      value: localStorageMock,
-      writable: true,
-    });
+    // Clear localStorage for clean state
+    localStorage.clear();
 
     // Mock YouTubeUtils
     /** @type {any} */ (global).YouTubeUtils = {
@@ -241,21 +230,21 @@ describe('Stats Module', () => {
 
   describe('Settings Management', () => {
     test('should load settings from localStorage', () => {
-      /** @type {any} */ (localStorage.getItem).mockReturnValue('true');
+      localStorage.setItem('youtube_stats_button_enabled', 'true');
 
       const enabled = localStorage.getItem('youtube_stats_button_enabled') !== 'false';
       expect(enabled).toBe(true);
     });
 
     test('should handle missing settings', () => {
-      /** @type {any} */ (localStorage.getItem).mockReturnValue(null);
+      localStorage.removeItem('youtube_stats_button_enabled');
 
       const enabled = localStorage.getItem('youtube_stats_button_enabled') !== 'false';
       expect(enabled).toBe(true); // Default to enabled
     });
 
     test('should handle disabled state', () => {
-      /** @type {any} */ (localStorage.getItem).mockReturnValue('false');
+      localStorage.setItem('youtube_stats_button_enabled', 'false');
 
       const enabled = localStorage.getItem('youtube_stats_button_enabled') !== 'false';
       expect(enabled).toBe(false);

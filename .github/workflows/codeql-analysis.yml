@@ -23,12 +23,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
           languages: javascript
+          config-file: ./.github/codeql-config.yml
           queries: security-and-quality
 
       - name: Autobuild

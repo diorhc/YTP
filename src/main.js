@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy == null) {
   trustedTypes.createPolicy('default', {
     createHTML: s => {
@@ -512,7 +511,7 @@ const executionScript = () => {
           })();
     /* eslint-enable no-var */
 
-    /* eslint-enable no-sequences, no-unused-expressions */
+    /* eslint-enable no-sequences, no-unused-expressions, prefer-const */
 
     // ------------------------------------------------------------------------ nextBrowserTick ------------------------------------------------------------------------
     // ------------------------------------------------------------------------ nextBrowserTick ------------------------------------------------------------------------
@@ -1203,7 +1202,7 @@ const executionScript = () => {
     });
 
     let cachedTabLinks = null;
-    let cachedTabContents = new Map();
+    const cachedTabContents = new Map();
     const switchToTab = activeLink => {
       if (typeof activeLink === 'string') {
         activeLink = qs(`a[tyt-tab-content="${activeLink}"]`) || null;
@@ -1847,10 +1846,10 @@ const executionScript = () => {
           ) {
             // setTimeout(() => chatCnt.urlChanged, 136);
             if (typeof chatCnt.urlChangedAsync12 === 'function') {
-              DEBUG_5085 && console.log('elements.chat urlChangedAsync12', 61);
+              DEBUG_5085 && console.warn('elements.chat urlChangedAsync12', 61);
               chatCnt.urlChanged();
             } else {
-              DEBUG_5085 && console.log('elements.chat urlChangedAsync12', 62);
+              DEBUG_5085 && console.warn('elements.chat urlChangedAsync12', 62);
               setTimeout(() => chatCnt.urlChanged(), 136);
             }
           }
@@ -2240,7 +2239,7 @@ const executionScript = () => {
 
       const conditionFulfillment = req => {
         const command = req ? req.command : null;
-        DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - 0801', command);
+        DEBUG_handleNavigateFactory && console.warn('handleNavigateFactory - 0801', command);
         if (!command) return;
 
         if (command && (command.commandMetadata || 0).webCommandMetadata && command.watchEndpoint) {
@@ -2260,9 +2259,9 @@ const executionScript = () => {
           return false;
         }
 
-        DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - 0802');
+        DEBUG_handleNavigateFactory && console.warn('handleNavigateFactory - 0802');
         if (!shouldUseMiniPlayer()) return false;
-        DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - 0803');
+        DEBUG_handleNavigateFactory && console.warn('handleNavigateFactory - 0803');
 
         /*
           // user would like to switch page immediately without playing the video;
@@ -2279,7 +2278,7 @@ const executionScript = () => {
 
         if (pageType !== 'watch') return false;
 
-        DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - 0804');
+        DEBUG_handleNavigateFactory && console.warn('handleNavigateFactory - 0804');
 
         // 2025.10.16 - ignore ytp-miniplayer-button existance
         // if (!checkElementExist('ytd-watch-flexy #player button.ytp-miniplayer-button.ytp-button', '[hidden]')) {
@@ -2353,10 +2352,11 @@ const executionScript = () => {
             endpoint = getBrowsableEndPoint(req);
 
             DEBUG_handleNavigateFactory &&
-              console.log('handleNavigateFactory - 1000', req, endpoint);
+              console.warn('handleNavigateFactory - 1000', req, endpoint);
           }
 
-          DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - 1001', req, endpoint);
+          DEBUG_handleNavigateFactory &&
+            console.warn('handleNavigateFactory - 1001', req, endpoint);
 
           if (!endpoint || !shouldUseMiniPlayer()) return handleNavigate.apply($this, $arguments);
 
@@ -2370,14 +2370,14 @@ const executionScript = () => {
             object = null;
           }
 
-          DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - 1002', object);
+          DEBUG_handleNavigateFactory && console.warn('handleNavigateFactory - 1002', object);
 
           if (typeof object !== 'object') object = null;
 
           const once = { once: true }; // browsers supporting async function can also use once option.
 
           if (object !== null && !('playlistId' in object)) {
-            DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - 1003', object);
+            DEBUG_handleNavigateFactory && console.warn('handleNavigateFactory - 1003', object);
 
             let wObject = mWeakRef(object);
 
@@ -2387,7 +2387,7 @@ const executionScript = () => {
 
             Object.defineProperty(kRef(wObject) || {}, 'playlistId', {
               get() {
-                DEBUG_handleNavigateFactory && console.log('handleNavigateFactory - get', count);
+                DEBUG_handleNavigateFactory && console.warn('handleNavigateFactory - get', count);
                 count++;
                 if (count === N) {
                   delete this.playlistId;
@@ -2396,7 +2396,7 @@ const executionScript = () => {
               },
               set(value) {
                 DEBUG_handleNavigateFactory &&
-                  console.log('handleNavigateFactory - set', count, value);
+                  console.warn('handleNavigateFactory - set', count, value);
                 delete this.playlistId; // remove property definition
                 this.playlistId = value; // assign as normal property
               },
@@ -2565,22 +2565,22 @@ const executionScript = () => {
         inlineExpanderCnt.updateIsAttributedExpanded();
       } catch (e) {
         // Optional method - may not exist
-        DEBUG_5084 && console.debug('[main] updateIsAttributedExpanded not available', e);
+        DEBUG_5084 && console.warn('[main] updateIsAttributedExpanded not available', e);
       }
       try {
         inlineExpanderCnt.updateIsFormattedExpanded();
       } catch (e) {
-        DEBUG_5084 && console.debug('[main] updateIsFormattedExpanded not available', e);
+        DEBUG_5084 && console.warn('[main] updateIsFormattedExpanded not available', e);
       }
       try {
         inlineExpanderCnt.updateTextOnSnippetTypeChange();
       } catch (e) {
-        DEBUG_5084 && console.debug('[main] updateTextOnSnippetTypeChange not available', e);
+        DEBUG_5084 && console.warn('[main] updateTextOnSnippetTypeChange not available', e);
       }
       try {
         inlineExpanderCnt.updateStyles();
       } catch (e) {
-        DEBUG_5084 && console.debug('[main] updateStyles not available', e);
+        DEBUG_5084 && console.warn('[main] updateStyles not available', e);
       }
     };
 
@@ -3197,7 +3197,7 @@ const executionScript = () => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-watch-next-secondary-results-renderer::attached');
+        DEBUG_5084 && console.warn(5084, 'ytd-watch-next-secondary-results-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -3223,7 +3223,7 @@ const executionScript = () => {
 
       'ytd-watch-next-secondary-results-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-watch-next-secondary-results-renderer::detached');
+        DEBUG_5084 && console.warn(5084, 'ytd-watch-next-secondary-results-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -3233,7 +3233,7 @@ const executionScript = () => {
           hostElement.removeAttribute000('tyt-videos-list');
         }
         DEBUG_5084 &&
-          console.log('ytd-watch-next-secondary-results-renderer::detached', hostElement);
+          console.warn('ytd-watch-next-secondary-results-renderer::detached', hostElement);
       },
 
       settingCommentsVideoId: hostElement => {
@@ -3354,7 +3354,7 @@ const executionScript = () => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-comments::attached');
+        DEBUG_5084 && console.warn(5084, 'ytd-comments::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -3380,7 +3380,7 @@ const executionScript = () => {
 
         if (elements.comments !== hostElement) return;
         if (hostElement.isConnected === false) return;
-        DEBUG_5085 && console.log(7932, 'comments');
+        DEBUG_5085 && console.warn(7932, 'comments');
 
         // if(!elements.comments || elements.comments.isConnected === false) return;
         if (hostElement && !hostElement.closest('#right-tabs')) {
@@ -3407,7 +3407,7 @@ const executionScript = () => {
       },
       'ytd-comments::detached': hostElement => {
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-comments::detached');
+        DEBUG_5084 && console.warn(5084, 'ytd-comments::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -3478,7 +3478,7 @@ const executionScript = () => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-comments-header-renderer::attached');
+        DEBUG_5084 && console.warn(5084, 'ytd-comments-header-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -3507,7 +3507,7 @@ const executionScript = () => {
 
       'ytd-comments-header-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-comments-header-renderer::detached');
+        DEBUG_5084 && console.warn(5084, 'ytd-comments-header-renderer::detached');
 
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
@@ -3671,12 +3671,12 @@ const executionScript = () => {
 
         /*
 
-        console.log('ytd-expander::defined 01');
+        console.warn('ytd-expander::defined 01');
         
         CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback = connectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback)
         CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback = disconnectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback)
         
-        console.log('ytd-expander::defined 02');
+        console.warn('ytd-expander::defined 02');
 
         */
 
@@ -3800,7 +3800,8 @@ const executionScript = () => {
           // return;
         }
 
-        DEBUG_5084 && console.log(5084, 'ytd-expandable-video-description-body-renderer::attached');
+        DEBUG_5084 &&
+          console.warn(5084, 'ytd-expandable-video-description-body-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -3860,7 +3861,7 @@ const executionScript = () => {
         // hostElement.__connectedFlg__ = 9;
         if (hostElement.hasAttribute000('tyt-main-info')) {
           DEBUG_5084 &&
-            console.log(5084, 'ytd-expandable-video-description-body-renderer::detached');
+            console.warn(5084, 'ytd-expandable-video-description-body-renderer::detached');
           elements.infoExpander = null;
           hostElement.removeAttribute000('tyt-main-info');
         }
@@ -3933,7 +3934,7 @@ const executionScript = () => {
           ioComment.unobserve(hostElement);
           hostElement.removeAttribute000('tyt-content-comment-entry');
         } else if (hostElement.hasAttribute000('tyt-main-info')) {
-          DEBUG_5084 && console.log(5084, 'ytd-expander::detached');
+          DEBUG_5084 && console.warn(5084, 'ytd-expander::detached');
           elements.infoExpander = null;
           hostElement.removeAttribute000('tyt-main-info');
         }
@@ -4018,7 +4019,7 @@ const executionScript = () => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-live-chat-frame::attached');
+        DEBUG_5084 && console.warn(5084, 'ytd-live-chat-frame::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4069,7 +4070,7 @@ const executionScript = () => {
 
       'ytd-live-chat-frame::detached': hostElement => {
         // if (inPageRearrange) return;
-        DEBUG_5084 && console.log(5084, 'ytd-live-chat-frame::detached');
+        DEBUG_5084 && console.warn(5084, 'ytd-live-chat-frame::detached');
 
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
@@ -4136,7 +4137,7 @@ const executionScript = () => {
 
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-engagement-panel-section-list-renderer::attached');
+        DEBUG_5084 && console.warn(5084, 'ytd-engagement-panel-section-list-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4173,7 +4174,7 @@ const executionScript = () => {
       'ytd-engagement-panel-section-list-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-engagement-panel-section-list-renderer::detached');
+        DEBUG_5084 && console.warn(5084, 'ytd-engagement-panel-section-list-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -4219,7 +4220,7 @@ const executionScript = () => {
 
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-watch-metadata::attached');
+        DEBUG_5084 && console.warn(5084, 'ytd-watch-metadata::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4240,7 +4241,7 @@ const executionScript = () => {
       'ytd-watch-metadata::detached': hostElement => {
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-watch-metadata::detached');
+        DEBUG_5084 && console.warn(5084, 'ytd-watch-metadata::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -4279,7 +4280,7 @@ const executionScript = () => {
 
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-playlist-panel-renderer::attached');
+        DEBUG_5084 && console.warn(5084, 'ytd-playlist-panel-renderer::attached');
         if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
         if (
           !(hostElement instanceof HTMLElement_) ||
@@ -4304,7 +4305,7 @@ const executionScript = () => {
       'ytd-playlist-panel-renderer::detached': hostElement => {
         // if (inPageRearrange) return;
 
-        DEBUG_5084 && console.log(5084, 'ytd-playlist-panel-renderer::detached');
+        DEBUG_5084 && console.warn(5084, 'ytd-playlist-panel-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -4952,10 +4953,10 @@ const executionScript = () => {
             ? checkElementExist('ytd-watch-flexy[is-two-columns_]', '[hidden]')
             : null;
         if (checkElementExist('ytd-playlist-panel-renderer#playlist', '[hidden], [collapsed]')) {
-          DEBUG_5085 && console.log('fixInitialTabStateFn 1p');
+          DEBUG_5085 && console.warn('fixInitialTabStateFn 1p');
           switchToTab(null);
         } else if (checkElementExist('ytd-live-chat-frame#chat', '[hidden], [collapsed]')) {
-          DEBUG_5085 && console.log('fixInitialTabStateFn 1a');
+          DEBUG_5085 && console.warn('fixInitialTabStateFn 1a');
           switchToTab(null);
           if (checkElementExist('ytd-watch-flexy[theater]', '[hidden]')) {
             ytBtnCollapseChat();
@@ -4963,7 +4964,7 @@ const executionScript = () => {
         } else if (qTab) {
           const hasTheater = qTab.hasAttribute('theater');
           if (!hasTheater) {
-            DEBUG_5085 && console.log('fixInitialTabStateFn 1b');
+            DEBUG_5085 && console.warn('fixInitialTabStateFn 1b');
             const btn0 = qs('.tab-btn-visible'); // or default button
             if (btn0) {
               switchToTab(btn0);
@@ -4971,11 +4972,11 @@ const executionScript = () => {
               switchToTab(null);
             }
           } else {
-            DEBUG_5085 && console.log('fixInitialTabStateFn 1c');
+            DEBUG_5085 && console.warn('fixInitialTabStateFn 1c');
             switchToTab(null);
           }
         } else {
-          DEBUG_5085 && console.log('fixInitialTabStateFn 1z');
+          DEBUG_5085 && console.warn('fixInitialTabStateFn 1z');
         }
         fixInitialTabStateK++;
       },
@@ -5089,8 +5090,9 @@ const executionScript = () => {
       YouTubeUtils.cleanupManager.registerObserver(moOverall);
     }
 
-    // Performance: observing the entire document subtree is expensive on home/feed/playlist.
-    // Enable it only when the watch player exists.
+    // Performance: observe only document.head (where YouTube injects <script>) instead
+    // of the entire document subtree. This is the main path for _yt_player detection.
+    // Falls back to document.documentElement if head is not yet available.
     let moOverallActive = false;
     const shouldActivateMoOverall = () => {
       try {
@@ -5101,7 +5103,8 @@ const executionScript = () => {
     };
     const activateMoOverall = () => {
       if (moOverallActive) return;
-      moOverall.observe(document, { subtree: true, childList: true });
+      const target = document.head || document.documentElement || document;
+      moOverall.observe(target, { subtree: true, childList: true });
       moOverallActive = true;
     };
     const deactivateMoOverall = () => {
@@ -5348,6 +5351,22 @@ const styles = {
   ytd-browse[page-subtype="home"] #contents.ytd-rich-grid-renderer>ytd-rich-item-renderer:nth-child(n+9){content-visibility:auto;contain-intrinsic-size:auto 360px;}
   ytd-playlist-video-list-renderer #contents>ytd-playlist-video-renderer:nth-child(n+10){content-visibility:auto;contain-intrinsic-size:auto 90px;}
   ytd-watch-next-secondary-results-renderer ytd-compact-video-renderer:nth-child(n+5){content-visibility:auto;contain-intrinsic-size:auto 94px;}
+  /* ── CLS Fix: reserve thumbnail space to prevent layout shifts (home, playlist, search) ── */
+  ytd-thumbnail,ytd-thumbnail a.ytd-thumbnail{display:block;aspect-ratio:16/9;contain:layout paint;}
+  ytd-browse[page-subtype="home"] ytd-thumbnail,ytd-browse[page-subtype="home"] ytd-thumbnail a.ytd-thumbnail{aspect-ratio:16/9;}
+  ytd-playlist-video-renderer ytd-thumbnail,ytd-playlist-video-renderer ytd-thumbnail a.ytd-thumbnail{aspect-ratio:16/9;}
+  ytd-compact-video-renderer ytd-thumbnail,ytd-compact-video-renderer ytd-thumbnail a.ytd-thumbnail{aspect-ratio:16/9;}
+  ytd-rich-item-renderer ytd-thumbnail yt-image{aspect-ratio:16/9;width:100%;height:auto;display:block;}
+  /* ── CLS Fix: stabilise rich-grid rows so columns don't shift as items load ── */
+  ytd-browse[page-subtype="home"] ytd-rich-grid-row{contain:layout size;}
+  ytd-browse[page-subtype="home"] ytd-rich-item-renderer{contain:layout paint;min-height:280px;}
+  /* ── Playlist page: reserve row height to prevent CLS on item load ── */
+  ytd-playlist-video-renderer{contain:layout paint;min-height:90px;}
+  ytd-playlist-panel-video-renderer{contain:layout paint;min-height:72px;}
+  /* ── Video page sidebar: stabilise compact-video rows ── */
+  ytd-compact-video-renderer{contain:layout paint;min-height:92px;}
+  /* ── Performance: GPU-composite the fixed/sticky nav to avoid repaint ── */
+  #masthead-container{will-change:transform;}
   `,
 };
 
@@ -5623,4 +5642,69 @@ const styles = {
     // Modules register themselves with LazyLoader in their own IIFEs
     loadOnIdle(2000);
   }
+
+  // ── Runtime LCP / CLS improvements ─────────────────────────────────────
+  (function injectPerformanceHints() {
+    try {
+      // 1. Preconnect to YouTube image CDNs so thumbnail fetches start earlier
+      const preconnectOrigins = [
+        'https://i.ytimg.com',
+        'https://yt3.ggpht.com',
+        'https://yt3.googleusercontent.com',
+      ];
+      preconnectOrigins.forEach(origin => {
+        if (!document.querySelector(`link[rel="preconnect"][href="${origin}"]`)) {
+          const link = document.createElement('link');
+          link.rel = 'preconnect';
+          link.href = origin;
+          link.crossOrigin = 'anonymous';
+          document.head.appendChild(link);
+        }
+      });
+
+      // 2. On yt-navigate-finish promote the first visible thumbnail's image to
+      //    high fetch-priority so it is the browser's LCP candidate.
+      const promoteLCPImage = () => {
+        try {
+          const firstThumb = document.querySelector(
+            'ytd-rich-item-renderer ytd-thumbnail img, ' +
+              'ytd-playlist-video-renderer ytd-thumbnail img, ' +
+              'ytd-video-renderer ytd-thumbnail img'
+          );
+          if (firstThumb && !firstThumb._ytpLCPPromoted) {
+            firstThumb.fetchPriority = 'high';
+            firstThumb.loading = 'eager';
+            firstThumb.decoding = 'sync';
+            firstThumb._ytpLCPPromoted = true;
+          }
+          // Remaining visible thumbnails: async decoding to unblock main thread
+          const allThumbs = document.querySelectorAll(
+            'ytd-rich-item-renderer ytd-thumbnail img, ' +
+              'ytd-playlist-video-renderer ytd-thumbnail img, ' +
+              'ytd-compact-video-renderer ytd-thumbnail img'
+          );
+          for (let i = 1; i < allThumbs.length; i++) {
+            const img = allThumbs[i];
+            if (!img._ytpDecoding) {
+              img.decoding = 'async';
+              img._ytpDecoding = true;
+            }
+          }
+        } catch (_e) {
+          /* non-fatal */
+        }
+      };
+
+      window.addEventListener('yt-navigate-finish', promoteLCPImage, { passive: true });
+      // Run once on initial load too
+      if (document.readyState !== 'loading') {
+        promoteLCPImage();
+      } else {
+        document.addEventListener('DOMContentLoaded', promoteLCPImage, { once: true });
+      }
+    } catch (_e) {
+      /* non-fatal */
+    }
+  })();
+  // ── End runtime LCP / CLS improvements ──────────────────────────────────
 })();

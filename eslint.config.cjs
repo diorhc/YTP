@@ -117,6 +117,7 @@ module.exports = [
       '**/scripts/**/*.js',
       'analyze-*.js',
       'benchmark.js',
+      'build.js',
       'check-*.js',
       'validate-*.js',
       'fix-*.js',

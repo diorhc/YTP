@@ -11,7 +11,8 @@
  */
 
 describe('createRetryScheduler', () => {
-  jest.useFakeTimers();
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
 
   /** @returns {{ stop: () => void }} */
   function createRetryScheduler(opts) {
@@ -552,15 +553,12 @@ describe('sanitizeHTML', () => {
 });
 
 describe('createRetryScheduler — advanced', () => {
-  jest.useFakeTimers();
-
-  // Mock performance.mark / getEntriesByType / clearMarks for jsdom
+  // jest.useFakeTimers() replaces the performance object, so exclude it
   const _marks = [];
-  const _origMark = global.performance.mark;
-  const _origGetEntries = global.performance.getEntriesByType;
-  const _origClearMarks = global.performance.clearMarks;
 
-  beforeAll(() => {
+  beforeEach(() => {
+    jest.useFakeTimers({ doNotFake: ['performance'] });
+    _marks.length = 0;
     global.performance.mark = name => {
       _marks.push({ name, entryType: 'mark' });
     };
@@ -569,12 +567,7 @@ describe('createRetryScheduler — advanced', () => {
       _marks.length = 0;
     };
   });
-
-  afterAll(() => {
-    global.performance.mark = _origMark;
-    global.performance.getEntriesByType = _origGetEntries;
-    global.performance.clearMarks = _origClearMarks;
-  });
+  afterEach(() => jest.useRealTimers());
 
   function createRetryScheduler(opts) {
     const { check, maxAttempts = 20, interval = 250, onGiveUp, label } = opts;
@@ -881,7 +874,8 @@ describe('createFeatureToggle', () => {
 });
 
 describe('resolveMusicContainers TTL cache (simulated)', () => {
-  jest.useFakeTimers();
+  beforeEach(() => jest.useFakeTimers());
+  afterEach(() => jest.useRealTimers());
 
   function createMusicContainerResolver(ttl = 5000) {
     let _cached = null;

@@ -14,16 +14,19 @@ jobs:
   security-scan:
     name: Security Vulnerability Scan
     runs-on: ubuntu-latest
+    env:
+      HUSKY: '0'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
     permissions:
       contents: read
       security-events: write
       
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v5
         with:
           node-version: '20'
           cache: 'npm'
@@ -35,9 +38,17 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
-      - name: Check for known vulnerabilities
-        run: npm audit --audit-level=moderate
-        continue-on-error: true
+      - name: Check for known vulnerabilities (non-blocking)
+        run: |
+          set +e
+          npm audit --audit-level=moderate
+          AUDIT_EXIT=$?
+          set -e
+          if [ $AUDIT_EXIT -ne 0 ]; then
+            echo "⚠️ npm audit found vulnerabilities (non-blocking in security scan workflow)"
+          else
+            echo "✅ npm audit passed"
+          fi
 
       - name: Security code patterns check
         run: |
@@ -131,7 +142,7 @@ jobs:
 
       - name: Upload security report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: security-report
           path: security-report.md
@@ -141,12 +152,15 @@ jobs:
     name: Dependency Review
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
+    env:
+      HUSKY: '0'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
     permissions:
       contents: read
       
     steps:
       - name: Checkout code
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
