@@ -5,33 +5,41 @@
 describe('Zoom Module', () => {
   beforeEach(() => {
     window._ytplusCreateHTML = s => s;
-    window.YouTubeUtils = {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
-      byId: jest.fn(id => document.getElementById(id)),
-      t: jest.fn(key => key || ''),
-      cleanupManager: {
+    const _cleanupManager = /** @type {CleanupManager} */ (
+      /** @type {unknown} */ ({
         registerInterval: jest.fn(id => id),
         registerTimeout: jest.fn(id => id),
         registerObserver: jest.fn(obs => obs),
         registerListener: jest.fn(),
         cleanup: jest.fn(),
-        observers: new Set(),
-        intervals: new Set(),
-        timeouts: new Set(),
-        animationFrames: new Set(),
+        registerAnimationFrame: jest.fn(id => id),
+      })
+    );
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(sel => document.querySelector(sel)),
+        $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
+        byId: jest.fn(id => document.getElementById(id)),
+        t: jest.fn(key => key || ''),
+        cleanupManager: _cleanupManager,
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        loadFeatureEnabled: jest.fn(() => true),
+        logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+        SETTINGS_KEY: 'youtube_plus_settings',
       },
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
-      loadFeatureEnabled: jest.fn(() => true),
-      logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
-      SETTINGS_KEY: 'youtube_plus_settings',
-    };
-    window.YouTubePlusLazyLoader = {
-      register: jest.fn(),
-      load: jest.fn(),
-      isLoaded: jest.fn(() => false),
-      getStats: jest.fn(() => ({})),
-    };
+    });
+    Object.defineProperty(window, 'YouTubePlusLazyLoader', {
+      configurable: true,
+      writable: true,
+      value: {
+        register: jest.fn(),
+        load: jest.fn(),
+        isLoaded: jest.fn(() => false),
+        getStats: jest.fn(() => ({})),
+      },
+    });
     global.mockLocation({
       hostname: 'www.youtube.com',
       pathname: '/watch',
@@ -51,7 +59,11 @@ describe('Zoom Module', () => {
   test('should provide zoom level clamping', () => {
     const MIN_ZOOM = 1.0;
     const MAX_ZOOM = 5.0;
-    const clamp = (val, min, max) => Math.min(Math.max(val, min), max);
+    const clamp = /** @param {number} val @param {number} min @param {number} max */ (
+      val,
+      min,
+      max
+    ) => Math.min(Math.max(val, min), max);
 
     expect(clamp(0.5, MIN_ZOOM, MAX_ZOOM)).toBe(1.0);
     expect(clamp(3.0, MIN_ZOOM, MAX_ZOOM)).toBe(3.0);
@@ -60,8 +72,11 @@ describe('Zoom Module', () => {
   });
 
   test('should generate valid CSS transform for zoom', () => {
-    const getTransform = (zoom, panX = 0, panY = 0) =>
-      `scale(${zoom}) translate(${panX}px, ${panY}px)`;
+    const getTransform = /** @param {number} zoom @param {number} [panX] @param {number} [panY] */ (
+      zoom,
+      panX = 0,
+      panY = 0
+    ) => `scale(${zoom}) translate(${panX}px, ${panY}px)`;
 
     expect(getTransform(2.0)).toBe('scale(2) translate(0px, 0px)');
     expect(getTransform(1.5, 10, -20)).toBe('scale(1.5) translate(10px, -20px)');

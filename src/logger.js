@@ -51,8 +51,8 @@
           if (parsed.debugMode) return true;
         }
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     return false;
   }
@@ -139,7 +139,7 @@
     }
   }
 
-  /** @type {import('../types/index').YouTubePlusLogger} */
+  /** @type {YouTubePlusLogger} */
   const logger = {
     /**
      * Log an error message
@@ -203,7 +203,7 @@
      * Get recent log entries
      * @param {number} [count=50] - Number of entries to return
      * @param {LogLevel} [filterLevel] - Optional level filter
-     * @returns {Array<Object>}
+     * @returns {any[]}
      */
     getRecent(count = 50, filterLevel) {
       let entries = logBuffer;
@@ -235,7 +235,7 @@
      */
     getStats() {
       const byLevel = { error: 0, warn: 0, info: 0, debug: 0 };
-      const byModule = {};
+      const byModule = /** @type {Record<string, number>} */ ({});
       for (const entry of logBuffer) {
         byLevel[entry.level]++;
         byModule[entry.module] = (byModule[entry.module] || 0) + 1;
@@ -248,19 +248,35 @@
      * Returns an object with error/warn/info/debug methods
      * that automatically set the module name.
      * @param {string} moduleName - Module identifier
-     * @returns {{error: Function, warn: Function, info: Function, debug: Function}}
+     * @returns {{error: (message: string, data?: any) => void, warn: (message: string, data?: any) => void, info: (message: string, data?: any) => void, debug: (message: string, data?: any) => void}}
      */
     createLogger(moduleName) {
       return {
+        /**
+         * @param {string} message
+         * @param {any} [data]
+         */
         error(message, data) {
           log('error', moduleName, message, data);
         },
+        /**
+         * @param {string} message
+         * @param {any} [data]
+         */
         warn(message, data) {
           log('warn', moduleName, message, data);
         },
+        /**
+         * @param {string} message
+         * @param {any} [data]
+         */
         info(message, data) {
           log('info', moduleName, message, data);
         },
+        /**
+         * @param {string} message
+         * @param {any} [data]
+         */
         debug(message, data) {
           log('debug', moduleName, message, data);
         },
@@ -270,7 +286,7 @@
 
   // Export to window
   if (typeof window !== 'undefined') {
-    window.YouTubePlusLogger = logger;
+    window.YouTubePlusLogger = /** @type {any} */ (logger);
   }
 
   if (typeof module !== 'undefined' && module.exports) {

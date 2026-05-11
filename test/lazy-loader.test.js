@@ -3,19 +3,28 @@
  */
 
 describe('LazyLoader', () => {
-  let lazyLoader;
+  /** @type {YouTubePlusLazyLoader | null} */
+  let lazyLoader = null;
 
   beforeEach(() => {
-    delete window.YouTubePlusLazyLoader;
-    window.YouTubeUtils = {
-      logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-    };
+    Object.defineProperty(window, 'YouTubePlusLazyLoader', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+      },
+    });
 
     // Reset module cache so the IIFE re-executes
     jest.resetModules();
 
     require('../src/lazy-loader');
-    lazyLoader = window.YouTubePlusLazyLoader;
+    lazyLoader = window.YouTubePlusLazyLoader || null;
   });
 
   afterEach(() => {
@@ -24,6 +33,7 @@ describe('LazyLoader', () => {
 
   test('should be exported to window.YouTubePlusLazyLoader', () => {
     expect(lazyLoader).toBeDefined();
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     expect(typeof lazyLoader.register).toBe('function');
     expect(typeof lazyLoader.load).toBe('function');
     expect(typeof lazyLoader.loadAll).toBe('function');
@@ -31,6 +41,7 @@ describe('LazyLoader', () => {
   });
 
   test('should register a module', () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     const fn = jest.fn();
     lazyLoader.register('test-mod', fn, { priority: 1 });
     const stats = lazyLoader.getStats();
@@ -39,6 +50,7 @@ describe('LazyLoader', () => {
   });
 
   test('should load a registered module', async () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     const fn = jest.fn();
     lazyLoader.register('test-mod', fn);
     const result = await lazyLoader.load('test-mod');
@@ -48,11 +60,13 @@ describe('LazyLoader', () => {
   });
 
   test('should return false for unknown module', async () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     const result = await lazyLoader.load('nonexistent');
     expect(result).toBe(false);
   });
 
   test('should not double-load a module', async () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     const fn = jest.fn();
     lazyLoader.register('once', fn);
     await lazyLoader.load('once');
@@ -61,6 +75,8 @@ describe('LazyLoader', () => {
   });
 
   test('should load all modules sorted by priority', async () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
+    /** @type {string[]} */
     const order = [];
     lazyLoader.register('low', () => order.push('low'), { priority: 0 });
     lazyLoader.register('high', () => order.push('high'), { priority: 10 });
@@ -72,6 +88,7 @@ describe('LazyLoader', () => {
   });
 
   test('should handle module load failure gracefully', async () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     lazyLoader.register('failing', () => {
       throw new Error('Module init failed');
     });
@@ -80,6 +97,7 @@ describe('LazyLoader', () => {
   });
 
   test('should provide correct stats', async () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     lazyLoader.register('a', jest.fn());
     lazyLoader.register('b', jest.fn());
     await lazyLoader.load('a');
@@ -92,6 +110,7 @@ describe('LazyLoader', () => {
   });
 
   test('should clear all modules', () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     lazyLoader.register('x', jest.fn());
     lazyLoader.clear();
     const stats = lazyLoader.getStats();
@@ -99,6 +118,7 @@ describe('LazyLoader', () => {
   });
 
   test('should not register duplicate modules', () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
     lazyLoader.register('dup', jest.fn());
     lazyLoader.register('dup', jest.fn());
     expect(lazyLoader.getStats().totalModules).toBe(1);

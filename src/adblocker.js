@@ -5,19 +5,78 @@
 
   // Shared helpers from YouTubeUtils (canonical in utils.js)
   const U = window.YouTubeUtils || {};
-  const $ = (sel, ctx) => U.$(sel, ctx) || (ctx || document).querySelector(sel);
-  const $$ = (sel, ctx) => U.$$(sel, ctx) || Array.from((ctx || document).querySelectorAll(sel));
-  const t = U.t || (key => key || '');
+  const $ = (/** @type {string} */ sel, /** @type {Document | Element} */ ctx = document) =>
+    U.$(sel, ctx) || ctx.querySelector(sel);
+  const t = U.t || ((/** @type {string} */ key) => key || '');
+
+  /**
+   * @typedef {{
+   *   skipInterval: number,
+   *   removeInterval: number,
+   *   enableLogging: boolean,
+   *   maxRetries: number,
+   *   enabled: boolean,
+   *   storageKey: string
+   * }} AdBlockerConfig
+   */
+
+  /**
+   * @typedef {{
+   *   isYouTubeShorts: boolean,
+   *   isYouTubeMusic: boolean,
+   *   lastSkipAttempt: number,
+   *   retryCount: number,
+   *   initialized: boolean
+   * }} AdBlockerState
+   */
+
+  /**
+   * @typedef {{
+   *   moviePlayer: Element | HTMLElement | null,
+   *   ytdPlayer: Element | HTMLElement | null,
+   *   lastCacheTime: number,
+   *   cacheTimeout: number
+   * }} AdBlockerCache
+   */
+
+  /**
+   * @typedef {{
+   *   ads: string,
+   *   elements: string,
+   *   video: string,
+   *   removal: string
+   * }} AdBlockerSelectors
+   */
+
+  /**
+   * @typedef {{
+   *   load: () => void,
+   *   save: () => void
+   * }} AdBlockerSettings
+   */
+
+  // Pre-built combined selector for all known skip buttons (cached at module level for performance)
+  const SKIP_SELECTOR = [
+    '.ytp-ad-skip-button',
+    '.ytp-ad-skip-button-modern',
+    '.ytp-skip-ad-button',
+    '.videoAdUiSkipButton',
+    'button.ytp-ad-skip-button-modern',
+    '.ytp-ad-skip-button-slot button',
+    '.ytp-ad-skip-button-container button',
+    '.ytp-ad-skip-button-modern .ytp-ad-skip-button-container',
+    '.ytp-skip-ad-button__text',
+    'button[class*="skip"]',
+    '.ytp-ad-skip-button-modern button',
+    'ytd-button-renderer.ytp-ad-skip-button-renderer button',
+  ].join(',');
 
   /**
    * Ad blocking functionality for YouTube
    * @namespace AdBlocker
    */
   const AdBlocker = {
-    /**
-     * Configuration settings
-     * @type {Object}
-     */
+    /** @type {AdBlockerConfig} */
     config: {
       skipInterval: 1000, // Combined ad-check interval (skip + remove + dismiss).
       removeInterval: 3000,
@@ -27,10 +86,7 @@
       storageKey: 'youtube_adblocker_settings',
     },
 
-    /**
-     * Current state tracking
-     * @type {Object}
-     */
+    /** @type {AdBlockerState} */
     state: {
       isYouTubeShorts: false,
       isYouTubeMusic: location.hostname === 'music.youtube.com',
@@ -39,10 +95,7 @@
       initialized: false,
     },
 
-    /**
-     * Cached DOM queries for performance
-     * @type {Object}
-     */
+    /** @type {AdBlockerCache} */
     cache: {
       moviePlayer: null,
       ytdPlayer: null,
@@ -50,10 +103,7 @@
       cacheTimeout: 10000, // Increased cache timeout for better performance
     },
 
-    /**
-     * Optimized CSS selectors for ad elements
-     * @type {Object}
-     */
+    /** @type {AdBlockerSelectors} */
     selectors: {
       // Only hide minor ad UI elements that YouTube doesn't monitor
       ads: '.ytp-ad-timed-pie-countdown-container,.ytp-ad-survey-questions,.ytp-ad-overlay-container,.ytp-ad-progress,.ytp-ad-progress-list',
@@ -79,10 +129,7 @@
       'ytd-reel-video-renderer',
     ],
 
-    /**
-     * Settings management with localStorage persistence
-     * @type {Object}
-     */
+    /** @type {AdBlockerSettings} */
     settings: {
       /**
        * Load settings from localStorage with validation
@@ -182,21 +229,7 @@
 
       try {
         // Strategy 1: Click skip button if available (most natural user action)
-        // Single combined selector for all known skip buttons (1 DOM query instead of 12)
-        const SKIP_SELECTOR = [
-          '.ytp-ad-skip-button',
-          '.ytp-ad-skip-button-modern',
-          '.ytp-skip-ad-button',
-          '.videoAdUiSkipButton',
-          'button.ytp-ad-skip-button-modern',
-          '.ytp-ad-skip-button-slot button',
-          '.ytp-ad-skip-button-container button',
-          '.ytp-ad-skip-button-modern .ytp-ad-skip-button-container',
-          '.ytp-skip-ad-button__text',
-          'button[class*="skip"]',
-          '.ytp-ad-skip-button-modern button',
-          'ytd-button-renderer.ytp-ad-skip-button-renderer button',
-        ].join(',');
+        // Uses module-level cached SKIP_SELECTOR constant
         const skipButtons = document.querySelectorAll(SKIP_SELECTOR);
         for (const skipButton of skipButtons) {
           const rect = skipButton.getBoundingClientRect();
@@ -239,7 +272,7 @@
         }
 
         AdBlocker.state.retryCount = 0;
-      } catch {
+      } catch (e) {
         if (AdBlocker.state.retryCount < AdBlocker.config.maxRetries) {
           AdBlocker.state.retryCount++;
           setTimeout(AdBlocker.skipAd, 800);
@@ -314,7 +347,7 @@
             }
           }
           // Last resort: remove dialog
-          dialog.style.display = 'none';
+          /** @type {any} */ (dialog).style.display = 'none';
           dialog.remove();
           return;
         }
@@ -324,11 +357,14 @@
           'tp-yt-iron-overlay-backdrop, .yt-dialog-overlay'
         );
         for (const overlay of overlays) {
-          if (overlay.style.display !== 'none' && overlay.offsetParent !== null) {
-            overlay.style.display = 'none';
+          if (
+            /** @type {any} */ (overlay).style.display !== 'none' &&
+            overlay.offsetParent !== null
+          ) {
+            /** @type {any} */ (overlay).style.display = 'none';
           }
         }
-      } catch {
+      } catch (e) {
         // Silently ignore
       }
     },
@@ -359,12 +395,12 @@
           adElements.forEach(el => {
             try {
               el.remove();
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           });
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
 
         // Remove ad-slot renderers
@@ -397,8 +433,9 @@
         });
       };
 
-      if (window.requestIdleCallback) {
-        requestIdleCallback(remove, { timeout: 100 });
+      const ric = /** @type {any} */ (window).requestIdleCallback;
+      if (typeof ric === 'function') {
+        ric(remove, { timeout: 100 });
       } else {
         setTimeout(remove, 0);
       }
@@ -422,14 +459,17 @@
 
         section.appendChild(item);
 
-        item.querySelector('input').addEventListener('change', e => {
+        const checkbox = item.querySelector('input');
+        if (!checkbox) return;
+        checkbox.addEventListener('change', (/** @type {Event} */ e) => {
           const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
           AdBlocker.config.enabled = target.checked;
           AdBlocker.settings.save();
           AdBlocker.config.enabled ? AdBlocker.addCss() : AdBlocker.removeCss();
         });
       } catch (error) {
-        YouTubeUtils.logError('AdBlocker', 'Failed to add settings UI', error);
+        const err = error instanceof Error ? error : new Error(String(error));
+        YouTubeUtils.logError('AdBlocker', 'Failed to add settings UI', err);
       }
     },
 
@@ -446,9 +486,24 @@
       }
 
       // Start optimized intervals with cleanup registration
+      // P7: Cache movie_player reference to avoid 4+ redundant DOM queries per check cycle
+      /** @type {Element | null} */
+      let _cachedMoviePlayer = null;
+      let _mpCacheTs = 0;
+      const _MP_CACHE_TTL = 5000; // 5 seconds
+
+      const getCachedMoviePlayer = () => {
+        const now = Date.now();
+        if (!_cachedMoviePlayer || now - _mpCacheTs > _MP_CACHE_TTL) {
+          _cachedMoviePlayer = $('#movie_player');
+          _mpCacheTs = now;
+        }
+        return _cachedMoviePlayer;
+      };
+
       // Guard: only run heavy DOM queries if an ad is actually showing
       const isAdActive = () => {
-        const mp = $('#movie_player');
+        const mp = getCachedMoviePlayer();
         return (
           mp && (mp.classList.contains('ad-showing') || mp.classList.contains('ad-interrupting'))
         );
@@ -460,14 +515,10 @@
           AdBlocker.skipAd();
           AdBlocker.dismissAdBlockerWarning();
         }
-        // removeElements runs less frequently — only on navigation (see below)
       };
 
-      // Fallback polling interval (increased to 3s; the MutationObserver below handles fast detection)
-      const adInterval = setInterval(combinedAdCheck, 3000);
-      YouTubeUtils.cleanupManager.registerInterval(adInterval);
-
-      // Fast ad-detection via MutationObserver on #movie_player class attribute
+      // Primary: MutationObserver on #movie_player class attribute (event-driven, no polling)
+      // Fallback polling removed — MutationObserver provides faster detection with lower overhead
       try {
         const attachAdObserver = () => {
           const moviePlayer = $('#movie_player');
@@ -496,9 +547,8 @@
       try {
         const handleVideoPlay = () => {
           if (AdBlocker.config.enabled) {
-            setTimeout(AdBlocker.skipAd, 50);
-            setTimeout(AdBlocker.skipAd, 200);
-            setTimeout(AdBlocker.skipAd, 500);
+            // Single delayed check — MutationObserver handles fast detection
+            setTimeout(combinedAdCheck, 100);
           }
         };
         if (YouTubeUtils.cleanupManager?.registerListener) {
@@ -592,16 +642,20 @@
                 document.querySelector('#page-manager'),
               ].filter(Boolean);
               if (retryContainers.length > 0) {
-                retryContainers.forEach(c =>
-                  adSlotObserver.observe(c, { childList: true, subtree: true })
-                );
+                retryContainers.forEach(c => {
+                  if (c instanceof Node) {
+                    adSlotObserver.observe(c, { childList: true, subtree: true });
+                  }
+                });
               } else {
                 adSlotObserver.observe(document.body, { childList: true, subtree: true });
               }
             }, 1000);
           } else {
             containers.forEach(container => {
-              adSlotObserver.observe(container, { childList: true, subtree: true });
+              if (container instanceof Node) {
+                adSlotObserver.observe(container, { childList: true, subtree: true });
+              }
             });
           }
         };
@@ -620,7 +674,7 @@
         }
       }
 
-      const clickHandler = e => {
+      const clickHandler = (/** @type {Event} */ e) => {
         const target = /** @type {EventTarget & HTMLElement} */ (e.target);
         if (target.dataset?.section === 'basic') {
           setTimeout(AdBlocker.addSettingsUI, 25);

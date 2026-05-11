@@ -48,12 +48,14 @@
   };
 
   // State management
+  /** @type {{ observer: MutationObserver | null, isProcessing: boolean, settingsNavListenerKey: symbol | null, panelCollapsed: boolean, initialized: boolean, settingsIntegrationInitialized: boolean }} */
   const state = {
     observer: null,
     isProcessing: false,
     settingsNavListenerKey: null,
     panelCollapsed: false,
     initialized: false,
+    settingsIntegrationInitialized: false,
   };
 
   const COMMENT_HISTORY_URL = (() => {
@@ -61,8 +63,8 @@
     try {
       if (window.YouTubePlusI18n?.getLanguage) lang = window.YouTubePlusI18n.getLanguage();
       else if (document.documentElement.lang) lang = document.documentElement.lang.split('-')[0];
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     return `https://myactivity.google.com/page?hl=${encodeURIComponent(lang)}&utm_medium=web&utm_source=youtube&page=youtube_comments`;
   })();
@@ -73,45 +75,64 @@
       if (!host.includes('myactivity.google.com')) return false;
       const params = new URLSearchParams(location.search || '');
       return params.get('page') === 'youtube_comments';
-    } catch {
+    } catch (e) {
       return false;
     }
   };
 
+  const isMyActivityHost = () => {
+    try {
+      return (location.hostname || '').includes('myactivity.google.com');
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const canRunCommentManagerRuntime = isMyActivityHost();
+
+  /** @param {MutationObserver} observer */
   const registerObserverSafe = observer => {
     try {
       if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
         YouTubeUtils.cleanupManager.registerObserver(observer);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
+  /**
+   * @param {EventTarget} target
+   * @param {string} event
+   * @param {EventListener} handler
+   * @param {AddEventListenerOptions} [options]
+   * @returns {symbol | null}
+   */
   const registerListenerSafe = (target, event, handler, options) => {
     try {
       if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
         return YouTubeUtils.cleanupManager.registerListener(target, event, handler, options);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     try {
       target.addEventListener(event, handler, options);
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     return null;
   };
 
+  /** @param {string} cssText */
   const addStyleBlock = cssText => {
     try {
       if (window.YouTubeUtils && YouTubeUtils.StyleManager) {
         YouTubeUtils.StyleManager.add('comment-delete-styles', cssText);
         return;
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     try {
       if (document.getElementById('comment-delete-styles')) return;
@@ -119,8 +140,8 @@
       style.id = 'comment-delete-styles';
       style.textContent = cssText;
       (document.head || document.documentElement).appendChild(style);
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
@@ -130,15 +151,15 @@
       try {
         const saved = localStorage.getItem(CONFIG.storageKey);
         if (saved) CONFIG.enabled = JSON.parse(saved).enabled ?? true;
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     },
     save: () => {
       try {
         localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     },
   };
@@ -147,6 +168,7 @@
   const debounce =
     window.YouTubeUtils?.debounce ||
     ((fn, ms) => {
+      /** @type {ReturnType<typeof setTimeout> | undefined} */
       let t;
       return (...a) => {
         clearTimeout(t);
@@ -155,7 +177,9 @@
     });
 
   // Shared DOM helpers from YouTubeUtils
+  /** @param {string} sel */
   const $ = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+  /** @param {string} sel */
   const $$ = sel => window.YouTubeUtils?.$$(sel) || Array.from(document.querySelectorAll(sel));
 
   /**
@@ -183,19 +207,22 @@
   const withErrorBoundary = (fn, context) => {
     if (window.YouTubeErrorBoundary?.withErrorBoundary) {
       return /** @type {any} */ (
-        window.YouTubeErrorBoundary.withErrorBoundary(fn, 'CommentManager')
+        window.YouTubeErrorBoundary.withErrorBoundary(
+          /** @type {(...args: unknown[]) => unknown} */ (/** @type {unknown} */ (fn)),
+          'CommentManager'
+        )
       );
     }
-    return /** @type {any} */ (
-      (...args) => {
-        try {
-          return fn(...args);
-        } catch (e) {
-          logError(context, e);
-          return null;
-        }
+    /** @param {...any} args */
+    const fallback = (...args) => {
+      try {
+        return fn(...args);
+      } catch (e) {
+        logError(context, e);
+        return null;
       }
-    );
+    };
+    return /** @type {any} */ (fallback);
   };
 
   /**
@@ -290,6 +317,7 @@
         </svg>
       `);
 
+    /** @param {boolean} collapsed */
     const togglePanelState = collapsed => {
       state.panelCollapsed = collapsed;
       header.classList.toggle('is-collapsed', collapsed);
@@ -308,6 +336,12 @@
     const actions = document.createElement('div');
     actions.className = CONFIG.classes.actions;
 
+    /**
+     * @param {string} label
+     * @param {string} className
+     * @param {() => void} onClick
+     * @param {{ id?: string, disabled?: boolean }} [options]
+     */
     const createActionButton = (label, className, onClick, options = {}) => {
       const button = document.createElement('button');
       button.type = 'button';
@@ -354,11 +388,11 @@
    */
   const updateDeleteButtonState = withErrorBoundary(() => {
     const deleteAllButton = $(`.${CONFIG.classes.deleteButton}`);
-    if (!deleteAllButton) return;
+    if (!(deleteAllButton instanceof HTMLButtonElement)) return;
 
     const hasChecked = Array.from($$(`.${CONFIG.classes.checkbox}`)).some(cb => cb.checked);
     deleteAllButton.disabled = !hasChecked;
-    deleteAllButton.style.opacity = hasChecked ? '1' : '0.6';
+    deleteAllButton.setAttribute('style', `opacity:${hasChecked ? '1' : '0.6'}`);
   }, 'updateDeleteButtonState');
 
   /**
@@ -374,7 +408,8 @@
       setTimeout(() => {
         const deleteButton =
           checkbox.nextElementSibling ||
-          checkbox.parentNode.querySelector(CONFIG.selectors.deleteButtons);
+          checkbox.parentElement?.querySelector(CONFIG.selectors.deleteButtons) ||
+          null;
         deleteButton?.click();
       }, index * CONFIG.deleteDelay);
     });
@@ -458,7 +493,7 @@
     if (existing) {
       try {
         experimentalSection.appendChild(existing);
-      } catch {
+      } catch (e) {
         // ignore
       }
       return;
@@ -473,17 +508,17 @@
         </div>
         <button class="ytp-plus-button" id="open-comment-history-page" style="margin:0 0 0 30px;padding:12px 16px;font-size:13px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="gray" stroke-width="2">
-            <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
-            <polyline points="15,3 21,3 21,9"/>
-            <line x1="10" y1="14" x2="21" y2="3"/>
-          </svg>
+              <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
+              <polyline points="15,3 21,3 21,9"/>
+              <line x1="10" y1="14" x2="21" y2="3"/>
+            </svg>
         </button>
       `);
 
     // Append to end (ensure it's the bottom-most item)
     experimentalSection.appendChild(settingsItem);
 
-    $('#open-comment-history-page').addEventListener('click', () => {
+    $('#open-comment-history-page')?.addEventListener('click', () => {
       window.open(COMMENT_HISTORY_URL, '_blank');
     });
   }, 'addCommentManagerSettings');
@@ -500,6 +535,33 @@
     addCommentManagerSettings();
     if (!$('.comment-manager-settings-item') && attempt < 20) {
       setTimeout(() => ensureCommentManagerSettings(attempt + 1), 80);
+    }
+  };
+
+  const initSettingsIntegration = () => {
+    if (state.settingsIntegrationInitialized) return;
+    state.settingsIntegrationInitialized = true;
+
+    document.addEventListener('youtube-plus-settings-modal-opened', () => {
+      setTimeout(() => ensureCommentManagerSettings(), 100);
+    });
+
+    /** @param {Event} e */
+    const handleExperimentalNavClick = e => {
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
+      if (navItem?.dataset?.section === 'experimental') {
+        setTimeout(() => ensureCommentManagerSettings(), 50);
+      }
+    };
+
+    if (!state.settingsNavListenerKey) {
+      state.settingsNavListenerKey = registerListenerSafe(
+        document,
+        'click',
+        handleExperimentalNavClick,
+        { passive: true, capture: true }
+      );
     }
   };
 
@@ -523,7 +585,7 @@
     const observeTarget = () => {
       const target =
         document.querySelector('#comments') || document.querySelector('#content') || document.body;
-      state.observer.observe(target, { childList: true, subtree: true });
+      state.observer?.observe(target, { childList: true, subtree: true });
     };
 
     if (document.body) {
@@ -536,7 +598,7 @@
     window.addEventListener(
       'yt-navigate-finish',
       () => {
-        state.observer.disconnect();
+        state.observer?.disconnect();
         setTimeout(observeTarget, 200);
       },
       { passive: true }
@@ -549,42 +611,15 @@
       initializeScript();
     }
 
-    // Settings modal integration — use event instead of MutationObserver
-    document.addEventListener('youtube-plus-settings-modal-opened', () => {
-      setTimeout(() => ensureCommentManagerSettings(), 100);
-    });
-
-    const handleExperimentalNavClick = e => {
-      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
-      if (navItem?.dataset?.section === 'experimental') {
-        setTimeout(() => ensureCommentManagerSettings(), 50);
-      }
-    };
-
-    if (!state.settingsNavListenerKey) {
-      state.settingsNavListenerKey = registerListenerSafe(
-        document,
-        'click',
-        handleExperimentalNavClick,
-        { passive: true, capture: true }
-      );
-    }
+    initSettingsIntegration();
   }, 'init');
 
   /**
    * Check if current route is relevant for comment manager
-   * @returns {boolean} True if on /watch, /shorts, or channel pages
+   * @returns {boolean} True if on My Activity comments page
    */
   const isRelevantRoute = () => {
-    if (isMyActivityCommentsPage()) return true;
-    const path = location.pathname;
-    return (
-      path === '/watch' ||
-      path.startsWith('/shorts/') ||
-      path.startsWith('/@') ||
-      path.startsWith('/channel/')
-    );
+    return isMyActivityCommentsPage();
   };
 
   /**
@@ -604,37 +639,41 @@
     );
   };
 
-  // Navigation observer to trigger lazy init
-  const navigationObserver = new MutationObserver(
-    debounce(() => {
-      if (!state.initialized && isRelevantRoute()) {
-        scheduleInit();
-      }
-      // Disconnect once initialized — no longer needed
-      if (state.initialized) {
-        navigationObserver.disconnect();
-        if (window.YouTubeUtils?.ObserverRegistry?.untrack) {
-          window.YouTubeUtils.ObserverRegistry.untrack();
+  initSettingsIntegration();
+
+  if (canRunCommentManagerRuntime) {
+    // Navigation observer to trigger lazy init
+    const navigationObserver = new MutationObserver(
+      debounce(() => {
+        if (!state.initialized && isRelevantRoute()) {
+          scheduleInit();
         }
+        // Disconnect once initialized — no longer needed
+        if (state.initialized) {
+          navigationObserver.disconnect();
+          if (window.YouTubeUtils?.ObserverRegistry?.untrack) {
+            window.YouTubeUtils.ObserverRegistry.untrack();
+          }
+        }
+      }, 300)
+    );
+
+    // Watch for navigation changes — register with cleanupManager for SPA lifecycle
+    if (document.body) {
+      navigationObserver.observe(document.body, {
+        childList: true,
+        subtree: false,
+        attributes: false,
+      });
+      if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
+        window.YouTubeUtils.cleanupManager.registerObserver(navigationObserver);
       }
-    }, 300)
-  );
+      if (window.YouTubeUtils?.ObserverRegistry?.track) {
+        window.YouTubeUtils.ObserverRegistry.track();
+      }
+    }
 
-  // Watch for navigation changes — register with cleanupManager for SPA lifecycle
-  if (document.body) {
-    navigationObserver.observe(document.body, {
-      childList: true,
-      subtree: false,
-      attributes: false,
-    });
-    if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
-      window.YouTubeUtils.cleanupManager.registerObserver(navigationObserver);
-    }
-    if (window.YouTubeUtils?.ObserverRegistry?.track) {
-      window.YouTubeUtils.ObserverRegistry.track();
-    }
+    // Start the module (lazy)
+    scheduleInit();
   }
-
-  // Start the module (lazy)
-  scheduleInit();
 })();

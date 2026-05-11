@@ -3,7 +3,24 @@
  */
 
 describe('YouTubePerformance', () => {
+  /**
+   * @typedef {Object} PerformanceHarness
+   * @property {(name: string) => void} mark
+   * @property {(name: string, startMark: string, endMark?: string) => number} measure
+   * @property {(name: string, value: number, metadata?: unknown) => void} recordMetric
+   * @property {(metricName?: string) => any} getStats
+   * @property {(name: string, fn: Function) => Function} timeFunction
+   * @property {(name: string, fn: Function) => Function} timeAsyncFunction
+   * @property {() => string} exportMetrics
+   * @property {() => void} clearMetrics
+   * @property {(element: HTMLElement, name: string) => MutationObserver | null} monitorMutations
+   * @property {(type: string) => PerformanceEntry[]} getPerformanceEntries
+   * @property {{enabled: boolean, sampleRate: number, storageKey: string, metricsRetention: number, enableConsoleOutput: boolean}} config
+   */
+
+  /** @type {PerformanceHarness} */
   let performance;
+  /** @type {{ mockRestore: () => void } | null} */
   let consoleLogSpy;
 
   beforeEach(() => {
@@ -63,11 +80,10 @@ describe('YouTubePerformance', () => {
       }),
 
       timeFunction: jest.fn((name, fn) => {
-        return /** @this {any} */ function (...args) {
+        return /** @this {unknown} @param {...unknown} args */ function (...args) {
           const start = Date.now();
           try {
-            const fnAny = /** @type {any} */ (fn);
-            const result = fnAny.apply(this, args);
+            const result = fn.apply(this, args);
             const duration = Date.now() - start;
             performance.recordMetric(name, duration);
             return result;
@@ -80,11 +96,10 @@ describe('YouTubePerformance', () => {
       }),
 
       timeAsyncFunction: jest.fn((name, fn) => {
-        return /** @this {any} */ async function (...args) {
+        return /** @this {unknown} @param {...unknown} args */ async function (...args) {
           const start = Date.now();
           try {
-            const fnAny = /** @type {any} */ (fn);
-            const result = await fnAny.apply(this, args);
+            const result = await fn.apply(this, args);
             const duration = Date.now() - start;
             performance.recordMetric(name, duration);
             return result;
@@ -97,6 +112,7 @@ describe('YouTubePerformance', () => {
       }),
 
       exportMetrics: jest.fn(() => {
+        /** @type {Record<string, {count: number, total: number, avg: number, min: number, max: number}>} */
         const exported = {};
         metrics.forEach((value, key) => {
           exported[key] = {
@@ -357,7 +373,7 @@ describe('YouTubePerformance', () => {
       expect(observer).toBeDefined();
 
       // Cleanup
-      if (observer && observer.disconnect) {
+      if (observer) {
         observer.disconnect();
       }
       document.body.removeChild(div);
@@ -366,15 +382,9 @@ describe('YouTubePerformance', () => {
 
   describe('Performance Entries', () => {
     test('should retrieve performance entries', () => {
-      // Use native Performance API if available
-      if (window.performance && window.performance.getEntriesByType) {
-        const entries = performance.getPerformanceEntries('measure');
-        expect(Array.isArray(entries)).toBe(true);
-      } else {
-        // Fallback behavior
-        const entries = performance.getPerformanceEntries('measure');
-        expect(entries).toBeDefined();
-      }
+      const entries = performance.getPerformanceEntries('measure');
+      expect(entries).toBeDefined();
+      expect(Array.isArray(entries)).toBe(true);
     });
   });
 

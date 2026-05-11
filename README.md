@@ -6,10 +6,10 @@
 
 <p align="center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-4245-blue?style=flat-square" height="25" />
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-4250-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="version" src="https://img.shields.io/badge/version-2.4.5-blue?style=flat-square" height="25" />
+    <img alt="version" src="https://img.shields.io/badge/version-2.5-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
     <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
@@ -48,6 +48,7 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 - Full immersion (immersive animations).
 - Support for all languages (partial).
 - Now you can suggest your own features and ideas and vote for other users' suggestions!
+- Theme support
 
 ## Installation
 
@@ -79,6 +80,16 @@ Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecod
 
 ## Based on and modified/improved
 
-Please add your ideas in [issues](https://github.com/diorhc/YTP/issues) or report them via the script settings - I would appreciate your feedback!
+<div align="center">
+
+  Please add your ideas in [discussions](https://github.com/diorhc/YTP/discussions) (for feature proposals)</a> or [issues](https://github.com/diorhc/YTP/issues) (for bugs), or report them via the script settings - I would appreciate your feedback!
+
+</div>
 
 ![Animation demo](https://i.imgur.com/k7ZDZSr.gif)
+
+<div align="center">
+
+Made with ❤️ by [diorhc](https://github.com/diorhc)
+
+</div>

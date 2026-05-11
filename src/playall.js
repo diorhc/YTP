@@ -4,41 +4,44 @@
   const _createHTML = window._ytplusCreateHTML || (s => s);
 
   let featureEnabled = true;
+  /** @type {(() => void)|null} */
   let stopRandomPlayTimers = null;
+  /** @type {(() => void)|null} */
   let scheduleApplyRandomPlay = null;
+  /** @type {number|null} */
   let addButtonRetryTimer = null;
   let addButtonRetryAttempts = 0;
   const loadFeatureEnabled = () =>
     window.YouTubeUtils?.loadFeatureEnabled?.('enablePlayAll') ?? true;
-  const setFeatureEnabled = nextEnabled => {
+  const setFeatureEnabled = (/** @type {boolean|undefined} */ nextEnabled) => {
     featureEnabled = nextEnabled !== false;
     if (!featureEnabled) {
       try {
         removeButton();
-      } catch {
+      } catch (e) {
         /* feature disable cleanup */
       }
       try {
         if (addButtonRetryTimer) clearTimeout(addButtonRetryTimer);
         addButtonRetryTimer = null;
         addButtonRetryAttempts = 0;
-      } catch {
+      } catch (e) {
         /* timer cleanup safe to ignore */
       }
       try {
         if (typeof stopRandomPlayTimers === 'function') stopRandomPlayTimers();
-      } catch {
+      } catch (e) {
         /* timer cleanup safe to ignore */
       }
     } else {
       try {
         queueDesktopAddButton();
-      } catch {
+      } catch (e) {
         /* feature enable may fail */
       }
       try {
         if (typeof scheduleApplyRandomPlay === 'function') scheduleApplyRandomPlay();
-      } catch {
+      } catch (e) {
         /* feature enable may fail */
       }
     }
@@ -51,20 +54,20 @@
   const _cm = window.YouTubeUtils?.cleanupManager;
   const onDomReady = (() => {
     let ready = document.readyState !== 'loading';
-    const queue = [];
+    const queue = /** @type {Array<() => void>} */ ([]);
     const run = () => {
       ready = true;
       while (queue.length) {
         const cb = queue.shift();
         try {
-          cb();
+          if (cb) cb();
         } catch (e) {
           console.warn('[Play All] DOMReady callback error:', e);
         }
       }
     };
     if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
-    return cb => {
+    return (/** @type {() => void} */ cb) => {
       if (ready) cb();
       else queue.push(cb);
     };
@@ -72,10 +75,10 @@
 
   const t = window.YouTubeUtils?.t || (key => key || '');
 
-  const hasTranslation = key => {
+  const hasTranslation = (/** @type {string} */ key) => {
     try {
       if (window.YouTubePlusI18n?.hasTranslation) return window.YouTubePlusI18n.hasTranslation(key);
-    } catch {
+    } catch (e) {
       /* i18n check optional */
     }
     return false;
@@ -100,10 +103,22 @@
       const metaValue = metaChannel?.getAttribute('content');
       if (metaValue && /^UC[a-zA-Z0-9_-]{22}$/.test(metaValue)) return metaValue;
 
+      const canonical = document.querySelector('link[rel="canonical"]');
+      const canonicalHref = canonical?.getAttribute('href') || '';
+      const canonicalMatch = canonicalHref.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+      if (canonicalMatch?.[1]) return canonicalMatch[1];
+
       const browseNode = document.querySelector('ytd-browse[page-subtype="channels"]');
       const attrId =
         browseNode?.getAttribute?.('channel-id') || browseNode?.getAttribute?.('external-id');
       if (attrId && /^UC[a-zA-Z0-9_-]{22}$/.test(attrId)) return attrId;
+
+      const channelHrefNode = document.querySelector(
+        'ytd-channel-name a[href*="/channel/UC"], #channel-name a[href*="/channel/UC"], a[href^="/channel/UC"]'
+      );
+      const channelHref = channelHrefNode?.getAttribute?.('href') || '';
+      const channelHrefMatch = channelHref.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+      if (channelHrefMatch?.[1]) return channelHrefMatch[1];
 
       const href = location.href;
       const fromUrl = href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
@@ -113,7 +128,7 @@
       const headerId =
         initialData?.header?.c4TabbedHeaderRenderer?.channelId ||
         initialData?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.find?.(
-          p => /^UC[a-zA-Z0-9_-]{22}$/.test(p?.text?.content || '')
+          (/** @type {any} */ p) => /^UC[a-zA-Z0-9_-]{22}$/.test(p?.text?.content || '')
         )?.text?.content;
       if (headerId && /^UC[a-zA-Z0-9_-]{22}$/.test(headerId)) return headerId;
 
@@ -127,7 +142,7 @@
     return null;
   };
 
-  const scheduleNonCritical = fn => {
+  const scheduleNonCritical = (/** @type {() => void} */ fn) => {
     if (typeof requestIdleCallback === 'function') {
       requestIdleCallback(fn, { timeout: 2000 });
     } else {
@@ -147,22 +162,20 @@
   if (scriptVersion && /-(alpha|beta|dev|test)$/.test(scriptVersion)) {
     try {
       window.YouTubeUtils &&
-        YouTubeUtils.logger &&
-        YouTubeUtils.logger.info &&
-        YouTubeUtils.logger.info(
+        window.YouTubeUtils?.logger?.info?.(
           '%cytp - YouTube Play All\n',
           'color: #bf4bcc; font-size: 32px; font-weight: bold',
           'You are currently running a test version:',
           scriptVersion
         );
-    } catch {
+    } catch (e) {
       /* logging non-critical */
     }
   }
 
   // TrustedTypes default policy is registered in main.js — no duplicate needed here
 
-  const insertStylesSafely = html => {
+  const insertStylesSafely = (/** @type {string} */ html) => {
     try {
       const target = document.head || document.documentElement;
       if (target && typeof target.insertAdjacentHTML === 'function') {
@@ -177,7 +190,7 @@
           if (t && typeof t.insertAdjacentHTML === 'function') {
             t.insertAdjacentHTML('beforeend', _createHTML(html));
           }
-        } catch {
+        } catch (e) {
           /* DOM insertion may fail before head available */
         }
       };
@@ -218,15 +231,15 @@
     </style>`)
   );
 
-  const getVideoId = url => {
+  const getVideoId = (/** @type {string} */ url) => {
     try {
       return new URLSearchParams(new URL(url).search).get('v');
-    } catch {
+    } catch (e) {
       return null;
     }
   };
 
-  const queryHTMLElement = selector => {
+  const queryHTMLElement = (/** @type {string} */ selector) => {
     const el = $(selector);
     return el instanceof HTMLElement ? el : null;
   };
@@ -241,13 +254,15 @@
    */
 
   /**
-   * @return {{ getProgressState: () => { current: number, duration, number }, pauseVideo: () => void, seekTo: (number) => void, isLifaAdPlaying: () => boolean }} player
+   * @return {{ getProgressState: () => { current: number, duration: number, number: number }, pauseVideo: () => void, seekTo: (arg0: number) => void, isLifaAdPlaying: () => boolean }|null} player
    */
   const getPlayer = () => /** @type {PlayerElement | null} */ ($('#movie_player'));
 
+  const isSupportedTabPath = () => /\/(videos|shorts|streams)\/?$/.test(window.location.pathname);
+
   const isAdPlaying = () => !!$('.ad-interrupting');
 
-  const redirect = (v, list, ytpRandom = null) => {
+  const redirect = (/** @type {string} */ v, /** @type {string} */ list, ytpRandom = null) => {
     if (location.host === 'm.youtube.com') {
       // Mobile: use direct navigation
       const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
@@ -280,7 +295,7 @@
           const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
           window.location.href = url;
         }
-      } catch {
+      } catch (e) {
         // Fallback: use direct navigation on error
         const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
         window.location.href = url;
@@ -368,11 +383,8 @@
     // Prevent duplicate buttons
     if (parent.querySelector('.ytp-play-all-btn')) {
       try {
-        window.YouTubeUtils &&
-          YouTubeUtils.logger &&
-          YouTubeUtils.logger.debug &&
-          YouTubeUtils.logger.debug('[Play All] Buttons already exist, skipping');
-      } catch {
+        window.YouTubeUtils?.logger?.debug?.('[Play All] Buttons already exist, skipping');
+      } catch (e) {
         /* logging non-critical */
       }
       return;
@@ -399,7 +411,7 @@
       )
     );
 
-    const navigate = href => {
+    const navigate = (/** @type {string} */ href) => {
       window.location.assign(href);
     };
 
@@ -408,7 +420,8 @@
       if (!parent.hasAttribute('data-ytp-delegated')) {
         parent.setAttribute('data-ytp-delegated', 'true');
         parent.addEventListener('click', event => {
-          const btn = event.target.closest('.ytp-btn');
+          const tgt = event.target instanceof Element ? event.target : null;
+          const btn = /** @type {HTMLAnchorElement|null} */ (tgt?.closest?.('.ytp-btn') ?? null);
           if (btn && btn.href) {
             event.preventDefault();
             navigate(btn.href);
@@ -420,7 +433,10 @@
       if (!parent.hasAttribute('data-ytp-delegated')) {
         parent.setAttribute('data-ytp-delegated', 'true');
         parent.addEventListener('click', event => {
-          const btn = event.target.closest('.ytp-play-all-btn');
+          const tgt = event.target instanceof Element ? event.target : null;
+          const btn = /** @type {HTMLAnchorElement|null} */ (
+            tgt?.closest?.('.ytp-play-all-btn') ?? null
+          );
           if (btn && btn.href) {
             event.preventDefault();
             event.stopPropagation();
@@ -446,7 +462,9 @@
       observerFrame = requestAnimationFrame(runObserverWork);
       return;
     }
-    observerFrame = setTimeout(runObserverWork, 16);
+    observerFrame = /** @type {number} */ (
+      /** @type {unknown} */ (setTimeout(runObserverWork, 16))
+    );
   });
 
   const addButton = async () => {
@@ -454,13 +472,7 @@
 
     if (!featureEnabled) return;
 
-    if (
-      !(
-        window.location.pathname.endsWith('/videos') ||
-        window.location.pathname.endsWith('/shorts') ||
-        window.location.pathname.endsWith('/streams')
-      )
-    ) {
+    if (!isSupportedTabPath()) {
       return;
     }
 
@@ -536,7 +548,15 @@
         console.warn('[Play All] Skipping fetch for non-YouTube URL');
         return;
       }
-      const html = await (await fetch(currentUrl)).text();
+      const _fetchCtrl = new AbortController();
+      const _fetchTimer = setTimeout(() => _fetchCtrl.abort(), 10000); // 10 s timeout
+      let _fetchResp;
+      try {
+        _fetchResp = await fetch(currentUrl, { signal: _fetchCtrl.signal });
+      } finally {
+        clearTimeout(_fetchTimer);
+      }
+      const html = await _fetchResp.text();
       const canonicalMatch = html.match(
         /<link rel="canonical" href="https:\/\/www\.youtube\.com\/channel\/(UC[a-zA-Z0-9_-]{22})"/
       );
@@ -583,13 +603,7 @@
         return;
       }
 
-      if (
-        !(
-          window.location.pathname.endsWith('/videos') ||
-          window.location.pathname.endsWith('/shorts') ||
-          window.location.pathname.endsWith('/streams')
-        )
-      ) {
+      if (!isSupportedTabPath()) {
         stopAddButtonRetries();
         return;
       }
@@ -607,7 +621,7 @@
       }
 
       addButtonRetryAttempts += 1;
-      addButtonRetryTimer = setTimeout(run, 300);
+      addButtonRetryTimer = /** @type {number} */ (/** @type {unknown} */ (setTimeout(run, 300)));
     };
 
     run();
@@ -649,8 +663,10 @@
       id = '';
     };
     const _navFinishHandler = () => {
-      setTimeout(() => queueDesktopAddButton(), 120);
-      setTimeout(() => queueDesktopAddButton(false), 800);
+      queueDesktopAddButton();
+      setTimeout(() => queueDesktopAddButton(false), 120);
+      setTimeout(() => queueDesktopAddButton(false), 600);
+      setTimeout(() => queueDesktopAddButton(false), 1400);
     };
     const _pageshowHandler = () => setTimeout(() => queueDesktopAddButton(), 120);
     const _visChangeHandler = () => {
@@ -674,18 +690,22 @@
     // Also attempt to add buttons on initial script run in case the SPA navigation event
     // already happened before this script was loaded (some browsers/firefox timing).
     try {
-      setTimeout(() => queueDesktopAddButton(), 300);
-    } catch {
+      onDomReady(() => queueDesktopAddButton(false));
+      setTimeout(() => queueDesktopAddButton(false), 50);
+      setTimeout(() => queueDesktopAddButton(false), 400);
+      setTimeout(() => queueDesktopAddButton(false), 1200);
+    } catch (e) {
       /* setTimeout unlikely to fail */
     }
   }
 
-  const _settingsUpdHandler = e => {
+  const _settingsUpdHandler = (/** @type {Event} */ e) => {
     try {
-      const nextEnabled = e?.detail?.enablePlayAll !== false;
+      const custom = e instanceof CustomEvent ? e : null;
+      const nextEnabled = custom?.detail?.enablePlayAll !== false;
       if (nextEnabled === featureEnabled) return;
       setFeatureEnabled(nextEnabled);
-    } catch {
+    } catch (e) {
       setFeatureEnabled(loadFeatureEnabled());
     }
   };
@@ -715,26 +735,27 @@
       return { params, mode: 'random', list, storageKey: `ytp-random-${list}` };
     };
 
-    const getStorage = storageKey => {
+    const getStorage = (/** @type {string} */ storageKey) => {
       try {
         return JSON.parse(localStorage.getItem(storageKey) || '{}');
-      } catch {
+      } catch (e) {
         return {};
       }
     };
 
-    const isWatched = (storageKey, videoId) => getStorage(storageKey)[videoId] || false;
-    const markWatched = (storageKey, videoId) => {
+    const isWatched = (/** @type {string} */ storageKey, /** @type {string} */ videoId) =>
+      getStorage(storageKey)[videoId] || false;
+    const markWatched = (/** @type {string} */ storageKey, /** @type {string} */ videoId) => {
       localStorage.setItem(
         storageKey,
         JSON.stringify({ ...getStorage(storageKey), [videoId]: true })
       );
       document
         .querySelectorAll('#wc-endpoint[href*=zsA3X40nz9w]')
-        .forEach(element => element.parentElement.setAttribute('hidden', ''));
+        .forEach(element => element.parentElement?.setAttribute('hidden', ''));
     };
 
-    const playNextRandom = (cfg, reload = false) => {
+    const playNextRandom = (/** @type {Record<string,any>} */ cfg, reload = false) => {
       const playerInstance = getPlayer();
       if (playerInstance && typeof playerInstance.pauseVideo === 'function') {
         playerInstance.pauseVideo();
@@ -763,7 +784,8 @@
       } else {
         // Use the redirect() function for consistent navigation
         try {
-          redirect(videos[videoIndex][0], params.get('list'), cfg.mode);
+          const listId = params.get('list') || '';
+          redirect(videos[videoIndex][0], listId, cfg.mode);
         } catch (error) {
           console.error(
             '[Play All] Error using redirect(), falling back to manual redirect:',
@@ -797,15 +819,17 @@
       }
     };
 
+    /** @type {number | { stop: () => void } | null} */
     let applyRetryTimeoutId = null;
+    /** @type {number|boolean|null} */
     let progressIntervalId = null;
 
     stopRandomPlayTimers = () => {
       if (applyRetryTimeoutId) {
-        if (typeof applyRetryTimeoutId === 'object' && applyRetryTimeoutId.stop) {
-          applyRetryTimeoutId.stop();
-        } else {
+        if (typeof applyRetryTimeoutId === 'number') {
           clearTimeout(applyRetryTimeoutId);
+        } else {
+          applyRetryTimeoutId.stop();
         }
       }
       applyRetryTimeoutId = null;
@@ -816,7 +840,7 @@
       progressIntervalId = null;
     };
 
-    const applyRandomPlay = cfg => {
+    const applyRandomPlay = (/** @type {Record<string,any>} */ cfg) => {
       if (!featureEnabled) return;
       if (!window.location.pathname.endsWith('/watch')) return;
 
@@ -848,6 +872,7 @@
         '#secondary ytd-playlist-panel-renderer a[href*="/watch?"]',
       ];
 
+      /** @type {HTMLAnchorElement[]} */
       const anchors = [];
       anchorSelectors.forEach(sel => {
         playlistContainer.querySelectorAll(sel).forEach(a => {
@@ -856,24 +881,25 @@
       });
 
       // Deduplicate by href
+      /** @type {HTMLAnchorElement[]} */
       const uniq = [];
       const seen = new Set();
       anchors.forEach(a => {
-        const href = a.href || a.getAttribute('href') || '';
+        const href = /** @type {HTMLAnchorElement} */ (a).href || a.getAttribute('href') || '';
         if (!seen.has(href)) {
           seen.add(href);
           uniq.push(a);
         }
       });
 
-      const navigate = href => (window.location.href = href);
+      const navigate = (/** @type {string} */ href) => (window.location.href = href);
 
       // Mark videos and prepare links
       uniq.forEach(element => {
         let videoId = null;
         try {
           videoId = new URL(element.href, window.location.origin).searchParams.get('v');
-        } catch {
+        } catch (e) {
           videoId = new URLSearchParams(element.search || '').get('v');
         }
 
@@ -888,14 +914,14 @@
           const u = new URL(element.href, window.location.origin);
           u.searchParams.set('ytp-random', cfg.mode);
           element.href = u.toString();
-        } catch {
+        } catch (e) {
           /* malformed URL ignored */
         }
 
         element.setAttribute('data-ytp-random-link', 'true');
 
         const entryKey = getVideoId(element.href);
-        if (isWatched(cfg.storageKey, entryKey)) {
+        if (entryKey && isWatched(cfg.storageKey, entryKey)) {
           element.parentElement?.setAttribute('hidden', '');
         }
       });
@@ -904,7 +930,10 @@
       if (playlistContainer && !playlistContainer.hasAttribute('data-ytp-random-delegated')) {
         playlistContainer.setAttribute('data-ytp-random-delegated', 'true');
         playlistContainer.addEventListener('click', event => {
-          const link = event.target.closest('a[data-ytp-random-link]');
+          const tgt = event.target instanceof Element ? event.target : null;
+          const link = /** @type {HTMLAnchorElement|null} */ (
+            tgt?.closest?.('a[data-ytp-random-link]') ?? null
+          );
           if (link && link.href) {
             event.preventDefault();
             navigate(link.href);
@@ -913,9 +942,10 @@
       }
       localStorage.setItem(cfg.storageKey, JSON.stringify(storage));
 
+      const currentVideoId = getVideoId(location.href);
       if (
         cfg.params.get('ytp-random-initial') === '1' ||
-        isWatched(cfg.storageKey, getVideoId(location.href))
+        (currentVideoId && isWatched(cfg.storageKey, currentVideoId))
       ) {
         playNextRandom(cfg);
 
@@ -946,14 +976,15 @@
         }
       }
 
-      const _keydownHandler = event => {
+      const _keydownHandler = (/** @type {Event} */ event) => {
+        if (!(event instanceof KeyboardEvent)) return;
         // SHIFT + N
         if (event.shiftKey && event.key.toLowerCase() === 'n') {
           event.stopImmediatePropagation();
           event.preventDefault();
 
           const videoId = getVideoId(location.href);
-          markWatched(cfg.storageKey, videoId);
+          if (videoId) markWatched(cfg.storageKey, videoId);
           // Unfortunately there is no workaround to YouTube redirecting to the next in line without a reload
           playNextRandom(cfg, true);
         }
@@ -1028,7 +1059,7 @@
 
     scheduleApplyRandomPlay = () => {
       if (!featureEnabled) return;
-      stopRandomPlayTimers();
+      stopRandomPlayTimers?.();
 
       if (!window.location.pathname.endsWith('/watch')) return;
 
@@ -1042,7 +1073,7 @@
           if (current && Array.isArray(JSON.parse(current))) {
             localStorage.removeItem(cfg.storageKey);
           }
-        } catch {
+        } catch (e) {
           localStorage.removeItem(cfg.storageKey);
         }
 
@@ -1062,11 +1093,11 @@
 
     const onNavigate = () => {
       if (!featureEnabled) {
-        stopRandomPlayTimers();
+        stopRandomPlayTimers?.();
         return;
       }
-      stopRandomPlayTimers();
-      scheduleApplyRandomPlay();
+      stopRandomPlayTimers?.();
+      scheduleApplyRandomPlay?.();
     };
 
     onNavigate();

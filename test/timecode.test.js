@@ -6,26 +6,30 @@ describe('Timecode Module', () => {
   beforeEach(() => {
     window._ytplusCreateHTML = s => s;
     window._timecodeModuleInitialized = false;
-    window.YouTubeUtils = {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
-      byId: jest.fn(id => document.getElementById(id)),
-      t: jest.fn(key => key || ''),
-      cleanupManager: {
+    const _cleanupManager = /** @type {CleanupManager} */ (
+      /** @type {unknown} */ ({
         registerTimeout: jest.fn(id => id),
         registerInterval: jest.fn(id => id),
         registerObserver: jest.fn(obs => obs),
         registerListener: jest.fn(),
         cleanup: jest.fn(),
-        observers: new Set(),
-        intervals: new Set(),
-        timeouts: new Set(),
-        animationFrames: new Set(),
+        registerAnimationFrame: jest.fn(id => id),
+      })
+    );
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(sel => document.querySelector(sel)),
+        $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
+        byId: jest.fn(id => document.getElementById(id)),
+        t: jest.fn(key => key || ''),
+        cleanupManager: _cleanupManager,
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        loadFeatureEnabled: jest.fn(() => true),
+        SETTINGS_KEY: 'youtube_plus_settings',
       },
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
-      loadFeatureEnabled: jest.fn(() => true),
-      SETTINGS_KEY: 'youtube_plus_settings',
-    };
+    });
     global.mockLocation({
       hostname: 'www.youtube.com',
       pathname: '/watch',
@@ -35,7 +39,7 @@ describe('Timecode Module', () => {
 
   test('should format time correctly', () => {
     // Replicate the formatTime function from the module
-    const formatTime = seconds => {
+    const formatTime = /** @param {number} seconds */ seconds => {
       if (!seconds || isNaN(seconds) || seconds < 0) return '0:00';
       const h = Math.floor(seconds / 3600);
       const m = Math.floor((seconds % 3600) / 60);
@@ -54,7 +58,7 @@ describe('Timecode Module', () => {
 
   test('should parse timecode strings', () => {
     // HH:MM:SS, MM:SS, or SS formats
-    const parseTimecode = str => {
+    const parseTimecode = /** @param {unknown} str */ str => {
       if (!str || typeof str !== 'string') return 0;
       const parts = str.split(':').map(Number);
       if (parts.some(isNaN)) return 0;

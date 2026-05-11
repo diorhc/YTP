@@ -2,8 +2,23 @@
  * @jest-environment jsdom
  */
 
+/**
+ * @typedef {Object} TestState
+ * @property {HTMLElement | null} overlay
+ * @property {ReturnType<typeof setInterval> | null} intervalId
+ * @property {number} updateInterval
+ * @property {number} overlayOpacity
+ * @property {string} currentChannelName
+ */
+
 describe('Stats Module - Event Handler Optimization', () => {
+  /** @type {TestState} */
   let state;
+
+  /** @param {EventTarget | null} target */
+  const isInput = target => target instanceof HTMLInputElement;
+  /** @param {EventTarget | null} target */
+  const isSelect = target => target instanceof HTMLSelectElement;
 
   beforeEach(() => {
     document.body.innerHTML = '';
@@ -11,7 +26,6 @@ describe('Stats Module - Event Handler Optimization', () => {
     jest.spyOn(console, 'error').mockImplementation(() => {});
     jest.spyOn(console, 'warn').mockImplementation(() => {});
 
-    // Mock state object
     state = {
       overlay: null,
       intervalId: null,
@@ -35,8 +49,10 @@ describe('Stats Module - Event Handler Optimization', () => {
 
       const updateDisplayState = jest.fn();
 
-      // Add delegated event listener
       displaySection.addEventListener('change', e => {
+        if (!isInput(e.target)) {
+          return;
+        }
         const checkbox = e.target;
         if (checkbox.type === 'checkbox' && checkbox.id.startsWith('show-')) {
           const option = checkbox.id.replace('show-', '');
@@ -45,7 +61,6 @@ describe('Stats Module - Event Handler Optimization', () => {
         }
       });
 
-      // Create checkboxes
       ['subscribers', 'views', 'videos'].forEach(option => {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
@@ -56,8 +71,12 @@ describe('Stats Module - Event Handler Optimization', () => {
 
       document.body.appendChild(displaySection);
 
-      // Simulate checkbox change
       const subscribersCheckbox = document.getElementById('show-subscribers');
+      expect(subscribersCheckbox).toBeInstanceOf(HTMLInputElement);
+      if (!(subscribersCheckbox instanceof HTMLInputElement)) {
+        return;
+      }
+
       subscribersCheckbox.checked = false;
       subscribersCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
 
@@ -67,10 +86,12 @@ describe('Stats Module - Event Handler Optimization', () => {
 
     test('should only process checkboxes with show- prefix', () => {
       const displaySection = document.createElement('div');
-
       const updateDisplayState = jest.fn();
 
       displaySection.addEventListener('change', e => {
+        if (!isInput(e.target)) {
+          return;
+        }
         const checkbox = e.target;
         if (checkbox.type === 'checkbox' && checkbox.id.startsWith('show-')) {
           updateDisplayState();
@@ -89,7 +110,6 @@ describe('Stats Module - Event Handler Optimization', () => {
 
       document.body.appendChild(displaySection);
 
-      // Only relevant checkbox should trigger update
       irrelevantCheckbox.dispatchEvent(new Event('change', { bubbles: true }));
       expect(updateDisplayState).not.toHaveBeenCalled();
 
@@ -107,19 +127,22 @@ describe('Stats Module - Event Handler Optimization', () => {
       const numberElements = ['subscribers-number', 'views-number', 'videos-number'].map(cls => {
         const el = document.createElement('div');
         el.className = cls;
-        el.style.fontSize = '24px';
+        if (el.style) {
+          el.style.fontSize = '24px';
+        }
         overlay.appendChild(el);
         return el;
       });
 
       state.overlay = overlay;
 
-      // Add delegated input handler
       controlsSection.addEventListener('input', e => {
-        const target = e.target;
+        if (!isInput(e.target)) {
+          return;
+        }
+        const input = e.target;
 
-        if (target.classList.contains('font-size-slider')) {
-          const input = target;
+        if (input.classList.contains('font-size-slider')) {
           const fontSizeValue = controlsSection.querySelector('.font-size-value');
           if (fontSizeValue) fontSizeValue.textContent = `${input.value}px`;
           localStorage.setItem('youtubeEnhancerFontSize', input.value);
@@ -127,13 +150,14 @@ describe('Stats Module - Event Handler Optimization', () => {
             state.overlay
               .querySelectorAll('.subscribers-number,.views-number,.videos-number')
               .forEach(el => {
-                el.style.fontSize = `${input.value}px`;
+                if (el instanceof HTMLElement && el.style) {
+                  el.style.fontSize = `${input.value}px`;
+                }
               });
           }
         }
       });
 
-      // Create slider
       const slider = document.createElement('input');
       slider.type = 'range';
       slider.className = 'font-size-slider';
@@ -149,14 +173,15 @@ describe('Stats Module - Event Handler Optimization', () => {
       controlsSection.appendChild(valueDisplay);
       document.body.appendChild(controlsSection);
 
-      // Simulate slider input
       slider.value = '48';
       slider.dispatchEvent(new Event('input', { bubbles: true }));
 
       expect(localStorage.getItem('youtubeEnhancerFontSize')).toBe('48');
       expect(valueDisplay.textContent).toBe('48px');
       numberElements.forEach(el => {
-        expect(el.style.fontSize).toBe('48px');
+        if (el.style) {
+          expect(el.style.fontSize).toBe('48px');
+        }
       });
     });
 
@@ -164,10 +189,12 @@ describe('Stats Module - Event Handler Optimization', () => {
       const controlsSection = document.createElement('div');
 
       controlsSection.addEventListener('input', e => {
-        const target = e.target;
+        if (!isInput(e.target)) {
+          return;
+        }
+        const input = e.target;
 
-        if (target.classList.contains('interval-slider')) {
-          const input = target;
+        if (input.classList.contains('interval-slider')) {
           const newInterval = parseInt(input.value, 10) * 1000;
           const intervalValue = controlsSection.querySelector('.interval-value');
           if (intervalValue) intervalValue.textContent = `${input.value}s`;
@@ -205,17 +232,19 @@ describe('Stats Module - Event Handler Optimization', () => {
       state.overlay = overlay;
 
       controlsSection.addEventListener('input', e => {
-        const target = e.target;
+        if (!isInput(e.target)) {
+          return;
+        }
+        const input = e.target;
 
-        if (target.classList.contains('opacity-slider')) {
-          const input = target;
+        if (input.classList.contains('opacity-slider')) {
           const newOpacity = parseInt(input.value, 10) / 100;
           const opacityValue = controlsSection.querySelector('.opacity-value');
           if (opacityValue) opacityValue.textContent = `${input.value}%`;
           state.overlayOpacity = newOpacity;
           localStorage.setItem('youtubeEnhancerOpacity', String(newOpacity));
 
-          if (state.overlay) {
+          if (state.overlay && state.overlay.style) {
             state.overlay.style.backgroundColor = `rgba(0, 0, 0, ${newOpacity})`;
           }
         }
@@ -242,7 +271,9 @@ describe('Stats Module - Event Handler Optimization', () => {
       expect(state.overlayOpacity).toBe(0.85);
       expect(localStorage.getItem('youtubeEnhancerOpacity')).toBe('0.85');
       expect(valueDisplay.textContent).toBe('85%');
-      expect(overlay.style.backgroundColor).toBe('rgba(0, 0, 0, 0.85)');
+      if (overlay.style) {
+        expect(overlay.style.backgroundColor).toBe('rgba(0, 0, 0, 0.85)');
+      }
     });
 
     test('should handle font family select through delegation', () => {
@@ -252,7 +283,9 @@ describe('Stats Module - Event Handler Optimization', () => {
       const numberElements = ['subscribers-number', 'views-number', 'videos-number'].map(cls => {
         const el = document.createElement('div');
         el.className = cls;
-        el.style.fontFamily = 'Rubik, sans-serif';
+        if (el.style) {
+          el.style.fontFamily = 'Rubik, sans-serif';
+        }
         overlay.appendChild(el);
         return el;
       });
@@ -260,16 +293,20 @@ describe('Stats Module - Event Handler Optimization', () => {
       state.overlay = overlay;
 
       controlsSection.addEventListener('change', e => {
-        const target = e.target;
+        if (!isSelect(e.target)) {
+          return;
+        }
+        const select = e.target;
 
-        if (target.classList.contains('font-family-select')) {
-          const select = target;
+        if (select.classList.contains('font-family-select')) {
           localStorage.setItem('youtubeEnhancerFontFamily', select.value);
           if (state.overlay) {
             state.overlay
               .querySelectorAll('.subscribers-number,.views-number,.videos-number')
               .forEach(el => {
-                el.style.fontFamily = select.value;
+                if (el instanceof HTMLElement && el.style) {
+                  el.style.fontFamily = select.value;
+                }
               });
           }
         }
@@ -296,7 +333,9 @@ describe('Stats Module - Event Handler Optimization', () => {
         'Impact, Charcoal, sans-serif'
       );
       numberElements.forEach(el => {
-        expect(el.style.fontFamily).toBe('Impact, Charcoal, sans-serif');
+        if (el.style) {
+          expect(el.style.fontFamily).toBe('Impact, Charcoal, sans-serif');
+        }
       });
     });
   });
@@ -306,12 +345,10 @@ describe('Stats Module - Event Handler Optimization', () => {
       const container = document.createElement('div');
       let listenerCount = 0;
 
-      // Add delegated listener
       container.addEventListener('change', () => {
         listenerCount++;
       });
 
-      // Add multiple checkboxes
       for (let i = 0; i < 10; i++) {
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
@@ -321,37 +358,41 @@ describe('Stats Module - Event Handler Optimization', () => {
 
       document.body.appendChild(container);
 
-      // Trigger multiple checkboxes
       for (let i = 0; i < 10; i++) {
         const checkbox = document.getElementById(`checkbox-${i}`);
+        expect(checkbox).toBeInstanceOf(HTMLInputElement);
+        if (!(checkbox instanceof HTMLInputElement)) {
+          continue;
+        }
         checkbox.dispatchEvent(new Event('change', { bubbles: true }));
       }
 
-      // Single listener handles all events
       expect(listenerCount).toBe(10);
     });
 
     test('should handle dynamically added elements', () => {
       const container = document.createElement('div');
+      /** @type {string[]} */
       const results = [];
 
       container.addEventListener('click', e => {
+        if (!(e.target instanceof Element)) {
+          return;
+        }
         const button = e.target.closest('button');
-        if (button) {
+        if (button instanceof HTMLButtonElement) {
           results.push(button.id);
         }
       });
 
       document.body.appendChild(container);
 
-      // Add buttons dynamically
       for (let i = 0; i < 5; i++) {
         const button = document.createElement('button');
         button.id = `btn-${i}`;
         container.appendChild(button);
       }
 
-      // Click each button
       container.querySelectorAll('button').forEach(btn => btn.click());
 
       expect(results).toEqual(['btn-0', 'btn-1', 'btn-2', 'btn-3', 'btn-4']);

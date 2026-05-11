@@ -1,12 +1,12 @@
 // Playlist Search
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const _createHTML = window._ytplusCreateHTML || ((/** @type {string} */ s) => s);
 
   let featureEnabled = true;
   const loadFeatureEnabled = () =>
     window.YouTubeUtils?.loadFeatureEnabled?.('enablePlaylistSearch') ?? true;
-  const setFeatureEnabled = nextEnabled => {
+  const setFeatureEnabled = (/** @type {boolean|undefined} */ nextEnabled) => {
     featureEnabled = nextEnabled !== false;
     if (!featureEnabled) {
       cleanup();
@@ -23,10 +23,14 @@
   window._playlistSearchInitialized = true;
 
   // Shared DOM helper from YouTubeUtils
-  const qs = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+  const qs = (/** @type {string} */ sel) =>
+    window.YouTubeUtils?.$(sel) || document.querySelector(sel);
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils?.t || (key => key || '');
+  const t =
+    window.YouTubeUtils?.t ||
+    ((/** @type {string} */ key, /** @type {Record<string, any>|undefined} */ _params) =>
+      key || '');
 
   // This module targets playlist content on both /watch and /playlist pages.
   const shouldRunOnThisPage = () => {
@@ -45,12 +49,12 @@
     try {
       const params = new URLSearchParams(window.location.search);
       return params.has('list');
-    } catch {
+    } catch (e) {
       return false;
     }
   };
 
-  const onDomReady = cb => {
+  const onDomReady = (/** @type {() => void} */ cb) => {
     if (document.readyState === 'loading') {
       document.addEventListener('DOMContentLoaded', cb, { once: true });
     } else {
@@ -61,22 +65,26 @@
   // Shared debounce/throttle from YouTubeUtils
   const debounce =
     window.YouTubeUtils?.debounce ||
-    ((fn, ms) => {
-      let t;
-      return (...a) => {
-        clearTimeout(t);
-        t = setTimeout(() => fn(...a), ms);
+    ((/** @type {any} */ fn, /** @type {number} */ ms) => {
+      /** @type {ReturnType<typeof setTimeout>|null} */
+      let timer = null;
+      return (/** @type {any[]} */ ...a) => {
+        if (timer) clearTimeout(timer);
+        timer = setTimeout(() => fn(...a), ms);
       };
     });
   const throttle =
     window.YouTubeUtils?.throttle ||
-    ((fn, ms) => {
-      let t;
-      return (...a) => {
-        if (!t) {
+    ((/** @type {any} */ fn, /** @type {number} */ ms) => {
+      /** @type {boolean} */
+      let active = false;
+      return (/** @type {any[]} */ ...a) => {
+        if (!active) {
           fn(...a);
-          t = true;
-          setTimeout(() => (t = false), ms);
+          active = true;
+          setTimeout(() => {
+            active = false;
+          }, ms);
         }
       };
     });
@@ -93,6 +101,34 @@
     deleteDelay: 250, // Delay between sequential delete actions
   };
 
+  /**
+   * @typedef {{
+   * element: Element,
+   * videoId: string,
+   * titleOriginal: string,
+   * channelOriginal: string,
+   * title: string,
+   * channel: string
+   * }} PlaylistItemData
+   */
+
+  /** @type {{
+   * searchInput: HTMLInputElement|null,
+   * searchResults: HTMLElement|null,
+   * originalItems: PlaylistItemData[],
+   * currentPlaylistId: string|null,
+   * mutationObserver: MutationObserver|null,
+   * rafId: number|null,
+   * itemsCache: Map<string, PlaylistItemData>,
+   * itemsContainer: Element|HTMLElement|null,
+   * itemSelector: string|null,
+   * itemTagName: string|null,
+   * playlistPanel: Element|HTMLElement|null,
+   * isPlaylistPage: boolean,
+   * isDeleting: boolean,
+   * deleteMode: boolean,
+   * selectedItems: Set<string>
+   * }} */
   const state = {
     searchInput: null,
     searchResults: null,
@@ -119,18 +155,18 @@
       if (attached) return;
       attached = true;
 
-      const handleFocus = input => {
-        input.style.borderColor = 'var(--yt-spec-call-to-action)';
+      const handleFocus = (/** @type {HTMLInputElement} */ input) => {
+        /** @type {any} */ (input).style.borderColor = 'var(--yt-spec-call-to-action)';
       };
 
-      const handleBlur = input => {
-        input.style.borderColor = 'var(--yt-spec-10-percent-layer)';
+      const handleBlur = (/** @type {HTMLInputElement} */ input) => {
+        /** @type {any} */ (input).style.borderColor = 'var(--yt-spec-10-percent-layer)';
       };
 
-      const handleInput = input => {
+      const handleInput = (/** @type {HTMLInputElement} */ input) => {
         let debounced = inputDebouncers.get(input);
         if (!debounced) {
-          debounced = debounce(value => {
+          debounced = debounce((/** @type {string} */ value) => {
             if (value.length > config.maxQueryLength) {
               const truncated = value.substring(0, config.maxQueryLength);
               input.value = truncated;
@@ -146,40 +182,58 @@
 
       const delegator = window.YouTubePlusEventDelegation;
       if (delegator?.on) {
-        delegator.on(document, 'focusin', '.ytplus-playlist-search-input', (ev, target) => {
-          void ev;
-          if (target) handleFocus(target);
-        });
-        delegator.on(document, 'focusout', '.ytplus-playlist-search-input', (ev, target) => {
-          void ev;
-          if (target) handleBlur(target);
-        });
-        delegator.on(document, 'input', '.ytplus-playlist-search-input', (ev, target) => {
-          void ev;
-          if (target) handleInput(target);
-        });
+        delegator.on(
+          document,
+          'focusin',
+          '.ytplus-playlist-search-input',
+          (/** @type {any} */ ev, /** @type {any} */ target) => {
+            void ev;
+            if (target) handleFocus(target);
+          }
+        );
+        delegator.on(
+          document,
+          'focusout',
+          '.ytplus-playlist-search-input',
+          (/** @type {any} */ ev, /** @type {any} */ target) => {
+            void ev;
+            if (target) handleBlur(target);
+          }
+        );
+        delegator.on(
+          document,
+          'input',
+          '.ytplus-playlist-search-input',
+          (/** @type {any} */ ev, /** @type {any} */ target) => {
+            void ev;
+            if (target) handleInput(target);
+          }
+        );
       } else {
         document.addEventListener(
           'focusin',
-          ev => {
-            const target = ev.target?.closest?.('.ytplus-playlist-search-input');
-            if (target) handleFocus(target);
+          (/** @type {Event} */ ev) => {
+            const source = ev.target instanceof Element ? ev.target : null;
+            const target = source?.closest('.ytplus-playlist-search-input');
+            if (target) handleFocus(/** @type {HTMLInputElement} */ (target));
           },
           true
         );
         document.addEventListener(
           'focusout',
-          ev => {
-            const target = ev.target?.closest?.('.ytplus-playlist-search-input');
-            if (target) handleBlur(target);
+          (/** @type {Event} */ ev) => {
+            const source = ev.target instanceof Element ? ev.target : null;
+            const target = source?.closest('.ytplus-playlist-search-input');
+            if (target) handleBlur(/** @type {HTMLInputElement} */ (target));
           },
           true
         );
         document.addEventListener(
           'input',
-          ev => {
-            const target = ev.target?.closest?.('.ytplus-playlist-search-input');
-            if (target) handleInput(target);
+          (/** @type {Event} */ ev) => {
+            const source = ev.target instanceof Element ? ev.target : null;
+            const target = source?.closest('.ytplus-playlist-search-input');
+            if (target) handleInput(/** @type {HTMLInputElement} */ (target));
           },
           true
         );
@@ -343,7 +397,7 @@
     state.isPlaylistPage = context.isPlaylistPage;
 
     // Create search container
-    const searchContainer = document.createElement('div');
+    const searchContainer = /** @type {any} */ (document.createElement('div'));
     searchContainer.className = 'ytplus-playlist-search';
     searchContainer.style.cssText = `
       padding: 8px 16px;
@@ -369,7 +423,9 @@
           return;
         }
 
-        const panel = state.playlistPanel || getPlaylistContext()?.panel;
+        const panel = /** @type {Element|HTMLElement|null} */ (
+          state.playlistPanel || getPlaylistContext()?.panel || null
+        );
         // Prefer small top offset on watch page (inside right panel), larger
         // offset on playlist page to account for header/thumbnail column.
         const topOffset = state.isPlaylistPage ? 84 : 8;
@@ -377,7 +433,7 @@
         // Try to find a scrollable ancestor for sticky positioning
         let scrollAncestor = panel;
         while (scrollAncestor && scrollAncestor !== document.body) {
-          const style = window.getComputedStyle(scrollAncestor);
+          const style = window.getComputedStyle(/** @type {Element} */ (scrollAncestor));
           const overflowY = style.overflowY;
           if (
             (overflowY === 'auto' || overflowY === 'scroll') &&
@@ -423,7 +479,7 @@
           searchContainer.style.top = `${topOffset}px`;
           searchContainer.style.background = 'var(--yt-spec-badge-chip-background)';
         }
-      } catch {
+      } catch (e) {
         // Ignore errors and leave default styles
       }
     };
@@ -431,7 +487,7 @@
     // Ensure sticky after insertion as DOM layout may change
     setTimeout(ensureSticky, 100);
 
-    const searchInput = document.createElement('input');
+    const searchInput = /** @type {any} */ (document.createElement('input'));
     searchInput.type = 'text';
     const playlistName = getPlaylistDisplayName(playlistPanel, playlistId);
     const placeholderKey = state.isPlaylistPage
@@ -445,7 +501,7 @@
       border: 1px solid var(--yt-spec-10-percent-layer);
       border-radius: 20px;
       background: var(--yt-spec-badge-chip-background);
-      color: var(--yt-spec-text-primary);
+      color: var(--yt-text-primary);
       font-size: 14px;
       font-family: 'Roboto', Arial, sans-serif;
       outline: none;
@@ -465,7 +521,7 @@
       /** @type {Element|null} */
       const firstVideo = itemsContainer.querySelector(itemSelector);
       if (firstVideo && firstVideo.parentElement === itemsContainer) {
-        itemsContainer.insertBefore(searchContainer, /** @type {Node} */ (firstVideo));
+        itemsContainer.insertBefore(searchContainer, /** @type {any} */ (firstVideo));
       } else {
         // Append to items container if no video element found
         itemsContainer.appendChild(searchContainer);
@@ -497,7 +553,7 @@
     }
 
     const playlistPanel = state.playlistPanel || getPlaylistContext()?.panel;
-    if (!playlistPanel || !state.itemTagName) return;
+    if (!playlistPanel || !state.itemTagName || !state.itemSelector) return;
 
     let lastUpdateCount = state.originalItems.length;
     let updateScheduled = false;
@@ -506,7 +562,7 @@
     const itemsRoot = state.itemsContainer || playlistPanel;
 
     // Throttled handler for mutations with better batching
-    const handleMutations = throttle(mutations => {
+    const handleMutations = throttle((/** @type {MutationRecord[]} */ mutations) => {
       // Skip if update already scheduled
       if (updateScheduled) return;
 
@@ -538,9 +594,7 @@
       updateScheduled = true;
       requestAnimationFrame(() => {
         const currentCount = lastUpdateCount;
-        const newItems = itemsRoot
-          ? itemsRoot.querySelectorAll(itemSelector)
-          : /** @type {NodeListOf<Element>} */ ([]);
+        const newItems = itemsRoot ? itemsRoot.querySelectorAll(itemSelector) : [];
 
         // Only recollect if item count changed
         if (newItems.length !== currentCount) {
@@ -599,7 +653,7 @@
       // Check if this item is already cached and element is still the same
       if (state.itemsCache.has(videoId)) {
         const cached = state.itemsCache.get(videoId);
-        if (cached.element === item) {
+        if (cached && cached.element === item) {
           return cached;
         }
       }
@@ -663,7 +717,7 @@
       // Show all items using RAF for smooth update
       state.rafId = requestAnimationFrame(() => {
         state.originalItems.forEach(item => {
-          item.element.style.display = '';
+          /** @type {any} */ (item.element).style.display = '';
         });
         state.rafId = null;
       });
@@ -676,18 +730,19 @@
     // Batch DOM updates using RAF
     state.rafId = requestAnimationFrame(() => {
       // Use document fragment approach - collect changes first
+      /** @type {{ element: Element, display: string }[]} */
       const updates = [];
 
       state.originalItems.forEach(item => {
         const matches = item.title.includes(searchTerm) || item.channel.includes(searchTerm);
 
         if (matches) {
-          if (item.element.style.display === 'none') {
+          if (/** @type {any} */ (item.element).style.display === 'none') {
             updates.push({ element: item.element, display: '' });
           }
           visibleCount++;
         } else {
-          if (item.element.style.display !== 'none') {
+          if (/** @type {any} */ (item.element).style.display !== 'none') {
             updates.push({ element: item.element, display: 'none' });
           }
         }
@@ -695,7 +750,7 @@
 
       // Apply all updates in one batch to minimize reflows
       updates.forEach(update => {
-        update.element.style.display = update.display;
+        /** @type {any} */ (update.element).style.display = update.display;
       });
 
       // Update results count indicator if needed
@@ -706,12 +761,9 @@
   };
 
   // Update results count (optional visual feedback)
-  const updateResultsCount = (visible, total) => {
+  const updateResultsCount = (/** @type {number} */ visible, /** @type {number} */ total) => {
     // Could add a results counter here if desired
-    window.YouTubeUtils &&
-      YouTubeUtils.logger &&
-      YouTubeUtils.logger.debug &&
-      YouTubeUtils.logger.debug(`[Playlist Search] Showing ${visible} of ${total} videos`);
+    window.YouTubeUtils?.logger?.debug?.(`[Playlist Search] Showing ${visible} of ${total} videos`);
   };
 
   // ── Video Deletion Feature (similar to comment.js pattern) ──
@@ -741,11 +793,14 @@
   const withErrorBoundary = (fn, context) => {
     if (window.YouTubeErrorBoundary?.withErrorBoundary) {
       return /** @type {any} */ (
-        window.YouTubeErrorBoundary.withErrorBoundary(fn, 'PlaylistSearch')
+        window.YouTubeErrorBoundary.withErrorBoundary(
+          /** @type {(...args: unknown[]) => unknown} */ (/** @type {unknown} */ (fn)),
+          'PlaylistSearch'
+        )
       );
     }
     return /** @type {any} */ (
-      (...args) => {
+      (/** @type {any[]} */ ...args) => {
         try {
           return fn(...args);
         } catch (e) {
@@ -766,24 +821,34 @@
     const container = state.playlistPanel || getPlaylistContext()?.panel;
     if (!container) return;
 
-    const toggleBtn = container.querySelector('.ytplus-playlist-delete-toggle');
-    const deleteBar = container.querySelector('.ytplus-playlist-delete-bar');
+    const toggleBtn = /** @type {any} */ (
+      container.querySelector('.ytplus-playlist-delete-toggle')
+    );
+    const deleteBar = /** @type {any} */ (container.querySelector('.ytplus-playlist-delete-bar'));
 
     if (state.deleteMode) {
       if (toggleBtn) {
-        toggleBtn.classList.add('active');
-        toggleBtn.setAttribute('aria-pressed', 'true');
-        toggleBtn.title = t('playlistDeleteModeExit');
+        const tb = /** @type {HTMLElement} */ (toggleBtn);
+        tb.classList.add('active');
+        tb.setAttribute('aria-pressed', 'true');
+        tb.title = t('playlistDeleteModeExit');
       }
-      if (deleteBar) deleteBar.style.display = '';
+      if (deleteBar) {
+        const db = /** @type {any} */ (deleteBar);
+        if (db.style) db.style.display = '';
+      }
       addCheckboxesToItems();
     } else {
       if (toggleBtn) {
-        toggleBtn.classList.remove('active');
-        toggleBtn.setAttribute('aria-pressed', 'false');
-        toggleBtn.title = t('playlistDeleteMode');
+        const tb = /** @type {HTMLElement} */ (toggleBtn);
+        tb.classList.remove('active');
+        tb.setAttribute('aria-pressed', 'false');
+        tb.title = t('playlistDeleteMode');
       }
-      if (deleteBar) deleteBar.style.display = 'none';
+      if (deleteBar) {
+        const db = /** @type {any} */ (deleteBar);
+        if (db.style) db.style.display = 'none';
+      }
       removeCheckboxesFromItems();
     }
     updateDeleteBarState();
@@ -800,7 +865,7 @@
     items.forEach((item, idx) => {
       if (item.querySelector('.ytplus-playlist-item-checkbox')) return;
 
-      const checkbox = document.createElement('input');
+      const checkbox = /** @type {any} */ (document.createElement('input'));
       checkbox.type = 'checkbox';
       // Use shared settings checkbox styling for consistent look
       checkbox.className = 'ytplus-playlist-item-checkbox ytp-plus-settings-checkbox';
@@ -823,10 +888,10 @@
         }
         updateDeleteBarState();
       });
-      checkbox.addEventListener('click', e => e.stopPropagation());
+      checkbox.addEventListener('click', (/** @type {Event} */ e) => e.stopPropagation());
 
       // Ensure the parent has relative positioning for the checkbox
-      item.style.position = 'relative';
+      /** @type {any} */ (item).style.position = 'relative';
       item.insertBefore(checkbox, item.firstChild);
     });
   }, 'addCheckboxesToItems');
@@ -848,15 +913,21 @@
     const container = state.playlistPanel || getPlaylistContext()?.panel;
     if (!container) return;
 
-    const deleteBtn = container.querySelector('.ytplus-playlist-delete-selected');
-    const countSpan = container.querySelector('.ytplus-playlist-selected-count');
+    const deleteBtn = /** @type {any} */ (
+      container.querySelector('.ytplus-playlist-delete-selected')
+    );
+    const countSpan = /** @type {any} */ (
+      container.querySelector('.ytplus-playlist-selected-count')
+    );
 
     if (deleteBtn) {
       deleteBtn.disabled = state.selectedItems.size === 0;
       deleteBtn.style.opacity = state.selectedItems.size > 0 ? '1' : '0.5';
     }
     if (countSpan) {
-      countSpan.textContent = t('playlistSelectedCount', { count: state.selectedItems.size });
+      /** @type {any} */ (countSpan).textContent = t('playlistSelectedCount', {
+        count: state.selectedItems.size,
+      });
     }
   }, 'updateDeleteBarState');
 
@@ -865,16 +936,18 @@
    */
   const selectAllItems = withErrorBoundary(() => {
     const itemsRoot = state.itemsContainer || state.playlistPanel;
-    if (!itemsRoot) return;
+    if (!itemsRoot || !state.itemSelector) return;
 
-    itemsRoot.querySelectorAll('.ytplus-playlist-item-checkbox').forEach(cb => {
-      const item = cb.closest(state.itemSelector);
-      if (item && item.style.display !== 'none') {
-        cb.checked = true;
-        const videoId = item.getAttribute('video-id') || `item-${cb.dataset.index}`;
-        state.selectedItems.add(videoId);
-      }
-    });
+    itemsRoot
+      .querySelectorAll('.ytplus-playlist-item-checkbox')
+      .forEach((/** @type {any} */ cb) => {
+        const item = cb.closest(state.itemSelector);
+        if (item && item.style.display !== 'none') {
+          cb.checked = true;
+          const videoId = item.getAttribute('video-id') || `item-${cb.dataset.index}`;
+          state.selectedItems.add(videoId);
+        }
+      });
     updateDeleteBarState();
   }, 'selectAllItems');
 
@@ -885,9 +958,11 @@
     const itemsRoot = state.itemsContainer || state.playlistPanel;
     if (!itemsRoot) return;
 
-    itemsRoot.querySelectorAll('.ytplus-playlist-item-checkbox').forEach(cb => {
-      cb.checked = false;
-    });
+    itemsRoot
+      .querySelectorAll('.ytplus-playlist-item-checkbox')
+      .forEach((/** @type {any} */ cb) => {
+        cb.checked = false;
+      });
     state.selectedItems.clear();
     updateDeleteBarState();
   }, 'clearAllItems');
@@ -1043,14 +1118,14 @@
    * Add delete mode toggle button and action bar to the search UI
    * @param {HTMLElement} searchContainer - The .ytplus-playlist-search container
    */
-  const addDeleteUI = searchContainer => {
+  const addDeleteUI = (/** @type {HTMLElement} */ searchContainer) => {
     if (!searchContainer || searchContainer.querySelector('.ytplus-playlist-delete-toggle')) return;
 
     // Add styles for delete UI (once)
     addDeleteStyles();
 
     // Toggle button (trash icon) next to the search input
-    const toggleBtn = document.createElement('button');
+    const toggleBtn = /** @type {any} */ (document.createElement('button'));
     toggleBtn.type = 'button';
     toggleBtn.className = 'ytplus-playlist-delete-toggle';
     toggleBtn.setAttribute('aria-pressed', 'false');
@@ -1084,19 +1159,23 @@
     toggleBtn.addEventListener('click', toggleDeleteMode);
 
     // Wrap search input and toggle in a flex container
-    const inputWrapper = document.createElement('div');
+    const inputWrapper = /** @type {any} */ (document.createElement('div'));
     inputWrapper.style.cssText = 'display:flex;align-items:center;gap:6px;';
-    const searchInput = searchContainer.querySelector('.ytplus-playlist-search-input');
+    const searchInput = /** @type {any} */ (
+      searchContainer.querySelector('.ytplus-playlist-search-input')
+    );
     if (searchInput) {
       searchInput.style.width = ''; // Reset fixed width
       searchInput.style.flex = '1';
-      searchInput.parentNode.insertBefore(inputWrapper, searchInput);
+      if (searchInput.parentNode) {
+        searchInput.parentNode.insertBefore(inputWrapper, searchInput);
+      }
       inputWrapper.appendChild(searchInput);
       inputWrapper.appendChild(toggleBtn);
     }
 
     // Action bar (hidden initially)
-    const deleteBar = document.createElement('div');
+    const deleteBar = /** @type {any} */ (document.createElement('div'));
     deleteBar.className = 'ytplus-playlist-delete-bar';
     deleteBar.style.cssText = `
       display: none;
@@ -1107,7 +1186,7 @@
     `;
     deleteBar.style.display = 'none';
 
-    const countSpan = document.createElement('span');
+    const countSpan = /** @type {any} */ (document.createElement('span'));
     countSpan.className = 'ytplus-playlist-selected-count';
     countSpan.style.cssText = `
       font-size: 12px;
@@ -1116,8 +1195,12 @@
     `;
     countSpan.textContent = t('playlistSelectedCount', { count: 0 });
 
-    const createBtn = (label, cls, onClick) => {
-      const btn = document.createElement('button');
+    const createBtn = (
+      /** @type {string} */ label,
+      /** @type {string} */ cls,
+      /** @type {(ev: Event) => any} */ onClick
+    ) => {
+      const btn = /** @type {any} */ (document.createElement('button'));
       btn.type = 'button';
       btn.textContent = label;
       btn.className = cls;
@@ -1192,8 +1275,8 @@
         window.YouTubeUtils.StyleManager.add('ytplus-playlist-delete-styles', css);
         return;
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     const style = document.createElement('style');
     style.id = 'ytplus-playlist-delete-styles';
@@ -1279,8 +1362,8 @@
       addSearchUI();
     };
 
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(run, { timeout: 1500 });
+    if (typeof window.requestIdleCallback === 'function') {
+      window.requestIdleCallback(run, { timeout: 1500 });
     } else {
       setTimeout(run, 0);
     }
@@ -1297,7 +1380,10 @@
 
   onDomReady(ensureInit);
 
-  if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+  if (
+    window.YouTubeUtils?.cleanupManager &&
+    typeof window.YouTubeUtils.cleanupManager.registerListener === 'function'
+  ) {
     YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
       passive: true,
     });
@@ -1311,10 +1397,11 @@
 
   window.addEventListener('youtube-plus-settings-updated', e => {
     try {
-      const nextEnabled = e?.detail?.enablePlaylistSearch !== false;
+      const detail = /** @type {any} */ (e).detail;
+      const nextEnabled = detail?.enablePlaylistSearch !== false;
       if (nextEnabled === featureEnabled) return;
       setFeatureEnabled(nextEnabled);
-    } catch {
+    } catch (e) {
       setFeatureEnabled(loadFeatureEnabled());
     }
   });

@@ -5,26 +5,39 @@
 describe('Music Module', () => {
   beforeEach(() => {
     window._ytplusCreateHTML = s => s;
-    window.YouTubeUtils = {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => []),
-      t: jest.fn(key => key || ''),
-      cleanupManager: {
-        registerInterval: jest.fn(id => id),
-        registerTimeout: jest.fn(id => id),
-        registerObserver: jest.fn(obs => obs),
-        registerListener: jest.fn(),
-        cleanup: jest.fn(),
-        observers: new Set(),
-        intervals: new Set(),
-        timeouts: new Set(),
-        animationFrames: new Set(),
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(sel => document.querySelector(sel)),
+        $$: jest.fn(() => []),
+        t: jest.fn(key => key || ''),
+        cleanupManager: {
+          registerInterval: jest.fn(id => id),
+          registerTimeout: jest.fn(id => id),
+          registerObserver: jest.fn(obs => obs),
+          registerListener: jest.fn(),
+          cleanup: jest.fn(),
+          registerAnimationFrame: jest.fn(id => id),
+        },
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        loadFeatureEnabled: jest.fn(() => true),
+        SETTINGS_KEY: 'youtube_plus_settings',
       },
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
-      loadFeatureEnabled: jest.fn(() => true),
-      SETTINGS_KEY: 'youtube_plus_settings',
-    };
-    window.YouTubeDOMCache = { get: jest.fn() };
+    });
+    Object.defineProperty(window, 'YouTubeDOMCache', {
+      configurable: true,
+      writable: true,
+      value: {
+        get: jest.fn(),
+        getAll: jest.fn(),
+        querySelector: jest.fn(),
+        querySelectorAll: jest.fn(),
+        getElementById: jest.fn(),
+        invalidate: jest.fn(),
+        clear: jest.fn(),
+      },
+    });
     // Note: Music module only activates on music.youtube.com
     global.mockLocation({
       hostname: 'music.youtube.com',
@@ -34,7 +47,8 @@ describe('Music Module', () => {
   });
 
   test('should only activate on music.youtube.com', () => {
-    const isMusicPage = hostname => hostname === 'music.youtube.com';
+    const isMusicPage = /** @param {string} hostname */ hostname =>
+      hostname === 'music.youtube.com';
     expect(isMusicPage('music.youtube.com')).toBe(true);
     expect(isMusicPage('www.youtube.com')).toBe(false);
   });
@@ -65,7 +79,7 @@ describe('Music Module', () => {
     const settings = { showShortcuts: false, enableVisualization: true };
     localStorage.setItem('youtube_music_settings', JSON.stringify(settings));
 
-    const restored = JSON.parse(localStorage.getItem('youtube_music_settings'));
+    const restored = JSON.parse(localStorage.getItem('youtube_music_settings') ?? 'null');
     expect(restored.showShortcuts).toBe(false);
     expect(restored.enableVisualization).toBe(true);
   });

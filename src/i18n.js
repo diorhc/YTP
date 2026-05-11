@@ -51,13 +51,10 @@
       if (typeof window !== 'undefined' && window.YouTubePlusEmbeddedTranslations) {
         const embedded = window.YouTubePlusEmbeddedTranslations[lang];
         if (embedded) {
-          window.YouTubeUtils &&
-            YouTubeUtils.logger &&
-            YouTubeUtils.logger.debug &&
-            YouTubeUtils.logger.debug(
-              '[YouTube+][i18n]',
-              `Using embedded translations for ${lang}`
-            );
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+][i18n]',
+            `Using embedded translations for ${lang}`
+          );
           return embedded;
         }
       }
@@ -117,6 +114,7 @@
         const translations = await fetchTranslation(languageCode);
         // Quick sanity check: warn if common UI keys are missing from fetched translations
         try {
+          /** @type {string[]} */
           const missing = [];
           ['loading', 'fetching'].forEach(k => {
             if (!Object.prototype.hasOwnProperty.call(translations, k)) missing.push(k);
@@ -127,7 +125,7 @@
               `Translations for ${languageCode} missing keys: ${missing.join(', ')} (source may be stale)`
             );
           }
-        } catch {
+        } catch (e) {
           /* ignore sanity-check errors */
         }
         translationsCache.set(languageCode, translations);
@@ -156,13 +154,13 @@
 
   /**
    * Loaded translations for current language
-   * @type {Object}
+   * @type {Record<string, string>}
    */
   let translations = {};
 
   /**
    * English fallback translations (loaded once).
-   * @type {Object}
+   * @type {Record<string, string>}
    */
   let fallbackTranslationsEn = {};
 
@@ -180,7 +178,7 @@
 
   /**
    * Loading state
-   * @type {Promise|null}
+   * @type {Promise<any> | null}
    */
   let loadingPromise = null;
 
@@ -193,17 +191,18 @@
     try {
       if (typeof window === 'undefined') return;
       window.dispatchEvent(new CustomEvent(name, { detail }));
-    } catch {
+    } catch (e) {
       try {
         if (typeof window === 'undefined') return;
         window.dispatchEvent(new Event(name));
-      } catch {
+      } catch (e) {
         /* no-op */
       }
     }
   }
 
   // Language mapping for common locale codes - extended to support all YouTube languages
+  /** @type {Record<string, string>} */
   const languageMap = {
     ko: 'kr', 'ko-kr': 'kr',
     fr: 'fr', 'fr-fr': 'fr', 'fr-ca': 'fr', 'fr-be': 'fr', 'fr-ch': 'fr',
@@ -245,11 +244,12 @@
     }
 
     // Check fallbacks
-    if (LANGUAGE_FALLBACKS[lower]) {
-      return LANGUAGE_FALLBACKS[lower];
+    const fallbacks = /** @type {Record<string,string>} */ (LANGUAGE_FALLBACKS);
+    if (fallbacks[lower]) {
+      return fallbacks[lower];
     }
-    if (LANGUAGE_FALLBACKS[shortCode]) {
-      return LANGUAGE_FALLBACKS[shortCode];
+    if (fallbacks[shortCode]) {
+      return fallbacks[shortCode];
     }
 
     // Default to English
@@ -293,7 +293,7 @@
       } catch { /* empty */ }
 
       // Fallback to browser language
-      const browserLang = navigator.language || navigator.userLanguage || 'en';
+      const browserLang = navigator.language || /** @type {any} */ (navigator).userLanguage || 'en';
       const mapped = mapToSupportedLanguage(browserLang);
 
       return mapped;
@@ -315,14 +315,11 @@
 
     loadingPromise = (async () => {
       try {
-        window.YouTubeUtils &&
-          YouTubeUtils.logger &&
-          YouTubeUtils.logger.debug &&
-          YouTubeUtils.logger.debug(
-            '[YouTube+][i18n]',
-            `Loading translations for ${currentLanguage}...`
-          );
-        translations = await loadTranslationsFromLoader(currentLanguage);
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][i18n]',
+          `Loading translations for ${currentLanguage}...`
+        );
+        translations = /** @type {Record<string,string>} */ (await loadTranslationsFromLoader(currentLanguage));
         // Ensure we always have English fallback available (best-effort).
         // Skip the async fetch when embedded English translations are already
         // bundled � this avoids a network round-trip on every page load.
@@ -335,20 +332,17 @@
             if (embeddedEn && typeof embeddedEn === 'object') {
               fallbackTranslationsEn = embeddedEn;
             } else {
-              fallbackTranslationsEn = await loadTranslationsFromLoader('en');
+              fallbackTranslationsEn = /** @type {Record<string,string>} */ (await loadTranslationsFromLoader('en'));
             }
-          } catch {
+          } catch (e) {
             fallbackTranslationsEn = {};
           }
         }
         translationCache.clear(); // Clear cache on new load
-        window.YouTubeUtils &&
-          YouTubeUtils.logger &&
-          YouTubeUtils.logger.debug &&
-          YouTubeUtils.logger.debug(
-            '[YouTube+][i18n]',
-            `? Loaded ${Object.keys(translations).length} translations for ${currentLanguage}`
-          );
+        window.YouTubeUtils?.logger?.debug?.(
+          '[YouTube+][i18n]',
+          `? Loaded ${Object.keys(translations).length} translations for ${currentLanguage}`
+        );
         return true;
       } catch (error) {
         console.error('[YouTube+][i18n]', 'Failed to load translations:', error);
@@ -369,14 +363,14 @@
   /**
    * Translate a key with optional placeholders
    * @param {string} key - Translation key
-   * @param {Object} [params] - Parameters to replace in translation
+   * @param {Record<string, any>} [params] - Parameters to replace in translation
    * @returns {string} Translated string
    */
   function translate(key, params = {}) {
     // Check cache
     const cacheKey = `${key}:${JSON.stringify(params)}`;
     if (translationCache.has(cacheKey)) {
-      return translationCache.get(cacheKey);
+      return translationCache.get(cacheKey) ?? key;
     }
 
     // Get translation
@@ -390,7 +384,11 @@
       } else {
         // Only warn if translations have been loaded and key is still missing everywhere
         if (Object.keys(translations).length > 0) {
-          console.warn('[YouTube+][i18n]', `Missing translation for key: ${key}`);
+          // Only warn if English fallback is also loaded (otherwise it's a timing issue,
+          // not a genuinely missing key — translations may still be fetching from CDN).
+          if (Object.keys(fallbackTranslationsEn).length > 0) {
+            console.warn('[YouTube+][i18n]', `Missing translation for key: ${key}`);
+          }
         }
         text = key;
       }
@@ -398,7 +396,7 @@
 
     // Replace parameters
     if (Object.keys(params).length > 0) {
-      const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      const escapeRegex = /** @param {string} s */ s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       Object.keys(params).forEach(param => {
         text = text.replace(new RegExp(`\\{${escapeRegex(param)}\\}`, 'g'), params[param]);
       });
@@ -516,7 +514,7 @@
   function formatNumber(num, options = {}) {
     try {
       const lang = getLanguage();
-      const localeMap = {ru: 'ru-RU', kr: 'ko-KR', fr: 'fr-FR', du: 'nl-NL', cn: 'zh-CN', tw: 'zh-TW', jp: 'ja-JP', tr: 'tr-TR'};
+      const localeMap = /** @type {Record<string,string>} */ ({ru: 'ru-RU', kr: 'ko-KR', fr: 'fr-FR', du: 'nl-NL', cn: 'zh-CN', tw: 'zh-TW', jp: 'ja-JP', tr: 'tr-TR'});
       const locale = localeMap[lang] || 'en-US';
       return new Intl.NumberFormat(locale, options).format(num);
     } catch (error) {
@@ -534,7 +532,7 @@
   function formatDate(date, options = {}) {
     try {
       const lang = getLanguage();
-      const localeMap = {ru: 'ru-RU', kr: 'ko-KR', fr: 'fr-FR', du: 'nl-NL', cn: 'zh-CN', tw: 'zh-TW', jp: 'ja-JP', tr: 'tr-TR'};
+      const localeMap = /** @type {Record<string,string>} */ ({ru: 'ru-RU', kr: 'ko-KR', fr: 'fr-FR', du: 'nl-NL', cn: 'zh-CN', tw: 'zh-TW', jp: 'ja-JP', tr: 'tr-TR'});
       const locale = localeMap[lang] || 'en-US';
       const dateObj = date instanceof Date ? date : new Date(date);
       return new Intl.DateTimeFormat(locale, options).format(dateObj);
@@ -552,7 +550,7 @@
    * @param {string} [few] - Few form (for Russian, etc.)
    * @returns {string} Appropriate form
    */
-  function pluralize(count, singular, plural, few = null) {
+  function pluralize(count, singular, plural, few = undefined) {
     const lang = getLanguage();
 
     // Russian pluralization
@@ -598,13 +596,10 @@
     try {
       currentLanguage = detectLanguage();
 
-      window.YouTubeUtils &&
-        YouTubeUtils.logger &&
-        YouTubeUtils.logger.debug &&
-        YouTubeUtils.logger.debug(
-          '[YouTube+][i18n]',
-          `Detected language: ${currentLanguage} (${LANGUAGE_NAMES[currentLanguage] || currentLanguage})`
-        );
+      window.YouTubeUtils?.logger?.debug?.(
+        '[YouTube+][i18n]',
+        `Detected language: ${currentLanguage} (${(/** @type {Record<string,string>} */ (LANGUAGE_NAMES))[currentLanguage] || currentLanguage})`
+      );
 
       // Load translations
       await loadTranslations();
@@ -643,6 +638,9 @@
     clearCache,
     getCacheStats,
 
+    // Utility
+    isReady: () => loadingPromise === null && Object.keys(translations).length > 0,
+
     // Internal functions
     loadTranslations,
     initialize,
@@ -675,9 +673,6 @@
 
   // Auto-initialize
   initialize().then(() => {
-    window.YouTubeUtils &&
-      YouTubeUtils.logger &&
-      YouTubeUtils.logger.debug &&
-      YouTubeUtils.logger.debug('[YouTube+][i18n]', 'i18n system initialized successfully');
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][i18n]', 'i18n system initialized successfully');
   });
 })();

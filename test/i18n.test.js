@@ -5,8 +5,16 @@
 describe('i18n Module', () => {
   beforeEach(() => {
     // Reset window globals
-    delete window.YouTubePlusI18n;
-    delete window.YouTubePlusEmbeddedTranslations;
+    Object.defineProperty(window, 'YouTubePlusI18n', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+    Object.defineProperty(window, 'YouTubePlusEmbeddedTranslations', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
 
     // Mock fetch
     global.fetch = jest.fn();
@@ -75,8 +83,12 @@ describe('i18n Module', () => {
 
     test('should handle null/undefined key', () => {
       // Allow null or empty string response
-      const nullResult = window.YouTubePlusI18n.t(null);
-      const undefinedResult = window.YouTubePlusI18n.t(undefined);
+      const nullResult = window.YouTubePlusI18n.t(
+        /** @type {string} */ (/** @type {unknown} */ (null))
+      );
+      const undefinedResult = window.YouTubePlusI18n.t(
+        /** @type {string} */ (/** @type {unknown} */ (undefined))
+      );
 
       expect([null, '', undefined, 'null', 'undefined']).toContain(nullResult);
       expect([null, '', undefined, 'null', 'undefined']).toContain(undefinedResult);
@@ -132,12 +144,20 @@ describe('i18n Module', () => {
     beforeEach(() => {
       jest.resetModules();
       delete require.cache[require.resolve('../src/i18n.js')];
-      global.fetch = jest.fn(() =>
-        Promise.resolve({
-          ok: true,
-          json: () => Promise.resolve({ test: 'value' }),
-        })
-      );
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({ test: 'value' }),
+      });
+      Object.defineProperty(global, 'fetch', {
+        configurable: true,
+        writable: true,
+        value: jest.fn(() =>
+          Promise.resolve({
+            ok: true,
+            json: () => Promise.resolve({ test: 'value' }),
+          })
+        ),
+      });
       require('../src/i18n.js');
     });
 
@@ -167,8 +187,6 @@ describe('i18n Module', () => {
     });
 
     test('should handle missing embedded translations', () => {
-      delete window.YouTubePlusEmbeddedTranslations;
-
       jest.resetModules();
       delete require.cache[require.resolve('../src/i18n.js')];
       require('../src/i18n.js');
@@ -193,9 +211,9 @@ describe('i18n Module', () => {
       require('../src/i18n.js');
 
       expect(() => {
-        window.YouTubePlusI18n.t(null);
-        window.YouTubePlusI18n.t(undefined);
-        window.YouTubePlusI18n.t(123);
+        window.YouTubePlusI18n.t(/** @type {string} */ (/** @type {unknown} */ (null)));
+        window.YouTubePlusI18n.t(/** @type {string} */ (/** @type {unknown} */ (undefined)));
+        window.YouTubePlusI18n.t(/** @type {string} */ (/** @type {unknown} */ (123)));
       }).not.toThrow();
     });
   });

@@ -1,9 +1,22 @@
-// @ts-nocheck
 /**
  * @jest-environment jsdom
  */
 
 describe('Stats Module', () => {
+  /** @param {() => void} fn @param {number} wait */
+  const createDebounce = (fn, wait) => {
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let timeout = null;
+    const debounced = () => {
+      if (timeout !== null) clearTimeout(timeout);
+      timeout = setTimeout(() => fn(), wait);
+    };
+    debounced.cancel = () => {
+      if (timeout !== null) clearTimeout(timeout);
+    };
+    return debounced;
+  };
+
   beforeEach(() => {
     // Reset DOM
     document.body.innerHTML = '';
@@ -21,22 +34,18 @@ describe('Stats Module', () => {
     localStorage.clear();
 
     // Mock YouTubeUtils
-    /** @type {any} */ (global).YouTubeUtils = {
-      StyleManager: {
-        add: jest.fn(),
-        remove: jest.fn(),
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        StyleManager: {
+          add: jest.fn(),
+          remove: jest.fn(),
+        },
+        logError: jest.fn(),
+        debounce: createDebounce,
       },
-      logError: jest.fn(),
-      debounce: (fn, wait) => {
-        let timeout;
-        const debounced = function (...args) {
-          clearTimeout(timeout);
-          timeout = setTimeout(() => fn(...args), wait);
-        };
-        debounced.cancel = () => clearTimeout(timeout);
-        return debounced;
-      },
-    };
+    });
   });
 
   describe('Video URL Detection', () => {
@@ -97,6 +106,7 @@ describe('Stats Module', () => {
 
   describe('Rate Limiter', () => {
     test('should allow requests within limit', () => {
+      /** @type {{ requests: Map<string, number[]>, maxRequests: number, timeWindow: number, canRequest: (key: string) => boolean }} */
       const rateLimiter = {
         requests: new Map(),
         maxRequests: 10,
@@ -126,6 +136,7 @@ describe('Stats Module', () => {
     });
 
     test('should block requests exceeding limit', () => {
+      /** @type {{ requests: Map<string, number[]>, maxRequests: number, timeWindow: number, canRequest: (key: string) => boolean }} */
       const rateLimiter = {
         requests: new Map(),
         maxRequests: 3,
@@ -155,6 +166,7 @@ describe('Stats Module', () => {
     });
 
     test('should track requests per key', () => {
+      /** @type {{ requests: Map<string, number[]>, maxRequests: number, timeWindow: number, canRequest: (key: string) => boolean }} */
       const rateLimiter = {
         requests: new Map(),
         maxRequests: 2,
@@ -198,6 +210,7 @@ describe('Stats Module', () => {
       const httpsUrl = 'https://stats.afkarxyz.fun';
       const httpUrl = 'http://stats.afkarxyz.fun';
 
+      /** @param {string} url */
       const isHttps = url => {
         try {
           return new URL(url).protocol === 'https:';
@@ -213,6 +226,7 @@ describe('Stats Module', () => {
     test('should validate allowed domains', () => {
       const allowedDomains = ['stats.afkarxyz.fun', 'livecounts.io', 'api.livecounts.io'];
 
+      /** @param {string} url */
       const validateDomain = url => {
         try {
           const parsed = new URL(url);
@@ -271,6 +285,7 @@ describe('Stats Module', () => {
       try {
         await fetch('https://www.youtube.com/test');
       } catch (error) {
+        if (!(error instanceof Error)) throw new Error('Expected Error instance');
         expect(error.message).toBe('Network error');
       }
     });
@@ -286,6 +301,7 @@ describe('Stats Module', () => {
       try {
         await fetch('https://www.youtube.com/test');
       } catch (error) {
+        if (!(error instanceof Error)) throw new Error('Expected Error instance');
         expect(error.message).toBe('Timeout');
       }
     });
@@ -295,13 +311,7 @@ describe('Stats Module', () => {
     test('should use debouncing for URL changes', done => {
       let callCount = 0;
 
-      const debounce = (fn, wait) => {
-        let timeout;
-        return function (...args) {
-          clearTimeout(timeout);
-          timeout = setTimeout(() => fn(...args), wait);
-        };
-      };
+      const debounce = createDebounce;
 
       const debouncedFn = debounce(() => {
         callCount++;

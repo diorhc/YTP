@@ -10,7 +10,7 @@
     constructor() {
       /** @type {Map<string, {element: Element|null, timestamp: number}>} */
       this.cache = new Map();
-      /** @type {Map<string, NodeList|Element[]>} */
+      /** @type {Map<string, Element[]>} */
       this.multiCache = new Map();
       this.maxAge = 5000; // Cache TTL: 5 seconds
       this.nullMaxAge = 1000; // Cache TTL for null/empty results: 1 s (was 250 ms).
@@ -36,6 +36,10 @@
       this.startCleanup();
     }
 
+    /**
+     * @param {Element|Document} ctx
+     * @returns {string|number}
+     */
     getContextUid(ctx) {
       if (ctx === document) return 'doc';
       let uid = this.contextUids.get(ctx);
@@ -85,7 +89,7 @@
       // LRU eviction if cache too large
       if (this.cache.size >= this.maxSize) {
         const firstKey = this.cache.keys().next().value;
-        this.cache.delete(firstKey);
+        if (firstKey !== undefined) this.cache.delete(firstKey);
         this.stats.evictions++;
       }
 
@@ -104,7 +108,7 @@
      */
     querySelectorAll(selector, context = document, skipCache = false) {
       if (!this.enabled || skipCache) {
-        return context.querySelectorAll(selector);
+        return Array.from(context.querySelectorAll(selector));
       }
 
       const cacheKey = `ALL::${selector}::${this.getContextUid(context)}`;
@@ -114,13 +118,12 @@
         return cached;
       }
 
-      const elements = Array.from(context.querySelectorAll(selector));
+      const elements = /** @type {Element[]} */ (Array.from(context.querySelectorAll(selector)));
       this.multiCache.set(cacheKey, elements);
 
-      // Auto-cleanup after maxAge or nullMaxAge — track timeout for cleanup
+      // Auto-cleanup after maxAge or nullMaxAge
       const ttl = elements.length > 0 ? this.maxAge : this.nullMaxAge;
       const timeoutId = setTimeout(() => this.multiCache.delete(cacheKey), ttl);
-      // Register timeout with cleanupManager if available
       if (typeof window !== 'undefined' && window.YouTubeUtils?.cleanupManager?.registerTimeout) {
         window.YouTubeUtils.cleanupManager.registerTimeout(timeoutId);
       }
@@ -135,7 +138,7 @@
      */
     getElementById(id) {
       if (!this.enabled) {
-        return document.getElementById(id);
+        return /** @type {Element|null} */ (document.getElementById(id));
       }
 
       const cacheKey = `ID::${id}`;
@@ -148,7 +151,7 @@
         }
       }
 
-      const element = document.getElementById(id);
+      const element = /** @type {Element|null} */ (document.getElementById(id));
       this.cache.set(cacheKey, { element, timestamp: now });
       return element;
     }
@@ -164,6 +167,10 @@
 
     /**
      * Check if cached elements are still valid
+     * @param {Element[]} elements
+     * @returns {boolean}
+     */
+    /**
      * @param {Element[]} elements
      * @returns {boolean}
      */
@@ -322,7 +329,7 @@
       if (!this.scopedCaches.has(scope)) {
         this.scopedCaches.set(scope, new WeakMap());
       }
-      return this.scopedCaches.get(scope);
+      return /** @type {WeakMap<Element, any>} */ (this.scopedCaches.get(scope));
     }
 
     /**
@@ -397,12 +404,14 @@
    * @returns {Array<Element|Element[]|null>}
    */
   function batchQuery(queries) {
-    return queries.map(({ selector, multi = false, context = document }) => {
-      if (multi) {
-        return Array.from(context.querySelectorAll(selector));
+    return queries.map(
+      ({ selector, multi = false, context = /** @type {Element|Document} */ (document) }) => {
+        if (multi) {
+          return Array.from(context.querySelectorAll(selector));
+        }
+        return context.querySelector(selector);
       }
-      return context.querySelector(selector);
-    });
+    );
   }
 
   // Create global instances
@@ -413,91 +422,111 @@
    * Wait for element to appear in DOM (Optimized)
    * @param {string} selector - CSS selector
    * @param {number} [timeout=5000] - Timeout in milliseconds
-   * @param {Element} [context=document] - Context element
+   * @param {Element|Document} [context] - Context element
    * @returns {Promise<Element|null>}
    */
-  function waitForElement(selector, timeout = 5000, context = document) {
-    return new Promise(resolve => {
-      const existing = context.querySelector(selector);
-      if (existing) {
-        resolve(existing);
-        return;
-      }
+  function waitForElement(
+    selector,
+    timeout = 5000,
+    context = /** @type {Element|Document} */ (document)
+  ) {
+    return new Promise(
+      /** @param {(el: Element|null) => void} resolve */ resolve => {
+        const existing = context.querySelector(selector);
+        if (existing) {
+          resolve(existing);
+          return;
+        }
 
-      const isPlaylistPage =
-        typeof window !== 'undefined' &&
-        window.location &&
-        typeof window.location.pathname === 'string' &&
-        window.location.pathname === '/playlist';
+        const isPlaylistPage =
+          typeof window !== 'undefined' &&
+          window.location &&
+          typeof window.location.pathname === 'string' &&
+          window.location.pathname === '/playlist';
 
-      // On heavy playlist pages (WL/LL), MutationObserver(subtree) can become very expensive.
-      // Prefer lightweight polling here to avoid reacting to the large volume of DOM mutations.
-      if (isPlaylistPage && (context === document || context === document.body)) {
-        const interval = 250;
-        const start = Date.now();
-        const timerId = setInterval(() => {
-          const element = context.querySelector(selector);
-          if (element) {
-            clearInterval(timerId);
-            resolve(element);
-            return;
-          }
-          if (Date.now() - start >= timeout) {
-            clearInterval(timerId);
-            resolve(null);
-          }
-        }, interval);
-        return;
-      }
+        // On heavy playlist pages (WL/LL), MutationObserver(subtree) can become very expensive.
+        // Prefer lightweight polling here to avoid reacting to the large volume of DOM mutations.
+        const ctxNode = /** @type {Node} */ (/** @type {unknown} */ (context));
+        if (isPlaylistPage && (ctxNode === document || ctxNode === document.body)) {
+          const interval = 250;
+          const start = Date.now();
+          const timerId = setInterval(() => {
+            const element = context.querySelector(selector);
+            if (element) {
+              clearInterval(timerId);
+              resolve(element);
+              return;
+            }
+            if (Date.now() - start >= timeout) {
+              clearInterval(timerId);
+              resolve(null);
+            }
+          }, interval);
+          return;
+        }
 
-      // Use shared observer if context is document/body
-      const useShared = context === document || context === document.body;
+        // Use shared observer if context is document/body
+        const ctxNodeShared = /** @type {Node} */ (/** @type {unknown} */ (context));
+        const useShared =
+          ctxNodeShared === document ||
+          (ctxNodeShared instanceof Node && ctxNodeShared === document.body);
 
-      if (useShared) {
-        globalCache.initSharedObserver();
+        if (useShared) {
+          globalCache.initSharedObserver();
 
-        const checkCallback = () => {
-          const element = context.querySelector(selector);
-          if (element) {
+          const checkCallback = () => {
+            const element = context.querySelector(selector);
+            if (element) {
+              globalCache.observerCallbacks.delete(checkCallback);
+              resolve(element);
+              return true;
+            }
+            return false;
+          };
+
+          globalCache.observerCallbacks.add(checkCallback);
+
+          setTimeout(() => {
             globalCache.observerCallbacks.delete(checkCallback);
-            resolve(element);
-            return true;
-          }
-          return false;
-        };
+            resolve(null);
+          }, timeout);
+        } else {
+          // Fallback to local observer for specific contexts
+          const observerCtx = /** @type {Element} */ (context);
+          const observer = new MutationObserver(() => {
+            const element = observerCtx.querySelector(selector);
+            if (element) {
+              observer.disconnect();
+              resolve(element);
+            }
+          });
 
-        globalCache.observerCallbacks.add(checkCallback);
+          observer.observe(observerCtx, {
+            childList: true,
+            subtree: true,
+          });
 
-        setTimeout(() => {
-          globalCache.observerCallbacks.delete(checkCallback);
-          resolve(null);
-        }, timeout);
-      } else {
-        // Fallback to local observer for specific contexts
-        const observer = new MutationObserver(() => {
-          const element = context.querySelector(selector);
-          if (element) {
+          setTimeout(() => {
             observer.disconnect();
-            resolve(element);
-          }
-        });
-
-        observer.observe(context, {
-          childList: true,
-          subtree: true,
-        });
-
-        setTimeout(() => {
-          observer.disconnect();
-          resolve(null);
-        }, timeout);
+            resolve(null);
+          }, timeout);
+        }
       }
-    });
+    );
   }
 
   // Export to global namespace
   if (typeof window !== 'undefined') {
-    window.YouTubeDOMCache = globalCache;
+    window.YouTubeDOMCache = /** @type {YouTubeDOMCache} */ (
+      Object.assign(globalCache, {
+        get: /** @param {string} selector */ selector => globalCache.querySelector(selector),
+        getAll: /** @param {string} selector */ selector => globalCache.querySelectorAll(selector),
+        waitForElement: /** @param {string} selector @param {number} [timeout] */ (
+          selector,
+          timeout
+        ) => waitForElement(selector, timeout),
+      })
+    );
     window.YouTubeScopedCache = scopedCache;
     window.YouTubeSelectors = OptimizedSelectors;
     window.batchQueryDOM = batchQuery;
@@ -505,7 +534,7 @@
 
     // Also add to YouTubeUtils if available
     if (window.YouTubeUtils) {
-      window.YouTubeUtils.domCache = globalCache;
+      window.YouTubeUtils.domCache = /** @type {any} */ (globalCache);
       window.YouTubeUtils.scopedCache = scopedCache;
       window.YouTubeUtils.selectors = OptimizedSelectors;
       window.YouTubeUtils.batchQuery = batchQuery;

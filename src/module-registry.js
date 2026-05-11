@@ -41,6 +41,7 @@
 
       // Also set window global for backward compatibility
       // Map common registry names to their existing window.* counterparts
+      /** @type {Record<string, string>} */
       const windowAliases = {
         utils: 'YouTubeUtils',
         domCache: 'YouTubeDOMCache',
@@ -112,7 +113,7 @@
       if (!pendingCallbacks.has(name)) {
         pendingCallbacks.set(name, new Set());
       }
-      pendingCallbacks.get(name).add(callback);
+      pendingCallbacks.get(name)?.add(callback);
     },
 
     /**

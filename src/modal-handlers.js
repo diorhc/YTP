@@ -6,7 +6,8 @@
 /* global GM_setValue, GM_getValue */
 
 // DOM cache helper from YouTubeUtils
-const qs = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+const qs = (/** @type {string} */ sel) =>
+  window.YouTubeUtils?.$(sel) || document.querySelector(sel);
 
 /**
  * Safely set a setting by path (supports dot notation)
@@ -43,7 +44,7 @@ const setSettingByPath = (settings, path, value) => {
  * Initialize download sites settings
  * @param {Object} settings - Settings object
  */
-const initializeDownloadSites = settings => {
+const initializeDownloadSites = (/** @type {any} */ settings) => {
   if (!settings.downloadSites) {
     settings.downloadSites = { externalDownloader: true, ytdl: true, direct: true };
   }
@@ -69,7 +70,7 @@ const toggleDownloadSiteControls = checkbox => {
     if (container) {
       const controls = container.querySelector('.download-site-controls');
       if (controls) {
-        controls.style.display = checkbox.checked ? 'block' : 'none';
+        /** @type {any} */ (controls).style.display = checkbox.checked ? 'block' : 'none';
       }
     }
   } catch (err) {
@@ -81,7 +82,7 @@ const toggleDownloadSiteControls = checkbox => {
  * Save settings safely
  * @param {Function} saveSettings - Save function
  */
-const safelySaveSettings = saveSettings => {
+const safelySaveSettings = (/** @type {Function} */ saveSettings) => {
   try {
     saveSettings();
   } catch (err) {
@@ -97,7 +98,13 @@ const safelySaveSettings = saveSettings => {
  * @param {Function} markDirty - Function to mark modal as dirty
  * @param {Function} saveSettings - Function to save settings
  */
-const handleDownloadSiteToggle = (target, key, settings, markDirty, saveSettings) => {
+const handleDownloadSiteToggle = (
+  /** @type {HTMLElement} */ target,
+  /** @type {string} */ key,
+  /** @type {any} */ settings,
+  /** @type {Function} */ markDirty,
+  /** @type {Function} */ saveSettings
+) => {
   initializeDownloadSites(settings);
 
   const checkbox = /** @type {HTMLInputElement} */ (target);
@@ -105,8 +112,8 @@ const handleDownloadSiteToggle = (target, key, settings, markDirty, saveSettings
 
   try {
     markDirty();
-  } catch {
-    /* empty */
+  } catch (e) {
+    // Non-critical, suppressed
   }
 
   toggleDownloadSiteControls(checkbox);
@@ -118,7 +125,7 @@ const handleDownloadSiteToggle = (target, key, settings, markDirty, saveSettings
  * Handle Download button live toggle
  * @param {Object} context - Context object with methods
  */
-const handleDownloadButtonToggle = context => {
+const handleDownloadButtonToggle = (/** @type {any} */ context) => {
   const { settings, getElement, addDownloadButton } = context;
   const controls = getElement('.ytp-right-controls');
   const existing = getElement('.ytp-download-button', false);
@@ -138,7 +145,7 @@ const handleDownloadButtonToggle = context => {
  * Handle Speed Control live toggle
  * @param {Object} context - Context object with methods
  */
-const handleSpeedControlToggle = context => {
+const handleSpeedControlToggle = (/** @type {any} */ context) => {
   const { settings, getElement, addSpeedControlButton } = context;
   const controls = getElement('.ytp-right-controls');
   const existing = getElement('.speed-control-btn', false);
@@ -156,7 +163,7 @@ const handleSpeedControlToggle = context => {
  * Update global settings exposure
  * @param {Object} settings - Settings object
  */
-const updateGlobalSettings = settings => {
+const updateGlobalSettings = (/** @type {any} */ settings) => {
   if (typeof window !== 'undefined' && window.youtubePlus) {
     window.youtubePlus.settings = window.youtubePlus.settings || settings;
   }
@@ -167,7 +174,7 @@ const updateGlobalSettings = settings => {
  * @param {string} setting - Setting key
  * @param {Object} context - Context object with methods
  */
-const applySettingLive = (setting, context) => {
+const applySettingLive = (/** @type {string} */ setting, /** @type {any} */ context) => {
   const { settings, refreshDownloadButton } = context;
 
   try {
@@ -220,8 +227,8 @@ const handleSimpleSettingToggle = (
   // Mark modal as dirty
   try {
     markDirty();
-  } catch {
-    /* empty */
+  } catch (e) {
+    // Non-critical, suppressed
   }
 
   // Apply settings immediately
@@ -242,18 +249,18 @@ const handleSimpleSettingToggle = (
   if (setting === 'enableDownload') {
     const submenu = modal.querySelector('.download-submenu');
     if (submenu) {
-      submenu.style.display = checked ? 'block' : 'none';
+      /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
     }
     const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="download"]');
     if (toggleBtn instanceof HTMLElement) {
       if (checked) {
         toggleBtn.removeAttribute('disabled');
         toggleBtn.setAttribute('aria-expanded', 'true');
-        toggleBtn.style.display = 'inline-flex';
+        /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
       } else {
         toggleBtn.setAttribute('disabled', '');
         toggleBtn.setAttribute('aria-expanded', 'false');
-        toggleBtn.style.display = 'none';
+        /** @type {any} */ (toggleBtn).style.display = 'none';
       }
     }
   }
@@ -262,18 +269,18 @@ const handleSimpleSettingToggle = (
   if (setting === 'enableZenStyles') {
     const submenu = modal.querySelector('.style-submenu');
     if (submenu) {
-      submenu.style.display = checked ? 'block' : 'none';
+      /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
     }
     const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="style"]');
     if (toggleBtn instanceof HTMLElement) {
       if (checked) {
         toggleBtn.removeAttribute('disabled');
         toggleBtn.setAttribute('aria-expanded', 'true');
-        toggleBtn.style.display = 'inline-flex';
+        /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
       } else {
         toggleBtn.setAttribute('disabled', '');
         toggleBtn.setAttribute('aria-expanded', 'false');
-        toggleBtn.style.display = 'none';
+        /** @type {any} */ (toggleBtn).style.display = 'none';
       }
     }
   }
@@ -282,18 +289,18 @@ const handleSimpleSettingToggle = (
   if (setting === 'enableSpeedControl') {
     const submenu = modal.querySelector('.speed-submenu');
     if (submenu) {
-      submenu.style.display = checked ? 'block' : 'none';
+      /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
     }
     const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="speed"]');
     if (toggleBtn instanceof HTMLElement) {
       if (checked) {
         toggleBtn.removeAttribute('disabled');
         toggleBtn.setAttribute('aria-expanded', 'true');
-        toggleBtn.style.display = 'inline-flex';
+        /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
       } else {
         toggleBtn.setAttribute('disabled', '');
         toggleBtn.setAttribute('aria-expanded', 'false');
-        toggleBtn.style.display = 'none';
+        /** @type {any} */ (toggleBtn).style.display = 'none';
       }
     }
   }
@@ -302,18 +309,18 @@ const handleSimpleSettingToggle = (
   if (setting === 'enableEnhanced') {
     const submenu = modal.querySelector('.enhanced-submenu');
     if (submenu) {
-      submenu.style.display = checked ? 'block' : 'none';
+      /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
     }
     const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="enhanced"]');
     if (toggleBtn instanceof HTMLElement) {
       if (checked) {
         toggleBtn.removeAttribute('disabled');
         toggleBtn.setAttribute('aria-expanded', 'true');
-        toggleBtn.style.display = 'inline-flex';
+        /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
       } else {
         toggleBtn.setAttribute('disabled', '');
         toggleBtn.setAttribute('aria-expanded', 'false');
-        toggleBtn.style.display = 'none';
+        /** @type {any} */ (toggleBtn).style.display = 'none';
       }
     }
   }
@@ -322,18 +329,18 @@ const handleSimpleSettingToggle = (
   if (setting === 'enableLoop') {
     const submenu = modal.querySelector('.loop-submenu');
     if (submenu) {
-      submenu.style.display = checked ? 'block' : 'none';
+      /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
     }
     const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="loop"]');
     if (toggleBtn instanceof HTMLElement) {
       if (checked) {
         toggleBtn.removeAttribute('disabled');
         toggleBtn.setAttribute('aria-expanded', 'true');
-        toggleBtn.style.display = 'inline-flex';
+        /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
       } else {
         toggleBtn.setAttribute('disabled', '');
         toggleBtn.setAttribute('aria-expanded', 'false');
-        toggleBtn.style.display = 'none';
+        /** @type {any} */ (toggleBtn).style.display = 'none';
       }
     }
   }
@@ -352,7 +359,7 @@ const handleSimpleSettingToggle = (
  * Initialize download site customization settings
  * @param {Object} settings - Settings object
  */
-const initializeDownloadCustomization = settings => {
+const initializeDownloadCustomization = (/** @type {any} */ settings) => {
   if (!settings.downloadSiteCustomization) {
     settings.downloadSiteCustomization = {
       externalDownloader: { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
@@ -381,7 +388,7 @@ const initializeDownloadCustomization = settings => {
  * @param {Object} settings - Settings object
  * @param {string} site - Site key
  */
-const initializeDownloadSite = (settings, site) => {
+const initializeDownloadSite = (/** @type {any} */ settings, /** @type {string} */ site) => {
   if (!settings.downloadSiteCustomization[site]) {
     settings.downloadSiteCustomization[site] = { name: '', url: '' };
   }
@@ -393,7 +400,7 @@ const initializeDownloadSite = (settings, site) => {
  * @param {Function} t - Translation function
  * @returns {string} Fallback name
  */
-const getDownloadSiteFallbackName = (site, t) => {
+const getDownloadSiteFallbackName = (/** @type {string} */ site, /** @type {Function} */ t) => {
   if (site === 'externalDownloader') return 'SSYouTube';
   if (site === 'ytdl') return t('byYTDL');
   return t('directDownload');
@@ -405,7 +412,11 @@ const getDownloadSiteFallbackName = (site, t) => {
  * @param {string} site - Site key
  * @param {Function} t - Translation function
  */
-const updateDownloadSiteName = (target, site, t) => {
+const updateDownloadSiteName = (
+  /** @type {HTMLElement} */ target,
+  /** @type {string} */ site,
+  /** @type {Function} */ t
+) => {
   const nameDisplay = target.closest('.download-site-option')?.querySelector('.download-site-name');
 
   if (nameDisplay) {
@@ -419,7 +430,7 @@ const updateDownloadSiteName = (target, site, t) => {
  * Rebuild download dropdown in UI
  * @param {Object} settings - Settings object
  */
-const rebuildDownloadDropdown = settings => {
+const rebuildDownloadDropdown = (/** @type {any} */ settings) => {
   try {
     if (
       typeof window !== 'undefined' &&
@@ -443,7 +454,14 @@ const rebuildDownloadDropdown = settings => {
  * @param {Function} markDirty - Function to mark modal as dirty
  * @param {Function} t - Translation function
  */
-const handleDownloadSiteInput = (target, site, field, settings, markDirty, t) => {
+const handleDownloadSiteInput = (
+  /** @type {HTMLElement} */ target,
+  /** @type {string} */ site,
+  /** @type {string} */ field,
+  /** @type {any} */ settings,
+  /** @type {Function} */ markDirty,
+  /** @type {Function} */ t
+) => {
   initializeDownloadCustomization(settings);
   initializeDownloadSite(settings, site);
 
@@ -451,12 +469,12 @@ const handleDownloadSiteInput = (target, site, field, settings, markDirty, t) =>
 
   try {
     markDirty();
-  } catch {
-    /* empty */
+  } catch (e) {
+    // Non-critical, suppressed
   }
 
   if (field === 'name') {
-    updateDownloadSiteName(target, site, t);
+    updateDownloadSiteName(/** @type {any} */ (target), site, t);
   }
 
   rebuildDownloadDropdown(settings);
@@ -474,7 +492,7 @@ const handleDownloadSiteInput = (target, site, field, settings, markDirty, t) =>
  * Ensure external downloader settings structure exists
  * @param {Object} settings - Settings object
  */
-const ensureExternalDownloaderStructure = settings => {
+const ensureExternalDownloaderStructure = (/** @type {any} */ settings) => {
   if (!settings.downloadSiteCustomization) {
     settings.downloadSiteCustomization = {
       externalDownloader: { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
@@ -490,7 +508,10 @@ const ensureExternalDownloaderStructure = settings => {
  * @param {HTMLElement} container - Container element
  * @param {Object} settings - Settings object
  */
-const readExternalDownloaderInputs = (container, settings) => {
+const readExternalDownloaderInputs = (
+  /** @type {HTMLElement} */ container,
+  /** @type {any} */ settings
+) => {
   const nameInput = container.querySelector(
     'input.download-site-input[data-site="externalDownloader"][data-field="name"]'
   );
@@ -518,12 +539,18 @@ const triggerRebuildDropdown = () => {
   }
 };
 
-const handleExternalDownloaderSave = (target, settings, saveSettings, showNotification, t) => {
+const handleExternalDownloaderSave = (
+  /** @type {HTMLElement} */ target,
+  /** @type {any} */ settings,
+  /** @type {Function} */ saveSettings,
+  /** @type {Function} */ showNotification,
+  /** @type {Function} */ t
+) => {
   ensureExternalDownloaderStructure(settings);
 
   const container = target.closest('.download-site-option');
   if (container) {
-    readExternalDownloaderInputs(container, settings);
+    readExternalDownloaderInputs(/** @type {any} */ (container), settings);
   }
 
   saveSettings();
@@ -537,7 +564,7 @@ const handleExternalDownloaderSave = (target, settings, saveSettings, showNotifi
       (t && typeof t === 'function' && t('externalDownloaderSettingsSaved')) ||
       t('y2mateSettingsSaved');
     showNotification(msg);
-  } catch {
+  } catch (e) {
     showNotification('Settings saved');
   }
 };
@@ -546,7 +573,7 @@ const handleExternalDownloaderSave = (target, settings, saveSettings, showNotifi
  * Reset external downloader to default values
  * @param {Object} settings - Settings object
  */
-const resetExternalDownloaderToDefaults = settings => {
+const resetExternalDownloaderToDefaults = (/** @type {any} */ settings) => {
   ensureExternalDownloaderStructure(settings);
   settings.downloadSiteCustomization.externalDownloader = {
     name: 'SSYouTube',
@@ -559,7 +586,10 @@ const resetExternalDownloaderToDefaults = settings => {
  * @param {HTMLElement} container - Container element
  * @param {Object} settings - Settings object
  */
-const updateExternalDownloaderModalInputs = (container, settings) => {
+const updateExternalDownloaderModalInputs = (
+  /** @type {HTMLElement} */ container,
+  /** @type {any} */ settings
+) => {
   const nameInput = container.querySelector(
     'input.download-site-input[data-site="externalDownloader"][data-field="name"]'
   );
@@ -582,12 +612,18 @@ const updateExternalDownloaderModalInputs = (container, settings) => {
  * @param {Function} showNotification - Function to show notification
  * @param {Function} t - Translation function
  */
-const handleExternalDownloaderReset = (modal, settings, saveSettings, showNotification, t) => {
+const handleExternalDownloaderReset = (
+  /** @type {HTMLElement} */ modal,
+  /** @type {any} */ settings,
+  /** @type {Function} */ saveSettings,
+  /** @type {Function} */ showNotification,
+  /** @type {Function} */ t
+) => {
   resetExternalDownloaderToDefaults(settings);
 
   const container = modal.querySelector('.download-site-option');
   if (container) {
-    updateExternalDownloaderModalInputs(container, settings);
+    updateExternalDownloaderModalInputs(/** @type {any} */ (container), settings);
   }
 
   saveSettings();
@@ -599,7 +635,7 @@ const handleExternalDownloaderReset = (modal, settings, saveSettings, showNotifi
   try {
     const msg = (t && typeof t === 'function' && t('externalDownloaderReset')) || t('y2mateReset');
     showNotification(msg);
-  } catch {
+  } catch (e) {
     showNotification('Settings reset');
   }
 };
@@ -609,9 +645,11 @@ const handleExternalDownloaderReset = (modal, settings, saveSettings, showNotifi
  * @param {HTMLElement} navItem - Navigation item element
  * @param {HTMLElement} modal - Modal element
  */
-const handleSidebarNavigation = (navItem, modal) => {
-  const { dataset } = navItem;
-  const { section } = dataset;
+const handleSidebarNavigation = (
+  /** @type {HTMLElement} */ navItem,
+  /** @type {HTMLElement} */ modal
+) => {
+  const section = /** @type {any} */ (navItem).dataset?.section;
 
   modal
     .querySelectorAll('.ytp-plus-settings-nav-item')
@@ -619,6 +657,12 @@ const handleSidebarNavigation = (navItem, modal) => {
   modal.querySelectorAll('.ytp-plus-settings-section').forEach(s => s.classList.add('hidden'));
 
   navItem.classList.add('active');
+
+  // Update topbar centered label
+  const activeLabel = modal.querySelector('#ytp-plus-active-section-label');
+  if (activeLabel) {
+    activeLabel.textContent = /** @type {any} */ (navItem).dataset?.label || '';
+  }
 
   const targetSection = modal.querySelector(
     `.ytp-plus-settings-section[data-section="${section}"]`
@@ -634,8 +678,8 @@ const handleSidebarNavigation = (navItem, modal) => {
   // Persist active nav section so it can be restored on next modal open
   try {
     localStorage.setItem('ytp-plus-active-nav-section', section);
-  } catch {
-    /* empty */
+  } catch (e) {
+    // Non-critical, suppressed
   }
 };
 
@@ -675,8 +719,8 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
           if (parsed && typeof parsed === 'object') musicSettings = { ...musicSettings, ...parsed };
         }
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
 
     try {
@@ -685,8 +729,8 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
         const parsed = JSON.parse(stored);
         if (parsed && typeof parsed === 'object') musicSettings = { ...musicSettings, ...parsed };
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
 
     musicSettings[setting] = /** @type {HTMLInputElement} */ (target).checked;
@@ -701,23 +745,23 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
         if (root) {
           const submenu = root.querySelector('.music-submenu[data-submenu="music"]');
           if (submenu instanceof HTMLElement) {
-            submenu.style.display = enabled ? 'block' : 'none';
+            /** @type {any} */ (submenu).style.display = enabled ? 'block' : 'none';
           }
           const toggleBtn = root.querySelector('.ytp-plus-submenu-toggle[data-submenu="music"]');
           if (toggleBtn instanceof HTMLElement) {
             if (enabled) {
               toggleBtn.removeAttribute('disabled');
-              toggleBtn.style.display = 'inline-flex';
+              /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
             } else {
               toggleBtn.setAttribute('disabled', '');
-              toggleBtn.style.display = 'none';
+              /** @type {any} */ (toggleBtn).style.display = 'none';
             }
             toggleBtn.setAttribute('aria-expanded', enabled ? 'true' : 'false');
           }
         }
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
 
     // Save to localStorage
@@ -728,8 +772,8 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
       if (typeof GM_setValue !== 'undefined') {
         GM_setValue('youtube-plus-music-settings', JSON.stringify(musicSettings));
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
 
     // Apply changes if YouTubeMusic module is available
@@ -746,7 +790,7 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
     if (showNotification && t) {
       showNotification(t('musicSettingsSaved'));
     }
-  } catch {
+  } catch (e) {
     console.warn('[YouTube+] handleMusicSettingToggle failed');
   }
 };
@@ -756,7 +800,7 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
  * @param {string} setting - Setting key
  * @returns {boolean} True if it's a music setting
  */
-const isMusicSetting = setting => {
+const isMusicSetting = (/** @type {string} */ setting) => {
   return (
     setting === 'enableMusic' ||
     setting === 'immersiveSearchStyles' ||
@@ -779,11 +823,11 @@ if (typeof window !== 'undefined') {
    * @param {HTMLElement} container - The modal/dialog element to trap focus in
    * @returns {() => void} Cleanup function
    */
-  const createFocusTrap = container => {
+  const createFocusTrap = (/** @type {HTMLElement} */ container) => {
     const FOCUSABLE =
       'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])';
 
-    const handler = e => {
+    const handler = (/** @type {KeyboardEvent} */ e) => {
       if (e.key !== 'Tab') return;
       const focusable = Array.from(container.querySelectorAll(FOCUSABLE)).filter(
         el => el.offsetParent !== null
@@ -810,7 +854,11 @@ if (typeof window !== 'undefined') {
     return () => container.removeEventListener('keydown', handler);
   };
 
-  window.YouTubePlusModalHandlers = {
+  window.YouTubePlusModalHandlers = /** @type {any} */ ({
+    setSettingByPath,
+    initializeDownloadSites,
+    toggleDownloadSiteControls,
+    safelySaveSettings,
     handleDownloadSiteToggle,
     handleSimpleSettingToggle,
     handleDownloadSiteInput,
@@ -821,5 +869,5 @@ if (typeof window !== 'undefined') {
     handleMusicSettingToggle,
     isMusicSetting,
     createFocusTrap,
-  };
+  });
 }

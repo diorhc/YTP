@@ -38,9 +38,18 @@
   };
 
   /**
+   * @typedef {{ timestamp: string; message: string; stack: string|undefined; severity: string; context: Record<string,any> }} ErrorInfo
+   */
+
+  /**
+   * @typedef {{ filename?: string; lineno?: number; colno?: number; module?: string; element?: Element; type?: string; args?: any[]; promise?: Promise<any> }} ErrorContext
+   */
+
+  /**
    * Error tracking state with circuit breaker
    */
   const errorState = {
+    /** @type {ErrorInfo[]} */
     errors: [],
     errorCount: 0,
     lastErrorTime: 0,
@@ -110,10 +119,7 @@
       errorState.circuitState === CircuitState.OPEN &&
       now - errorState.circuitLastFailureTime >= circuitBreaker.resetTimeout
     ) {
-      window.YouTubeUtils &&
-        YouTubeUtils.logger &&
-        YouTubeUtils.logger.debug &&
-        YouTubeUtils.logger.debug('[YouTube+] Circuit breaker transitioning to HALF_OPEN');
+      window.YouTubeUtils?.logger?.debug?.('[YouTube+] Circuit breaker transitioning to HALF_OPEN');
       errorState.circuitState = CircuitState.HALF_OPEN;
       errorState.circuitSuccessCount = 0;
     }
@@ -123,10 +129,9 @@
       if (errorState.circuitState === CircuitState.HALF_OPEN) {
         errorState.circuitSuccessCount++;
         if (errorState.circuitSuccessCount >= circuitBreaker.halfOpenAttempts) {
-          window.YouTubeUtils &&
-            YouTubeUtils.logger &&
-            YouTubeUtils.logger.debug &&
-            YouTubeUtils.logger.debug('[YouTube+] Circuit breaker CLOSED - system recovered');
+          window.YouTubeUtils?.logger?.debug?.(
+            '[YouTube+] Circuit breaker CLOSED - system recovered'
+          );
           errorState.circuitState = CircuitState.CLOSED;
           errorState.circuitFailureCount = 0;
           errorState.circuitSuccessCount = 0;
@@ -161,7 +166,7 @@
   /**
    * Log error with context
    * @param {Error} error - The error object
-   * @param {Object} context - Additional context information
+   * @param {ErrorContext} [context]
    */
   const logError = (error, context = {}) => {
     if (!ErrorBoundaryConfig.enableLogging) return;
@@ -209,8 +214,8 @@
       stored.push(errorInfo);
       if (stored.length > 20) stored.shift();
       localStorage.setItem(ErrorBoundaryConfig.storageKey, JSON.stringify(stored));
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
@@ -313,7 +318,7 @@
   /**
    * Attempt to recover from error
    * @param {Error} error - The error that occurred
-   * @param {Object} context - Error context
+   * @param {Record<string, unknown>} context - Error context
    */
   const attemptRecovery = (error, context) => {
     if (!ErrorBoundaryConfig.enableRecovery || errorState.isRecovering) return;
@@ -357,15 +362,14 @@
   /**
    * Perform legacy recovery (fallback)
    * @param {Error} error - Error object
-   * @param {Object} context - Error context
+   * @param {ErrorContext} context - Error context
    */
   const performLegacyRecovery = (error, context) => {
     // Attempt module-specific recovery
     if (context.module) {
-      window.YouTubeUtils &&
-        YouTubeUtils.logger &&
-        YouTubeUtils.logger.debug &&
-        YouTubeUtils.logger.debug(`[YouTube+] Attempting recovery for module: ${context.module}`);
+      window.YouTubeUtils?.logger?.debug?.(
+        `[YouTube+] Attempting recovery for module: ${context.module}`
+      );
 
       // Try to reinitialize the module if possible
       const Y = window.YouTubeUtils;
@@ -390,10 +394,7 @@
         (error.message.includes('null') || error.message.includes('undefined')) &&
         context.element
       ) {
-        window.YouTubeUtils &&
-          YouTubeUtils.logger &&
-          YouTubeUtils.logger.debug &&
-          YouTubeUtils.logger.debug('[YouTube+] Attempting to re-query DOM element');
+        window.YouTubeUtils?.logger?.debug?.('[YouTube+] Attempting to re-query DOM element');
         // Could trigger element re-query here
       }
     }
@@ -484,13 +485,19 @@
    */
   const withErrorBoundary = (fn, context = 'unknown') => {
     /** @this {any} */
-    return function (...args) {
+    return function (/** @type {any[]} */ ...args) {
       try {
         const fnAny = /** @type {any} */ (fn);
         return /** @this {any} */ fnAny.call(this, ...args);
       } catch (error) {
-        logError(error, { module: context, args });
-        attemptRecovery(error, { module: context });
+        logError(/** @type {Error} */ (error instanceof Error ? error : new Error(String(error))), {
+          module: context,
+          args,
+        });
+        attemptRecovery(
+          /** @type {Error} */ (error instanceof Error ? error : new Error(String(error))),
+          { module: context }
+        );
         return null;
       }
     };
@@ -504,13 +511,19 @@
    */
   const withAsyncErrorBoundary = (fn, context = 'unknown') => {
     /** @this {any} */
-    return async function (...args) {
+    return async function (/** @type {any[]} */ ...args) {
       try {
         const fnAny = /** @type {any} */ (fn);
         return /** @this {any} */ await fnAny.call(this, ...args);
       } catch (error) {
-        logError(error, { module: context, args });
-        attemptRecovery(error, { module: context });
+        logError(/** @type {Error} */ (error instanceof Error ? error : new Error(String(error))), {
+          module: context,
+          args,
+        });
+        attemptRecovery(
+          /** @type {Error} */ (error instanceof Error ? error : new Error(String(error))),
+          { module: context }
+        );
         return null;
       }
     };
@@ -518,7 +531,7 @@
 
   /**
    * Get error statistics
-   * @returns {Object} Error statistics
+   * @returns {{ totalErrors: number; recentErrors: number; lastErrorTime: number; isRecovering: boolean; errorsByType: Record<string, number> }} Error statistics
    */
   const getErrorStats = () => {
     return {
@@ -526,10 +539,10 @@
       recentErrors: errorState.errors.length,
       lastErrorTime: errorState.lastErrorTime,
       isRecovering: errorState.isRecovering,
-      errorsByType: errorState.errors.reduce((acc, e) => {
+      errorsByType: errorState.errors.reduce((/** @type {Record<string, number>} */ acc, e) => {
         acc[e.severity] = (acc[e.severity] || 0) + 1;
         return acc;
-      }, {}),
+      }, /** @type {Record<string,number>} */ ({})),
     };
   };
 
@@ -540,8 +553,8 @@
     errorState.errors = [];
     try {
       localStorage.removeItem(ErrorBoundaryConfig.storageKey);
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
@@ -552,8 +565,14 @@
 
     // Expose error boundary utilities
     window.YouTubeErrorBoundary = {
-      withErrorBoundary,
-      withAsyncErrorBoundary,
+      withErrorBoundary:
+        /** @type {(fn: (...args: unknown[]) => unknown, context?: string) => (...args: unknown[]) => unknown} */ (
+          /** @type {unknown} */ (withErrorBoundary)
+        ),
+      withAsyncErrorBoundary:
+        /** @type {(fn: (...args: unknown[]) => Promise<unknown>, context?: string) => (...args: unknown[]) => Promise<unknown>} */ (
+          /** @type {unknown} */ (withAsyncErrorBoundary)
+        ),
       getErrorStats,
       clearErrors,
       logError,
@@ -561,9 +580,9 @@
       config: ErrorBoundaryConfig,
     };
 
-    window.YouTubeUtils &&
-      YouTubeUtils.logger &&
-      YouTubeUtils.logger.debug &&
-      YouTubeUtils.logger.debug('[YouTube+][Error Boundary]', 'Error boundary initialized');
+    window.YouTubeUtils?.logger?.debug?.(
+      '[YouTube+][Error Boundary]',
+      'Error boundary initialized'
+    );
   }
 })();

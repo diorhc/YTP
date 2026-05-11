@@ -62,12 +62,17 @@
   // State management
   const state = {
     helpVisible: false,
+    /** @type {string|null} */
     lastAction: null,
+    /** @type {number|null} */
     actionTimeout: null,
+    /** @type {string|null} */
     editingShortcut: null,
+    /** @type {HTMLVideoElement|null} */
     cachedVideo: null,
     lastVideoCheck: 0,
     initialized: false,
+    /** @type {MutationObserver|null} */
     routeObserver: null,
   };
 
@@ -88,9 +93,9 @@
       for (const selector of selectors) {
         const video = YouTubeUtils.querySelector(selector);
         if (video) {
-          state.cachedVideo = video;
+          state.cachedVideo = /** @type {HTMLVideoElement} */ (/** @type {unknown} */ (video));
           state.lastVideoCheck = now;
-          return video;
+          return state.cachedVideo;
         }
       }
 
@@ -113,7 +118,9 @@
      */
     isInputFocused: () => {
       const el = document.activeElement;
-      return el?.matches?.('input, textarea, [contenteditable="true"]') || el?.isContentEditable;
+      return !!(
+        el?.matches?.('input, textarea, [contenteditable="true"]') || el?.isContentEditable
+      );
     },
 
     /**
@@ -142,15 +149,16 @@
 
           for (const [action, shortcut] of Object.entries(parsed.shortcuts)) {
             // Only restore valid shortcut actions
-            if (!defaultShortcuts[action]) continue;
+            const defaultSc = /** @type {Record<string,any>} */ (defaultShortcuts);
+            if (!defaultSc[action]) continue;
             if (!shortcut || typeof shortcut !== 'object') continue;
 
             const { key: sKey, editable: sEditable } =
               /** @type {{ key?: string, editable?: boolean }} */ (shortcut);
             if (typeof sKey === 'string' && sKey.length > 0 && sKey.length <= 20) {
-              config.shortcuts[action] = {
+              /** @type {Record<string,any>} */ (config.shortcuts)[action] = {
                 key: sKey,
-                description: defaultShortcuts[action].description,
+                description: defaultSc[action].description,
                 editable: sEditable !== false,
               };
             }
@@ -233,6 +241,7 @@
    * Uses glassmorphism design for visual feedback
    */
   const feedback = (() => {
+    /** @type {HTMLElement|null} */
     let element = null;
 
     /**
@@ -244,7 +253,9 @@
 
       element = document.createElement('div');
       element.id = 'shorts-keyboard-feedback';
-      element.style.cssText = `
+      element.setAttribute(
+        'style',
+        `
           position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
           background:var(--shorts-feedback-bg,rgba(255,255,255,.1));
           backdrop-filter:blur(16px) saturate(150%);
@@ -260,7 +271,8 @@
           box-shadow: 0 8px 32px 0 rgba(31,38,135,0.37);
           backdrop-filter: blur(12px) saturate(180%);
           -webkit-backdrop-filter: blur(12px) saturate(180%);
-        `;
+        `
+      );
       document.body.appendChild(element);
       return element;
     };
@@ -273,22 +285,33 @@
        */
       show: text => {
         state.lastAction = text;
-        clearTimeout(state.actionTimeout);
+        clearTimeout(state.actionTimeout ?? undefined);
 
         const el = create();
         el.textContent = text;
 
         requestAnimationFrame(() => {
-          el.style.opacity = '1';
-          el.style.visibility = 'visible';
-          el.style.transform = 'translate(-50%, -50%) scale(1.05)';
+          el.setAttribute(
+            'style',
+            (el.getAttribute('style') || '') +
+              ';opacity:1;visibility:visible;transform:translate(-50%,-50%) scale(1.05)'
+          );
         });
 
-        state.actionTimeout = setTimeout(() => {
-          el.style.opacity = '0';
-          el.style.visibility = 'hidden';
-          el.style.transform = 'translate(-50%, -50%) scale(0.95)';
-        }, 1500);
+        state.actionTimeout = /** @type {number} */ (
+          /** @type {unknown} */ (
+            setTimeout(() => {
+              el.setAttribute(
+                'style',
+                (el.getAttribute('style') || '')
+                  .replace(/;opacity:[^;]*/g, '')
+                  .replace(/;visibility:[^;]*/g, '')
+                  .replace(/;transform:[^;]*/g, '') +
+                  ';opacity:0;visibility:hidden;transform:translate(-50%,-50%) scale(0.95)'
+              );
+            }, 1500)
+          )
+        );
       },
     };
   })();
@@ -348,7 +371,7 @@
             }
           }
         }
-      } catch {
+      } catch (e) {
         // Continue to fallback
       }
 
@@ -431,7 +454,7 @@
             }
           }
         }
-      } catch {
+      } catch (e) {
         // ignore and fallback
       }
 
@@ -454,6 +477,7 @@
    * Provides interactive UI for viewing and editing shortcuts
    */
   const helpPanel = (() => {
+    /** @type {HTMLElement|null} */
     let panel = null;
 
     /**
@@ -471,7 +495,9 @@
       panel.tabIndex = -1;
 
       const render = () => {
-        panel.innerHTML = _createHTML(`
+        if (!panel) return;
+        const p = /** @type {HTMLElement} */ (panel);
+        p.innerHTML = _createHTML(`
             <div class="help-header">
               <h3>${t('keyboardShortcuts')}</h3>
               <button class="ytp-plus-settings-close help-close" type="button" aria-label="${t('closeButton')}">
@@ -482,13 +508,13 @@
             </div>
             <div class="help-content">
               ${Object.entries(config.shortcuts)
-                .map(
-                  ([action, shortcut]) =>
-                    `<div class="help-item">
-                  <kbd data-action="${action}" ${shortcut.editable === false ? 'class="non-editable"' : ''}>${shortcut.key === ' ' ? 'Space' : shortcut.key}</kbd>
+                .map(([action, shortcut]) => {
+                  const sc = /** @type {Record<string,any>} */ (shortcut);
+                  return `<div class="help-item">
+                  <kbd data-action="${action}" ${sc.editable === false ? 'class="non-editable"' : ''}>${shortcut.key === ' ' ? 'Space' : shortcut.key}</kbd>
                   <span>${shortcut.description}</span>
-                </div>`
-                )
+                </div>`;
+                })
                 .join('')}
             </div>
             <div class="help-footer">
@@ -496,19 +522,28 @@
             </div>
           `);
 
-        panel.querySelector('.help-close').onclick = () => helpPanel.hide();
-        panel.querySelector('.reset-all-shortcuts').onclick = () => {
-          if (confirm(t('resetAllConfirm'))) {
-            config.shortcuts = utils.getDefaultShortcuts();
-            utils.saveSettings();
-            feedback.show(t('shortcutsReset'));
-            render();
-          }
-        };
+        const helpClose = p.querySelector('.help-close');
+        if (helpClose) helpClose.onclick = () => helpPanel.hide();
+        const resetBtn = p.querySelector('.reset-all-shortcuts');
+        if (resetBtn) {
+          resetBtn.onclick = () => {
+            if (confirm(t('resetAllConfirm'))) {
+              const defaultShortcuts = utils.getDefaultShortcuts();
+              Object.assign(config, { _shortcuts: defaultShortcuts });
+              utils.saveSettings();
+              feedback.show(t('shortcutsReset'));
+              render();
+            }
+          };
+        }
 
-        panel.querySelectorAll('kbd[data-action]:not(.non-editable)').forEach(kbd => {
-          kbd.onclick = () =>
-            editShortcut(kbd.dataset.action, config.shortcuts[kbd.dataset.action].key);
+        p.querySelectorAll('kbd[data-action]:not(.non-editable)').forEach(kbd => {
+          const kbdEl = /** @type {HTMLElement} */ (kbd);
+          kbdEl.onclick = () => {
+            const act = kbdEl.getAttribute('data-action') || '';
+            const sc = /** @type {Record<string,any>} */ (config.shortcuts);
+            editShortcut(act, sc[act]?.key || '');
+          };
         });
       };
 
@@ -570,9 +605,10 @@
     dialog.className = 'glass-modal shortcut-edit-dialog';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
+    const sc = /** @type {Record<string,any>} */ (config.shortcuts);
     dialog.innerHTML = _createHTML(`
         <div class="glass-panel shortcut-edit-content">
-          <h4>${t('editShortcut')}: ${config.shortcuts[actionKey].description}</h4>
+          <h4>${t('editShortcut')}: ${sc[actionKey]?.description || actionKey}</h4>
           <p>${t('pressAnyKey')}</p>
           <div class="current-shortcut">${t('current')}: <kbd>${currentKey === ' ' ? 'Space' : currentKey}</kbd></div>
           <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">${t('cancel')}</button>
@@ -582,20 +618,22 @@
     document.body.appendChild(dialog);
     state.editingShortcut = actionKey;
 
-    const handleKey = e => {
+    const handleKey = /** @param {KeyboardEvent} e */ e => {
       e.preventDefault();
       e.stopPropagation();
       if (e.key === 'Escape') return cleanup();
 
       const conflict = Object.keys(config.shortcuts).find(
-        key => key !== actionKey && config.shortcuts[key].key === e.key
+        key =>
+          key !== actionKey &&
+          /** @type {Record<string,any>} */ (config.shortcuts)[key]?.key === e.key
       );
       if (conflict) {
         feedback.show(t('keyAlreadyUsed', { key: e.key }));
         return;
       }
 
-      config.shortcuts[actionKey].key = e.key;
+      /** @type {Record<string,any>} */ (config.shortcuts)[actionKey].key = e.key;
       utils.saveSettings();
       feedback.show(t('shortcutUpdated'));
       helpPanel.refresh();
@@ -608,13 +646,18 @@
       state.editingShortcut = null;
     };
 
-    dialog.querySelector('.shortcut-cancel').onclick = cleanup;
+    const cancelBtn = dialog.querySelector('.shortcut-cancel');
+    if (cancelBtn) cancelBtn.onclick = cleanup;
     // Use parameter destructuring to satisfy prefer-destructuring rule
-    dialog.onclick = ({ target }) => {
-      // target is expected to be an Element here
-      if (target === dialog) cleanup();
+    dialog.onclick = ev => {
+      if (ev && ev.target === dialog) cleanup();
     };
-    YouTubeUtils.cleanupManager.registerListener(document, 'keydown', handleKey, true);
+    YouTubeUtils.cleanupManager.registerListener(
+      document,
+      'keydown',
+      /** @type {EventListener} */ (handleKey),
+      true
+    );
   };
 
   /**
@@ -687,11 +730,13 @@
     if (e.code === 'NumpadAdd') key = '+';
     else if (e.code === 'NumpadSubtract') key = '-';
 
-    const action = Object.keys(config.shortcuts).find(k => config.shortcuts[k].key === key);
-    if (action && actions[action]) {
+    const action = Object.keys(config.shortcuts).find(
+      k => /** @type {Record<string,any>} */ (config.shortcuts)[k]?.key === key
+    );
+    if (action && /** @type {Record<string,any>} */ (actions)[action]) {
       e.preventDefault();
       e.stopPropagation();
-      actions[action]();
+      /** @type {Record<string,any>} */ (actions)[action]();
     }
   };
 
@@ -738,22 +783,34 @@
     utils.loadSettings();
     addStyles();
 
-    YouTubeUtils.cleanupManager.registerListener(document, 'keydown', handleKeydown, true);
+    YouTubeUtils.cleanupManager.registerListener(
+      document,
+      'keydown',
+      /** @type {EventListener} */ (handleKeydown),
+      true
+    );
 
     // Prefer destructuring the event parameter
-    const clickHandler = ({ target }) => {
-      if (state.helpVisible && target?.closest && !target.closest('#shorts-keyboard-help')) {
+    const clickHandler = /** @param {Event} ev */ ev => {
+      const tgt = ev.target instanceof Element ? ev.target : null;
+      if (state.helpVisible && tgt?.closest && !tgt.closest('#shorts-keyboard-help')) {
         helpPanel.hide();
       }
     };
     YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler);
 
-    YouTubeUtils.cleanupManager.registerListener(document, 'keydown', e => {
-      if (e.key === 'Escape' && state.helpVisible) {
-        e.preventDefault();
-        helpPanel.hide();
-      }
-    });
+    YouTubeUtils.cleanupManager.registerListener(
+      document,
+      'keydown',
+      /** @type {EventListener} */ (
+        /** @param {KeyboardEvent} e */ e => {
+          if (e.key === 'Escape' && state.helpVisible) {
+            e.preventDefault();
+            helpPanel.hide();
+          }
+        }
+      )
+    );
   };
 
   // Route observer to cleanup when leaving /shorts
@@ -790,8 +847,8 @@
       if (YouTubeUtils.cleanupManager?.registerObserver) {
         YouTubeUtils.cleanupManager.registerObserver(state.routeObserver);
       }
-      if (YouTubeUtils.ObserverRegistry?.track) {
-        YouTubeUtils.ObserverRegistry.track();
+      if (/** @type {any} */ (YouTubeUtils).ObserverRegistry?.track) {
+        /** @type {any} */ (YouTubeUtils).ObserverRegistry.track();
       }
     }
   };

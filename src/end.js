@@ -7,20 +7,21 @@
   const { $, $$ } = window.YouTubeUtils || {};
   const onDomReady = (() => {
     let ready = document.readyState !== 'loading';
+    /** @type {Array<() => void>} */
     const queue = [];
     const run = () => {
       ready = true;
       while (queue.length) {
         const cb = queue.shift();
         try {
-          cb();
-        } catch {
-          /* empty */
+          cb?.();
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
     };
     if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
-    return cb => {
+    return /** @param {() => void} cb */ cb => {
       if (ready) cb();
       else queue.push(cb);
     };
@@ -38,6 +39,7 @@
   };
 
   // Minimal state with better tracking
+  /** @type {{ observer: MutationObserver | null, styleEl: string | null, isActive: boolean, removeCount: number, lastCheck: number, ytNavigateListenerKey: symbol | null, settingsNavListenerKey: symbol | null }} */
   const state = {
     observer: null,
     styleEl: null,
@@ -52,6 +54,7 @@
   const debounce =
     window.YouTubeUtils?.debounce ||
     ((fn, ms) => {
+      /** @type {ReturnType<typeof setTimeout> | undefined} */
       let t;
       return (...a) => {
         clearTimeout(t);
@@ -59,17 +62,20 @@
       };
     });
 
+  /**
+   * @param {HTMLElement[]} elements
+   */
   const fastRemove = elements => {
     const len = Math.min(elements.length, CONFIG.batchSize);
     for (let i = 0; i < len; i++) {
       const el = elements[i];
       if (el?.isConnected) {
-        el.style.cssText = 'display:none!important;visibility:hidden!important';
+        el.setAttribute('style', 'display:none!important;visibility:hidden!important');
         try {
           el.remove();
           state.removeCount++;
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
     }
@@ -81,7 +87,7 @@
       try {
         const data = localStorage.getItem(CONFIG.storageKey);
         CONFIG.enabled = data ? (JSON.parse(data).enabled ?? true) : true;
-      } catch {
+      } catch (e) {
         CONFIG.enabled = true;
       }
     },
@@ -89,8 +95,8 @@
     save: () => {
       try {
         localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
       settings.apply();
     },
@@ -115,9 +121,12 @@
     state.lastCheck = now;
 
     const elements = $$(CONFIG.selectors);
-    if (elements.length) fastRemove(elements);
+    if (elements.length) fastRemove(/** @type {HTMLElement[]} */ (elements));
   };
 
+  /**
+   * @param {Element} node
+   */
   const getClassNameValue = node => {
     if (typeof node.className === 'string') {
       return node.className;
@@ -183,7 +192,7 @@
     const observeTarget = (attempt = 0) => {
       const target = $('#movie_player');
       if (target) {
-        state.observer.observe(target, {
+        state.observer?.observe(target, {
           childList: true,
           subtree: true,
           attributeFilter: ['class', 'style'],
@@ -192,7 +201,7 @@
         setTimeout(() => observeTarget(attempt + 1), 500);
       } else {
         // Final fallback: observe body
-        state.observer.observe(document.body, {
+        state.observer?.observe(document.body, {
           childList: true,
           subtree: true,
           attributeFilter: ['class', 'style'],
@@ -208,8 +217,8 @@
     if (state.styleEl) {
       try {
         YouTubeUtils.StyleManager.remove(state.styleEl);
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     }
     state.styleEl = null;
@@ -231,12 +240,11 @@
       attached = true;
 
       const delegator = window.YouTubePlusEventDelegation;
-      const handler = (ev, target) => {
-        const input = /** @type {HTMLInputElement | null} */ (target);
-        if (!input) return;
-        if (!input.classList?.contains('ytp-plus-settings-checkbox')) return;
-        if (!input.closest?.('.endscreen-settings')) return;
-        CONFIG.enabled = input.checked;
+      const handler = (/** @type {Event} */ ev, /** @type {HTMLInputElement | null} */ target) => {
+        if (!target) return;
+        if (!target.classList?.contains('ytp-plus-settings-checkbox')) return;
+        if (!target.closest?.('.endscreen-settings')) return;
+        CONFIG.enabled = target.checked;
         settings.save();
         void ev;
       };
@@ -250,9 +258,11 @@
           { passive: true }
         );
       } else {
-        const changeHandler = ev => {
-          const target = ev.target?.closest?.('.ytp-plus-settings-checkbox');
-          if (target) handler(ev, target);
+        const changeHandler = /** @param {Event} ev */ ev => {
+          const target = /** @type {Element | null} */ (ev.target)?.closest?.(
+            '.ytp-plus-settings-checkbox'
+          );
+          if (target) handler(ev, /** @type {HTMLInputElement} */ (target));
         };
         if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
           YouTubeUtils.cleanupManager.registerListener(document, 'change', changeHandler, {
@@ -271,7 +281,7 @@
     const enhancedSlot = $('.endscreen-settings-slot');
     const enhancedCard = $('.enhanced-submenu .glass-card');
     const host = enhancedSlot || enhancedCard;
-    if (!host || $('.endscreen-settings', host)) return;
+    if (!host || $('.endscreen-settings', /** @type {Element} */ (host))) return;
 
     const container = document.createElement('div');
     container.className = 'ytp-plus-settings-item endscreen-settings';
@@ -304,8 +314,9 @@
 
   onDomReady(init);
 
+  /** @param {Event} e */
   const handleSettingsNavClick = e => {
-    const { target } = /** @type {{ target: HTMLElement }} */ (e);
+    const { target } = /** @type {{ target: HTMLElement }} */ (/** @type {unknown} */ (e));
     if (target?.dataset?.section === 'advanced') {
       setTimeout(addSettingsUI, 10);
     }

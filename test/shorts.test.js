@@ -9,34 +9,52 @@ describe('Shorts Module', () => {
     document.head.innerHTML = '';
 
     // Mock window globals
-    window.YouTubePlusI18n = {
-      t: jest.fn((key, params = {}) => {
-        const translations = {
-          seekBackward: 'Seek Backward',
-          seekForward: 'Seek Forward',
-          volumeUp: 'Volume Up',
-          volumeDown: 'Volume Down',
-          muteUnmute: 'Mute/Unmute',
-          toggleCaptions: 'Toggle Captions',
-          showHideHelp: 'Show/Hide Help',
-        };
-        return translations[key] || key;
-      }),
-    };
+    Object.defineProperty(window, 'YouTubePlusI18n', {
+      configurable: true,
+      writable: true,
+      value: {
+        t: jest.fn(key => {
+          const translations = {
+            seekBackward: 'Seek Backward',
+            seekForward: 'Seek Forward',
+            volumeUp: 'Volume Up',
+            volumeDown: 'Volume Down',
+            muteUnmute: 'Mute/Unmute',
+            toggleCaptions: 'Toggle Captions',
+            showHideHelp: 'Show/Hide Help',
+          };
+          return /** @type {Record<string, string>} */ (translations)[key] || key;
+        }),
+        getLanguage: jest.fn(() => 'en'),
+        loadTranslations: jest.fn(),
+        isReady: jest.fn(() => true),
+      },
+    });
 
-    window.YouTubeUtils = {
-      debounce: jest.fn(fn => fn),
-      throttle: jest.fn(fn => fn),
-      logError: jest.fn(),
-      StyleManager: {
-        add: jest.fn(),
-        remove: jest.fn(),
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        debounce: /** @type {YouTubeUtils['debounce']} */ (
+          /** @type {unknown} */ (jest.fn(fn => fn))
+        ),
+        throttle: jest.fn(fn => fn),
+        logError: jest.fn(),
+        StyleManager: {
+          add: jest.fn(),
+          remove: jest.fn(),
+          clear: jest.fn(),
+        },
+        cleanupManager: {
+          registerListener: jest.fn(),
+          registerObserver: jest.fn(),
+          registerInterval: jest.fn(id => id),
+          registerTimeout: jest.fn(id => id),
+          registerAnimationFrame: jest.fn(id => id),
+          cleanup: jest.fn(),
+        },
       },
-      cleanupManager: {
-        registerListener: jest.fn(),
-        registerObserver: jest.fn(),
-      },
-    };
+    });
 
     // Mock localStorage methods for this test
     localStorage.getItem = jest.fn(() => null);

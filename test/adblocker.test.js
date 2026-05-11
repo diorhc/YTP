@@ -5,27 +5,37 @@
 describe('Adblocker Module', () => {
   beforeEach(() => {
     window._ytplusCreateHTML = s => s;
-    window.YouTubeUtils = {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
-      t: jest.fn(key => key || ''),
-      cleanupManager: {
-        registerInterval: jest.fn(id => id),
-        registerTimeout: jest.fn(id => id),
-        registerObserver: jest.fn(obs => obs),
-        registerListener: jest.fn(),
-        cleanup: jest.fn(),
-        observers: new Set(),
-        intervals: new Set(),
-        timeouts: new Set(),
-        animationFrames: new Set(),
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(sel => document.querySelector(sel)),
+        $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
+        t: jest.fn(key => key || ''),
+        cleanupManager: {
+          registerInterval: jest.fn(id => id),
+          registerTimeout: jest.fn(id => id),
+          registerObserver: jest.fn(obs => obs),
+          registerListener: jest.fn(),
+          cleanup: jest.fn(),
+          registerAnimationFrame: jest.fn(id => id),
+        },
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        loadFeatureEnabled: jest.fn(() => true),
+        logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+        SETTINGS_KEY: 'youtube_plus_settings',
       },
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
-      loadFeatureEnabled: jest.fn(() => true),
-      logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
-      SETTINGS_KEY: 'youtube_plus_settings',
-    };
-    window.YouTubePlusI18n = { t: jest.fn(key => key) };
+    });
+    Object.defineProperty(window, 'YouTubePlusI18n', {
+      configurable: true,
+      writable: true,
+      value: {
+        t: jest.fn(key => key),
+        getLanguage: jest.fn(() => 'en'),
+        loadTranslations: jest.fn(),
+        isReady: jest.fn(() => true),
+      },
+    });
     global.mockLocation({
       hostname: 'www.youtube.com',
       pathname: '/watch',

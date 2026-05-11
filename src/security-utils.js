@@ -44,7 +44,7 @@
         hostname === 'music.youtube.com' ||
         hostname.endsWith('.youtube.com')
       );
-    } catch {
+    } catch (e) {
       return false;
     }
   }
@@ -80,7 +80,7 @@
    * Create safe HTML using TrustedTypes if available
    * Falls back to identity function if not available
    * @param {string} html - HTML string to make safe
-   * @returns {string|TrustedHTML} Safe HTML
+   * @returns {string} Safe HTML
    */
   function createSafeHTML(html) {
     if (typeof window._ytplusCreateHTML === 'function') {
@@ -92,9 +92,9 @@
 
   /**
    * Set innerHTML safely with optional sanitization
-   * @param {HTMLElement} element - Target element
+   * @param {Element} element - Target element
    * @param {string} html - HTML content to set
-   * @param {boolean} sanitize - Whether to escape HTML (default: false for trusted content)
+   * @param {boolean} [sanitize=false] - Whether to escape HTML
    */
   function setInnerHTMLSafe(element, html, sanitize = false) {
     if (!element || !(element instanceof HTMLElement)) {
@@ -107,7 +107,7 @@
 
   /**
    * Set text content safely (always escapes HTML)
-   * @param {HTMLElement} element - Target element
+   * @param {Element} element - Target element
    * @param {string} text - Text content to set
    */
   function setTextContentSafe(element, text) {
@@ -157,7 +157,7 @@
 
   /**
    * Set attribute safely with validation
-   * @param {HTMLElement} element - Target element
+   * @param {Element} element - Target element
    * @param {string} attrName - Attribute name
    * @param {string} attrValue - Attribute value
    * @returns {boolean} Success status
@@ -216,7 +216,9 @@
       const requests = this.requests.get(key) || [];
 
       // Remove old requests outside time window
-      const recentRequests = requests.filter(time => now - time < this.timeWindow);
+      const recentRequests = requests.filter(
+        /** @param {number} time */ time => now - time < this.timeWindow
+      );
 
       if (recentRequests.length >= this.maxRequests) {
         console.warn(
@@ -272,15 +274,16 @@
   function validateJSONSchema(data, schema) {
     if (!data || typeof data !== 'object') return false;
     if (!schema || typeof schema !== 'object') return true;
-
-    for (const key in schema) {
-      if (schema[key].required && !(key in data)) {
+    const schemaObj = /** @type {Record<string, any>} */ (schema);
+    const dataObj = /** @type {Record<string, any>} */ (data);
+    for (const key in schemaObj) {
+      if (schemaObj[key].required && !(key in dataObj)) {
         console.warn(`[Security] Missing required field: ${key}`);
         return false;
       }
-      if (key in data && schema[key].type && typeof data[key] !== schema[key].type) {
+      if (key in dataObj && schemaObj[key].type && typeof dataObj[key] !== schemaObj[key].type) {
         console.warn(
-          `[Security] Invalid type for field ${key}: expected ${schema[key].type}, got ${typeof data[key]}`
+          `[Security] Invalid type for field ${key}: expected ${schemaObj[key].type}, got ${typeof dataObj[key]}`
         );
         return false;
       }

@@ -1,14 +1,18 @@
 if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy == null) {
   trustedTypes.createPolicy('default', {
-    createHTML: s => {
+    createHTML: (/** @type {unknown} */ s) => {
       if (typeof s !== 'string') return String(s);
       // Strip dangerous patterns for defense-in-depth
       return s
         .replace(/<script\b[\s\S]*?<\/script\s*>/gi, '')
+        .replace(/<iframe\b[\s\S]*?<\/iframe\s*>/gi, '')
+        .replace(/<object\b[\s\S]*?<\/object\s*>/gi, '')
+        .replace(/<embed\b[^>]*\/?>/gi, '')
         .replace(/\s+on[a-z]+\s*=\s*(?:"[^"]*"|'[^']*'|[^\s>]+)/gi, '')
-        .replace(/javascript\s*:/gi, '');
+        .replace(/javascript\s*:/gi, '')
+        .replace(/data\s*:\s*text\/html/gi, 'blocked:');
     },
-    createScriptURL: s => {
+    createScriptURL: (/** @type {unknown} */ s) => {
       if (typeof s !== 'string') return String(s);
       // Only allow same-origin or trusted CDN URLs
       try {
@@ -17,12 +21,13 @@ if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy == null) {
         if (url.hostname.endsWith('.googleapis.com') || url.hostname.endsWith('.youtube.com')) {
           return s;
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Malformed URL — block it
       }
-      return s;
+      console.warn('[YouTube+][Security] Blocked untrusted script URL:', s);
+      return 'about:blank';
     },
-    createScript: s => {
+    createScript: (/** @type {unknown} */ s) => {
       if (typeof s !== 'string') return String(s);
       return s;
     },
@@ -30,9 +35,9 @@ if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy == null) {
 }
 
 const defaultPolicy = (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy) || {
-  createHTML: s => s,
+  createHTML: (/** @type {unknown} */ s) => s,
 };
-function createHTML(s) {
+function createHTML(/** @type {unknown} */ s) {
   return defaultPolicy.createHTML(s);
 }
 // Expose createHTML globally for other modules to use via TrustedTypes
@@ -59,18 +64,19 @@ const executionScript = () => {
   const DEBUG_5085 = false;
   const DEBUG_handleNavigateFactory = false;
   const TAB_AUTO_SWITCH_TO_COMMENTS = false;
+  /** @type {any} */
   const YouTubeUtils = window.YouTubeUtils || {};
 
   // Reuse the global createHTML from the outer TrustedTypes setup
-  const createHTML = window._ytplusCreateHTML || (s => s);
+  const createHTML = window._ytplusCreateHTML || ((/** @type {unknown} */ s) => s);
 
   try {
     if (typeof CustomElementRegistry === 'undefined') return;
-    if (CustomElementRegistry.prototype.define000) return;
+    if (Reflect.get(CustomElementRegistry.prototype, 'define000')) return;
     if (typeof CustomElementRegistry.prototype.define !== 'function') return;
 
-    /** @type {HTMLElement} */
-    const HTMLElement_ = HTMLElement.prototype.constructor;
+    /** @type {typeof HTMLElement} */
+    const HTMLElement_ = HTMLElement;
 
     /**
      *  @param {Element} elm
@@ -84,7 +90,7 @@ const executionScript = () => {
       return HTMLElement_.prototype.querySelector.call(elm, selector);
     };
 
-    const _qs = selector => {
+    const _qs = (/** @type {string} */ selector) => {
       if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
         return window.YouTubeDOMCache.get(selector);
       }
@@ -95,9 +101,10 @@ const executionScript = () => {
      * Flexible selector helper: supports both `qs(selector)` and `qs(element, selector)`.
      * Backwards-compatible alias used throughout the codebase.
      */
-    function qs(a, b) {
-      if (arguments.length === 1) return _qs(a);
-      return qsOne(a, b);
+    function qs(/** @type {string|Element} */ a, /** @type {string|undefined} */ b = undefined) {
+      if (arguments.length === 1 && typeof a === 'string') return _qs(a);
+      if (a instanceof Element && typeof b === 'string') return qsOne(a, b);
+      return null;
     }
 
     /**
@@ -114,7 +121,10 @@ const executionScript = () => {
       return Array.from(ctx.querySelectorAll(selector));
     };
 
-    const defineProperties = (p, o) => {
+    const defineProperties = (
+      /** @type {object | null | undefined} */ p,
+      /** @type {PropertyDescriptorMap} */ o
+    ) => {
       if (!p) {
         console.warn(`defineProperties ERROR: Prototype is undefined`);
         return;
@@ -128,11 +138,25 @@ const executionScript = () => {
       return Object.defineProperties(p, o);
     };
 
-    const replaceChildrenPolyfill = function replaceChildren(...new_children) {
+    const replaceChildrenPolyfill = /** @this {Node} */ function replaceChildren(
+      /** @type {Node[]} */ ...new_children
+    ) {
       while (this.firstChild) {
         this.removeChild(this.firstChild);
       }
-      this.append(...new_children);
+      if (this instanceof Element || this instanceof DocumentFragment) {
+        this.append(...new_children);
+      }
+    };
+
+    /** @param {DocumentFragment} frag @param {Node[]} nodes */
+    const fragReplaceChildrenCompat = (frag, ...nodes) => {
+      const fn = Reflect.get(frag, 'replaceChildren000');
+      if (typeof fn === 'function') {
+        fn.apply(frag, nodes);
+        return;
+      }
+      frag.replaceChildren(...nodes);
     };
 
     const pdsBaseDF = Object.getOwnPropertyDescriptors(DocumentFragment.prototype);
@@ -142,7 +166,7 @@ const executionScript = () => {
         replaceChildren000: pdsBaseDF.replaceChildren,
       });
     } else {
-      DocumentFragment.prototype.replaceChildren000 = replaceChildrenPolyfill;
+      Reflect.set(DocumentFragment.prototype, 'replaceChildren000', replaceChildrenPolyfill);
     }
 
     const pdsBaseNode = Object.getOwnPropertyDescriptors(Node.prototype);
@@ -168,31 +192,39 @@ const executionScript = () => {
       };
 
       if (pdsBaseElement.replaceChildren) {
-        nPdsElement.replaceChildren000 = pdsBaseElement.replaceChildren;
+        Reflect.set(nPdsElement, 'replaceChildren000', pdsBaseElement.replaceChildren);
       } else {
-        Element.prototype.replaceChildren000 = replaceChildrenPolyfill;
+        Reflect.set(Element.prototype, 'replaceChildren000', replaceChildrenPolyfill);
       }
 
       defineProperties(Element.prototype, nPdsElement);
     }
 
-    Element.prototype.setAttribute111 = function (p, v) {
+    Element.prototype.setAttribute111 = function (
+      /** @type {string} */ p,
+      /** @type {unknown} */ v
+    ) {
       v = `${v}`;
       if (this.getAttribute000(p) === v) return;
-      this.setAttribute000(p, v);
+      this.setAttribute000(p, /** @type {string} */ (v));
     };
 
-    Element.prototype.incAttribute111 = function (p) {
-      let v = +this.getAttribute000(p) || 0;
+    Element.prototype.incAttribute111 = function (/** @type {string} */ p) {
+      let v = +(this.getAttribute000(p) ?? '0') || 0;
       v = v > 1e9 ? v + 1 : 9;
       this.setAttribute000(p, `${v}`);
       return v;
     };
 
-    Element.prototype.assignChildren111 = function (previousSiblings, node, nextSiblings) {
+    Element.prototype.assignChildren111 = function (
+      /** @type {Node[] | null | undefined} */ previousSiblings,
+      /** @type {Node} */ node,
+      /** @type {Node[] | null | undefined} */ nextSiblings
+    ) {
       // assume all previousSiblings, node, and nextSiblings are on the page
       //  -> only remove triggering is needed
-      let nodeList = [];
+      /** @type {Node[]} */
+      const nodeList = [];
       for (let t = this.firstChild; t instanceof Node; t = t.nextSibling) {
         if (t === node) continue;
         nodeList.push(t);
@@ -200,22 +232,21 @@ const executionScript = () => {
 
       inPageRearrange = true;
       if (node.parentNode === this) {
-        let fm = new DocumentFragment();
+        const fm = new DocumentFragment();
         if (nodeList.length > 0) {
-          fm.replaceChildren000(...nodeList);
+          fragReplaceChildrenCompat(fm, ...nodeList);
           // nodeList.length = 0;
         }
         // nodeList = null;
         if (previousSiblings && previousSiblings.length > 0) {
-          fm.replaceChildren000(...previousSiblings);
+          fragReplaceChildrenCompat(fm, ...previousSiblings);
           this.insertBefore000(fm, node);
         }
         if (nextSiblings && nextSiblings.length > 0) {
-          fm.replaceChildren000(...nextSiblings);
+          fragReplaceChildrenCompat(fm, ...nextSiblings);
           this.appendChild000(fm);
         }
-        fm.replaceChildren000();
-        fm = null;
+        fragReplaceChildrenCompat(fm);
       } else {
         if (!previousSiblings) previousSiblings = [];
         if (!nextSiblings) nextSiblings = [];
@@ -228,12 +259,11 @@ const executionScript = () => {
         }
       }
       nodeList.length = 0;
-      nodeList = null;
     };
 
     let secondaryInnerHold = 0;
 
-    const secondaryInnerFn = cb => {
+    const secondaryInnerFn = (/** @type {() => unknown} */ cb) => {
       if (secondaryInnerHold) {
         secondaryInnerHold++;
         let err, r;
@@ -282,25 +312,31 @@ const executionScript = () => {
      *
      */
     (() => {
-      const e =
-        'undefined' != typeof unsafeWindow ? unsafeWindow : this instanceof Window ? this : window;
+      /** @type {any} */
+      const e = 'undefined' != typeof unsafeWindow ? unsafeWindow : window;
       if (!e._ytConfigHacks) {
         let t = 4;
         class n extends Set {
-          add(e) {
+          add(/** @type {unknown} */ fn) {
             if (t <= 0) {
-              return console.warn('yt.config_ is already applied on the page.');
+              console.warn('yt.config_ is already applied on the page.');
+              return this;
             }
-            'function' == typeof e && super.add(e);
+            if (typeof fn === 'function') super.add(fn);
+            return this;
           }
         }
-        let a = (async () => {})().constructor,
+        let a = globalThis.Promise,
           i = (e._ytConfigHacks = new n()),
+          /** @type {(() => void) | null} */
           l = () => {
             const t = e.ytcsi.originalYtcsi;
-            t && ((e.ytcsi = t), (l = null));
+            if (t) {
+              e.ytcsi = t;
+              l = null;
+            }
           },
-          c = null,
+          c = false,
           o = () => {
             if (t >= 1) {
               const n = (e.yt || 0).config_ || (e.ytcfg || 0).data_ || 0;
@@ -310,16 +346,17 @@ const executionScript = () => {
             }
           },
           f = 1,
-          d = t => {
-            if ((t = t || e.ytcsi)) {
+          d = (/** @type {any} */ target = undefined) => {
+            if ((target = target || e.ytcsi)) {
               return (
-                (e.ytcsi = new Proxy(t, {
-                  get: (e, t, _n) =>
-                    'originalYtcsi' === t ? e : (o(), c && --f <= 0 && l && l(), e[t]),
+                (e.ytcsi = new Proxy(target, {
+                  get: (obj, key, _n) =>
+                    'originalYtcsi' === key ? obj : (o(), c && --f <= 0 && l && l(), obj[key]),
                 })),
                 !0
               );
             }
+            return false;
           };
         d() ||
           Object.defineProperty(e, 'ytcsi', {
@@ -329,17 +366,18 @@ const executionScript = () => {
             configurable: !0,
           });
         const { addEventListener: s, removeEventListener: y } = Document.prototype;
-        function r(t) {
-          (o(), t && e.removeEventListener('DOMContentLoaded', r, !1));
+        function r(/** @type {Event | undefined} */ evt = undefined) {
+          o();
+          if (evt) e.removeEventListener('DOMContentLoaded', r, !1);
         }
-        (new a(e => {
+        (new a((/** @type {(value?: unknown) => void} */ done, _reject) => {
           if ('undefined' != typeof AbortSignal) {
-            (s.call(document, 'yt-page-data-fetched', e, { once: !0 }),
-              s.call(document, 'yt-navigate-finish', e, { once: !0 }),
-              s.call(document, 'spfdone', e, { once: !0 }));
+            (s.call(document, 'yt-page-data-fetched', done, { once: !0 }),
+              s.call(document, 'yt-navigate-finish', done, { once: !0 }),
+              s.call(document, 'spfdone', done, { once: !0 }));
           } else {
             const t = () => {
-              (e(),
+              (done(),
                 y.call(document, 'yt-page-data-fetched', t, !1),
                 y.call(document, 'yt-navigate-finish', t, !1),
                 y.call(document, 'spfdone', t, !1));
@@ -349,12 +387,13 @@ const executionScript = () => {
               s.call(document, 'spfdone', t, !1));
           }
         }).then(o),
-          new a(e => {
+          new a((/** @type {(value?: unknown) => void} */ done, _reject) => {
             if ('undefined' != typeof AbortSignal) {
-              s.call(document, 'yt-action', e, { once: !0, capture: !0 });
+              s.call(document, 'yt-action', done, { once: !0, capture: !0 });
             } else {
               const t = () => {
-                (e(), y.call(document, 'yt-action', t, !0));
+                done();
+                y.call(document, 'yt-action', t, !0);
               };
               s.call(document, 'yt-action', t, !0);
             }
@@ -366,7 +405,7 @@ const executionScript = () => {
     })();
 
     let configOnce = false;
-    window._ytConfigHacks.add(config_ => {
+    window._ytConfigHacks.add((/** @type {Record<string, any>} */ config_) => {
       if (configOnce) return;
       configOnce = true;
 
@@ -397,34 +436,52 @@ const executionScript = () => {
 
     /* globals WeakRef:false */
 
-    /** @type {(o: Object | null) => WeakRef | null} */
+    /** @type {(o: object | null) => WeakRef<object> | object | null} */
     const mWeakRef =
       typeof WeakRef === 'function' ? o => (o ? new WeakRef(o) : null) : o => o || null; // typeof InvalidVar == 'undefined'
 
-    /** @type {(wr: Object | null) => Object | null} */
-    const kRef = wr => (wr && wr.deref ? wr.deref() : wr);
+    /** @type {(wr: WeakRef<object> | object | null) => object | null} */
+    const kRef = wr => {
+      if (!wr) return null;
+      if (typeof wr === 'object' && 'deref' in wr && typeof wr.deref === 'function') {
+        return wr.deref() || null;
+      }
+      return wr;
+    };
 
     /** @type {globalThis.PromiseConstructor} */
-    const Promise = (async () => {})().constructor; // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
+    const Promise = globalThis.Promise; // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
 
-    const delayPn = delay => new Promise(fn => setTimeout(fn, delay));
+    const delayPn = (/** @type {number} */ delay) =>
+      new Promise((/** @type {(value?: unknown) => void} */ fn) => setTimeout(fn, delay));
 
-    const insp = o => (o ? o.polymerController || o.inst || o || 0 : o || 0);
+    const insp = (/** @type {any} */ o) => (o ? o.polymerController || o.inst || o || 0 : o || 0);
 
     const setTimeout_ = setTimeout.bind(window);
 
-    const PromiseExternal = ((resolve_, reject_) => {
-      const h = (resolve, reject) => {
+    const PromiseExternal = (() => {
+      /** @type {(value?: unknown) => void} */
+      let resolve_ = () => {};
+      /** @type {(reason?: unknown) => void} */
+      let reject_ = () => {};
+      const h = (
+        /** @type {(value?: unknown) => void} */ resolve,
+        /** @type {(reason?: unknown) => void} */ reject
+      ) => {
         resolve_ = resolve;
         reject_ = reject;
       };
       return class PromiseExternal extends Promise {
-        constructor(cb = h) {
+        constructor(
+          cb = /** @type {(resolve: (value?: unknown) => void, reject: (reason?: unknown) => void) => void} */ (
+            h
+          )
+        ) {
           super(cb);
           if (cb === h) {
-            /** @type {(value: any) => void} */
+            /** @type {(value?: unknown) => void} */
             this.resolve = resolve_;
-            /** @type {(reason?: any) => void} */
+            /** @type {(reason?: unknown) => void} */
             this.reject = reject_;
           }
         }
@@ -433,20 +490,17 @@ const executionScript = () => {
 
     // ------------------------------------------------------------------------ nextBrowserTick ------------------------------------------------------------------------
     /* eslint-disable no-var */
+    /** @type {any} */
     var nextBrowserTick =
       void 0 !== nextBrowserTick && nextBrowserTick.version >= 2
         ? nextBrowserTick
         : (() => {
             'use strict';
-            const e =
-              typeof globalThis !== 'undefined'
-                ? globalThis
-                : typeof window !== 'undefined'
-                  ? window
-                  : this;
+            /** @type {any} */
+            const e = typeof globalThis !== 'undefined' ? globalThis : window;
             let t = !0;
             if (
-              !(function n(s) {
+              !(function n(/** @type {unknown} */ s) {
                 return s
                   ? (t = !1)
                   : e.postMessage && !e.importScripts && e.addEventListener
@@ -454,12 +508,13 @@ const executionScript = () => {
                       e.postMessage('$$$', '*'),
                       e.removeEventListener('message', n, !1),
                       t)
-                    : void 0;
+                    : false;
               })()
             ) {
               return void console.warn('Your browser environment cannot use nextBrowserTick');
             }
-            const n = (async () => {})().constructor;
+            const n = Promise;
+            /** @type {Promise<unknown> | null} */
             let s = null;
             const o = new Map(),
               { floor: r, random: i } = Math;
@@ -472,39 +527,44 @@ const executionScript = () => {
             e[a] = 1;
             e.addEventListener(
               'message',
-              e => {
+              (/** @type {MessageEvent} */ evt) => {
                 if (0 !== o.size) {
-                  const t = (e || 0).data;
-                  if ('string' == typeof t && t.length === c && e.source === (e.target || 1)) {
-                    const e = o.get(t);
-                    e && ('p' === t[0] && (s = null), o.delete(t), e());
+                  const t = (evt || 0).data;
+                  if ('string' == typeof t && t.length === c && evt.source === (evt.target || 1)) {
+                    const fn = o.get(t);
+                    if (fn) {
+                      if ('p' === t[0]) s = null;
+                      o.delete(t);
+                      fn();
+                    }
                   }
                 }
               },
               !1
             );
-            const d = (t = o) => {
+            const d = (/** @type {Map<string, Function>} */ t = o) => {
               if (t === o) {
                 if (s) return s;
-                let t;
+                /** @type {string | null} */
+                let token = null;
                 do {
-                  t = `p${a}${r(314159265359 * i() + 314159265359).toString(36)}`;
-                } while (o.has(t));
-                return (
-                  (s = new n(e => {
-                    o.set(t, e);
-                  })),
-                  e.postMessage(t, '*'),
-                  (t = null),
-                  s
-                );
+                  token = `p${a}${r(314159265359 * i() + 314159265359).toString(36)}`;
+                } while (token && o.has(token));
+                s = new n((/** @type {(value?: unknown) => void} */ resolve) => {
+                  if (token) o.set(token, resolve);
+                });
+                if (token) e.postMessage(token, '*');
+                token = null;
+                return s;
               }
               {
                 let n;
                 do {
                   n = `f${a}${r(314159265359 * i() + 314159265359).toString(36)}`;
                 } while (o.has(n));
-                (o.set(n, t), e.postMessage(n, '*'));
+                o.set(n, t);
+                e.postMessage(n, '*');
+                return null;
               }
             };
             return ((d.version = 2), d);
@@ -520,7 +580,7 @@ const executionScript = () => {
     const capturePassive = isPassiveArgSupport ? { capture: true, passive: true } : true;
 
     class Attributer {
-      constructor(list) {
+      constructor(/** @type {string} */ list) {
         this.list = list;
         this.flag = 0;
       }
@@ -543,27 +603,33 @@ const executionScript = () => {
 
     const wrSelfMap = new WeakMap();
 
-    /** @type {Object.<string, Element | null>} */
+    /** @type {Record<string, any>} */
     const elements = new Proxy(
       {
         related: null,
         comments: null,
         infoExpander: null,
+        flexy: null,
+        chat: null,
+        playlist: null,
       },
       {
         get(target, prop) {
-          return kRef(target[prop]);
+          if (typeof prop !== 'string') return null;
+          return kRef(/** @type {Record<string, any>} */ (target)[prop]);
         },
         set(target, prop, value) {
+          if (typeof prop !== 'string') return true;
+          const targetObj = /** @type {Record<string, any>} */ (target);
           if (value) {
             let wr = wrSelfMap.get(value);
             if (!wr) {
               wr = mWeakRef(value);
               wrSelfMap.set(value, wr);
             }
-            target[prop] = wr;
+            targetObj[prop] = wr;
           } else {
-            target[prop] = null;
+            targetObj[prop] = null;
           }
           return true;
         },
@@ -578,13 +644,140 @@ const executionScript = () => {
       return mainInfo || null;
     };
 
+    const TABVIEW_PLACEHOLDER_ATTR = 'data-ytp-tabview-placeholder';
+
+    const getStoredSettings = () => {
+      try {
+        return (
+          /** @type {any} */ (window).youtubePlus?.settings ||
+          JSON.parse(
+            localStorage.getItem(window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings') ||
+              '{}'
+          )
+        );
+      } catch (e) {
+        return /** @type {any} */ (window).youtubePlus?.settings || {};
+      }
+    };
+
+    const isTabviewEnabled = (settings = null) => {
+      const resolved = settings || getStoredSettings();
+      return resolved?.enableTabview !== false;
+    };
+
+    const getTabviewPlaceholder = (/** @type {string} */ key) =>
+      qs(`[${TABVIEW_PLACEHOLDER_ATTR}="${key}"]`);
+
+    const ensureTabviewPlaceholder = (
+      /** @type {string} */ key,
+      /** @type {Node | null} */ node
+    ) => {
+      if (!(node instanceof Node)) return null;
+      const existing = getTabviewPlaceholder(key);
+      if (existing) return existing;
+      const parent = node.parentNode;
+      if (!(parent instanceof Element)) return null;
+      const placeholder = document.createElement('tabview-placeholder');
+      placeholder.setAttribute111(TABVIEW_PLACEHOLDER_ATTR, key);
+      placeholder.setAttribute111('hidden', '');
+      placeholder.setAttribute111('style', 'display:none');
+      inPageRearrange = true;
+      parent.insertBefore000(placeholder, node);
+      inPageRearrange = false;
+      return placeholder;
+    };
+
+    const moveNodeToTabview = (
+      /** @type {string} */ key,
+      /** @type {any} */ node,
+      /** @type {any} */ target
+    ) => {
+      if (!(node instanceof HTMLElement_) || !(target instanceof HTMLElement_)) return;
+      ensureTabviewPlaceholder(key, node);
+      target.assignChildren111(null, node, null);
+    };
+
+    const restoreNodeFromTabview = (/** @type {string} */ key, /** @type {any} */ node) => {
+      const placeholder = getTabviewPlaceholder(key);
+      if (!(placeholder instanceof Element) || !(node instanceof HTMLElement_)) return false;
+      const parent = placeholder.parentElement;
+      if (!(parent instanceof Element)) return false;
+      inPageRearrange = true;
+      parent.insertBefore000(node, placeholder);
+      placeholder.remove();
+      inPageRearrange = false;
+      return true;
+    };
+
+    function disableTabviewRuntime() {
+      const rightTabs = qs('#right-tabs');
+      const secondaryInner = qs('#secondary-inner.style-scope.ytd-watch-flexy');
+      const secondaryWrapper = qs('#secondary-inner-wrapper');
+
+      roRightTabs.disconnect();
+
+      restoreNodeFromTabview('comments', elements.comments);
+      restoreNodeFromTabview('info', elements.infoExpander);
+      restoreNodeFromTabview('related', elements.related);
+
+      if (rightTabs instanceof Element) {
+        inPageRearrange = true;
+        rightTabs.remove();
+        inPageRearrange = false;
+      }
+
+      if (secondaryInner instanceof Element && secondaryWrapper instanceof Element) {
+        const fragment = document.createDocumentFragment();
+        for (const child of [...secondaryWrapper.childNodes]) {
+          fragment.appendChild(child);
+        }
+        inPageRearrange = true;
+        secondaryInner.insertBefore000(fragment, secondaryWrapper);
+        secondaryWrapper.remove();
+        inPageRearrange = false;
+      }
+
+      const ytdFlexyElm = elements.flexy;
+      if (ytdFlexyElm) {
+        ytdFlexyElm.setAttribute111('tyt-tab', '');
+      }
+      isRightTabsInserted = false;
+    }
+
+    function enableTabviewRuntime() {
+      if (!isTabviewEnabled()) return;
+      Promise.resolve()
+        .then(eventMap['onceInsertRightTabs'])
+        .then(() =>
+          Promise.resolve(lockSet['refreshSecondaryInnerLock']).then(
+            eventMap['refreshSecondaryInner']
+          )
+        )
+        .then(() =>
+          Promise.resolve(lockSet['fixInitialTabStateLock']).then(eventMap['fixInitialTabStateFn'])
+        )
+        .catch(console.warn);
+    }
+
+    if (typeof window !== 'undefined') {
+      window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {
+        const nextEnabled = isTabviewEnabled(e?.detail || null);
+        if (nextEnabled) {
+          enableTabviewRuntime();
+        } else {
+          disableTabviewRuntime();
+        }
+      });
+    }
+
+    /** @type {string | null} */
     let pageType = null;
     /**
      * Translation helper using centralized i18n system
-     * @param {string} key - Translation key
+     * @param {string} tag - Translation key
      * @returns {string} Translated string
      */
-    function getWord(tag) {
+    function getWord(/** @type {string} */ tag) {
       try {
         // Use centralized i18n system if available
         if (typeof window !== 'undefined' && window.YouTubePlusI18n) {
@@ -595,6 +788,7 @@ const executionScript = () => {
         }
 
         // Fallback to basic English translations
+        /** @type {Record<string, string>} */
         const fallbackWords = {
           info: 'Info',
           videos: 'Videos',
@@ -605,6 +799,7 @@ const executionScript = () => {
       } catch (error) {
         console.warn('[YouTube+][Main] Translation error:', error);
         // Final fallback to English
+        /** @type {Record<string, string>} */
         const englishWords = {
           info: 'Info',
           videos: 'Videos',
@@ -636,7 +831,14 @@ const executionScript = () => {
     const svgPlayList =
       `<path d="M0 3h12v2H0zm0 4h12v2H0zm0 4h8v2H0zm16 0V7h-2v4h-4v2h4v4h2v-4h4v-2z"/>`.trim();
 
-    const svgElm = (w, h, vw, vh, p, m) =>
+    const svgElm = (
+      /** @type {number} */ w,
+      /** @type {number} */ h,
+      /** @type {number} */ vw,
+      /** @type {number} */ vh,
+      /** @type {string} */ p,
+      /** @type {string | undefined} */ m = undefined
+    ) =>
       `<svg${m ? ` class=${m}` : ''} width="${w}" height="${h}" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid meet">${p}</svg>`;
 
     const hiddenTabsByUserCSS = 0;
@@ -697,6 +899,7 @@ const executionScript = () => {
     }
 
     // All languages shipped with the script — keep in sync with i18n.js AVAILABLE_LANGUAGES.
+    /** @type {Record<string, boolean>} */
     const langWords = {
       ar: true,
       be: true,
@@ -738,13 +941,14 @@ const executionScript = () => {
           const detected = window.YouTubePlusI18n.getLanguage();
           if (detected && langWords[detected]) return detected;
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       // Inline fallback covers all shipped supported languages so early callers
       // (before i18n is ready) still get a correct code.
       const htmlLang = ((document || 0).documentElement || 0).lang || '';
+      /** @type {Record<string, string>} */
       const localMap = {
         // Dutch (de → 'du' is the project's internal code, not a typo)
         de: 'du',
@@ -849,6 +1053,7 @@ const executionScript = () => {
 
     const lockGet = new Proxy(_locks, {
       get(target, prop) {
+        if (typeof prop !== 'string') return 0;
         return target[prop] || 0;
       },
       set(_target, _prop, _val) {
@@ -858,6 +1063,7 @@ const executionScript = () => {
 
     const lockSet = new Proxy(_locks, {
       get(target, prop) {
+        if (typeof prop !== 'string') return 0;
         if (target[prop] > 1e9) target[prop] = 9;
         return (target[prop] = (target[prop] || 0) + 1);
       },
@@ -877,17 +1083,21 @@ const executionScript = () => {
 
     const infoExpanderElementProvidedPromise = new PromiseExternal();
 
+    /** @type {Record<string, boolean>} */
     const pluginsDetected = {};
+    /** @type {ReturnType<typeof setTimeout> | null} */
     let pluginDetectDebounceTimer = null;
-    const pluginDetectObserver = new MutationObserver(mutations => {
-      if (pluginDetectDebounceTimer) return;
-      pluginDetectDebounceTimer = setTimeout(() => {
-        pluginDetectDebounceTimer = null;
-        processPluginDetectMutations(mutations);
-      }, 50);
-    });
+    const pluginDetectObserver = new MutationObserver(
+      (/** @type {MutationRecord[]} */ mutations) => {
+        if (pluginDetectDebounceTimer) return;
+        pluginDetectDebounceTimer = setTimeout(() => {
+          pluginDetectDebounceTimer = null;
+          processPluginDetectMutations(mutations);
+        }, 50);
+      }
+    );
 
-    const processPluginDetectMutations = mutations => {
+    const processPluginDetectMutations = (/** @type {MutationRecord[]} */ mutations) => {
       let changeOnRoot = false;
       const newPlugins = [];
       const attributeChangedSet = new Set();
@@ -925,7 +1135,7 @@ const executionScript = () => {
         });
       }
       for (const detected of newPlugins) {
-        const pluginItem = plugin[`${detected}`];
+        const pluginItem = /** @type {any} */ (plugin)[detected];
         if (pluginItem) {
           pluginItem.activate();
         } else {
@@ -969,7 +1179,8 @@ const executionScript = () => {
       }
     });
 
-    const funcCanCollapse = function (_s) {
+    /** @this {any} */
+    const funcCanCollapse = function (/** @type {any} */ _s) {
       // if (!s) return;
       const content = this.content || this.$.content;
       this.canToggle =
@@ -983,7 +1194,7 @@ const executionScript = () => {
             (content && content.scrollHeight > this.collapsedHeight);
     };
 
-    const aoChatAttrChangeFn = async lockId => {
+    const aoChatAttrChangeFn = async (/** @type {number} */ lockId) => {
       if (lockGet['aoChatAttrAsyncLock'] !== lockId) return;
 
       const chatElm = elements.chat;
@@ -1008,7 +1219,7 @@ const executionScript = () => {
     //   if (lockGet['zoInfoAttrAsyncLock'] !== lockId) return;
     // };
 
-    const aoPlayListAttrChangeFn = async lockId => {
+    const aoPlayListAttrChangeFn = async (/** @type {number} */ lockId) => {
       if (lockGet['aoPlayListAttrAsyncLock'] !== lockId) return;
 
       const playlistElm = elements.playlist;
@@ -1025,11 +1236,11 @@ const executionScript = () => {
       } else if (ytdFlexyElm) {
         doAttributeChange = 2;
       }
-      if (doAttributeChange === 1) {
+      if (doAttributeChange === 1 && ytdFlexyElm) {
         if (ytdFlexyElm.getAttribute000('tyt-playlist-expanded') !== '') {
           ytdFlexyElm.setAttribute111('tyt-playlist-expanded', '');
         }
-      } else if (doAttributeChange === 2) {
+      } else if (doAttributeChange === 2 && ytdFlexyElm) {
         if (ytdFlexyElm.hasAttribute000('tyt-playlist-expanded')) {
           ytdFlexyElm.removeAttribute000('tyt-playlist-expanded');
         }
@@ -1066,9 +1277,11 @@ const executionScript = () => {
       YouTubeUtils.ObserverRegistry.track();
     }
 
+    /** @type {ReturnType<typeof setTimeout> | null} */
     let aoCommentThrottleTimer = null;
+    /** @type {MutationRecord[]} */
     let aoCommentPendingMutations = [];
-    const aoComment = new MutationObserver(async mutations => {
+    const aoComment = new MutationObserver(async (/** @type {MutationRecord[]} */ mutations) => {
       aoCommentPendingMutations.push(...mutations);
       if (aoCommentThrottleTimer) return;
       aoCommentThrottleTimer = setTimeout(() => {
@@ -1085,7 +1298,7 @@ const executionScript = () => {
       YouTubeUtils.ObserverRegistry.track();
     }
 
-    const processCommentMutations = async mutations => {
+    const processCommentMutations = async (/** @type {MutationRecord[]} */ mutations) => {
       const commentsArea = elements.comments;
       const ytdFlexyElm = elements.flexy;
 
@@ -1143,15 +1356,16 @@ const executionScript = () => {
 
         if (commentsArea.closest('#tab-comments')) {
           const shouldTabVisible = !commentsArea.closest('[hidden]');
-          document
-            .querySelector('[tyt-tab-content="#tab-comments"]')
-            .classList.toggle('tab-btn-hidden', !shouldTabVisible);
+          const tabCommentsButton = document.querySelector('[tyt-tab-content="#tab-comments"]');
+          if (tabCommentsButton) {
+            tabCommentsButton.classList.toggle('tab-btn-hidden', !shouldTabVisible);
+          }
         }
       }
     };
 
     const ioComment = new IntersectionObserver(
-      entries => {
+      (/** @type {IntersectionObserverEntry[]} */ entries) => {
         requestAnimationFrame(() => {
           for (const entry of entries) {
             const target = entry.target;
@@ -1182,13 +1396,19 @@ const executionScript = () => {
 
     let bFixForResizedTabLater = false;
     let lastRoRightTabsWidth = 0;
+    /** @type {ReturnType<typeof setTimeout> | null} */
     let resizeDebounceTimer = null;
-    const roRightTabs = new ResizeObserver(entries => {
+    const roRightTabs = new ResizeObserver((/** @type {ResizeObserverEntry[]} */ entries) => {
       if (resizeDebounceTimer) return;
       resizeDebounceTimer = setTimeout(() => {
         resizeDebounceTimer = null;
         const entry = entries[entries.length - 1];
-        const width = Math.round(entry.borderBoxSize.inlineSize);
+        const borderBox = Array.isArray(entry.borderBoxSize)
+          ? entry.borderBoxSize[0]
+          : entry.borderBoxSize;
+        const width = Math.round(
+          (borderBox && borderBox.inlineSize) || entry.contentRect.width || 0
+        );
         if (lastRoRightTabsWidth !== width) {
           lastRoRightTabsWidth = width;
           if ((tabAStatus & 2) === 2) {
@@ -1201,9 +1421,11 @@ const executionScript = () => {
       }, 100);
     });
 
+    /** @type {Element[] | null} */
     let cachedTabLinks = null;
+    /** @type {Map<Element, Element>} */
     const cachedTabContents = new Map();
-    const switchToTab = activeLink => {
+    const switchToTab = (/** @type {string | Element | null} */ activeLink) => {
       if (typeof activeLink === 'string') {
         activeLink = qs(`a[tyt-tab-content="${activeLink}"]`) || null;
       }
@@ -1217,9 +1439,9 @@ const executionScript = () => {
       const links = cachedTabLinks;
 
       for (const link of links) {
-        let content = cachedTabContents.get(link);
+        let content = cachedTabContents.get(link) || null;
         if (!content || !content.isConnected) {
-          content = qs(link.getAttribute000('tyt-tab-content'));
+          content = qs(link.getAttribute000('tyt-tab-content') ?? '');
           if (content) cachedTabContents.set(link, content);
         }
         if (link && content) {
@@ -1258,7 +1480,7 @@ const executionScript = () => {
     };
 
     let tabAStatus = 0;
-    const calculationFn = (r = 0, flag) => {
+    const calculationFn = (/** @type {number} */ r = 0, /** @type {number} */ flag) => {
       const ytdFlexyElm = elements.flexy;
       if (!ytdFlexyElm) return r;
       if (flag & 1) {
@@ -1316,7 +1538,7 @@ const executionScript = () => {
         if (s?.enableZenStyles === false) return false;
         if (s?.zenStyles?.theaterEnhancements === false) return false;
         return true;
-      } catch {
+      } catch (e) {
         return true;
       }
     }
@@ -1331,7 +1553,7 @@ const executionScript = () => {
       }
     }
 
-    function getSuitableElement(selector) {
+    function getSuitableElement(/** @type {string} */ selector) {
       const elements = qsAll(selector);
       let j = -1,
         h = -1;
@@ -1408,7 +1630,7 @@ const executionScript = () => {
       }
     }
 
-    function ytBtnEgmPanelCore(arr) {
+    function ytBtnEgmPanelCore(/** @type {any[] | any} */ arr) {
       if (!arr) return;
       if (!('length' in arr)) arr = [arr];
 
@@ -1455,7 +1677,7 @@ const executionScript = () => {
             false
           );
         }
-        actions = null;
+        actions = [];
       }
     }
 
@@ -1490,6 +1712,7 @@ const executionScript = () => {
       }
     }
 
+    /** @this {any} */
     const updateChatLocation498 = function () {
       if (this.is !== 'ytd-watch-grid') {
         secondaryInnerFn(() => {
@@ -1507,12 +1730,15 @@ const executionScript = () => {
     const __j5744__ = Symbol(); // original element
     const __j5733__ = Symbol(); // __lastChanged__
 
-    const monitorDataChangedByDOMMutation = async function (_mutations) {
+    /** @this {any} */
+    const monitorDataChangedByDOMMutation = async function (
+      /** @type {MutationRecord[]} */ _mutations
+    ) {
       const nodeWR = this;
       const node = kRef(nodeWR);
-      if (!node) return;
+      if (!(node instanceof Element)) return;
 
-      const cnt = insp(node);
+      const cnt = /** @type {any} */ (insp(node));
       const __lastChanged__ = cnt[__j5733__];
 
       const val = cnt.data ? cnt.data[__j4836__] || 1 : 0;
@@ -1525,15 +1751,16 @@ const executionScript = () => {
       }
     };
 
-    const moChangeReflection = function (mutations) {
+    /** @this {any} */
+    const moChangeReflection = function (/** @type {MutationRecord[]} */ mutations) {
       const nodeWR = this;
       const node = kRef(nodeWR);
-      if (!node) return;
-      const originElement = kRef(node[__j5744__] || null) || null;
-      if (!originElement) return;
+      if (!(node instanceof Element)) return;
+      const originElement = kRef(/** @type {any} */ (node)[__j5744__] || null) || null;
+      if (!(originElement instanceof Element)) return;
 
-      const cnt = insp(node);
-      const oriCnt = insp(originElement);
+      const cnt = /** @type {any} */ (insp(node));
+      const oriCnt = /** @type {any} */ (insp(originElement));
 
       if (mutations) {
         let bfDataChangeCounter = false;
@@ -1558,10 +1785,10 @@ const executionScript = () => {
       }
     };
 
-    const attributeInc = (elm, prop) => {
-      let v = (+elm.getAttribute000(prop) || 0) + 1;
+    const attributeInc = (/** @type {Element} */ elm, /** @type {string} */ prop) => {
+      let v = (+(elm.getAttribute000(prop) ?? '0') || 0) + 1;
       if (v > 1e9) v = 9;
-      elm.setAttribute000(prop, v);
+      elm.setAttribute000(prop, `${v}`);
       return v;
     };
 
@@ -1571,17 +1798,17 @@ const executionScript = () => {
      * The channel ID is the 24 character alphanumeric string that starts with 'UC' in the channel URL.
      */
 
-    const isChannelId = x => {
+    const isChannelId = (/** @type {unknown} */ x) => {
       if (typeof x === 'string' && x.length === 24) {
         return /UC[-_a-zA-Z0-9+=.]{22}/.test(x);
       }
       return false;
     };
 
-    const infoFix = lockId => {
+    const infoFix = (/** @type {number | null} */ lockId) => {
       if (lockId !== null && lockGet['infoFixLock'] !== lockId) return;
       const infoExpander = elements.infoExpander;
-      const infoContainer = (infoExpander ? infoExpander.parentNode : null) || qs('#tab-info');
+      const infoContainer = (infoExpander ? infoExpander.parentElement : null) || qs('#tab-info');
       const ytdFlexyElm = elements.flexy;
       if (!infoContainer || !ytdFlexyElm) return;
       if (infoExpander) {
@@ -1605,10 +1832,12 @@ const executionScript = () => {
         })
         .map(elm => {
           const is = elm.is;
-          while (elm instanceof HTMLElement_) {
-            const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
+          /** @type {any} */
+          let current = elm;
+          while (current instanceof HTMLElement_) {
+            const q = [...current.querySelectorAll(is)].filter(e => insp(e).data);
             if (q.length >= 1) return q[0];
-            elm = elm.parentNode;
+            current = current.parentElement;
           }
         })
         .filter(elm => !!elm && typeof elm.is === 'string');
@@ -1624,15 +1853,18 @@ const executionScript = () => {
         };
       });
 
+      /** @type {any} */
       let noscript_ = qs('noscript#aythl');
       if (!noscript_) {
-        noscript_ = document.createElement('noscript');
-        noscript_.id = 'aythl';
+        const createdNoscript = document.createElement('noscript');
+        createdNoscript.id = 'aythl';
 
         inPageRearrange = true;
-        ytdFlexyElm.insertBefore000(noscript_, ytdFlexyElm.firstChild);
+        ytdFlexyElm.insertBefore000(createdNoscript, ytdFlexyElm.firstChild);
         inPageRearrange = false;
+        noscript_ = createdNoscript;
       }
+      if (!noscript_) return;
       const noscript = noscript_;
 
       let requiredUpdate = false;
@@ -1642,8 +1874,8 @@ const executionScript = () => {
         let mirrorNode = mirrorNodeWS.get(s);
         mirrorNode = mirrorNode ? kRef(mirrorNode) : mirrorNode;
         if (!mirrorNode) {
-          const cnt = insp(s);
-          const cProto = cnt.constructor.prototype;
+          const cnt = /** @type {any} */ (insp(s));
+          const cProto = /** @type {any} */ (cnt.constructor.prototype);
 
           const element = document.createElement(tag);
           noscript.appendChild(element); // appendChild to trigger .attached()
@@ -1697,7 +1929,7 @@ const executionScript = () => {
               dataSignal.controller573 = mWeakRef(cnt);
               dataSignal.setWithPath573 = dataSignal.setWithPath;
               dataSignal.setWithPath = function () {
-                const cnt = kRef(this.controller573 || null) || null;
+                const cnt = /** @type {any} */ (kRef(this.controller573 || null) || null);
                 cnt &&
                   typeof cnt._dataChanged496k === 'function' &&
                   Promise.resolve(cnt).then(cnt._dataChanged496k).catch(console.warn);
@@ -1711,7 +1943,7 @@ const executionScript = () => {
                   attributeInc(node, 'tyt-data-change-counter'); // next macro task
                 }
               };
-              cProto._dataChanged496k = cnt => cnt._dataChanged496();
+              cProto._dataChanged496k = (/** @type {any} */ cnt) => cnt._dataChanged496();
             }
           }
 
@@ -1744,7 +1976,6 @@ const executionScript = () => {
         }
 
         mirrorElmSet.add(mirrorNode);
-        source.mirrored = mirrorNode;
       }
 
       const mirroElmArr = [...mirrorElmSet];
@@ -1774,8 +2005,8 @@ const executionScript = () => {
         for (const mirrorElm of mirroElmArr) {
           // trigger data assignment and record refresh count by manual update
           const j = attributeInc(mirrorElm, 'tyt-clone-refresh-count');
-          const oriElm = kRef(mirrorElm[__j5744__] || null) || null;
-          if (oriElm) {
+          const oriElm = kRef(/** @type {any} */ (mirrorElm)[__j5744__] || null) || null;
+          if (oriElm instanceof Element) {
             oriElm.setAttribute111('tyt-clone-refresh-count', j);
           }
         }
@@ -1785,14 +2016,15 @@ const executionScript = () => {
       source.length = 0;
     };
 
-    const layoutFix = lockId => {
+    const layoutFix = (/** @type {number} */ lockId) => {
       if (lockGet['layoutFixLock'] !== lockId) return;
 
       const secondaryWrapper = qs(
         '#secondary-inner.style-scope.ytd-watch-flexy > secondary-wrapper'
       );
       if (secondaryWrapper) {
-        const secondaryInner = secondaryWrapper.parentNode;
+        const secondaryInner = secondaryWrapper.parentElement;
+        if (!secondaryInner) return;
 
         const chatContainer = qs('#columns.style-scope.ytd-watch-flexy [tyt-chat-container]');
 
@@ -1800,7 +2032,7 @@ const executionScript = () => {
           for (let node = secondaryInner.firstChild; node; node = node.nextSibling) {
             if (node === secondaryWrapper) continue;
             if (node === chatContainer) continue;
-            if (node.nodeType === 3 && !node.textContent.trim()) continue; // ignore whitespace
+            if (node.nodeType === 3 && !(node.textContent || '').trim()) continue; // ignore whitespace
             return true;
           }
           return false;
@@ -1823,7 +2055,7 @@ const executionScript = () => {
               ) {
                 if (node2 === chatContainer && chatContainer) {
                 } else {
-                  if (node2.id === 'right-tabs' && chatContainer) {
+                  if (node2 instanceof Element && node2.id === 'right-tabs' && chatContainer) {
                     w2.push(chatContainer);
                   }
                   w2.push(node2);
@@ -1861,6 +2093,7 @@ const executionScript = () => {
     let lastTab = '';
     // let fixInitialTabState = 0;
 
+    /** @type {ReturnType<typeof setTimeout> | null} */
     let egmPanelsDebounceTimer = null;
     const aoEgmPanels = new MutationObserver(() => {
       if (egmPanelsDebounceTimer) return;
@@ -1876,7 +2109,7 @@ const executionScript = () => {
       YouTubeUtils.ObserverRegistry.track();
     }
 
-    const removeKeepCommentsScroller = async lockId => {
+    const removeKeepCommentsScroller = async (/** @type {number} */ lockId) => {
       if (lockGet['removeKeepCommentsScrollerLock'] !== lockId) return;
       await Promise.resolve();
       if (lockGet['removeKeepCommentsScrollerLock'] !== lockId) return;
@@ -1888,15 +2121,18 @@ const executionScript = () => {
 
     const egmPanelsCache = new Set();
 
-    const updateEgmPanels = async lockId => {
+    const updateEgmPanels = async (/** @type {number} */ lockId) => {
       if (lockId !== lockGet['updateEgmPanelsLock']) return;
       await navigateFinishedPromise.then().catch(console.warn);
       if (lockId !== lockGet['updateEgmPanelsLock']) return;
       const ytdFlexyElm = elements.flexy;
       if (!ytdFlexyElm) return;
-      let newVisiblePanels = [];
-      let newHiddenPanels = [];
-      let allVisiblePanels = [];
+      /** @type {Element[]} */
+      const newVisiblePanels = [];
+      /** @type {Element[]} */
+      const newHiddenPanels = [];
+      /** @type {Element[]} */
+      const allVisiblePanels = [];
       const panels = egmPanelsCache;
 
       for (const panelElm of panels) {
@@ -1945,16 +2181,13 @@ const executionScript = () => {
         ytdFlexyElm.removeAttribute000('tyt-egm-panel_');
       }
       newVisiblePanels.length = 0;
-      newVisiblePanels = null;
       newHiddenPanels.length = 0;
-      newHiddenPanels = null;
       allVisiblePanels.length = 0;
-      allVisiblePanels = null;
     };
 
-    const checkElementExist = (css, exclude) => {
+    const checkElementExist = (/** @type {string} */ css, /** @type {string} */ exclude) => {
       const elms = window.YouTubeDOMCache
-        ? window.YouTubeDOMCache.querySelectorAll(css, document)
+        ? (window.YouTubeDOMCache.querySelectorAll?.(css, document) ?? qsAll(css))
         : qsAll(css);
       for (const p of elms) {
         if (!p.closest(exclude)) return p;
@@ -1966,8 +2199,24 @@ const executionScript = () => {
 
     const { handleNavigateFactory } = (() => {
       let isLoadStartListened = false;
+      const closestFromAnchor = Element.prototype.closest;
+      const _querySelector = Element.prototype.querySelector;
+      const isVideoPlaying = (/** @type {HTMLMediaElement} */ media) =>
+        !!media && !media.paused && !media.ended && media.readyState > 2;
 
-      function findLcComment(lc) {
+      const findContentsRenderer = (/** @type {any} */ renderer) => {
+        const parent = renderer ? renderer.parentNode : null;
+        const cnt = parent ? insp(parent) : null;
+        const contents = ((cnt || 0).data || 0).contents || [];
+        return {
+          parent,
+          index: Array.isArray(contents)
+            ? contents.findIndex((/** @type {any} */ c) => c === insp(renderer).data)
+            : -1,
+        };
+      };
+
+      function findLcComment(/** @type {string | undefined} */ lc = undefined) {
         if (arguments.length === 1) {
           const element = qs(
             `#tab-comments ytd-comments ytd-comment-renderer #header-author a[href*="lc=${lc}"]`
@@ -2012,11 +2261,14 @@ const executionScript = () => {
         return null;
       }
 
-      function lcSwapFuncA(targetLcId, currentLcId) {
+      function lcSwapFuncA(/** @type {string} */ targetLcId, /** @type {string} */ currentLcId) {
         let done = 0;
         try {
-          const r1 = findLcComment(currentLcId).commentRendererElm;
-          const r2 = findLcComment(targetLcId).commentRendererElm;
+          const currentResult = findLcComment(currentLcId);
+          const targetResult = findLcComment(targetLcId);
+          if (!currentResult || !targetResult) return false;
+          const r1 = currentResult.commentRendererElm;
+          const r2 = targetResult.commentRendererElm;
 
           if (
             typeof insp(r1).data.linkedCommentBadge === 'object' &&
@@ -2050,15 +2302,15 @@ const executionScript = () => {
                 done = 1;
               } else {
                 const v2pCnt = insp(v2.parent);
-                const v2Conents = (v2pCnt.data || 0).contents || 0;
+                const v2Conents = /** @type {any[]} */ ((v2pCnt.data || 0).contents || []);
                 if (!v2Conents) console.warn('v2Conents is not found');
 
                 v2pCnt.data = Object.assign({}, v2pCnt.data, {
-                  contents: [].concat(
-                    [v2Conents[v2.index]],
-                    v2Conents.slice(0, v2.index),
-                    v2Conents.slice(v2.index + 1)
-                  ),
+                  contents: [
+                    v2Conents[v2.index],
+                    ...v2Conents.slice(0, v2.index),
+                    ...v2Conents.slice(v2.index + 1),
+                  ],
                 });
 
                 if (lcSwapFuncB(targetLcId, currentLcId, p)) {
@@ -2073,12 +2325,19 @@ const executionScript = () => {
         return done === 1;
       }
 
-      function lcSwapFuncB(targetLcId, currentLcId, _p) {
+      function lcSwapFuncB(
+        /** @type {string} */ targetLcId,
+        /** @type {string} */ currentLcId,
+        /** @type {any} */ _p
+      ) {
         let done = 0;
         try {
-          const r1 = findLcComment(currentLcId).commentRendererElm;
+          const currentResult = findLcComment(currentLcId);
+          const targetResult = findLcComment(targetLcId);
+          if (!currentResult || !targetResult) return false;
+          const r1 = currentResult.commentRendererElm;
           const r1cnt = insp(r1);
-          const r2 = findLcComment(targetLcId).commentRendererElm;
+          const r2 = targetResult.commentRendererElm;
           const r2cnt = insp(r2);
 
           const r1d = r1cnt.data;
@@ -2100,28 +2359,32 @@ const executionScript = () => {
         return done === 1;
       }
 
-      const loadStartFx = async evt => {
-        const media = (evt || 0).target || 0;
-        if (media.nodeName === 'VIDEO' || media.nodeName === 'AUDIO') {
-        } else return;
+      const loadStartFx = async (/** @type {Event} */ evt) => {
+        const target = evt ? evt.target : null;
+        if (!(target instanceof HTMLMediaElement)) return;
+        const media = target;
+        if (media.nodeName !== 'VIDEO' && media.nodeName !== 'AUDIO') return;
 
         const newMedia = media;
 
         const media1 = common.getMediaElement(0); // document.querySelector('#movie_player video[src]');
         const media2 = common.getMediaElements(2); // document.querySelectorAll('ytd-browse[role="main"] video[src]');
 
-        if (media1 !== null && media2.length > 0) {
+        if (media1 instanceof HTMLMediaElement && media2.length > 0) {
           if (newMedia !== media1 && media1.paused === false) {
             if (isVideoPlaying(media1)) {
               Promise.resolve(newMedia)
-                .then(video => video.paused === false && video.pause())
+                .then(
+                  (/** @type {HTMLMediaElement} */ video) => video.paused === false && video.pause()
+                )
                 .catch(console.warn);
             }
           } else if (newMedia === media1) {
             for (const s of media2) {
+              if (!(s instanceof HTMLMediaElement)) continue;
               if (s.paused === false) {
                 Promise.resolve(s)
-                  .then(s => s.paused === false && s.pause())
+                  .then(mediaElement => mediaElement.paused === false && mediaElement.pause())
                   .catch(console.warn);
                 break;
               }
@@ -2134,7 +2397,7 @@ const executionScript = () => {
         }
       };
 
-      const getBrowsableEndPoint = req => {
+      const getBrowsableEndPoint = (/** @type {any} */ req) => {
         let valid = false;
         let endpoint = req ? req.command : null;
         if (
@@ -2237,7 +2500,7 @@ const executionScript = () => {
         // return !!document.querySelector('ytd-page-manager#page-manager > ytd-browse[page-subtype]');
       };
 
-      const conditionFulfillment = req => {
+      const conditionFulfillment = (/** @type {any} */ req) => {
         const command = req ? req.command : null;
         DEBUG_handleNavigateFactory && console.warn('handleNavigateFactory - 0801', command);
         if (!command) return;
@@ -2285,20 +2548,19 @@ const executionScript = () => {
         //   return false;
         // }
 
-        // DEBUG_handleNavigateFactory && console.log("handleNavigateFactory - 0805");
-
         return true;
       };
 
       let u38 = 0;
-      const fixChannelAboutPopup = async t38 => {
+      const fixChannelAboutPopup = async (/** @type {number} */ t38) => {
+        /** @type {any} */
         let promise = new PromiseExternal();
         const f = () => {
-          promise && promise.resolve();
+          if (promise) promise.resolve();
           promise = null;
         };
         document.addEventListener('yt-navigate-finish', f, false);
-        await promise.then();
+        await (promise ? promise.then() : Promise.resolve());
         promise = null;
         document.removeEventListener('yt-navigate-finish', f, false);
         if (t38 !== u38) return;
@@ -2315,8 +2577,8 @@ const executionScript = () => {
               let arr = null;
               try {
                 arr = cnt.handleGetOpenedPopupsAction_();
-              } catch {
-                /* empty */
+              } catch (e) {
+                // Non-critical, suppressed
               }
               if (arr && arr.length === 0) okay = true;
             } else {
@@ -2338,8 +2600,9 @@ const executionScript = () => {
           }
         }, 80);
       };
-      const handleNavigateFactory = handleNavigate => {
-        return function (req) {
+      const handleNavigateFactory = (/** @type {any} */ handleNavigate) => {
+        /** @this {any} */
+        return function (/** @type {any} */ req) {
           if (u38 > 1e9) u38 = 9;
           const t38 = ++u38;
 
@@ -2366,7 +2629,7 @@ const executionScript = () => {
           let object = null;
           try {
             object = ytdAppCnt.data.response.currentVideoEndpoint.watchEndpoint || null;
-          } catch {
+          } catch (e) {
             object = null;
           }
 
@@ -2404,33 +2667,38 @@ const executionScript = () => {
               configurable: true,
             });
 
+            /** @type {(() => void) | null} */
             let playlistClearout = null;
 
+            /** @type {ReturnType<typeof setTimeout> | 0} */
             let timeoutid = 0;
-            Promise.race([
-              new Promise(r => {
-                timeoutid = setTimeout(r, 4000);
-              }),
-              new Promise(r => {
-                playlistClearout = () => {
-                  if (timeoutid > 0) {
-                    clearTimeout(timeoutid);
-                    timeoutid = 0;
-                  }
-                  r();
-                };
-                document.addEventListener('yt-page-type-changed', playlistClearout, once);
-              }),
-            ])
+            Promise.race(
+              /** @type {any} */ ([
+                new Promise((/** @type {(value?: unknown) => void} */ resolve, _reject) => {
+                  timeoutid = setTimeout(resolve, 4000);
+                }),
+                new Promise((/** @type {(value?: unknown) => void} */ resolve, _reject) => {
+                  playlistClearout = () => {
+                    if (timeoutid !== 0) {
+                      clearTimeout(timeoutid);
+                      timeoutid = 0;
+                    }
+                    resolve();
+                  };
+                  document.addEventListener('yt-page-type-changed', playlistClearout, once);
+                }),
+              ])
+            )
               .then(() => {
                 if (timeoutid !== 0) {
-                  playlistClearout &&
-                    document.removeEventListener('yt-page-type-changed', playlistClearout, once);
+                  if (playlistClearout) {
+                    document.removeEventListener('yt-page-type-changed', playlistClearout);
+                  }
                   timeoutid = 0;
                 }
                 playlistClearout = null;
                 count = N - 1;
-                const object = kRef(wObject);
+                const object = /** @type {any} */ (kRef(wObject));
                 wObject = null;
                 return object ? object.playlistId : null;
               })
@@ -2470,7 +2738,7 @@ const executionScript = () => {
 
     const common = (() => {
       let mediaModeLock = 0;
-      const _getMediaElement = i => {
+      const _getMediaElement = (/** @type {number} */ i) => {
         if (mediaModeLock === 0) {
           const e =
             qs('.video-stream.html5-main-video') ||
@@ -2507,10 +2775,10 @@ const executionScript = () => {
       };
 
       return {
-        xReplaceState(s, u) {
+        xReplaceState(/** @type {any} */ s, /** @type {string} */ u) {
           try {
             history.replaceState(s, '', u);
-          } catch {
+          } catch (e) {
             // in case error occurs if replaceState is replaced by any external script / extension
           }
           if (s.endpoint) {
@@ -2518,20 +2786,21 @@ const executionScript = () => {
               const ytdAppElm = qs('ytd-app');
               const ytdAppCnt = insp(ytdAppElm);
               ytdAppCnt.replaceState(s.endpoint, '', u);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
         },
-        getMediaElement(i) {
+        getMediaElement(/** @type {number} */ i) {
           const s = _getMediaElement(i) || '';
-          if (s) return qs(s);
-          return null;
+          if (!s) return null;
+          const media = qs(s);
+          return media instanceof HTMLMediaElement ? media : null;
         },
-        getMediaElements(i) {
+        getMediaElements(/** @type {number} */ i) {
           const s = _getMediaElement(i) || '';
-          if (s) return qsAll(s);
-          return [];
+          if (!s) return [];
+          return qsAll(s).filter(el => el instanceof HTMLMediaElement);
         },
       };
     })();
@@ -2554,13 +2823,13 @@ const executionScript = () => {
         const params = new URLSearchParams(location.search);
         const v = params.get('v');
         if (v && /^[\w-]{11}$/.test(v)) return v;
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
       return '';
     };
 
-    const fixInlineExpanderDisplay = inlineExpanderCnt => {
+    const fixInlineExpanderDisplay = (/** @type {any} */ inlineExpanderCnt) => {
       try {
         inlineExpanderCnt.updateIsAttributedExpanded();
       } catch (e) {
@@ -2584,7 +2853,7 @@ const executionScript = () => {
       }
     };
 
-    const setExpand = cnt => {
+    const setExpand = (/** @type {any} */ cnt) => {
       if (typeof cnt.set === 'function') {
         cnt.set('isExpanded', true);
         if (typeof cnt.isExpandedChanged === 'function') cnt.isExpandedChanged();
@@ -2594,11 +2863,12 @@ const executionScript = () => {
       }
     };
 
+    /** @type {any} */
     const cloneMethods = {
       updateTextOnSnippetTypeChange() {
         if (this.isResetMutation === false) this.isResetMutation = true;
         if (this.isExpanded === true) this.isExpanded = false;
-        setExpand(this, true);
+        setExpand(this);
         if (this.isResetMutation === false) this.isResetMutation = true;
         try {
           true || (this.isResetMutation && this.mutationCallback());
@@ -2612,7 +2882,7 @@ const executionScript = () => {
       },
       dataChanged() {},
     };
-    const fixInlineExpanderMethods = inlineExpanderCnt => {
+    const fixInlineExpanderMethods = (/** @type {any} */ inlineExpanderCnt) => {
       if (inlineExpanderCnt && !inlineExpanderCnt.__$$idncjk8487$$__) {
         inlineExpanderCnt.__$$idncjk8487$$__ = true;
         inlineExpanderCnt.dataChanged = cloneMethods.dataChanged;
@@ -2647,9 +2917,7 @@ const executionScript = () => {
       //   // holdInlineExpanderAlwaysExpanded(inlineExpanderCnt);
       // }
       // if(inlineExpanderCnt){
-      //   // console.log(21886,4, inlineExpanderCnt.isExpanded, inlineExpanderCnt.isTruncated)
       //   if (inlineExpanderCnt.isExpanded === false && inlineExpanderCnt.isTruncated === true) {
-      //     // console.log(21881)
       //     inlineExpanderCnt.isTruncated = false;
       //   }
       // }
@@ -2692,7 +2960,7 @@ const executionScript = () => {
         /** @type { MutationObserver | null } */
         mo: null,
         promiseReady: new PromiseExternal(),
-        moFn(lockId) {
+        moFn(/** @type {number} */ lockId) {
           if (lockGet['autoExpandInfoDescAttrAsyncLock'] !== lockId) return;
 
           const mainInfo = getMainInfo();
@@ -2705,8 +2973,8 @@ const executionScript = () => {
                 try {
                   insp(mainInfo).handleMoreTap(new Event('tap'));
                   success = true;
-                } catch {
-                  /* empty */
+                } catch (e) {
+                  // Non-critical, suppressed
                 }
                 if (success) mainInfo.setAttribute111('tyt-no-less-btn', '');
               }
@@ -2715,7 +2983,7 @@ const executionScript = () => {
               const inlineExpanderElm = mainInfo.querySelector('ytd-text-inline-expander');
               const inlineExpanderCnt = insp(inlineExpanderElm);
               if (inlineExpanderCnt && inlineExpanderCnt.isExpanded === false) {
-                setExpand(inlineExpanderCnt, true);
+                setExpand(inlineExpanderCnt);
                 // holdInlineExpanderAlwaysExpanded(inlineExpanderCnt);
               }
               break;
@@ -2736,8 +3004,9 @@ const executionScript = () => {
           this.activated = true;
           this.promiseReady.resolve();
         },
-        async onMainInfoSet(mainInfo) {
+        async onMainInfoSet(/** @type {any} */ mainInfo) {
           await this.promiseReady.then();
+          if (!this.mo) return;
           if (mainInfo.nodeName.toLowerCase() === 'ytd-expander') {
             this.mo.observe(mainInfo, {
               attributes: true,
@@ -2758,22 +3027,24 @@ const executionScript = () => {
         ro: null,
         promiseReady: new PromiseExternal(),
         checkResize: 0,
-        mouseEnterFn(evt) {
+        mouseEnterFn(/** @type {Event} */ evt) {
           const target = evt ? evt.target : null;
           if (!(target instanceof HTMLElement_)) return;
           const metaDataElm = target.closest('ytd-watch-metadata');
+          if (!metaDataElm) return;
           metaDataElm.classList.remove('tyt-metadata-hover-resized');
           this.checkResize = Date.now() + 300;
           metaDataElm.classList.add('tyt-metadata-hover');
         },
-        mouseLeaveFn(evt) {
+        mouseLeaveFn(/** @type {Event} */ evt) {
           const target = evt ? evt.target : null;
           if (!(target instanceof HTMLElement_)) return;
           const metaDataElm = target.closest('ytd-watch-metadata');
+          if (!metaDataElm) return;
           metaDataElm.classList.remove('tyt-metadata-hover-resized');
           metaDataElm.classList.remove('tyt-metadata-hover');
         },
-        moFn(lockId) {
+        moFn(/** @type {number} */ lockId) {
           if (lockGet['fullChannelNameOnHoverAttrAsyncLock'] !== lockId) return;
 
           const uploadInfo = qs('#primary.ytd-watch-flexy ytd-watch-metadata #upload-info');
@@ -2789,7 +3060,7 @@ const executionScript = () => {
         async onNavigateFinish() {
           await this.promiseReady.then();
           const uploadInfo = qs('#primary.ytd-watch-flexy ytd-watch-metadata #upload-info');
-          if (!uploadInfo) return;
+          if (!uploadInfo || !this.mo || !this.ro) return;
           this.mo.observe(uploadInfo, {
             attributes: true,
             attributeFilter: ['hidden', 'attr-3wb0k'],
@@ -2820,13 +3091,13 @@ const executionScript = () => {
           if (YouTubeUtils?.cleanupManager?.registerObserver) {
             YouTubeUtils.cleanupManager.registerObserver(this.mo);
           }
-          this.ro = new ResizeObserver(mutations => {
+          this.ro = new ResizeObserver((/** @type {ResizeObserverEntry[]} */ mutations) => {
             if (Date.now() > this.checkResize) return;
             for (const mutation of mutations) {
               const uploadInfo = mutation.target;
               if (uploadInfo && mutation.contentRect.width > 0 && mutation.contentRect.height > 0) {
                 const metaDataElm = uploadInfo.closest('ytd-watch-metadata');
-                if (metaDataElm.classList.contains('tyt-metadata-hover')) {
+                if (metaDataElm && metaDataElm.classList.contains('tyt-metadata-hover')) {
                   metaDataElm.classList.add('tyt-metadata-hover-resized');
                 }
 
@@ -2854,13 +3125,18 @@ const executionScript = () => {
     // let shouldFixInfo = false;
     const __attachedSymbol__ = Symbol();
 
-    const makeInitAttached = tag => {
+    const makeInitAttached = (/** @type {string} */ tag) => {
       const inPageRearrange_ = inPageRearrange;
       inPageRearrange = false;
       for (const elm of qsAll(`${tag}`)) {
         const cnt = insp(elm) || 0;
-        if (typeof cnt.attached498 === 'function' && !elm[__attachedSymbol__]) {
-          Promise.resolve(elm).then(eventMap[`${tag}::attached`]).catch(console.warn);
+        if (
+          typeof cnt.attached498 === 'function' &&
+          !(/** @type {any} */ (elm)[__attachedSymbol__])
+        ) {
+          Promise.resolve(elm)
+            .then(/** @type {any} */ (eventMap)[`${tag}::attached`])
+            .catch(console.warn);
         }
       }
       inPageRearrange = inPageRearrange_;
@@ -2879,23 +3155,27 @@ const executionScript = () => {
     };
 
     const nsTemplateObtain = () => {
+      /** @type {any} */
       let nsTemplate = qs('ytd-watch-flexy noscript[ns-template]');
       if (!nsTemplate) {
         nsTemplate = document.createElement('noscript');
         nsTemplate.setAttribute('ns-template', '');
-        qs('ytd-watch-flexy').appendChild(nsTemplate);
+        const flexyHost = qs('ytd-watch-flexy');
+        if (flexyHost) {
+          flexyHost.appendChild(nsTemplate);
+        }
       }
       return nsTemplate;
     };
 
-    const isPageDOM = (elm, selector) => {
+    const isPageDOM = (/** @type {any} */ elm, /** @type {string} */ selector) => {
       if (!elm || !(elm instanceof Element) || !elm.nodeName) return false;
       if (!elm.closest(selector)) return false;
       if (elm.isConnected !== true) return false;
       return true;
     };
 
-    const invalidFlexyParent = hostElement => {
+    const invalidFlexyParent = (/** @type {any} */ hostElement) => {
       if (hostElement instanceof HTMLElement) {
         const hasFlexyParent = HTMLElement.prototype.closest.call(hostElement, 'ytd-watch-flexy'); // eg short
         if (!hasFlexyParent) return true;
@@ -2913,9 +3193,12 @@ const executionScript = () => {
     // });
     // mutationPromiseObs.observe(mutationComment, {characterData: true});
 
+    /** @type {MutationObserver | null} */
     let headerMutationObserver = null;
+    /** @type {Element | null} */
     let headerMutationTmpNode = null;
 
+    /** @type {any} */
     const eventMap = {
       ceHack: () => {
         mLoaded.flag |= 2;
@@ -2949,7 +3232,7 @@ const executionScript = () => {
           .catch(console.warn);
       },
 
-      fixForTabDisplay: isResize => {
+      fixForTabDisplay: (/** @type {any} */ isResize) => {
         // isResize is true if the layout is resized (not due to tab switching)
         // youtube components shall handle the resize issue. can skip some checkings.
 
@@ -2961,8 +3244,8 @@ const executionScript = () => {
             if (element instanceof HTMLElement_ && typeof cnt.calculateCanCollapse === 'function') {
               try {
                 cnt.calculateCanCollapse(true);
-              } catch {
-                /* empty */
+              } catch (e) {
+                // Non-critical, suppressed
               }
             }
           }
@@ -2985,8 +3268,8 @@ const executionScript = () => {
               if (element instanceof HTMLElement_ && typeof cnt.notifyResize === 'function') {
                 try {
                   cnt.notifyResize();
-                } catch {
-                  /* empty */
+                } catch (e) {
+                  // Non-critical, suppressed
                 }
               }
             }
@@ -3011,8 +3294,8 @@ const executionScript = () => {
               if (typeof cnt.notifyResize === 'function') {
                 try {
                   cnt.notifyResize();
-                } catch {
-                  /* empty */
+                } catch (e) {
+                  // Non-critical, suppressed
                 }
               }
             }
@@ -3020,7 +3303,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-watch-flexy::defined': cProto => {
+      'ytd-watch-flexy::defined': (/** @type {any} */ cProto) => {
         if (
           !cProto.updateChatLocation498 &&
           typeof cProto.updateChatLocation === 'function' &&
@@ -3036,7 +3319,11 @@ const executionScript = () => {
           cProto.isTwoColumnsChanged_.length === 2
         ) {
           cProto.isTwoColumnsChanged498_ = cProto.isTwoColumnsChanged_;
-          cProto.isTwoColumnsChanged_ = function (arg1, arg2, ...args) {
+          cProto.isTwoColumnsChanged_ = function (
+            /** @type {unknown} */ arg1,
+            /** @type {unknown} */ arg2,
+            /** @type {unknown[]} */ ...args
+          ) {
             const r = secondaryInnerFn(() => {
               const r = this.isTwoColumnsChanged498_(arg1, arg2, ...args);
               return r;
@@ -3051,7 +3338,7 @@ const executionScript = () => {
           cProto.defaultTwoColumnLayoutChanged.length === 0
         ) {
           cProto.defaultTwoColumnLayoutChanged498 = cProto.defaultTwoColumnLayoutChanged;
-          cProto.defaultTwoColumnLayoutChanged = function (...args) {
+          cProto.defaultTwoColumnLayoutChanged = function (/** @type {unknown[]} */ ...args) {
             const r = secondaryInnerFn(() => {
               const r = this.defaultTwoColumnLayoutChanged498(...args);
               return r;
@@ -3066,7 +3353,7 @@ const executionScript = () => {
           cProto.updatePlayerLocation.length === 0
         ) {
           cProto.updatePlayerLocation498 = cProto.updatePlayerLocation;
-          cProto.updatePlayerLocation = function (...args) {
+          cProto.updatePlayerLocation = function (/** @type {unknown[]} */ ...args) {
             const r = secondaryInnerFn(() => {
               const r = this.updatePlayerLocation498(...args);
               return r;
@@ -3081,7 +3368,7 @@ const executionScript = () => {
           cProto.updateCinematicsLocation.length === 0
         ) {
           cProto.updateCinematicsLocation498 = cProto.updateCinematicsLocation;
-          cProto.updateCinematicsLocation = function (...args) {
+          cProto.updateCinematicsLocation = function (/** @type {unknown[]} */ ...args) {
             const r = secondaryInnerFn(() => {
               const r = this.updateCinematicsLocation498(...args);
               return r;
@@ -3096,7 +3383,7 @@ const executionScript = () => {
           cProto.updatePanelsLocation.length === 0
         ) {
           cProto.updatePanelsLocation498 = cProto.updatePanelsLocation;
-          cProto.updatePanelsLocation = function (...args) {
+          cProto.updatePanelsLocation = function (/** @type {unknown[]} */ ...args) {
             const r = secondaryInnerFn(() => {
               const r = this.updatePanelsLocation498(...args);
               return r;
@@ -3111,13 +3398,13 @@ const executionScript = () => {
         ) {
           cProto.swatcherooUpdatePanelsLocation498 = cProto.swatcherooUpdatePanelsLocation;
           cProto.swatcherooUpdatePanelsLocation = function (
-            arg1,
-            arg2,
-            arg3,
-            arg4,
-            arg5,
-            arg6,
-            ...args
+            /** @type {unknown} */ arg1,
+            /** @type {unknown} */ arg2,
+            /** @type {unknown} */ arg3,
+            /** @type {unknown} */ arg4,
+            /** @type {unknown} */ arg5,
+            /** @type {unknown} */ arg6,
+            /** @type {unknown[]} */ ...args
           ) {
             const r = secondaryInnerFn(() => {
               const r = this.swatcherooUpdatePanelsLocation498(
@@ -3141,7 +3428,7 @@ const executionScript = () => {
           cProto.updateErrorScreenLocation.length === 0
         ) {
           cProto.updateErrorScreenLocation498 = cProto.updateErrorScreenLocation;
-          cProto.updateErrorScreenLocation = function (...args) {
+          cProto.updateErrorScreenLocation = function (/** @type {unknown[]} */ ...args) {
             const r = secondaryInnerFn(() => {
               const r = this.updateErrorScreenLocation498(...args);
               return r;
@@ -3156,7 +3443,7 @@ const executionScript = () => {
           cProto.updateFullBleedElementLocations.length === 0
         ) {
           cProto.updateFullBleedElementLocations498 = cProto.updateFullBleedElementLocations;
-          cProto.updateFullBleedElementLocations = function (...args) {
+          cProto.updateFullBleedElementLocations = function (/** @type {unknown[]} */ ...args) {
             const r = secondaryInnerFn(() => {
               const r = this.updateFullBleedElementLocations498(...args);
               return r;
@@ -3166,39 +3453,45 @@ const executionScript = () => {
         }
       },
 
-      'ytd-watch-next-secondary-results-renderer::defined': cProto => {
+      'ytd-watch-next-secondary-results-renderer::defined': (
+        /** @type {Record<string, unknown>} */ cProto
+      ) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
+            const self = /** @type {any} */ (this);
             if (!inPageRearrange) {
-              Promise.resolve(this.hostElement)
+              Promise.resolve(self.hostElement)
                 .then(eventMap['ytd-watch-next-secondary-results-renderer::attached'])
                 .catch(console.warn);
             }
-            return this.attached498();
+            return self.attached498();
           };
         }
         if (!cProto.detached498 && typeof cProto.detached === 'function') {
           cProto.detached498 = cProto.detached;
           cProto.detached = function () {
+            const self = /** @type {any} */ (this);
             if (!inPageRearrange) {
-              Promise.resolve(this.hostElement)
+              Promise.resolve(self.hostElement)
                 .then(eventMap['ytd-watch-next-secondary-results-renderer::detached'])
                 .catch(console.warn);
             }
-            return this.detached498();
+            return self.detached498();
           };
         }
 
         makeInitAttached('ytd-watch-next-secondary-results-renderer');
       },
 
-      'ytd-watch-next-secondary-results-renderer::attached': hostElement => {
+      'ytd-watch-next-secondary-results-renderer::attached': (
+        /** @type {Element} */ hostElement
+      ) => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
         DEBUG_5084 && console.warn(5084, 'ytd-watch-next-secondary-results-renderer::attached');
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -3221,7 +3514,9 @@ const executionScript = () => {
         }
       },
 
-      'ytd-watch-next-secondary-results-renderer::detached': hostElement => {
+      'ytd-watch-next-secondary-results-renderer::detached': (
+        /** @type {Element} */ hostElement
+      ) => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.warn(5084, 'ytd-watch-next-secondary-results-renderer::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
@@ -3236,7 +3531,7 @@ const executionScript = () => {
           console.warn('ytd-watch-next-secondary-results-renderer::detached', hostElement);
       },
 
-      settingCommentsVideoId: hostElement => {
+      settingCommentsVideoId: (/** @type {any} */ hostElement) => {
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -3263,7 +3558,7 @@ const executionScript = () => {
           hostElement.removeAttribute000('tyt-comments-video-id');
         }
       },
-      checkCommentsShouldBeHidden: lockId => {
+      checkCommentsShouldBeHidden: (/** @type {number} */ lockId) => {
         if (lockGet['checkCommentsShouldBeHiddenLock'] !== lockId) return;
 
         // commentsArea's attribute: tyt-comments-video-id
@@ -3282,7 +3577,7 @@ const executionScript = () => {
           }
         }
       },
-      'ytd-comments::defined': cProto => {
+      'ytd-comments::defined': (/** @type {any} */ cProto) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
@@ -3326,7 +3621,7 @@ const executionScript = () => {
         makeInitAttached('ytd-comments');
       },
 
-      'ytd-comments::_dataChanged498': hostElement => {
+      'ytd-comments::_dataChanged498': (/** @type {any} */ hostElement) => {
         if (!hostElement.hasAttribute000('tyt-comments-area')) return;
         let commentsDataStatus = 0;
         const cnt = insp(hostElement);
@@ -3350,12 +3645,12 @@ const executionScript = () => {
         Promise.resolve(hostElement).then(eventMap['settingCommentsVideoId']).catch(console.warn);
       },
 
-      'ytd-comments::attached': async hostElement => {
+      'ytd-comments::attached': async (/** @type {any} */ hostElement) => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
         DEBUG_5084 && console.warn(5084, 'ytd-comments::attached');
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -3379,21 +3674,23 @@ const executionScript = () => {
         if (lockGet['rightTabReadyLock02'] !== lockId) return;
 
         if (elements.comments !== hostElement) return;
-        if (hostElement.isConnected === false) return;
+        if (!isTabviewEnabled()) return;
         DEBUG_5085 && console.warn(7932, 'comments');
 
         // if(!elements.comments || elements.comments.isConnected === false) return;
         if (hostElement && !hostElement.closest('#right-tabs')) {
-          qs('#tab-comments').assignChildren111(null, hostElement, null);
+          const tabComments = qs('#tab-comments');
+          moveNodeToTabview('comments', hostElement, tabComments);
         } else {
           const shouldTabVisible =
             elements.comments &&
             elements.comments.closest('#tab-comments') &&
             !elements.comments.closest('[hidden]');
 
-          document
-            .querySelector('[tyt-tab-content="#tab-comments"]')
-            .classList.toggle('tab-btn-hidden', !shouldTabVisible);
+          const tabCommentsButton = document.querySelector('[tyt-tab-content="#tab-comments"]');
+          if (tabCommentsButton) {
+            tabCommentsButton.classList.toggle('tab-btn-hidden', !shouldTabVisible);
+          }
 
           //   document.querySelector('#tab-comments').classList.remove('tab-content-hidden')
           //   document.querySelector('[tyt-tab-content="#tab-comments"]').classList.remove('tab-btn-hidden')
@@ -3405,7 +3702,7 @@ const executionScript = () => {
 
         TAB_AUTO_SWITCH_TO_COMMENTS && switchToTab('#tab-comments');
       },
-      'ytd-comments::detached': hostElement => {
+      'ytd-comments::detached': (/** @type {any} */ hostElement) => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.warn(5084, 'ytd-comments::detached');
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
@@ -3424,9 +3721,10 @@ const executionScript = () => {
           aoComment.takeRecords();
           elements.comments = null;
 
-          document
-            .querySelector('[tyt-tab-content="#tab-comments"]')
-            .classList.add('tab-btn-hidden');
+          const tabCommentsButton = document.querySelector('[tyt-tab-content="#tab-comments"]');
+          if (tabCommentsButton) {
+            tabCommentsButton.classList.add('tab-btn-hidden');
+          }
 
           Promise.resolve(lockSet['removeKeepCommentsScrollerLock'])
             .then(removeKeepCommentsScroller)
@@ -3434,7 +3732,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-comments-header-renderer::defined': cProto => {
+      'ytd-comments-header-renderer::defined': (/** @type {any} */ cProto) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
@@ -3474,12 +3772,12 @@ const executionScript = () => {
         makeInitAttached('ytd-comments-header-renderer');
       },
 
-      'ytd-comments-header-renderer::attached': hostElement => {
+      'ytd-comments-header-renderer::attached': (/** @type {any} */ hostElement) => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
         DEBUG_5084 && console.warn(5084, 'ytd-comments-header-renderer::attached');
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -3505,7 +3803,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-comments-header-renderer::detached': hostElement => {
+      'ytd-comments-header-renderer::detached': (/** @type {any} */ hostElement) => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.warn(5084, 'ytd-comments-header-renderer::detached');
 
@@ -3526,7 +3824,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-comments-header-renderer::dataChanged': hostElement => {
+      'ytd-comments-header-renderer::dataChanged': (/** @type {any} */ hostElement) => {
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -3569,10 +3867,12 @@ const executionScript = () => {
               YouTubeUtils.cleanupManager.registerObserver(headerMutationObserver);
             }
           }
-          headerMutationObserver.observe(hostElement.parentNode, {
-            subtree: false,
-            childList: true,
-          });
+          if (hostElement.parentNode) {
+            headerMutationObserver.observe(hostElement.parentNode, {
+              subtree: false,
+              childList: true,
+            });
+          }
           if (!headerMutationTmpNode) {
             headerMutationTmpNode = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
           }
@@ -3597,24 +3897,24 @@ const executionScript = () => {
           ) {
             let max = -1;
             const z = data.commentsCount.runs
-              .map(e => {
+              .map((/** @type {any} */ e) => {
                 const c = e.text.replace(/\D+/g, '').length;
                 if (c > max) max = c;
                 return [e.text, c];
               })
-              .filter(a => a[1] === max);
+              .filter((/** @type {[string, number]} */ a) => a[1] === max);
             if (z.length >= 1) {
               ez = z[0][0];
             }
           } else if (data.countText && data.countText.runs && data.countText.runs.length >= 1) {
             let max = -1;
             const z = data.countText.runs
-              .map(e => {
+              .map((/** @type {any} */ e) => {
                 const c = e.text.replace(/\D+/g, '').length;
                 if (c > max) max = c;
                 return [e.text, c];
               })
-              .filter(a => a[1] === max);
+              .filter((/** @type {[string, number]} */ a) => a[1] === max);
             if (z.length >= 1) {
               ez = z[0][0];
             }
@@ -3631,7 +3931,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-expander::defined': cProto => {
+      'ytd-expander::defined': (/** @type {any} */ cProto) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
@@ -3683,9 +3983,9 @@ const executionScript = () => {
         makeInitAttached('ytd-expander');
       },
 
-      'ytd-expander::childrenChanged': hostElement => {
+      'ytd-expander::childrenChanged': (/** @type {any} */ hostElement) => {
         if (
-          hostElement instanceof Node &&
+          hostElement instanceof Element &&
           hostElement.hasAttribute000('hidden') &&
           hostElement.hasAttribute000('tyt-main-info') &&
           hostElement.firstElementChild
@@ -3694,7 +3994,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-expandable-video-description-body-renderer::defined': cProto => {
+      'ytd-expandable-video-description-body-renderer::defined': (/** @type {any} */ cProto) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
@@ -3721,7 +4021,9 @@ const executionScript = () => {
         makeInitAttached('ytd-expandable-video-description-body-renderer');
       },
 
-      'ytd-expandable-video-description-body-renderer::attached': async hostElement => {
+      'ytd-expandable-video-description-body-renderer::attached': async (
+        /** @type {any} */ hostElement
+      ) => {
         if (
           hostElement instanceof HTMLElement_ &&
           isPageDOM(hostElement, '[tyt-info-renderer]') &&
@@ -3769,7 +4071,8 @@ const executionScript = () => {
               YouTubeUtils.cleanupManager.registerObserver(mo);
             }
             mo.observe(inlineExpanderElm, {
-              attributes: ['is-expanded', 'attr-6v8qu', 'hidden'],
+              attributes: true,
+              attributeFilter: ['is-expanded', 'attr-6v8qu', 'hidden'],
               subtree: true,
             }); // hidden + subtree to trigger the fn by delayedUpdate
             inlineExpanderElm.incAttribute111('attr-6v8qu');
@@ -3782,12 +4085,11 @@ const executionScript = () => {
             const tabInfoElm = qs('#tab-info');
             if (tabInfoElm) tabInfoElm.assignChildren111(null, infoExpander, null);
           } else {
-            if (qs('[tyt-tab-content="#tab-info"]')) {
+            const tabInfoButton = document.querySelector('[tyt-tab-content="#tab-info"]');
+            if (tabInfoButton) {
               const shouldTabVisible =
                 elements.infoExpander && elements.infoExpander.closest('#tab-info');
-              document
-                .querySelector('[tyt-tab-content="#tab-info"]')
-                .classList.toggle('tab-btn-hidden', !shouldTabVisible);
+              tabInfoButton.classList.toggle('tab-btn-hidden', !shouldTabVisible);
             }
           }
 
@@ -3802,7 +4104,7 @@ const executionScript = () => {
 
         DEBUG_5084 &&
           console.warn(5084, 'ytd-expandable-video-description-body-renderer::attached');
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -3819,6 +4121,7 @@ const executionScript = () => {
           // }
         } else if (!hostElement.closest('#tab-info')) {
           const bodyRenderer = hostElement;
+          /** @type {any} */
           let bodyRendererNew = qs(
             'ytd-expandable-video-description-body-renderer[tyt-info-renderer]'
           );
@@ -3827,7 +4130,8 @@ const executionScript = () => {
               'ytd-expandable-video-description-body-renderer'
             );
             bodyRendererNew.setAttribute('tyt-info-renderer', '');
-            nsTemplateObtain().appendChild(bodyRendererNew);
+            const nsTemplate = nsTemplateObtain();
+            if (nsTemplate) nsTemplate.appendChild(bodyRendererNew);
           }
           // document.querySelector('#tab-info').assignChildren111(null, bodyRendererNew, null);
 
@@ -3854,7 +4158,9 @@ const executionScript = () => {
         }
       },
 
-      'ytd-expandable-video-description-body-renderer::detached': async hostElement => {
+      'ytd-expandable-video-description-body-renderer::detached': async (
+        /** @type {any} */ hostElement
+      ) => {
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
@@ -3867,11 +4173,11 @@ const executionScript = () => {
         }
       },
 
-      'ytd-expander::attached': async hostElement => {
+      'ytd-expander::attached': async (/** @type {any} */ hostElement) => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -3889,7 +4195,7 @@ const executionScript = () => {
           !hostElement.matches('[hidden] ytd-expander#expander')
         ) {
           hostElement.setAttribute111('tyt-content-comment-entry', '');
-          ioComment.observe(hostElement);
+          ioComment.observe(/** @type {any} */ (hostElement));
         }
 
         // --------------
@@ -3924,14 +4230,14 @@ const executionScript = () => {
         // --------------
       },
 
-      'ytd-expander::detached': hostElement => {
+      'ytd-expander::detached': (/** @type {any} */ hostElement) => {
         // if (inPageRearrange) return;
         if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
         if (hostElement.isConnected !== false) return;
         // if (hostElement.__connectedFlg__ !== 8) return;
         // hostElement.__connectedFlg__ = 9;
         if (hostElement.hasAttribute000('tyt-content-comment-entry')) {
-          ioComment.unobserve(hostElement);
+          ioComment.unobserve(/** @type {any} */ (hostElement));
           hostElement.removeAttribute000('tyt-content-comment-entry');
         } else if (hostElement.hasAttribute000('tyt-main-info')) {
           DEBUG_5084 && console.warn(5084, 'ytd-expander::detached');
@@ -3940,7 +4246,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-live-chat-frame::defined': cProto => {
+      'ytd-live-chat-frame::defined': (/** @type {any} */ cProto) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
@@ -3972,6 +4278,7 @@ const executionScript = () => {
         ) {
           cProto.urlChanged66 = cProto.urlChanged;
           let ath = 0;
+          /** @this {any} */
           cProto.urlChangedAsync12 = async function () {
             await this.__urlChangedAsyncT689__;
             const t = (ath = (ath & 1073741823) + 1);
@@ -3995,13 +4302,14 @@ const executionScript = () => {
                       break;
                     }
                   }
-                }).observe(chatframe);
+                }).observe(/** @type {any} */ (chatframe));
               }).catch(console.warn);
               await Promise.race([p1, p2]);
               if (t !== ath) return;
             }
             this.urlChanged66();
           };
+          /** @this {any} */
           cProto.urlChanged = function () {
             const t = (this.__urlChangedAsyncT688__ =
               (this.__urlChangedAsyncT688__ & 1073741823) + 1);
@@ -4015,12 +4323,12 @@ const executionScript = () => {
         makeInitAttached('ytd-live-chat-frame');
       },
 
-      'ytd-live-chat-frame::attached': async hostElement => {
+      'ytd-live-chat-frame::attached': async (/** @type {any} */ hostElement) => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
         DEBUG_5084 && console.warn(5084, 'ytd-live-chat-frame::attached');
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -4068,7 +4376,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-live-chat-frame::detached': hostElement => {
+      'ytd-live-chat-frame::detached': (/** @type {any} */ hostElement) => {
         // if (inPageRearrange) return;
         DEBUG_5084 && console.warn(5084, 'ytd-live-chat-frame::detached');
 
@@ -4090,7 +4398,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::defined': cProto => {
+      'ytd-engagement-panel-section-list-renderer::defined': (/** @type {any} */ cProto) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
@@ -4116,7 +4424,9 @@ const executionScript = () => {
         makeInitAttached('ytd-engagement-panel-section-list-renderer');
       },
 
-      'ytd-engagement-panel-section-list-renderer::bindTarget': hostElement => {
+      'ytd-engagement-panel-section-list-renderer::bindTarget': (
+        /** @type {any} */ hostElement
+      ) => {
         if (
           hostElement.matches(
             '#panels.ytd-watch-flexy > ytd-engagement-panel-section-list-renderer[target-id][visibility]'
@@ -4132,13 +4442,13 @@ const executionScript = () => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::attached': hostElement => {
+      'ytd-engagement-panel-section-list-renderer::attached': (/** @type {any} */ hostElement) => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.warn(5084, 'ytd-engagement-panel-section-list-renderer::attached');
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -4171,7 +4481,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-engagement-panel-section-list-renderer::detached': hostElement => {
+      'ytd-engagement-panel-section-list-renderer::detached': (/** @type {any} */ hostElement) => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.warn(5084, 'ytd-engagement-panel-section-list-renderer::detached');
@@ -4188,7 +4498,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-watch-metadata::defined': cProto => {
+      'ytd-watch-metadata::defined': (/** @type {any} */ cProto) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
@@ -4215,13 +4525,13 @@ const executionScript = () => {
         makeInitAttached('ytd-watch-metadata');
       },
 
-      'ytd-watch-metadata::attached': hostElement => {
+      'ytd-watch-metadata::attached': (/** @type {any} */ hostElement) => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.warn(5084, 'ytd-watch-metadata::attached');
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -4238,7 +4548,7 @@ const executionScript = () => {
         }
       },
 
-      'ytd-watch-metadata::detached': hostElement => {
+      'ytd-watch-metadata::detached': (/** @type {any} */ hostElement) => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.warn(5084, 'ytd-watch-metadata::detached');
@@ -4248,7 +4558,7 @@ const executionScript = () => {
         // hostElement.__connectedFlg__ = 9;
       },
 
-      'ytd-playlist-panel-renderer::defined': cProto => {
+      'ytd-playlist-panel-renderer::defined': (/** @type {any} */ cProto) => {
         if (!cProto.attached498 && typeof cProto.attached === 'function') {
           cProto.attached498 = cProto.attached;
           cProto.attached = function () {
@@ -4275,13 +4585,13 @@ const executionScript = () => {
         makeInitAttached('ytd-playlist-panel-renderer');
       },
 
-      'ytd-playlist-panel-renderer::attached': hostElement => {
+      'ytd-playlist-panel-renderer::attached': (/** @type {any} */ hostElement) => {
         if (invalidFlexyParent(hostElement)) return;
 
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.warn(5084, 'ytd-playlist-panel-renderer::attached');
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
+        if (hostElement instanceof Element) Reflect.set(hostElement, __attachedSymbol__, true);
         if (
           !(hostElement instanceof HTMLElement_) ||
           !(hostElement.classList.length > 0) ||
@@ -4302,7 +4612,7 @@ const executionScript = () => {
         hostElement.incAttribute111('attr-1y6nu');
       },
 
-      'ytd-playlist-panel-renderer::detached': hostElement => {
+      'ytd-playlist-panel-renderer::detached': (/** @type {any} */ hostElement) => {
         // if (inPageRearrange) return;
 
         DEBUG_5084 && console.warn(5084, 'ytd-playlist-panel-renderer::detached');
@@ -4316,7 +4626,7 @@ const executionScript = () => {
         mLoaded.flag |= 4;
         document.documentElement.setAttribute111('tabview-loaded', mLoaded.makeString());
       },
-      relatedElementProvided: target => {
+      relatedElementProvided: (/** @type {any} */ target) => {
         if (target.closest('[hidden]')) return;
         elements.related = target;
         videosElementProvidedPromise.resolve();
@@ -4328,8 +4638,9 @@ const executionScript = () => {
         }
       },
 
-      refreshSecondaryInner: lockId => {
+      refreshSecondaryInner: (/** @type {number} */ lockId) => {
         if (lockGet['refreshSecondaryInnerLock'] !== lockId) return;
+        if (!isTabviewEnabled()) return;
         /*
    
         ytd-watch-flexy:not([panels-beside-player]):not([fixed-panels]) #panels-full-bleed-container.ytd-watch-flexy{
@@ -4359,7 +4670,8 @@ const executionScript = () => {
 
         const related = elements.related;
         if (related && related.isConnected && !related.closest('#right-tabs #tab-videos')) {
-          qs('#tab-videos').assignChildren111(null, related, null);
+          const tabVideos = qs('#tab-videos');
+          moveNodeToTabview('related', related, tabVideos);
         }
         const infoExpander = elements.infoExpander;
         if (
@@ -4367,7 +4679,8 @@ const executionScript = () => {
           infoExpander.isConnected &&
           !infoExpander.closest('#right-tabs #tab-info')
         ) {
-          qs('#tab-info').assignChildren111(null, infoExpander, null);
+          const tabInfo = qs('#tab-info');
+          moveNodeToTabview('info', infoExpander, tabInfo);
         } else {
           // if (infoExpander && ytdFlexyElm && shouldFixInfo) {
           //   shouldFixInfo = false;
@@ -4380,14 +4693,14 @@ const executionScript = () => {
           const isConnected = commentsArea.isConnected;
           if (isConnected && !commentsArea.closest('#right-tabs #tab-comments')) {
             const tab = qs('#tab-comments');
-            tab.assignChildren111(null, commentsArea, null);
+            moveNodeToTabview('comments', commentsArea, tab);
           } else {
             // if (!isConnected || tab.classList.contains('tab-content-hidden')) removeKeepCommentsScroller();
           }
         }
       },
 
-      'yt-navigate-finish': _evt => {
+      'yt-navigate-finish': (/** @type {Event} */ _evt) => {
         // Performance: the global document-subtree observer is expensive on home/feed/playlist.
         // Toggle it based on whether the watch player is present.
         if (typeof shouldActivateMoOverall === 'function') {
@@ -4443,6 +4756,7 @@ const executionScript = () => {
         const related = elements.related;
         let rightTabs = qs('#right-tabs');
         if (!qs('#right-tabs') && related) {
+          if (!isTabviewEnabled()) return;
           getLangForPage();
           const docTmp = document.createElement('template');
           docTmp.innerHTML = createHTML(getTabsHTML());
@@ -4453,9 +4767,12 @@ const executionScript = () => {
             inPageRearrange = false;
           }
           rightTabs = newElm;
-          rightTabs
-            .querySelector('[tyt-tab-content="#tab-comments"]')
-            .classList.add('tab-btn-hidden');
+          const tabCommentsBtn = rightTabs
+            ? rightTabs.querySelector('[tyt-tab-content="#tab-comments"]')
+            : null;
+          if (tabCommentsBtn) {
+            tabCommentsBtn.classList.add('tab-btn-hidden');
+          }
 
           const secondaryWrapper = document.createElement('secondary-wrapper');
           secondaryWrapper.classList.add('tabview-secondary-wrapper');
@@ -4468,40 +4785,44 @@ const executionScript = () => {
           secondaryInner.insertBefore000(secondaryWrapper, secondaryInner.firstChild);
           inPageRearrange = false;
 
-          rightTabs
-            .querySelector('#material-tabs')
-            .addEventListener('click', eventMap['tabs-btn-click'], true);
+          const materialTabs = rightTabs ? rightTabs.querySelector('#material-tabs') : null;
+          if (materialTabs) {
+            materialTabs.addEventListener('click', eventMap['tabs-btn-click'], true);
+          }
 
           // Arrow key navigation for tabs (accessibility)
-          rightTabs.querySelector('#material-tabs').addEventListener('keydown', e => {
-            if (
-              e.key !== 'ArrowLeft' &&
-              e.key !== 'ArrowRight' &&
-              e.key !== 'Home' &&
-              e.key !== 'End'
-            ) {
-              return;
-            }
-            const tabs = Array.from(
-              rightTabs.querySelectorAll(
-                '#material-tabs a.tab-btn[tyt-tab-content]:not(.tab-btn-hidden)'
-              )
-            );
-            if (tabs.length === 0) return;
-            const idx = tabs.indexOf(/** @type {HTMLAnchorElement} */ (document.activeElement));
-            if (idx < 0) return;
-            e.preventDefault();
-            let next;
-            if (e.key === 'ArrowRight') next = tabs[(idx + 1) % tabs.length];
-            else if (e.key === 'ArrowLeft') next = tabs[(idx - 1 + tabs.length) % tabs.length];
-            else if (e.key === 'Home') next = tabs[0];
-            else next = tabs[tabs.length - 1];
-            /** @type {HTMLElement} */ (next).focus();
-            /** @type {HTMLElement} */ (next).click();
-          });
+          const tabsRoot = rightTabs;
+          if (materialTabs && tabsRoot) {
+            materialTabs.addEventListener('keydown', e => {
+              const key = /** @type {KeyboardEvent} */ (e).key;
+              if (key !== 'ArrowLeft' && key !== 'ArrowRight' && key !== 'Home' && key !== 'End') {
+                return;
+              }
+              const tabs = /** @type {HTMLElement[]} */ (
+                Array.from(
+                  tabsRoot.querySelectorAll(
+                    '#material-tabs a.tab-btn[tyt-tab-content]:not(.tab-btn-hidden)'
+                  )
+                )
+              );
+              if (tabs.length === 0) return;
+              const idx = tabs.indexOf(/** @type {HTMLElement} */ (document.activeElement));
+              if (idx < 0) return;
+              e.preventDefault();
+              let next;
+              if (key === 'ArrowRight') next = tabs[(idx + 1) % tabs.length];
+              else if (key === 'ArrowLeft') next = tabs[(idx - 1 + tabs.length) % tabs.length];
+              else if (key === 'Home') next = tabs[0];
+              else next = tabs[tabs.length - 1];
+              /** @type {HTMLElement} */ (next).focus();
+              /** @type {HTMLElement} */ (next).click();
+            });
+          }
 
           inPageRearrange = true;
-          if (!rightTabs.closest('secondary-wrapper')) secondaryWrapper.appendChild000(rightTabs);
+          if (rightTabs && !rightTabs.closest('secondary-wrapper')) {
+            secondaryWrapper.appendChild000(rightTabs);
+          }
           inPageRearrange = false;
         }
         if (rightTabs) {
@@ -4510,7 +4831,7 @@ const executionScript = () => {
             entries => {
               for (const entry of entries) {
                 const rect = entry.boundingClientRect;
-                entry.target.classList.toggle('tab-btn-visible', rect.width && rect.height);
+                entry.target.classList.toggle('tab-btn-visible', !!(rect.width && rect.height));
               }
             },
             { rootMargin: '0px' }
@@ -4518,16 +4839,19 @@ const executionScript = () => {
           for (const btn of qsAll('.tab-btn[tyt-tab-content]')) {
             ioTabBtns.observe(btn);
           }
-          if (!related.closest('#right-tabs')) {
-            qs('#tab-videos').assignChildren111(null, related, null);
+          if (related && !related.closest('#right-tabs')) {
+            const tabVideos = qs('#tab-videos');
+            moveNodeToTabview('related', related, tabVideos);
           }
           const infoExpander = elements.infoExpander;
           if (infoExpander && !infoExpander.closest('#right-tabs')) {
-            qs('#tab-info').assignChildren111(null, infoExpander, null);
+            const tabInfo = qs('#tab-info');
+            moveNodeToTabview('info', infoExpander, tabInfo);
           }
           const commentsArea = elements.comments;
           if (commentsArea && !commentsArea.closest('#right-tabs')) {
-            qs('#tab-comments').assignChildren111(null, commentsArea, null);
+            const tabComments = qs('#tab-comments');
+            moveNodeToTabview('comments', commentsArea, tabComments);
           }
           rightTabsProvidedPromise.resolve();
           roRightTabs.disconnect();
@@ -4537,7 +4861,9 @@ const executionScript = () => {
           if (YouTubeUtils?.cleanupManager?.registerObserver) {
             YouTubeUtils.cleanupManager.registerObserver(aoFlexy);
           }
-          aoFlexy.observe(ytdFlexyElm, { attributes: true });
+          if (ytdFlexyElm) {
+            aoFlexy.observe(ytdFlexyElm, { attributes: true });
+          }
           // Promise.resolve(lockSet['tabsStatusCorrectionLock']).then(eventMap['tabsStatusCorrection']).catch(console.warn);
 
           Promise.resolve(lockSet['fixInitialTabStateLock'])
@@ -4570,7 +4896,7 @@ const executionScript = () => {
         }
       },
 
-      twoColumnChanged10: lockId => {
+      twoColumnChanged10: (/** @type {number} */ lockId) => {
         if (lockId !== lockGet['twoColumnChanged10Lock']) return;
         for (const continuation of qsAll(
           '#tab-videos ytd-watch-next-secondary-results-renderer ytd-continuation-item-renderer'
@@ -4588,7 +4914,7 @@ const executionScript = () => {
         }
       },
 
-      tabsStatusCorrection: lockId => {
+      tabsStatusCorrection: (/** @type {number} */ lockId) => {
         if (lockId !== lockGet['tabsStatusCorrectionLock']) return;
         const ytdFlexyElm = elements.flexy;
         if (!ytdFlexyElm) return;
@@ -4697,13 +5023,13 @@ const executionScript = () => {
             bFixForResizedTab = true;
           }
 
-          if (((p & 16) === 16) & ((q & 16) === 0)) {
+          if ((p & 16) === 16 && (q & 16) === 0) {
             Promise.resolve(lockSet['twoColumnChanged10Lock'])
               .then(eventMap['twoColumnChanged10'])
               .catch(console.warn);
           }
 
-          if (((p & 2) === 2) ^ ((q & 2) === 2) && (q & 2) === 2) {
+          if (((p & 2) === 2) !== ((q & 2) === 2) && (q & 2) === 2) {
             bFixForResizedTab = true;
           }
 
@@ -4913,7 +5239,7 @@ const executionScript = () => {
             Promise.resolve(0).then(eventMap['fixForTabDisplay']).catch(console.warn);
           }
 
-          if (((p & 16) === 16) ^ ((q & 16) === 16)) {
+          if (((p & 16) === 16) !== ((q & 16) === 16)) {
             Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn);
             Promise.resolve(lockSet['removeKeepCommentsScrollerLock'])
               .then(removeKeepCommentsScroller)
@@ -4923,7 +5249,7 @@ const executionScript = () => {
         }
       },
 
-      updateOnVideoIdChanged: lockId => {
+      updateOnVideoIdChanged: (/** @type {number} */ lockId) => {
         if (lockId !== lockGet['updateOnVideoIdChangedLock']) return;
         const videoId = tmpLastVideoId;
         if (!videoId) return;
@@ -4942,7 +5268,7 @@ const executionScript = () => {
         Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(console.warn);
       },
 
-      fixInitialTabStateFn: async lockId => {
+      fixInitialTabStateFn: async (/** @type {number} */ lockId) => {
         if (lockGet['fixInitialTabStateLock'] !== lockId) return;
         const delayTime = fixInitialTabStateK > 0 ? 200 : 1;
         await delayPn(delayTime);
@@ -4981,7 +5307,7 @@ const executionScript = () => {
         fixInitialTabStateK++;
       },
 
-      'tabs-btn-click': evt => {
+      'tabs-btn-click': (/** @type {Event} */ evt) => {
         const target = evt.target;
         if (
           target instanceof HTMLElement_ &&
@@ -4994,7 +5320,7 @@ const executionScript = () => {
 
           const activeLink = target;
 
-          switchToTab(activeLink);
+          switchToTab(/** @type {any} */ (activeLink));
         }
       },
     };
@@ -5012,7 +5338,7 @@ const executionScript = () => {
 
     const promiseForCustomYtElementsReady = isCustomElementsProvided
       ? Promise.resolve(0)
-      : new Promise(callback => {
+      : new Promise((/** @type {(value?: unknown) => void} */ callback, _reject) => {
           const EVENT_KEY_ON_REGISTRY_READY = 'ytI-ce-registry-created';
           if (typeof customElements === 'undefined') {
             if (!('__CE_registry' in document)) {
@@ -5033,12 +5359,13 @@ const executionScript = () => {
                 configurable: true,
               });
             }
+            /** @type {((evt: Event) => void) | null} */
             let eventHandler = _evt => {
-              document.removeEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
-              const f = callback;
-              callback = null;
+              if (eventHandler) {
+                document.removeEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
+              }
+              callback();
               eventHandler = null;
-              f();
             };
             document.addEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
           } else {
@@ -5046,7 +5373,7 @@ const executionScript = () => {
           }
         });
 
-    const _retrieveCE = async nodeName => {
+    const _retrieveCE = async (/** @type {string} */ nodeName) => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
         await customElements.whenDefined(nodeName);
@@ -5055,7 +5382,9 @@ const executionScript = () => {
       }
     };
 
-    const retrieveCE = async nodeName => {
+    void _retrieveCE;
+
+    const retrieveCE = async (/** @type {string} */ nodeName) => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
         await customElements.whenDefined(nodeName);
@@ -5071,6 +5400,7 @@ const executionScript = () => {
       _yt_playerProvided: () => (window || 0)._yt_player || 0 || 0,
     };
 
+    /** @type {PromiseExternal | null} */
     let promiseWaitNext = null;
     const moOverall = new MutationObserver(() => {
       if (promiseWaitNext) {
@@ -5097,7 +5427,7 @@ const executionScript = () => {
     const shouldActivateMoOverall = () => {
       try {
         return !!qs('ytd-watch-flexy #player');
-      } catch {
+      } catch (e) {
         return false;
       }
     };
@@ -5120,6 +5450,7 @@ const executionScript = () => {
     const moEgmPanelReady = new MutationObserver(mutations => {
       for (const mutation of mutations) {
         const target = mutation.target;
+        if (!(target instanceof Element)) continue;
         if (!target.hasAttribute000('tyt-egm-panel-jclmd')) continue;
         if (target.hasAttribute000('target-id') && target.hasAttribute000('visibility')) {
           target.removeAttribute000('tyt-egm-panel-jclmd');
@@ -5155,7 +5486,7 @@ const executionScript = () => {
       document.addEventListener('yt-navigate-finish', eventMap['yt-navigate-finish'], false);
     }
 
-    const _animStartHandler = evt => {
+    const _animStartHandler = (/** @type {AnimationEvent} */ evt) => {
       const f = eventMap[evt.animationName];
       if (typeof f === 'function') f(evt.target);
     };
@@ -5197,6 +5528,9 @@ const styles = {
   ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents{--comment-pre-load-display:none;}
   ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*:only-of-type,ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*:last-child{--comment-pre-load-display:block;}
   ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents>*{display:var(--comment-pre-load-display)!important;}
+  ytd-watch-flexy #tab-comments ytd-comments-header-renderer #title{justify-content:space-between;}
+  ytd-watch-flexy #tab-comments ytd-item-section-renderer #contents{padding-left:0!important;}
+  ytd-watch-flexy #tab-videos ytd-item-section-renderer #contents{padding-left:0!important;}
   ytd-watch-flexy #tab-comments:not(.tab-content-hidden){pointer-events:auto!important;}
   ytd-watch-flexy #tab-comments:not(.tab-content-hidden) *{pointer-events:auto!important;}
   ytd-watch-flexy #tab-comments:not(.tab-content-hidden) button,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-button-renderer,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) a,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) tp-yt-paper-button,ytd-watch-flexy #tab-comments:not(.tab-content-hidden) [role="button"],ytd-watch-flexy #tab-comments:not(.tab-content-hidden) yt-button-shape{pointer-events:auto!important;}
@@ -5222,14 +5556,14 @@ const styles = {
   @supports (color:var(--tabview-tab-btn-define)){
   ytd-watch-flexy #right-tabs .tab-btn{background:var(--yt-spec-general-background-a);}
   html{--tyt-tab-btn-flex-grow:1;--tyt-tab-btn-flex-basis:0%;--tyt-tab-bar-color-1-def:#ff4533;--tyt-tab-bar-color-2-def:var(--yt-brand-light-red);--tyt-tab-bar-color-1:var(--main-color,var(--tyt-tab-bar-color-1-def));--tyt-tab-bar-color-2:var(--main-color,var(--tyt-tab-bar-color-2-def));}
-  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]{flex:var(--tyt-tab-btn-flex-grow) 1 var(--tyt-tab-btn-flex-basis);position:relative;display:inline-block;text-decoration:none;text-transform:uppercase;--tyt-tab-btn-color:var(--yt-spec-text-secondary);color:var(--tyt-tab-btn-color);text-align:center;padding:14px 8px 10px;border:0;border-bottom:4px solid transparent;font-weight:500;font-size:12px;line-height:18px;cursor:pointer;transition:border 200ms linear 100ms;background-color:var(--ytd-searchbox-legacy-button-color);text-transform:var(--yt-button-text-transform,inherit);user-select:none!important;overflow:hidden;white-space:nowrap;text-overflow:clip;}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]{flex:var(--tyt-tab-btn-flex-grow) 1 var(--tyt-tab-btn-flex-basis);position:relative;display:inline-block;text-decoration:none;text-transform:uppercase;--tyt-tab-btn-color:var(--yt-text-secondary);color:var(--tyt-tab-btn-color);text-align:center;padding:14px 8px 10px;border:0;border-bottom:4px solid transparent;font-weight:500;font-size:12px;line-height:18px;cursor:pointer;transition:border 200ms linear 100ms;background-color:var(--ytd-searchbox-legacy-button-color);text-transform:var(--yt-button-text-transform,inherit);user-select:none!important;overflow:hidden;white-space:nowrap;text-overflow:clip;}
   ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]>svg{height:18px;padding-right:0;vertical-align:bottom;opacity:.5;margin-right:0;color:var(--yt-button-color,inherit);fill:var(--iron-icon-fill-color,currentcolor);stroke:var(--iron-icon-stroke-color,none);pointer-events:none;}
   ytd-watch-flexy #right-tabs .tab-btn{--tabview-btn-txt-ml:8px;}
   ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]{--tabview-btn-txt-ml:0;}
   ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]>svg+span{margin-left:var(--tabview-btn-txt-ml);}
-  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active{font-weight:500;outline:0;--tyt-tab-btn-color:var(--yt-spec-text-primary);background-color:var(--ytd-searchbox-legacy-button-focus-color);border-bottom:2px var(--tyt-tab-bar-color-2) solid;}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active{font-weight:500;outline:0;--tyt-tab-btn-color:var(--yt-text-primary);background-color:var(--ytd-searchbox-legacy-button-focus-color);border-bottom:2px var(--tyt-tab-bar-color-2) solid;}
   ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active svg{opacity:.9;}
-  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover{background-color:var(--ytd-searchbox-legacy-button-hover-color);--tyt-tab-btn-color:var(--yt-spec-text-primary);}
+  ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover{background-color:var(--ytd-searchbox-legacy-button-hover-color);--tyt-tab-btn-color:var(--yt-text-primary);}
   ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover svg{opacity:.9;}
   ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].tab-btn-hidden{display:none;}
   ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"],ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]:hover{--tyt-tab-btn-color:var(--yt-spec-icon-disabled);}
@@ -5372,21 +5706,18 @@ const styles = {
 
 (async () => {
   // ------------------------------------------------------------------------ nextBrowserTick ------------------------------------------------------------------------
-  /* eslint-disable no-unused-expressions, no-var */
+  /* eslint-disable no-var */
+  /** @type {any} */
   var nextBrowserTick =
     void 0 !== nextBrowserTick && nextBrowserTick.version >= 2
       ? nextBrowserTick
       : (() => {
           'use strict';
-          const e =
-            typeof globalThis !== 'undefined'
-              ? globalThis
-              : typeof window !== 'undefined'
-                ? window
-                : this;
+          /** @type {any} */
+          const e = typeof globalThis !== 'undefined' ? globalThis : window;
           let t = !0;
           if (
-            !(function n(s) {
+            !(function n(/** @type {unknown} */ s) {
               return s
                 ? (t = !1)
                 : e.postMessage && !e.importScripts && e.addEventListener
@@ -5394,12 +5725,13 @@ const styles = {
                     e.postMessage('$$$', '*'),
                     e.removeEventListener('message', n, !1),
                     t)
-                  : void 0;
+                  : false;
             })()
           ) {
             return void console.warn('Your browser environment cannot use nextBrowserTick');
           }
-          const n = (async () => {}).constructor;
+          const n = globalThis.Promise;
+          /** @type {Promise<unknown> | null} */
           let s = null;
           const o = new Map(),
             { floor: r, random: i } = Math;
@@ -5412,54 +5744,63 @@ const styles = {
           e[a] = 1;
           e.addEventListener(
             'message',
-            e => {
+            (/** @type {MessageEvent} */ evt) => {
               if (0 !== o.size) {
-                const t = (e || 0).data;
-                if ('string' == typeof t && t.length === c && e.source === (e.target || 1)) {
-                  const e = o.get(t);
-                  e && ('p' === t[0] && (s = null), o.delete(t), e());
+                const t = (evt || 0).data;
+                if ('string' == typeof t && t.length === c && evt.source === (evt.target || 1)) {
+                  const fn = o.get(t);
+                  if (fn) {
+                    if ('p' === t[0]) s = null;
+                    o.delete(t);
+                    fn();
+                  }
                 }
               }
             },
             !1
           );
-          const d = (t = o) => {
+          const d = (/** @type {Map<string, Function>} */ t = o) => {
             if (t === o) {
               if (s) return s;
-              let t;
+              /** @type {string | null} */
+              let token = null;
               do {
-                t = `p${a}${r(314159265359 * i() + 314159265359).toString(36)}`;
-              } while (o.has(t));
-              return (
-                (s = new n(e => {
-                  o.set(t, e);
-                })),
-                e.postMessage(t, '*'),
-                (t = null),
-                s
-              );
+                token = `p${a}${r(314159265359 * i() + 314159265359).toString(36)}`;
+              } while (token && o.has(token));
+              s = new n((/** @type {(value?: unknown) => void} */ resolve) => {
+                if (token) o.set(token, resolve);
+              });
+              if (token) e.postMessage(token, '*');
+              token = null;
+              return s;
             }
             {
               let n;
               do {
                 n = `f${a}${r(314159265359 * i() + 314159265359).toString(36)}`;
               } while (o.has(n));
-              (o.set(n, t), e.postMessage(n, '*'));
+              o.set(n, t);
+              e.postMessage(n, '*');
+              return null;
             }
           };
           return ((d.version = 2), d);
         })();
-  /* eslint-enable no-unused-expressions, no-var */
+  /* eslint-enable no-var */
   // ------------------------------------------------------------------------ nextBrowserTick ------------------------------------------------------------------------
   const communicationKey = `ck-${Date.now()}-${Math.floor(Math.random() * 314159265359 + 314159265359).toString(36)}`;
 
   /** @type {globalThis.PromiseConstructor} */
-  const Promise = (async () => {})().constructor; // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
+  const Promise = globalThis.Promise; // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
 
   if (!document.documentElement) {
     await Promise.resolve(0);
     while (!document.documentElement) {
-      await new Promise(resolve => nextBrowserTick(resolve)).then().catch(console.warn);
+      await new Promise((/** @type {(value?: unknown) => void} */ resolve, _reject) =>
+        nextBrowserTick(resolve)
+      )
+        .then()
+        .catch(console.warn);
     }
   }
   const sourceURL = 'debug://tabview-youtube/tabview.execution.js';
@@ -5495,13 +5836,13 @@ const styles = {
       script.onload = script.onerror = () => {
         try {
           globalThis.URL.revokeObjectURL(blobUrl);
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         try {
           script.remove();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       };
       (document.head || document.documentElement).appendChild(script);
@@ -5526,20 +5867,21 @@ const styles = {
   }
 
   const applyTabviewI18nVars = () => {
-    const root = document.documentElement;
+    const root = /** @type {HTMLElement | null} */ (document.documentElement);
     if (!root) return;
     const i18n = typeof window !== 'undefined' ? window.YouTubePlusI18n : null;
-    const translate = (key, fallback) => {
+    const translate = (/** @type {string} */ key, /** @type {string} */ fallback) => {
       if (i18n && typeof i18n.t === 'function') {
         const value = i18n.t(key);
         if (value && value !== key) return value;
       }
       return fallback;
     };
-    const toCssString = value => {
+    const toCssString = (/** @type {unknown} */ value) => {
       const text = String(value).replace(/\\/g, '\\\\').replace(/"/g, '\\"');
       return `"${text}"`;
     };
+    if (!root.style) return;
     root.style.setProperty('--tabview-text-loading', toCssString(translate('loading', 'Loading')));
     root.style.setProperty(
       '--tabview-text-fetching',
@@ -5551,7 +5893,7 @@ const styles = {
     const container = document.querySelector('#right-tabs');
     if (!container) return false;
     const i18n = typeof window !== 'undefined' ? window.YouTubePlusI18n : null;
-    const translate = (key, fallback) => {
+    const translate = (/** @type {string} */ key, /** @type {string} */ fallback) => {
       if (i18n && typeof i18n.t === 'function') {
         const value = i18n.t(key);
         if (value && value !== key) return value;
@@ -5690,7 +6032,7 @@ const styles = {
               img._ytpDecoding = true;
             }
           }
-        } catch {
+        } catch (e) {
           /* non-fatal */
         }
       };
@@ -5702,7 +6044,7 @@ const styles = {
       } else {
         document.addEventListener('DOMContentLoaded', promoteLCPImage, { once: true });
       }
-    } catch {
+    } catch (e) {
       /* non-fatal */
     }
   })();

@@ -3,7 +3,7 @@
   'use strict';
 
   const initZoomModule = () => {
-    const _createHTML = window._ytplusCreateHTML || (s => s);
+    const _createHTML = window._ytplusCreateHTML || ((/** @type {string} */ s) => s);
 
     let featureEnabled = true;
     const loadFeatureEnabled = () =>
@@ -12,36 +12,36 @@
       try {
         const ui = byId('ytp-zoom-control');
         if (ui) ui.remove();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
       try {
         const styles = byId('ytp-zoom-styles');
         if (styles) styles.remove();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
       try {
         const video = findVideoElement();
         if (video) {
-          video.style.transform = '';
-          video.style.willChange = '';
-          video.style.transition = '';
-          video.style.cursor = '';
+          /** @type {any} */ (video).style.transform = '';
+          /** @type {any} */ (video).style.willChange = '';
+          /** @type {any} */ (video).style.transition = '';
+          /** @type {any} */ (video).style.cursor = '';
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     };
-    const setFeatureEnabled = nextEnabled => {
+    const setFeatureEnabled = (/** @type {boolean|undefined} */ nextEnabled) => {
       featureEnabled = nextEnabled !== false;
       if (!featureEnabled) {
         clearZoomUI();
       } else {
         try {
           initZoom();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
     };
@@ -72,12 +72,16 @@
         const panX = Number(obj && obj.panX) || 0;
         const panY = Number(obj && obj.panY) || 0;
         return { zoom, panX, panY };
-      } catch {
+      } catch (e) {
         return { zoom: DEFAULT_ZOOM, panX: 0, panY: 0 };
       }
     }
 
-    function saveZoomPan(zoom, panX, panY) {
+    function saveZoomPan(
+      /** @type {number} */ zoom,
+      /** @type {number} */ panX,
+      /** @type {number} */ panY
+    ) {
       try {
         const obj = {
           zoom: Number(zoom) || DEFAULT_ZOOM,
@@ -90,7 +94,7 @@
       }
     }
 
-    function logRestoreEvent(evt) {
+    function logRestoreEvent(/** @type {Record<string, any>} */ evt) {
       try {
         const entry = Object.assign({ time: new Date().toISOString() }, evt);
         try {
@@ -100,7 +104,7 @@
           // keep last 200 entries
           if (arr.length > 200) arr.splice(0, arr.length - 200);
           sessionStorage.setItem(RESTORE_LOG_KEY, JSON.stringify(arr));
-        } catch {
+        } catch (e) {
           // fallback: ignore
         }
         // Console output for live debugging (only when debug mode is active)
@@ -110,8 +114,8 @@
         ) {
           console.warn('[YouTube+] Zoom restore:', entry);
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     }
 
@@ -129,8 +133,8 @@
     let _isApplyingTransform = false;
 
     const applyZoomToVideo = (
-      videoEl,
-      zoom,
+      /** @type {HTMLVideoElement|null} */ videoEl,
+      /** @type {number} */ zoom,
       panX = 0,
       panY = 0,
       skipTransformTracking = false,
@@ -145,17 +149,20 @@
         }
 
         // Ensure container can display overflow content
-        container.style.overflow = 'visible';
-        if (!container.style.position || container.style.position === 'static') {
-          container.style.position = 'relative';
+        /** @type {any} */ (container).style.overflow = 'visible';
+        if (
+          !(/** @type {any} */ (container).style.position) ||
+          /** @type {any} */ (container).style.position === 'static'
+        ) {
+          /** @type {any} */ (container).style.position = 'relative';
         }
 
         // Set transform origin to center for natural zoom
-        videoEl.style.transformOrigin = 'center center';
+        /** @type {any} */ (videoEl).style.transformOrigin = 'center center';
 
         // Apply transform with proper precision
         const transformStr = `translate(${panX.toFixed(2)}px, ${panY.toFixed(2)}px) scale(${zoom.toFixed(3)})`;
-        videoEl.style.transform = transformStr;
+        /** @type {any} */ (videoEl).style.transform = transformStr;
 
         // Track the transform we just applied
         if (!skipTransformTracking) {
@@ -163,10 +170,12 @@
         }
 
         // Use will-change for GPU acceleration
-        videoEl.style.willChange = zoom !== 1 ? 'transform' : 'auto';
+        /** @type {any} */ (videoEl).style.willChange = zoom !== 1 ? 'transform' : 'auto';
 
         // Smooth transition for better UX (skip during fullscreen transitions to avoid flicker)
-        videoEl.style.transition = skipTransition ? 'none' : 'transform .08s ease-out';
+        /** @type {any} */ (videoEl).style.transition = skipTransition
+          ? 'none'
+          : 'transform .08s ease-out';
 
         // Reset flag after a short delay
         if (!skipTransformTracking) {
@@ -181,7 +190,7 @@
     };
 
     function createZoomUI() {
-      const player = $('#movie_player');
+      const player = /** @type {HTMLElement | null} */ ($('#movie_player'));
       if (!player) return null;
       if (byId('ytp-zoom-control')) {
         return byId('ytp-zoom-control');
@@ -193,7 +202,7 @@
         s.id = 'ytp-zoom-styles';
         s.textContent = `
       /* Compact control bar matching YouTube control style */
-      #ytp-zoom-control{position: absolute; left: 12px; bottom: 64px; z-index: 2200; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 24px; background: rgba(0,0,0,0.35); color: #fff; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.5); backdrop-filter: blur(6px);}
+      #ytp-zoom-control{position: absolute; left: 12px; bottom: 70px; z-index: 2200; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 24px; background: rgba(0,0,0,0.35); color: #fff; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.5); backdrop-filter: blur(6px);}
       #ytp-zoom-control input[type=range]{width: 120px; -webkit-appearance: none; background: transparent; height: 24px;}
       /* WebKit track */
       #ytp-zoom-control input[type=range]::-webkit-slider-runnable-track{height: 4px; background: rgba(255,255,255,0.12); border-radius: 3px;}
@@ -248,7 +257,7 @@
       const stored = readZoomPan().zoom;
       const initZoomVal = Number.isFinite(stored) && !Number.isNaN(stored) ? stored : DEFAULT_ZOOM;
 
-      const setZoom = z => {
+      const setZoom = (/** @type {number|string} */ z) => {
         const clamped = Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Number(z)));
         input.value = String(clamped);
         const percentage = Math.round(clamped * 100);
@@ -265,8 +274,8 @@
               applyZoomToVideo(video, clamped, panX, panY);
               // update cursor depending on zoom
               try {
-                video.style.cursor = clamped > 1 ? 'grab' : '';
-              } catch {
+                /** @type {any} */ (video).style.cursor = clamped > 1 ? 'grab' : '';
+              } catch (e) {
                 /* Intentional: video element may be detached */
               }
             } catch (err) {
@@ -282,7 +291,10 @@
         }
       };
 
-      input.addEventListener('input', e => setZoom(e.target.value));
+      input.addEventListener('input', (/** @type {Event} */ e) => {
+        const target = /** @type {HTMLInputElement|null} */ (e.target);
+        setZoom(target ? target.value : DEFAULT_ZOOM);
+      });
       reset.addEventListener('click', () => {
         try {
           panX = 0;
@@ -296,9 +308,9 @@
             console.warn('[YouTube+] Failed to persist zoom reset:', e);
           }
           // Provide visual feedback
-          reset.style.transform = 'scale(0.9)';
+          /** @type {any} */ (reset).style.transform = 'scale(0.9)';
           setTimeout(() => {
-            reset.style.transform = '';
+            /** @type {any} */ (reset).style.transform = '';
           }, 150);
         } catch (err) {
           console.error('[YouTube+] Reset zoom error:', err);
@@ -306,8 +318,10 @@
       });
 
       // Wheel: Shift + wheel to zoom (with throttling for performance)
+      /** @type {ReturnType<typeof setTimeout>|null} */
       let wheelThrottleTimer = null;
       // Throttled pan save timer to avoid excessive localStorage writes
+      /** @type {ReturnType<typeof setTimeout>|null} */
       let panSaveTimer = null;
       const scheduleSavePan = () => {
         try {
@@ -325,7 +339,7 @@
           console.error('[YouTube+] Schedule save pan error:', err);
         }
       };
-      const wheelHandler = ev => {
+      const wheelHandler = (/** @type {WheelEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           if (!ev.shiftKey) return;
@@ -362,7 +376,7 @@
       }
 
       // Keyboard +/- (ignore when typing)
-      const keydownHandler = ev => {
+      const keydownHandler = (/** @type {KeyboardEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           const active = document.activeElement;
@@ -394,6 +408,7 @@
       let panX = 0;
       let panY = 0;
       // Observer to watch for external changes to the video's style (YouTube may override transform)
+      /** @type {MutationObserver|null} */
       let videoStyleObserver = null;
 
       let dragging = false;
@@ -402,7 +417,7 @@
       let dragStartPanX = 0;
       let dragStartPanY = 0;
 
-      const clampPan = (zoom = readZoomPan().zoom) => {
+      const clampPan = (/** @type {number} */ zoom = readZoomPan().zoom) => {
         try {
           if (!video) return;
           const container = video.parentElement || video;
@@ -439,18 +454,25 @@
       };
 
       const pointers = new Map();
+      /** @type {number|null} */
       let initialPinchDist = null;
+      /** @type {number|null} */
       let pinchStartZoom = null;
+      /** @type {string|null} */
       let prevTouchAction = null;
-      const getDistance = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+      const getDistance = (
+        /** @type {{x:number,y:number}} */ a,
+        /** @type {{x:number,y:number}} */ b
+      ) => Math.hypot(a.x - b.x, a.y - b.y);
 
-      const pointerDown = ev => {
+      const pointerDown = (/** @type {PointerEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           pointers.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
           try {
-            ev.target.setPointerCapture(ev.pointerId);
-          } catch {
+            const target = /** @type {any} */ (ev.target);
+            if (target?.setPointerCapture) target.setPointerCapture(ev.pointerId);
+          } catch (e) {
             /* Intentional: some elements don't support pointer capture */
           }
           // Start mouse drag for panning when single mouse pointer and zoomed in.
@@ -471,31 +493,31 @@
               dragStartPanX = panX;
               dragStartPanY = panY;
               try {
-                video.style.cursor = 'grabbing';
-              } catch {
-                /* empty */
+                /** @type {any} */ (video).style.cursor = 'grabbing';
+              } catch (e) {
+                // Non-critical, suppressed
               }
             }
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
           if (pointers.size === 2) {
             const pts = Array.from(pointers.values());
             initialPinchDist = getDistance(pts[0], pts[1]);
             pinchStartZoom = readZoomPan().zoom;
-            prevTouchAction = player.style.touchAction;
+            prevTouchAction = /** @type {any} */ (player).style.touchAction;
             try {
-              player.style.touchAction = 'none';
-            } catch {
-              /* empty */
+              /** @type {any} */ (player).style.touchAction = 'none';
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       };
 
-      const pointerMove = ev => {
+      const pointerMove = (/** @type {PointerEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           // Update pointers map
@@ -529,47 +551,51 @@
             setZoom(newZoom);
             ev.preventDefault();
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       };
 
-      const pointerUp = ev => {
+      const pointerUp = (/** @type {PointerEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           pointers.delete(ev.pointerId);
           try {
-            ev.target.releasePointerCapture(ev.pointerId);
-          } catch {
-            /* empty */
+            const target = /** @type {any} */ (ev.target);
+            if (target?.releasePointerCapture) target.releasePointerCapture(ev.pointerId);
+          } catch (e) {
+            // Non-critical, suppressed
           }
           // stop dragging
           try {
             if (dragging && ev.pointerType === 'mouse') {
               dragging = false;
               try {
-                if (video) video.style.cursor = parseFloat(input.value) > 1 ? 'grab' : '';
-              } catch {
-                /* empty */
+                if (video) {
+                  /** @type {any} */ (video).style.cursor =
+                    parseFloat(input.value) > 1 ? 'grab' : '';
+                }
+              } catch (e) {
+                // Non-critical, suppressed
               }
             }
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
           if (pointers.size < 2) {
             initialPinchDist = null;
             pinchStartZoom = null;
             if (prevTouchAction != null) {
               try {
-                player.style.touchAction = prevTouchAction;
-              } catch {
-                /* empty */
+                /** @type {any} */ (player).style.touchAction = prevTouchAction;
+              } catch (e) {
+                // Non-critical, suppressed
               }
               prevTouchAction = null;
             }
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       };
 
@@ -585,13 +611,15 @@
       let touchDragStartY = 0;
       let touchDragStartPanX = 0;
       let touchDragStartPanY = 0;
+      /** @type {number|null} */
       let touchInitialDist = null;
+      /** @type {number|null} */
       let touchPinchStartZoom = null;
 
-      const getTouchDistance = (t1, t2) =>
+      const getTouchDistance = (/** @type {Touch} */ t1, /** @type {Touch} */ t2) =>
         Math.hypot(t1.clientX - t2.clientX, t1.clientY - t2.clientY);
 
-      const touchStart = ev => {
+      const touchStart = (/** @type {TouchEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           if (!video) return;
@@ -613,10 +641,10 @@
             touchPinchStartZoom = parseFloat(input.value) || readZoomPan().zoom || DEFAULT_ZOOM;
             // prevent default gestures (scroll/zoom) while pinching
             try {
-              prevTouchAction = player.style.touchAction;
-              player.style.touchAction = 'none';
-            } catch {
-              /* empty */
+              prevTouchAction = /** @type {any} */ (player).style.touchAction;
+              /** @type {any} */ (player).style.touchAction = 'none';
+            } catch (e) {
+              // Non-critical, suppressed
             }
             ev.preventDefault();
           }
@@ -625,7 +653,7 @@
         }
       };
 
-      const touchMove = ev => {
+      const touchMove = (/** @type {TouchEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           if (!video) return;
@@ -654,7 +682,7 @@
         }
       };
 
-      const touchEnd = ev => {
+      const touchEnd = (/** @type {TouchEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           if (touchDragging && ev.touches.length === 0) {
@@ -665,9 +693,9 @@
             touchPinchStartZoom = null;
             if (prevTouchAction != null) {
               try {
-                player.style.touchAction = prevTouchAction;
-              } catch {
-                /* empty */
+                /** @type {any} */ (player).style.touchAction = prevTouchAction;
+              } catch (e) {
+                // Non-critical, suppressed
               }
               prevTouchAction = null;
             }
@@ -688,7 +716,7 @@
       }
 
       // Fallback mouse handlers for more reliable dragging on desktop
-      const mouseDownHandler = ev => {
+      const mouseDownHandler = (/** @type {MouseEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           if (ev.button !== 0 || !video) return;
@@ -703,17 +731,17 @@
           dragStartPanX = panX;
           dragStartPanY = panY;
           try {
-            video.style.cursor = 'grabbing';
-          } catch {
-            /* empty */
+            /** @type {any} */ (video).style.cursor = 'grabbing';
+          } catch (e) {
+            // Non-critical, suppressed
           }
           ev.preventDefault();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       };
 
-      const mouseMoveHandler = ev => {
+      const mouseMoveHandler = (/** @type {MouseEvent} */ ev) => {
         try {
           if (!featureEnabled) return;
           if (!dragging || !video) return;
@@ -725,12 +753,13 @@
           clampPan();
 
           // Use RAF to avoid excessive repaints
-          if (!video._panRAF) {
-            video._panRAF = requestAnimationFrame(() => {
-              applyZoomToVideo(video, parseFloat(input.value) || DEFAULT_ZOOM, panX, panY);
+          if (video && !video._panRAF) {
+            const activeVideo = video;
+            activeVideo._panRAF = requestAnimationFrame(() => {
+              applyZoomToVideo(activeVideo, parseFloat(input.value) || DEFAULT_ZOOM, panX, panY);
               // persist pan after RAF'd update
               scheduleSavePan();
-              video._panRAF = null;
+              activeVideo._panRAF = null;
             });
           }
 
@@ -740,37 +769,39 @@
         }
       };
 
-      const mouseUpHandler = _ev => {
+      const mouseUpHandler = (/** @type {MouseEvent} */ _ev) => {
         try {
           if (!featureEnabled) return;
           if (dragging) {
             dragging = false;
             try {
-              if (video) video.style.cursor = parseFloat(input.value) > 1 ? 'grab' : '';
-            } catch {
-              /* empty */
+              if (video) {
+                /** @type {any} */ (video).style.cursor = parseFloat(input.value) > 1 ? 'grab' : '';
+              }
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       };
 
       if (video) {
         try {
           video.addEventListener('mousedown', mouseDownHandler);
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         try {
           window.addEventListener('mousemove', mouseMoveHandler);
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         try {
           window.addEventListener('mouseup', mouseUpHandler);
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         // Attach style observer to ensure transform isn't clobbered by YouTube
         try {
@@ -779,8 +810,8 @@
               if (videoStyleObserver) {
                 try {
                   videoStyleObserver.disconnect();
-                } catch {
-                  /* empty */
+                } catch (e) {
+                  // Non-critical, suppressed
                 }
                 videoStyleObserver = null;
               }
@@ -818,33 +849,33 @@
                                 panX,
                                 panY,
                               });
-                            } catch {
-                              /* empty */
+                            } catch (e) {
+                              // Non-critical, suppressed
                             }
-                          } catch {
-                            /* empty */
+                          } catch (e) {
+                            // Non-critical, suppressed
                           }
                         });
                       }
                     }
                   }
-                } catch {
-                  /* empty */
+                } catch (e) {
+                  // Non-critical, suppressed
                 }
               });
               videoStyleObserver.observe(video, { attributes: true, attributeFilter: ['style'] });
               try {
-                window.YouTubeUtils?.cleanupManager?.registerObserver?.(videoStyleObserver, video);
-              } catch {
-                /* empty */
+                window.YouTubeUtils?.cleanupManager?.registerObserver?.(videoStyleObserver);
+              } catch (e) {
+                // Non-critical, suppressed
               }
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           };
           attachStyleObserver();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
 
@@ -875,8 +906,8 @@
               if (videoStyleObserver) {
                 try {
                   videoStyleObserver.disconnect();
-                } catch {
-                  /* empty */
+                } catch (e) {
+                  // Non-critical, suppressed
                 }
                 videoStyleObserver = null;
               }
@@ -912,28 +943,25 @@
                                   panX,
                                   panY,
                                 });
-                              } catch {
-                                /* empty */
+                              } catch (e) {
+                                // Non-critical, suppressed
                               }
-                            } catch {
-                              /* empty */
+                            } catch (e) {
+                              // Non-critical, suppressed
                             }
                           });
                         }
                       }
                     }
-                  } catch {
-                    /* empty */
+                  } catch (e) {
+                    // Non-critical, suppressed
                   }
                 });
                 videoStyleObserver.observe(video, { attributes: true, attributeFilter: ['style'] });
                 try {
-                  window.YouTubeUtils?.cleanupManager?.registerObserver?.(
-                    videoStyleObserver,
-                    video
-                  );
-                } catch {
-                  /* empty */
+                  window.YouTubeUtils?.cleanupManager?.registerObserver?.(videoStyleObserver);
+                } catch (e) {
+                  // Non-critical, suppressed
                 }
               }
             } catch (err) {
@@ -995,8 +1023,8 @@
                     // detach from old video listeners safely
                     try {
                       if (video) video.removeEventListener('wheel', wheelHandler);
-                    } catch {
-                      /* empty */
+                    } catch (e) {
+                      // Non-critical, suppressed
                     }
 
                     video = newVideo;
@@ -1005,8 +1033,8 @@
                     // Reattach wheel handler if needed
                     try {
                       video.addEventListener('wheel', wheelHandler, { passive: false });
-                    } catch {
-                      /* empty */
+                    } catch (e) {
+                      // Non-critical, suppressed
                     }
                   }
 
@@ -1064,8 +1092,8 @@
       try {
         const initialTransform = `translate(${panX.toFixed(2)}px, ${panY.toFixed(2)}px) scale(${initZoomVal.toFixed(3)})`;
         _lastTransformApplied = initialTransform;
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       setZoom(initZoomVal);
@@ -1076,12 +1104,12 @@
           // If chrome exists, place the control just above it; otherwise keep the CSS fallback.
           if (chrome && chrome.offsetHeight) {
             const offset = chrome.offsetHeight + 8; // small gap above controls
-            wrap.style.bottom = `${offset}px`;
+            /** @type {any} */ (wrap).style.bottom = `${offset}px`;
           } else {
             // fallback to original design value
-            wrap.style.bottom = '';
+            /** @type {any} */ (wrap).style.bottom = '';
           }
-        } catch {
+        } catch (e) {
           // ignore positioning errors
         }
       };
@@ -1093,7 +1121,7 @@
       // next animation frame. This reduces the chance of a "ResizeObserver loop
       // completed with undelivered notifications" error caused by synchronous
       // layout work inside the observer callback.
-      const ro = new ResizeObserver(_entries => {
+      const ro = new ResizeObserver((/** @type {ResizeObserverEntry[]} */ _entries) => {
         try {
           if (typeof window !== 'undefined' && typeof window.requestAnimationFrame === 'function') {
             requestAnimationFrame(() => {
@@ -1103,9 +1131,13 @@
                 try {
                   YouTubeUtils &&
                     YouTubeUtils.logError &&
-                    YouTubeUtils.logError('Enhanced', 'updateZoomPosition failed', e);
-                } catch {
-                  /* empty */
+                    YouTubeUtils.logError(
+                      'Enhanced',
+                      'updateZoomPosition failed',
+                      e instanceof Error ? e : new Error(String(e))
+                    );
+                } catch (e) {
+                  // Non-critical, suppressed
                 }
               }
             });
@@ -1117,9 +1149,13 @@
           try {
             YouTubeUtils &&
               YouTubeUtils.logError &&
-              YouTubeUtils.logError('Enhanced', 'ResizeObserver callback error', e);
-          } catch {
-            /* empty */
+              YouTubeUtils.logError(
+                'Enhanced',
+                'ResizeObserver callback error',
+                e instanceof Error ? e : new Error(String(e))
+              );
+          } catch (e) {
+            // Non-critical, suppressed
           }
         }
       });
@@ -1127,10 +1163,10 @@
       // Register observer with cleanup manager so it gets disconnected on unload/cleanup
       try {
         if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-          YouTubeUtils.cleanupManager.registerObserver(ro);
+          YouTubeUtils.cleanupManager.registerObserver(/** @type {any} */ (ro));
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       try {
@@ -1140,9 +1176,13 @@
         try {
           YouTubeUtils &&
             YouTubeUtils.logError &&
-            YouTubeUtils.logError('Enhanced', 'Failed to observe chrome element', e);
-        } catch {
-          /* empty */
+            YouTubeUtils.logError(
+              'Enhanced',
+              'Failed to observe chrome element',
+              e instanceof Error ? e : new Error(String(e))
+            );
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
 
@@ -1152,8 +1192,8 @@
         if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
           YouTubeUtils.cleanupManager.registerListener(window, 'resize', updateZoomPosition);
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       // Reposition on fullscreen changes (vendor-prefixed events included)
@@ -1168,8 +1208,8 @@
           if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
             YouTubeUtils.cleanupManager.registerListener(document, evt, updateZoomPosition);
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       });
 
@@ -1196,8 +1236,8 @@
               return true;
             }
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         return false;
       };
@@ -1209,8 +1249,8 @@
           } else {
             wrap.classList.remove('ytp-hidden');
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       };
 
@@ -1225,23 +1265,24 @@
           });
         }
         try {
-          window.YouTubeUtils?.cleanupManager?.registerObserver?.(visObserver, player);
-        } catch {
-          /* empty */
+          window.YouTubeUtils?.cleanupManager?.registerObserver?.(visObserver);
+        } catch (e) {
+          // Non-critical, suppressed
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       // Temporary show on mousemove over player (like other controls)
+      /** @type {ReturnType<typeof setTimeout>|null} */
       let showTimer = null;
       const mouseMoveShow = () => {
         try {
           wrap.classList.remove('ytp-hidden');
           if (showTimer) clearTimeout(showTimer);
           showTimer = setTimeout(updateHidden, 2200);
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       };
       player.addEventListener('mousemove', mouseMoveShow, { passive: true });
@@ -1281,32 +1322,32 @@
           if (video) {
             try {
               video.removeEventListener('mousedown', mouseDownHandler);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
             try {
               video.removeEventListener('wheel', wheelHandler);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
             try {
               window.removeEventListener('mousemove', mouseMoveHandler);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
             try {
               window.removeEventListener('mouseup', mouseUpHandler);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
             try {
               // Reset video styles
-              video.style.cursor = '';
-              video.style.transform = '';
-              video.style.willChange = 'auto';
-              video.style.transition = '';
-            } catch {
-              /* empty */
+              /** @type {any} */ (video).style.cursor = '';
+              /** @type {any} */ (video).style.transform = '';
+              /** @type {any} */ (video).style.willChange = 'auto';
+              /** @type {any} */ (video).style.transition = '';
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
 
@@ -1314,8 +1355,8 @@
           if (videoStyleObserver) {
             try {
               videoStyleObserver.disconnect();
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
             videoStyleObserver = null;
           }
@@ -1324,22 +1365,22 @@
           if (visObserver) {
             try {
               visObserver.disconnect();
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
           // Disconnect player mutation observer
           try {
             if (playerObserver) playerObserver.disconnect();
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
 
           // Remove fullscreen handler
           try {
             document.removeEventListener('fullscreenchange', fullscreenHandler);
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
 
           // Clear show timer
@@ -1371,8 +1412,11 @@
       try {
         if (!featureEnabled) return;
         const ensure = () => {
-          const player = $('#movie_player');
-          if (!player) return setTimeout(ensure, 400);
+          const player = /** @type {HTMLElement | null} */ ($('#movie_player'));
+          if (!player) {
+            setTimeout(ensure, 400);
+            return;
+          }
           createZoomUI();
         };
         ensure();
@@ -1382,26 +1426,32 @@
             setTimeout(() => createZoomUI(), 300)
           );
         }
-      } catch {
+      } catch (e) {
         console.error('initZoom error');
       }
     }
 
-    window.addEventListener('youtube-plus-settings-updated', e => {
-      try {
-        const nextEnabled = e?.detail?.enableZoom !== false;
-        if (nextEnabled === featureEnabled) return;
-        setFeatureEnabled(nextEnabled);
-      } catch {
-        setFeatureEnabled(loadFeatureEnabled());
-      }
-    });
+    window.addEventListener(
+      'youtube-plus-settings-updated',
+      /** @type {EventListener} */ (
+        e => {
+          try {
+            const detail = /** @type {any} */ (e).detail;
+            const nextEnabled = detail?.enableZoom !== false;
+            if (nextEnabled === featureEnabled) return;
+            setFeatureEnabled(nextEnabled);
+          } catch (e) {
+            setFeatureEnabled(loadFeatureEnabled());
+          }
+        }
+      )
+    );
 
     // Ensure initZoom is used to avoid unused-var lint and to initialize feature
     try {
       initZoom();
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   }; // end initZoomModule
 

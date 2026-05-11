@@ -8,12 +8,13 @@
    */
   class LazyLoader {
     constructor() {
-      /** @type {Map<string, {fn: Function, priority: number, loaded: boolean}>} */
+      /** @type {Map<string, {fn: Function, priority: number, delay: number, dependencies: string[], loaded: boolean}>} */
       this.modules = new Map();
       /** @type {Set<string>} */
       this.loadedModules = new Set();
       this.stats = { totalModules: 0, loadedModules: 0 };
       this.isIdle = false;
+      /** @type {number | null} */
       this.idleCallbackId = null;
     }
 
@@ -148,7 +149,9 @@
       if (typeof requestIdleCallback !== 'undefined') {
         this.idleCallbackId = requestIdleCallback(loadModules, { timeout });
       } else {
-        this.idleCallbackId = setTimeout(loadModules, timeout);
+        this.idleCallbackId = /** @type {number} */ (
+          /** @type {unknown} */ (setTimeout(loadModules, timeout))
+        );
       }
     }
 
@@ -161,7 +164,11 @@
       if (typeof window.cancelIdleCallback !== 'undefined' && this.idleCallbackId) {
         window.cancelIdleCallback(this.idleCallbackId);
       } else if (this.idleCallbackId) {
-        clearTimeout(this.idleCallbackId);
+        clearTimeout(
+          /** @type {ReturnType<typeof setTimeout>} */ (
+            /** @type {unknown} */ (this.idleCallbackId)
+          )
+        );
       }
 
       this.isIdle = false;
@@ -179,7 +186,7 @@
 
     /**
      * Get loading statistics
-     * @returns {Object} Statistics object
+     * @returns {Record<string, unknown>} Statistics object
      */
     getStats() {
       return {
@@ -210,7 +217,11 @@
   if (typeof window !== 'undefined') {
     window.YouTubePlusLazyLoader = {
       LazyLoader,
-      register: (name, fn, options) => lazyLoader.register(name, fn, options),
+      register: (
+        /** @type {string} */ name,
+        /** @type {Function} */ fn,
+        /** @type {{priority?: number; delay?: number; dependencies?: string[]} | undefined} */ options
+      ) => lazyLoader.register(name, fn, options),
       load: name => lazyLoader.load(name),
       loadAll: () => lazyLoader.loadAll(),
       loadOnIdle: timeout => lazyLoader.loadOnIdle(timeout),

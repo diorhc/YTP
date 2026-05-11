@@ -25,7 +25,7 @@
 // @name:uz             YouTube +
 // @name:vi             YouTube +
 // @namespace           by
-// @version             2.4.5
+// @version             2.5
 // @author              diorhc
 // @description         Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:ar      Tabview YouTube and download and other features ↴
@@ -78,6 +78,7 @@
 // @grant               GM_addValueChangeListener
 // @grant               GM_xmlhttpRequest
 // @grant               unsafeWindow
+// @grant               GM_addElement
 // @connect             api.livecounts.io
 // @connect             cnv.cx
 // @connect             mp3yt.is
@@ -88,7 +89,7 @@
 // @run-at              document-start
 // @noframes
 // @homepageURL         https://github.com/diorhc/YTP
-// @supportURL          https://github.com/diorhc/YTP/issues
+// @supportURL          https://github.com/diorhc/YTP/discussions
 // @downloadURL         https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js
 // @updateURL           https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js
 // ==/UserScript==

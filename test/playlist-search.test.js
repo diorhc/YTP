@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * @jest-environment jsdom
  */
@@ -91,12 +90,14 @@ describe('Playlist Search Module', () => {
     test('should use debouncing', done => {
       let callCount = 0;
 
+      /** @param {() => void} func @param {number} wait */
       const debounce = (func, wait) => {
-        let timeout;
-        return function executedFunction(...args) {
-          clearTimeout(timeout);
+        /** @type {ReturnType<typeof setTimeout> | null} */
+        let timeout = null;
+        return function executedFunction() {
+          if (timeout !== null) clearTimeout(timeout);
           timeout = setTimeout(() => {
-            func(...args);
+            func();
           }, wait);
         };
       };
@@ -119,11 +120,12 @@ describe('Playlist Search Module', () => {
     test('should use throttling for observers', done => {
       let callCount = 0;
 
+      /** @param {() => void} func @param {number} limit */
       const throttle = (func, limit) => {
-        let inThrottle;
-        return function executedFunction(...args) {
+        let inThrottle = false;
+        return function executedFunction() {
           if (!inThrottle) {
-            func(...args);
+            func();
             inThrottle = true;
             setTimeout(() => (inThrottle = false), limit);
           }
@@ -277,9 +279,9 @@ describe('Playlist Search Module', () => {
 
   describe('Error Handling', () => {
     test('should handle invalid elements', () => {
-      const element = null;
+      const element = document.querySelector('#missing-playlist-element');
 
-      if (element && element.querySelector) {
+      if (element) {
         // Would throw if not checked
         element.querySelector('.test');
       }
@@ -297,19 +299,24 @@ describe('Playlist Search Module', () => {
 
   describe('DOM Operations', () => {
     test('should batch DOM updates', () => {
+      /** @type {Array<{ element: HTMLDivElement, display: string }>} */
       const updates = [];
 
       // Collect updates
       for (let i = 0; i < 100; i++) {
+        const element = document.createElement('div');
         updates.push({
-          element: document.createElement('div'),
+          element,
           display: i % 2 === 0 ? '' : 'none',
         });
       }
 
       // Apply in batch
       updates.forEach(update => {
-        update.element.style.display = update.display;
+        if (update.element instanceof HTMLElement) {
+          const style = update.element.style;
+          if (style) style.display = update.display;
+        }
       });
 
       expect(updates.length).toBe(100);

@@ -20,7 +20,7 @@
     try {
       // Jest provides process.env.JEST_WORKER_ID in node/jsdom
       return typeof process !== 'undefined' && !!process?.env?.JEST_WORKER_ID;
-    } catch {
+    } catch (e) {
       return false;
     }
   })();
@@ -37,7 +37,7 @@
       if (typeof explicit === 'number' && isFinite(explicit)) {
         return Math.min(1, Math.max(0, explicit));
       }
-    } catch {
+    } catch (e) {
       // ignore
     }
     return PerformanceConfig.sampleRate;
@@ -55,13 +55,27 @@
     ) {
       PerformanceConfig.enabled = false;
     }
-  } catch {
+  } catch (e) {
     // ignore
   }
 
   /**
    * Performance metrics storage
    */
+  /** @type {{
+   * timings: Map<string, any>,
+   * marks: Map<string, number>,
+   * measures: any[],
+   * resources: any[],
+   * webVitals: {
+   *   LCP: number|null,
+   *   CLS: number,
+   *   FID: number|null,
+   *   INP: number|null,
+   *   FCP: number|null,
+   *   TTFB: number|null
+   * }
+   * }} */
   const metrics = {
     timings: new Map(),
     marks: new Map(),
@@ -101,7 +115,11 @@
    * @param {string} endMark - End mark name (optional, defaults to now)
    * @returns {number} Duration in milliseconds
    */
-  const measure = (name, startMark, endMark) => {
+  const measure = (
+    /** @type {string} */ name,
+    /** @type {string} */ startMark,
+    /** @type {string|undefined} */ endMark
+  ) => {
     if (!PerformanceConfig.enabled) return 0;
 
     try {
@@ -111,7 +129,7 @@
         return 0;
       }
 
-      const endTime = endMark ? metrics.marks.get(endMark) : Date.now();
+      const endTime = endMark ? (metrics.marks.get(endMark) ?? Date.now()) : Date.now();
       const duration = endTime - startTime;
 
       const measureData = {
@@ -137,8 +155,8 @@
       if (typeof performance !== 'undefined' && performance.measure) {
         try {
           performance.measure(name, startMark, endMark);
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
 
@@ -158,7 +176,7 @@
   const timeFunction = (name, fn) => {
     if (!PerformanceConfig.enabled) return fn;
 
-    return /** @this {any} */ function (...args) {
+    return /** @this {any} */ function (/** @type {any[]} */ ...args) {
       const startMark = `${name}-start-${Date.now()}`;
       mark(startMark);
 
@@ -191,7 +209,7 @@
   const timeAsyncFunction = (name, fn) => {
     if (!PerformanceConfig.enabled) return fn;
 
-    return /** @this {any} */ async function (...args) {
+    return /** @this {any} */ async function (/** @type {any[]} */ ...args) {
       const startMark = `${name}-start-${Date.now()}`;
       mark(startMark);
 
@@ -213,7 +231,11 @@
    * @param {number} value - Metric value
    * @param {Object} metadata - Additional metadata
    */
-  const recordMetric = (name, value, metadata = {}) => {
+  const recordMetric = (
+    /** @type {string} */ name,
+    /** @type {number} */ value,
+    /** @type {Record<string, any>} */ metadata = {}
+  ) => {
     if (!PerformanceConfig.enabled) return;
 
     const metric = {
@@ -233,9 +255,9 @@
   /**
    * Get performance statistics
    * @param {string} metricName - Optional metric name filter
-   * @returns {Object} Performance statistics
+   * @returns {Object|null} Performance statistics
    */
-  const getStats = metricName => {
+  const getStats = (/** @type {string|undefined} */ metricName) => {
     if (metricName) {
       const filtered = metrics.measures.filter(m => m.name === metricName);
       if (filtered.length === 0) return null;
@@ -252,6 +274,7 @@
     }
 
     // Get all stats
+    /** @type {Record<string, any>} */
     const allMetrics = {};
     const metricNames = [...new Set(metrics.measures.map(m => m.name))];
 
@@ -270,22 +293,23 @@
 
   /**
    * Get memory usage information
-   * @returns {Object|null} Memory usage data
+   * @returns {any|null} Memory usage data
    */
   const getMemoryUsage = () => {
-    if (typeof performance === 'undefined' || !performance.memory) {
+    const perf = /** @type {any} */ (performance);
+    if (typeof performance === 'undefined' || !perf.memory) {
       return null;
     }
 
     try {
-      const memory = performance.memory;
+      const memory = perf.memory;
       return {
         usedJSHeapSize: memory.usedJSHeapSize,
         totalJSHeapSize: memory.totalJSHeapSize,
         jsHeapSizeLimit: memory.jsHeapSizeLimit,
         usedPercent: ((memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100).toFixed(2),
       };
-    } catch {
+    } catch (e) {
       return null;
     }
   };
@@ -294,7 +318,7 @@
    * Track memory usage as a metric
    */
   const trackMemory = () => {
-    const memory = getMemoryUsage();
+    const memory = /** @type {any} */ (getMemoryUsage());
     if (memory) {
       recordMetric('memory-usage', memory.usedJSHeapSize, {
         totalJSHeapSize: memory.totalJSHeapSize,
@@ -306,16 +330,17 @@
   /**
    * Check if metrics exceed thresholds
    * @param {Object} thresholds - Threshold configuration
-   * @returns {Array} Array of threshold violations
+   * @returns {any[]} Array of threshold violations
    */
-  const checkThresholds = thresholds => {
+  const checkThresholds = (/** @type {Record<string, number>} */ thresholds) => {
+    /** @type {any[]} */
     const violations = [];
     const allStats = getStats(undefined);
 
-    if (!allStats || !allStats.metrics) return violations;
+    if (!allStats || !(/** @type {any} */ (allStats).metrics)) return violations;
 
     Object.entries(thresholds).forEach(([metricName, threshold]) => {
-      const stat = allStats.metrics[metricName];
+      const stat = /** @type {any} */ (allStats).metrics[metricName];
       if (stat && stat.avg > threshold) {
         violations.push({
           metric: metricName,
@@ -379,7 +404,7 @@
   /**
    * Aggregate metrics by time period
    * @param {number} periodMs - Time period in milliseconds
-   * @returns {Array} Aggregated metrics
+   * @returns {any[]} Aggregated metrics
    */
   const aggregateByPeriod = (periodMs = 60000) => {
     const periods = new Map();
@@ -392,15 +417,18 @@
       periods.get(periodStart).push(measure);
     });
 
+    /** @type {any[]} */
     const aggregated = [];
     periods.forEach((measures, periodStart) => {
-      const durations = measures.map(m => m.duration);
+      const durations = measures.map((/** @type {any} */ m) => m.duration);
       aggregated.push({
         period: new Date(periodStart).toISOString(),
         count: durations.length,
         min: Math.min(...durations),
         max: Math.max(...durations),
-        avg: durations.reduce((a, b) => a + b, 0) / durations.length,
+        avg:
+          durations.reduce((/** @type {number} */ a, /** @type {number} */ b) => a + b, 0) /
+          durations.length,
       });
     });
 
@@ -426,16 +454,16 @@
 
     try {
       localStorage.removeItem(PerformanceConfig.storageKey);
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
 
     if (typeof performance !== 'undefined' && performance.clearMarks) {
       try {
         performance.clearMarks();
         performance.clearMeasures();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     }
   };
@@ -444,7 +472,7 @@
    * Monitor DOM mutations performance
    * @param {Element} element - Element to monitor
    * @param {string} name - Monitor name
-   * @returns {MutationObserver} The observer instance
+   * @returns {MutationObserver|null} The observer instance
    */
   const monitorMutations = (element, name) => {
     if (!PerformanceConfig.enabled) return null;
@@ -462,7 +490,8 @@
     observer.observe(element, {
       childList: true,
       subtree: true,
-      attributes: true,
+      // P8: Removed `attributes: true` — attribute mutations are very frequent on
+      // YouTube's data-driven custom elements and create overhead without value.
     });
 
     return observer;
@@ -471,7 +500,7 @@
   /**
    * Get browser performance entries
    * @param {string} type - Entry type filter
-   * @returns {Array} Performance entries
+   * @returns {any[]} Performance entries
    */
   const getPerformanceEntries = type => {
     if (typeof performance === 'undefined' || !performance.getEntriesByType) {
@@ -480,7 +509,7 @@
 
     try {
       return performance.getEntriesByType(type);
-    } catch {
+    } catch (e) {
       return [];
     }
   };
@@ -505,8 +534,9 @@
       // Observe CLS
       new PerformanceObserver(entryList => {
         for (const entry of entryList.getEntries()) {
-          if (!entry.hadRecentInput) {
-            metrics.webVitals.CLS += entry.value;
+          const entryAny = /** @type {any} */ (entry);
+          if (!entryAny.hadRecentInput) {
+            metrics.webVitals.CLS += entryAny.value || 0;
           }
         }
         if (PerformanceConfig.enableConsoleOutput && PerformanceConfig.logLevel === 'debug') {
@@ -516,8 +546,8 @@
 
       // Observe FID (First Input Delay)
       new PerformanceObserver(entryList => {
-        const firstInput = entryList.getEntries()[0];
-        metrics.webVitals.FID = firstInput.processingStart - firstInput.startTime;
+        const firstInput = /** @type {any} */ (entryList.getEntries()[0]);
+        metrics.webVitals.FID = (firstInput.processingStart || 0) - (firstInput.startTime || 0);
         if (PerformanceConfig.enableConsoleOutput) {
           console.warn(`[YouTube+ Perf] FID: ${metrics.webVitals.FID.toFixed(2)}ms`);
         }
@@ -530,7 +560,7 @@
           // Simplified INP calculation (just taking max duration for now)
           const maxDuration = Math.max(...entries.map(e => e.duration));
           metrics.webVitals.INP = maxDuration;
-        }).observe({ type: 'event', buffered: true, durationThreshold: 16 });
+        }).observe(/** @type {any} */ ({ type: 'event', buffered: true, durationThreshold: 16 }));
       } catch (e) {
         void e; // INP might not be supported; reference `e` to satisfy linters
       }
@@ -574,7 +604,9 @@
      * RAF Scheduler for batched animations
      */
     const RAFScheduler = (() => {
+      /** @type {number|null} */
       let rafId = null;
+      /** @type {Set<() => void>} */
       const callbacks = new Set();
 
       const flush = () => {
@@ -590,7 +622,7 @@
       };
 
       return {
-        schedule: callback => {
+        schedule: (/** @type {() => void} */ callback) => {
           callbacks.add(callback);
           if (!rafId) rafId = requestAnimationFrame(flush);
           return () => callbacks.delete(callback);
@@ -607,10 +639,11 @@
      * Lazy Loader using Intersection Observer
      */
     const LazyLoader = (() => {
+      /** @type {Map<IntersectionObserver, Set<Element>>} */
       const observers = new Map();
 
       return {
-        create: (options = {}) => {
+        create: (/** @type {any} */ options = {}) => {
           const { root = null, rootMargin = '50px', threshold = 0.01, onIntersect } = options;
 
           const observer = new IntersectionObserver(
@@ -628,13 +661,13 @@
           observers.set(observer, new Set());
 
           return {
-            observe: el => {
+            observe: (/** @type {Element} */ el) => {
               if (el instanceof Element) {
                 observer.observe(el);
-                observers.get(observer).add(el);
+                observers.get(observer)?.add(el);
               }
             },
-            unobserve: el => {
+            unobserve: (/** @type {Element} */ el) => {
               if (el instanceof Element) {
                 observer.unobserve(el);
                 observers.get(observer)?.delete(el);
@@ -657,12 +690,13 @@
      * DOM Batcher for efficient DOM mutations
      */
     const DOMBatcher = (() => {
+      /** @type {Map<Element, Element[]>} */
       const batches = new Map();
 
       return {
-        batch: (container, elements) => {
+        batch: (/** @type {Element} */ container, /** @type {Element[]} */ elements) => {
           if (!batches.has(container)) batches.set(container, []);
-          batches.get(container).push(...elements);
+          batches.get(container)?.push(...elements);
         },
         flush: () => {
           RAFScheduler.schedule(() => {
@@ -678,7 +712,7 @@
             batches.clear();
           });
         },
-        clear: container => batches.delete(container),
+        clear: (/** @type {Element} */ container) => batches.delete(container),
       };
     })();
 
@@ -689,8 +723,8 @@
       const cache = new WeakMap();
 
       return {
-        get: (el, key) => cache.get(el)?.[key],
-        set: (el, key, val) => {
+        get: (/** @type {Element} */ el, /** @type {string} */ key) => cache.get(el)?.[key],
+        set: (/** @type {Element} */ el, /** @type {string} */ key, /** @type {any} */ val) => {
           let data = cache.get(el);
           if (!data) {
             data = {};
@@ -698,11 +732,11 @@
           }
           data[key] = val;
         },
-        has: (el, key) => {
+        has: (/** @type {Element} */ el, /** @type {string} */ key) => {
           const data = cache.get(el);
           return data ? key in data : false;
         },
-        delete: (el, key) => {
+        delete: (/** @type {Element} */ el, /** @type {string} */ key) => {
           const data = cache.get(el);
           if (data) delete data[key];
         },
@@ -710,7 +744,7 @@
     })();
 
     // Expose performance monitoring API
-    window.YouTubePerformance = {
+    /** @type {any} */ (window).YouTubePerformance = {
       mark,
       measure,
       timeFunction,
@@ -775,10 +809,10 @@
      * @param {number} [options.maxBlockTime=50] - Max time to block before yielding
      * @returns {Function} Wrapped handler
      */
-    const wrapForINP = (handler, options = {}) => {
+    const wrapForINP = (/** @type {Function} */ handler, /** @type {any} */ options = {}) => {
       const { maxBlockTime = 50 } = options;
 
-      return async function (...args) {
+      return /** @this {any} */ async function (/** @type {any[]} */ ...args) {
         const start = performance.now();
         let result;
 
@@ -802,9 +836,9 @@
     };
 
     // Add INP helpers to global API
-    window.YouTubePerformance.yieldToMain = yieldToMain;
-    window.YouTubePerformance.runChunkedTasks = runChunkedTasks;
-    window.YouTubePerformance.wrapForINP = wrapForINP;
+    /** @type {any} */ (window).YouTubePerformance.yieldToMain = yieldToMain;
+    /** @type {any} */ (window).YouTubePerformance.runChunkedTasks = runChunkedTasks;
+    /** @type {any} */ (window).YouTubePerformance.wrapForINP = wrapForINP;
 
     // ─── LCP Optimization Suite ────────────────────────────────────────────────
     // Target: Main page <5s, Video page <3.5s, Playlist page <3.5s
@@ -847,6 +881,7 @@
      */
     const boostLCPElement = () => {
       const path = location.pathname;
+      /** @type {string|undefined} */
       let lcpSelector;
 
       if (path === '/watch' || path.startsWith('/shorts/')) {
@@ -865,7 +900,7 @@
       if (!lcpSelector) return;
 
       requestAnimationFrame(() => {
-        const el = document.querySelector(lcpSelector);
+        const el = /** @type {any} */ (document.querySelector(lcpSelector));
         if (el && el.tagName === 'IMG') {
           el.setAttribute('fetchpriority', 'high');
           el.setAttribute('loading', 'eager');
@@ -965,6 +1000,7 @@
       };
 
       // Run periodically to catch new items
+      /** @type {ReturnType<typeof setTimeout>|null} */
       let imgTimer = null;
       const scheduleObserve = () => {
         if (imgTimer) return;
@@ -993,9 +1029,12 @@
      *    from multiple independent subtree observers.
      */
     const SharedMutationManager = (() => {
+      /** @type {MutationObserver|null} */
       let observer = null;
+      /** @type {Map<string, {callback: Function, filter?: Function}>} */
       const callbacks = new Map(); // key -> {callback, filter}
       let scheduled = false;
+      /** @type {MutationRecord[]} */
       const pending = [];
 
       const flush = () => {
@@ -1004,7 +1043,7 @@
         pending.length = 0;
 
         for (const [, { callback, filter }] of callbacks) {
-          const filtered = filter ? entries.filter(filter) : entries;
+          const filtered = filter ? entries.filter(/** @type {any} */ (filter)) : entries;
           if (filtered.length > 0) {
             try {
               callback(filtered);
@@ -1017,7 +1056,7 @@
 
       const start = () => {
         if (observer) return;
-        observer = new MutationObserver(mutations => {
+        observer = new MutationObserver((/** @type {MutationRecord[]} */ mutations) => {
           pending.push(...mutations);
           if (!scheduled) {
             scheduled = true;
@@ -1042,7 +1081,7 @@
           callbacks.set(key, { callback, filter });
           if (callbacks.size === 1) start();
         },
-        unregister(key) {
+        unregister(/** @type {string} */ key) {
           callbacks.delete(key);
           if (callbacks.size === 0 && observer) {
             observer.disconnect();
@@ -1058,12 +1097,14 @@
      *    Schedules non-critical initialization to idle periods.
      */
     const IdleScheduler = (() => {
+      /** @type {{fn: Function, priority: number}[]} */
       const queue = [];
       let running = false;
 
-      const processQueue = deadline => {
+      const processQueue = (/** @type {IdleDeadline|null} */ deadline) => {
         while (queue.length > 0 && (deadline ? deadline.timeRemaining() > 5 : true)) {
           const task = queue.shift();
+          if (!task) continue;
           try {
             task.fn();
           } catch (e) {
@@ -1113,6 +1154,7 @@
     const initLongTaskMonitor = () => {
       if (typeof PerformanceObserver === 'undefined') return;
       try {
+        /** @type {{ duration: number, startTime: number, name: string }[]} */
         const longTasks = [];
         new PerformanceObserver(list => {
           for (const entry of list.getEntries()) {
@@ -1127,7 +1169,7 @@
           const totalBlocking = longTasks.reduce((sum, t) => sum + Math.max(0, t.duration - 50), 0);
           recordMetric('total-blocking-time', totalBlocking);
         }).observe({ type: 'longtask', buffered: true });
-      } catch {
+      } catch (e) {
         // longtask observer not supported
       }
     };
@@ -1138,7 +1180,12 @@
      */
     const initNavigationTracking = () => {
       const _pCm2 = window.YouTubeUtils?.cleanupManager;
-      const _addL = (t, ev, fn, o) => {
+      const _addL = (
+        /** @type {EventTarget} */ t,
+        /** @type {string} */ ev,
+        /** @type {EventListenerOrEventListenerObject} */ fn,
+        /** @type {AddEventListenerOptions|boolean|undefined} */ o = undefined
+      ) => {
         if (_pCm2?.registerListener) _pCm2.registerListener(t, ev, fn, o);
         else t.addEventListener(ev, fn, o);
       };
@@ -1156,7 +1203,7 @@
         'yt-navigate-finish',
         () => {
           mark('yt-navigate-finish');
-          measure('yt-navigation-duration', 'yt-navigate-start');
+          measure('yt-navigation-duration', 'yt-navigate-start', undefined);
 
           // Re-boost LCP for new page
           requestAnimationFrame(() => {
@@ -1194,14 +1241,11 @@
     initLCPOptimizations();
 
     // Expose new performance APIs
-    window.YouTubePerformance.SharedMutationManager = SharedMutationManager;
-    window.YouTubePerformance.IdleScheduler = IdleScheduler;
-    window.YouTubePerformance.boostLCPElement = boostLCPElement;
-    window.YouTubePerformance.injectResourceHints = injectResourceHints;
+    /** @type {any} */ (window).YouTubePerformance.SharedMutationManager = SharedMutationManager;
+    /** @type {any} */ (window).YouTubePerformance.IdleScheduler = IdleScheduler;
+    /** @type {any} */ (window).YouTubePerformance.boostLCPElement = boostLCPElement;
+    /** @type {any} */ (window).YouTubePerformance.injectResourceHints = injectResourceHints;
 
-    window.YouTubeUtils &&
-      YouTubeUtils.logger &&
-      YouTubeUtils.logger.debug &&
-      YouTubeUtils.logger.debug('[YouTube+] Performance monitoring initialized');
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+] Performance monitoring initialized');
   }
 })();

@@ -118,13 +118,28 @@ for (const buildFile of buildFiles) {
 window.YouTubePlusEmbeddedTranslations = ${JSON.stringify(translations, null, 0)};
 `;
 
-  // Find the i18n module section and inject the embedded translations before it
-  // Look for the GITHUB_CONFIG marker that starts the i18n module
-  let i18nLoaderStart = buildContent.indexOf('const GITHUB_CONFIG = {');
+  // Find the i18n module section and inject the embedded translations before it.
+  // Keep this resilient to build-time constant folding/minification.
+  const i18nMarkers = [
+    'const GITHUB_CONFIG = {',
+    'const GITHUB_CONFIG_owner = ',
+    'window.YouTubePlusI18n =',
+    'const CDN_URLS = {',
+  ];
+  let i18nLoaderStart = -1;
+  let markerUsed = '';
+  for (const marker of i18nMarkers) {
+    const idx = buildContent.indexOf(marker);
+    if (idx !== -1) {
+      i18nLoaderStart = idx;
+      markerUsed = marker;
+      break;
+    }
+  }
 
   if (i18nLoaderStart === -1) {
     console.error('✗ Could not find i18n module section in build file');
-    console.error('   Looking for: const GITHUB_CONFIG = {');
+    console.error(`   Tried markers: ${i18nMarkers.join(' | ')}`);
     process.exit(1);
   }
 
@@ -140,7 +155,9 @@ window.YouTubePlusEmbeddedTranslations = ${JSON.stringify(translations, null, 0)
   // Write back to file
   fs.writeFileSync(buildFile, buildContent, 'utf8');
 
-  console.log(`\n✅ Successfully embedded translations into ${path.basename(buildFile)}`);
+  console.log(
+    `\n✅ Successfully embedded translations into ${path.basename(buildFile)} (marker: ${markerUsed})`
+  );
 }
 
 console.log(`\n📊 Total translations embedded: ${locales.length} languages`);

@@ -10,7 +10,7 @@
     constructor() {
       /** @type {Map<string, Map<string, Set<Function>>>} */
       this.delegatedHandlers = new Map();
-      /** @type {Map<Element, Map<string, Function>}>} */
+      /** @type {Map<Element, Map<string, Function>>} */
       this.registeredDelegators = new Map();
       this.stats = { totalDelegations: 0, totalHandlers: 0 };
     }
@@ -39,12 +39,13 @@
       }
 
       const handlersForSelector = this.delegatedHandlers.get(delegationKey);
+      if (!handlersForSelector) return;
       if (!handlersForSelector.has(selector)) {
         handlersForSelector.set(selector, new Set());
       }
 
       // Add handler
-      handlersForSelector.get(selector).add(handler);
+      handlersForSelector.get(selector)?.add(handler);
       this.stats.totalHandlers++;
 
       // Create or get delegated listener
@@ -53,12 +54,18 @@
       }
 
       const parentDelegators = this.registeredDelegators.get(parent);
+      if (!parentDelegators) return;
       if (!parentDelegators.has(eventType)) {
+        /** @param {Event} event */
         const delegatedListener = event => {
           this._handleDelegatedEvent(parent, eventType, event);
         };
 
-        parent.addEventListener(eventType, delegatedListener, options);
+        parent.addEventListener(
+          eventType,
+          /** @type {EventListener} */ (delegatedListener),
+          /** @type {boolean|AddEventListenerOptions} */ (options)
+        );
         parentDelegators.set(eventType, delegatedListener);
         this.stats.totalDelegations++;
 
@@ -103,6 +110,11 @@
      * Handle delegated event and dispatch to matching handlers
      * @private
      */
+    /**
+     * @param {Element} parent
+     * @param {string} eventType
+     * @param {Event} event
+     */
     _handleDelegatedEvent(parent, eventType, event) {
       const parentKey = this._getElementKey(parent);
       const delegationKey = `${parentKey}:${eventType}`;
@@ -113,7 +125,8 @@
       // Check each selector for matches
       for (const [selector, handlers] of handlersForSelector.entries()) {
         // Find closest matching element
-        const target = event.target.closest(selector);
+        const evtTarget = /** @type {HTMLElement|null} */ (event.target);
+        const target = evtTarget?.closest(selector);
 
         if (target && parent.contains(target)) {
           // Execute all handlers for this selector
@@ -133,13 +146,17 @@
      * Remove parent listener
      * @private
      */
+    /**
+     * @param {Element} parent
+     * @param {string} eventType
+     */
     _removeParentListener(parent, eventType) {
       const parentDelegators = this.registeredDelegators.get(parent);
       if (!parentDelegators) return;
 
       const listener = parentDelegators.get(eventType);
       if (listener) {
-        parent.removeEventListener(eventType, listener);
+        parent.removeEventListener(eventType, /** @type {EventListener} */ (listener));
         parentDelegators.delete(eventType);
         this.stats.totalDelegations--;
       }
@@ -153,9 +170,13 @@
      * Get unique key for element
      * @private
      */
+    /**
+     * @param {Element|Document} element
+     * @returns {string}
+     */
     _getElementKey(element) {
       if (element === document) return 'document';
-      if (element === window) return 'window';
+      if (element === /** @type {any} */ (window)) return 'window';
       if (element === document.body) return 'body';
 
       // Use a WeakMap for stable, deterministic element keys
@@ -163,13 +184,13 @@
         this._elementKeyMap = new WeakMap();
         this._elementKeyCounter = 0;
       }
-      if (element.id) return element.id;
-      let key = this._elementKeyMap.get(element);
-      if (!key) {
-        key = `${element.tagName || 'ELEM'}_${++this._elementKeyCounter}`;
-        this._elementKeyMap.set(element, key);
-      }
-      return key;
+      const htmlEl = /** @type {Element} */ (element);
+      if (htmlEl.id) return htmlEl.id;
+      const existing = this._elementKeyMap.get(htmlEl);
+      if (existing) return existing;
+      const newKey = `${htmlEl.tagName || 'ELEM'}_${(this._elementKeyCounter = (this._elementKeyCounter || 0) + 1)}`;
+      this._elementKeyMap.set(htmlEl, newKey);
+      return newKey;
     }
 
     /**
@@ -188,10 +209,13 @@
      */
     clear() {
       for (const [parent, delegators] of this.registeredDelegators.entries()) {
-        for (const [eventType, listener] of delegators.entries()) {
+        for (const eventType of delegators.keys()) {
           try {
-            parent.removeEventListener(eventType, listener);
-          } catch {
+            parent.removeEventListener(
+              eventType,
+              /** @type {EventListener} */ (delegators.get(eventType))
+            );
+          } catch (e) {
             // Element may have been GC'd — safe to ignore
           }
         }
@@ -235,13 +259,24 @@
 
   // Export to window
   if (typeof window !== 'undefined') {
-    window.YouTubePlusEventDelegation = {
-      EventDelegator,
-      on,
-      off,
-      getStats: () => eventDelegator.getStats(),
-      clear: () => eventDelegator.clear(),
-    };
+    window.YouTubePlusEventDelegation =
+      /** @type {YouTubePlusEventDelegation & {EventDelegator: any, on: Function, off: Function, clear: Function}} */ ({
+        EventDelegator,
+        on,
+        off,
+        delegate: (parent, eventType, selector, handler, options) =>
+          eventDelegator.delegate(
+            /** @type {Element} */ (parent),
+            eventType,
+            selector,
+            handler,
+            options
+          ),
+        undelegate: (parent, eventType, selector, handler) =>
+          eventDelegator.undelegate(/** @type {Element} */ (parent), eventType, selector, handler),
+        getStats: () => eventDelegator.getStats(),
+        clear: () => eventDelegator.clear(),
+      });
   }
 
   if (typeof module !== 'undefined' && module.exports) {

@@ -17,7 +17,8 @@ function runBuild() {
     execSync(`node "${BUILD_SCRIPT}" --no-eslint`, { stdio: 'inherit' });
     console.log('✓ Build completed successfully\n');
   } catch (e) {
-    throw new Error(`Build failed: ${e.message}`);
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error(`Build failed: ${msg}`);
   }
 }
 
@@ -69,7 +70,8 @@ function smokeValidate() {
     new vm.Script(content, { filename: OUT });
     console.log('✓ JavaScript syntax is valid');
   } catch (e) {
-    throw new Error('Syntax check failed: ' + e.message);
+    const msg = e instanceof Error ? e.message : String(e);
+    throw new Error('Syntax check failed: ' + msg);
   }
 
   // Check for common issues
@@ -108,7 +110,8 @@ function validateSourceFiles() {
     try {
       new vm.Script(content, { filename: file });
     } catch (e) {
-      console.error(`✗ ${file}: ${e.message}`);
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error(`✗ ${file}: ${msg}`);
       invalidFiles++;
     }
   });
@@ -137,7 +140,7 @@ try {
   console.error('\n╔════════════════════════════════════════╗');
   console.error('║         SMOKE TEST FAILED ✗            ║');
   console.error('╚════════════════════════════════════════╝');
-  console.error('\nError:', e && e.message);
+  console.error('\nError:', e instanceof Error ? e.message : String(e));
   console.error();
   process.exit(2);
 }

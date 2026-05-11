@@ -5,16 +5,24 @@
 describe('PiP Module', () => {
   beforeEach(() => {
     window._ytplusCreateHTML = s => s;
-    window.YouTubeUtils = {
-      t: jest.fn(key => key || ''),
-      $: jest.fn(sel => document.querySelector(sel)),
-      loadFeatureEnabled: jest.fn(() => true),
-      cleanupManager: {
-        registerListener: jest.fn(),
-        registerTimeout: jest.fn(id => id),
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        t: jest.fn(key => key || ''),
+        $: jest.fn(sel => document.querySelector(sel)),
+        loadFeatureEnabled: jest.fn(() => true),
+        cleanupManager: {
+          registerListener: jest.fn(),
+          registerTimeout: jest.fn(id => id),
+          registerObserver: jest.fn(),
+          registerInterval: jest.fn(id => id),
+          registerAnimationFrame: jest.fn(id => id),
+          cleanup: jest.fn(),
+        },
+        SETTINGS_KEY: 'youtube_plus_settings',
       },
-      SETTINGS_KEY: 'youtube_plus_settings',
-    };
+    });
   });
 
   test('should define PiP settings with defaults', () => {
@@ -31,10 +39,12 @@ describe('PiP Module', () => {
 
   test('should detect PiP support', () => {
     const isPiPSupported = () => {
-      return (
-        'pictureInPictureEnabled' in document ||
-        document.createElement('video').requestPictureInPicture !== undefined
+      const doc = /** @type {Record<string, unknown>} */ (/** @type {unknown} */ (document));
+      if ('pictureInPictureEnabled' in doc) return true;
+      const vid = /** @type {HTMLVideoElement} */ (
+        /** @type {unknown} */ (document.createElement('video'))
       );
+      return typeof vid.requestPictureInPicture === 'function';
     };
 
     // jsdom doesn't support PiP
@@ -42,9 +52,15 @@ describe('PiP Module', () => {
   });
 
   test('should validate shortcut config', () => {
-    const isValidShortcut = config => {
+    const isValidShortcut = /** @param {unknown} config */ config => {
       if (!config || typeof config !== 'object') return false;
-      if (!config.key || typeof config.key !== 'string') return false;
+      if (!('key' in config) || typeof (/** @type {{key?: unknown}} */ (config).key) !== 'string')
+        return false;
+      if (
+        config /** @type {{key: string}} */.key
+          .trim().length === 0
+      )
+        return false;
       return true;
     };
 
@@ -59,7 +75,7 @@ describe('PiP Module', () => {
     const settings = { enabled: false, shortcut: { key: 'I', altKey: true } };
 
     localStorage.setItem(key, JSON.stringify(settings));
-    const restored = JSON.parse(localStorage.getItem(key));
+    const restored = JSON.parse(localStorage.getItem(key) ?? 'null');
     expect(restored.enabled).toBe(false);
     expect(restored.shortcut.key).toBe('I');
   });

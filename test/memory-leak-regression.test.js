@@ -21,10 +21,17 @@ describe('Memory leak regression — SPA navigation cycle', () => {
       observers,
       listeners,
       intervals,
+      /** @param {MutationObserver} o */
       registerObserver(o) {
         if (o) observers.add(o);
         return o;
       },
+      /**
+       * @param {EventTarget} target
+       * @param {string} ev
+       * @param {EventListener} fn
+       * @param {boolean|AddEventListenerOptions|undefined} [opts]
+       */
       registerListener(target, ev, fn, opts) {
         target.addEventListener(ev, fn, opts);
         const key = Symbol();
@@ -32,6 +39,7 @@ describe('Memory leak regression — SPA navigation cycle', () => {
         registeredTotal++;
         return key;
       },
+      /** @param {number} id */
       registerInterval(id) {
         intervals.add(id);
         return id;
@@ -69,9 +77,14 @@ describe('Memory leak regression — SPA navigation cycle', () => {
   function createObserverRegistry() {
     const registry = new Map();
     return {
+      /**
+       * @param {string} name
+       * @param {MutationObserver} obs
+       */
       register(name, obs) {
         registry.set(name, { observer: obs, registeredAt: Date.now() });
       },
+      /** @param {string} name */
       unregister(name) {
         const entry = registry.get(name);
         if (entry && entry.observer?.disconnect) entry.observer.disconnect();
@@ -86,6 +99,10 @@ describe('Memory leak regression — SPA navigation cycle', () => {
   /**
    * Simulate a single "module init" that registers observers + listeners
    * (mimics what src/ modules do on page load)
+   */
+  /**
+   * @param {ReturnType<typeof createCleanupManager>} cm
+   * @param {ReturnType<typeof createObserverRegistry>} registry
    */
   function simulateModuleInit(cm, registry) {
     // Register 3 MutationObservers
@@ -105,7 +122,9 @@ describe('Memory leak regression — SPA navigation cycle', () => {
     }
 
     // Register 1 interval
-    const intervalId = setInterval(() => {}, 60000);
+    const intervalId = /** @type {number} */ (
+      /** @type {unknown} */ (setInterval(() => {}, 60000))
+    );
     cm.registerInterval(intervalId);
   }
 
@@ -163,7 +182,9 @@ describe('Memory leak regression — SPA navigation cycle', () => {
     cm.registerObserver(obs);
     cm.registerListener(document, 'click', () => {});
     cm.registerListener(document, 'keydown', () => {});
-    cm.registerInterval(setInterval(() => {}, 60000));
+    cm.registerInterval(
+      /** @type {number} */ (/** @type {unknown} */ (setInterval(() => {}, 60000)))
+    );
 
     const before = cm.getStats();
     expect(before.observers).toBe(1);

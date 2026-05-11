@@ -3,6 +3,7 @@ const { $, $$, byId } = window.YouTubeUtils || {};
 
 const onDomReady = (() => {
   let ready = document.readyState !== 'loading';
+  /** @type {Array<() => void>} */
   const queue = [];
 
   const run = () => {
@@ -10,7 +11,7 @@ const onDomReady = (() => {
     while (queue.length) {
       const cb = queue.shift();
       try {
-        cb();
+        if (cb) cb();
       } catch (e) {
         console.warn('[YouTube+] DOMReady callback error:', e);
       }
@@ -21,7 +22,7 @@ const onDomReady = (() => {
     document.addEventListener('DOMContentLoaded', run, { once: true });
   }
 
-  return cb => {
+  return (/** @type {any} */ cb) => {
     if (ready) {
       cb();
     } else {
@@ -33,7 +34,8 @@ const onDomReady = (() => {
 // Enhanced Tabviews
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const _createHTML =
+    window._ytplusCreateHTML || /** @type {any} */ ((/** @type {string} */ s) => s);
   // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
   const _getLanguage = () => {
     if (window.YouTubePlusI18n?.getLanguage) return window.YouTubePlusI18n.getLanguage();
@@ -43,7 +45,7 @@ const onDomReady = (() => {
   };
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils?.t || (key => key || '');
+  const t = window.YouTubeUtils?.t || /** @type {any} */ ((/** @type {string} */ key) => key || '');
 
   /**
    * Configuration object for scroll-to-top button
@@ -51,18 +53,38 @@ const onDomReady = (() => {
    * @property {boolean} enabled - Whether the feature is enabled
    * @property {string} storageKey - LocalStorage key for settings
    */
+  /** @type {any} */
   const config = {
     enabled: window.YouTubeUtils?.loadFeatureEnabled?.('enableScrollToTopButton') ?? true,
     storageKey: 'youtube_top_button_settings',
   };
 
+  // Shared debounce helper — prefers YouTubeUtils, falls back to shared defaults
+  const _debounce =
+    window.YouTubeUtils?.debounce ??
+    window._ytpDefaults?.debounce ??
+    ((/** @type {any} */ fn, /** @type {number} */ delay) => {
+      /** @type {ReturnType<typeof setTimeout> | null} */
+      let timeoutId = null;
+      return (/** @type {any[]} */ ...args) => {
+        if (timeoutId) clearTimeout(timeoutId);
+        timeoutId = setTimeout(() => fn(...args), delay);
+      };
+    });
+
+  const isTabviewEnabled = () => window.YouTubeUtils?.loadFeatureEnabled?.('enableTabview') ?? true;
+
+  /** @type {any} */
   let universalScrollHandler = null;
+  /** @type {any} */
   let universalScrollContainer = null;
   const universalExtraScrollTargets = new Set();
+  /** @type {Array<ReturnType<typeof setTimeout>>} */
   let universalAttachTimeoutIds = [];
 
   // --- Shared Music/Studio container resolver ---
   // Caches results for a short TTL to avoid repeated DOM queries in hot paths.
+  /** @type {Element[] | null} */
   let _musicContainersCache = null;
   let _musicContainersCacheTime = 0;
   const MUSIC_CACHE_TTL = 5000;
@@ -77,12 +99,14 @@ const onDomReady = (() => {
     if (_musicContainersCache && now - _musicContainersCacheTime < MUSIC_CACHE_TTL) {
       return _musicContainersCache;
     }
-    _musicContainersCache = [
-      document.querySelector('ytmusic-app-layout #layout'),
-      document.querySelector('ytmusic-app-layout'),
-      document.querySelector('ytmusic-browse-response #contents'),
-      document.querySelector('ytmusic-section-list-renderer'),
-    ].filter(Boolean);
+    _musicContainersCache = /** @type {Element[]} */ (
+      [
+        document.querySelector('ytmusic-app-layout #layout'),
+        document.querySelector('ytmusic-app-layout'),
+        document.querySelector('ytmusic-browse-response #contents'),
+        document.querySelector('ytmusic-section-list-renderer'),
+      ].filter(Boolean)
+    );
     _musicContainersCacheTime = now;
     return _musicContainersCache;
   };
@@ -135,49 +159,52 @@ const onDomReady = (() => {
     return document.scrollingElement || document.documentElement;
   };
 
+  /** @type {any} */
   let universalWindowScrollHandler = null;
 
   const removeUniversalButton = () => {
     try {
       const btn = byId('universal-top-button');
       if (btn) btn.remove();
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     try {
       if (universalScrollHandler && universalScrollContainer) {
         universalScrollContainer.removeEventListener('scroll', universalScrollHandler);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     try {
       if (universalWindowScrollHandler) {
         window.removeEventListener('scroll', universalWindowScrollHandler);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     try {
       if (universalWindowScrollHandler && universalExtraScrollTargets.size) {
         for (const target of universalExtraScrollTargets) {
           try {
             target.removeEventListener('scroll', universalWindowScrollHandler);
-            if (target._ytpScrollAttached) target._ytpScrollAttached = false;
-          } catch {
-            /* empty */
+            if (/** @type {any} */ (target)._ytpScrollAttached) {
+              /** @type {any} */ (target)._ytpScrollAttached = false;
+            }
+          } catch (e) {
+            // Non-critical, suppressed
           }
         }
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     try {
       if (universalAttachTimeoutIds.length) {
         universalAttachTimeoutIds.forEach(id => clearTimeout(id));
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     universalScrollHandler = null;
     universalScrollContainer = null;
@@ -186,7 +213,9 @@ const onDomReady = (() => {
     universalAttachTimeoutIds = [];
   };
 
+  /** @type {any} */
   let musicSideScrollHandler = null;
+  /** @type {any} */
   let musicSideScrollContainer = null;
 
   const getMusicSidePanelContainer = () => {
@@ -207,8 +236,8 @@ const onDomReady = (() => {
       try {
         const el = document.querySelector(sel);
         if (el && el.scrollHeight > el.clientHeight + 30) return el;
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     }
 
@@ -233,8 +262,8 @@ const onDomReady = (() => {
         try {
           const el = root.querySelector(sel);
           if (el && el.scrollHeight > el.clientHeight + 30) return el;
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
     }
@@ -245,15 +274,15 @@ const onDomReady = (() => {
     try {
       const btn = byId('music-side-top-button');
       if (btn) btn.remove();
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     try {
       if (musicSideScrollHandler && musicSideScrollContainer) {
         musicSideScrollContainer.removeEventListener('scroll', musicSideScrollHandler);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     musicSideScrollHandler = null;
     musicSideScrollContainer = null;
@@ -263,14 +292,14 @@ const onDomReady = (() => {
     try {
       const rightButton = byId('right-tabs-top-button');
       if (rightButton) rightButton.remove();
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     try {
       const playlistButton = byId('playlist-panel-top-button');
       if (playlistButton) playlistButton.remove();
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
 
     removeMusicSideButton();
@@ -301,8 +330,8 @@ const onDomReady = (() => {
           rightTabsEl._scrollCleanup = null;
         }
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
 
     try {
@@ -311,31 +340,35 @@ const onDomReady = (() => {
         playlistScroll.removeEventListener('scroll', playlistScroll._topButtonScrollHandler);
         playlistScroll._topButtonScrollHandler = null;
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
+  /** @type {MutationObserver | null} */
   let tabChangesObserver = null;
   let watchInitToken = 0;
   let isTabClickListenerAttached = false;
+  /** @type {any} */
   let tabDelegationHandler = null;
   let tabDelegationRegistered = false;
+  /** @type {any} */
   let tabCheckTimeoutId = null;
+  /** @type {any} */
   let playlistPanelCheckTimeoutId = null;
 
   const isWatchPage = () => window.location.pathname === '/watch';
   const isShortsPage = () => window.location.pathname.startsWith('/shorts');
   const shouldInitReturnDislike = () => isWatchPage() || isShortsPage();
 
-  const isTopButton = el =>
+  const isTopButton = (/** @type {any} */ el) =>
     el &&
     (el.id === 'right-tabs-top-button' ||
       el.id === 'universal-top-button' ||
       el.id === 'playlist-panel-top-button' ||
       el.id === 'music-side-top-button');
 
-  const handleTopButtonActivate = button => {
+  const handleTopButtonActivate = (/** @type {any} */ button) => {
     try {
       if (!button) return;
 
@@ -354,7 +387,7 @@ const onDomReady = (() => {
               ? activeTab
               : activeTab || rightTabsEl;
         if (scrollTarget) {
-          if ('scrollBehavior' in document.documentElement.style) {
+          if ('scrollBehavior' in /** @type {any} */ (document.documentElement.style || {})) {
             scrollTarget.scrollTo({ top: 0, behavior: 'smooth' });
           } else {
             scrollTarget.scrollTop = 0;
@@ -378,8 +411,8 @@ const onDomReady = (() => {
             : universalScrollContainer || getUniversalScrollContainer();
 
         // Try multiple scroll strategies for YouTube Music
-        const scrollToTop = el => {
-          if ('scrollBehavior' in document.documentElement.style) {
+        const scrollToTop = (/** @type {any} */ el) => {
+          if ('scrollBehavior' in /** @type {any} */ (document.documentElement.style || {})) {
             el.scrollTo({ top: 0, behavior: 'smooth' });
           } else {
             el.scrollTop = 0;
@@ -411,9 +444,11 @@ const onDomReady = (() => {
 
       if (button.id === 'playlist-panel-top-button') {
         const playlistPanel = $('ytd-playlist-panel-renderer');
-        const scrollContainer = playlistPanel ? $('#items', playlistPanel) : null;
+        const scrollContainer = playlistPanel
+          ? $('#items', /** @type {any} */ (playlistPanel))
+          : null;
         if (scrollContainer) {
-          if ('scrollBehavior' in document.documentElement.style) {
+          if ('scrollBehavior' in /** @type {any} */ (document.documentElement.style || {})) {
             scrollContainer.scrollTo({ top: 0, behavior: 'smooth' });
           } else {
             scrollContainer.scrollTop = 0;
@@ -426,7 +461,7 @@ const onDomReady = (() => {
         // Always re-detect since panel content changes with navigation
         const target = getMusicSidePanelContainer() || musicSideScrollContainer;
         if (target) {
-          if ('scrollBehavior' in document.documentElement.style) {
+          if ('scrollBehavior' in /** @type {any} */ (document.documentElement.style || {})) {
             target.scrollTo({ top: 0, behavior: 'smooth' });
           } else {
             target.scrollTop = 0;
@@ -446,23 +481,33 @@ const onDomReady = (() => {
 
       const delegator = window.YouTubePlusEventDelegation;
       if (delegator?.on) {
-        delegator.on(document, 'click', '.top-button', (ev, target) => {
-          if (isTopButton(target)) handleTopButtonActivate(target);
-        });
-        delegator.on(document, 'keydown', '.top-button', (ev, target) => {
-          if (!isTopButton(target)) return;
-          if (ev.key === 'Enter' || ev.key === ' ') {
-            ev.preventDefault();
-            handleTopButtonActivate(target);
+        delegator.on(
+          document,
+          'click',
+          '.top-button',
+          (/** @type {any} */ _ev, /** @type {any} */ target) => {
+            if (isTopButton(target)) handleTopButtonActivate(target);
           }
-        });
+        );
+        delegator.on(
+          document,
+          'keydown',
+          '.top-button',
+          (/** @type {any} */ ev, /** @type {any} */ target) => {
+            if (!isTopButton(target)) return;
+            if (ev.key === 'Enter' || ev.key === ' ') {
+              ev.preventDefault();
+              handleTopButtonActivate(target);
+            }
+          }
+        );
       } else {
         const _cm = window.YouTubeUtils?.cleanupManager;
-        const _clickHandler = ev => {
+        const _clickHandler = (/** @type {any} */ ev) => {
           const target = ev.target?.closest?.('.top-button');
           if (isTopButton(target)) handleTopButtonActivate(target);
         };
-        const _keyHandler = ev => {
+        const _keyHandler = (/** @type {any} */ ev) => {
           const target = ev.target?.closest?.('.top-button');
           if (!isTopButton(target)) return;
           if (ev.key === 'Enter' || ev.key === ' ') {
@@ -481,7 +526,7 @@ const onDomReady = (() => {
     };
   })();
 
-  const clearTimeoutSafe = id => {
+  const clearTimeoutSafe = (/** @type {any} */ id) => {
     if (id) clearTimeout(id);
     return null;
   };
@@ -555,7 +600,8 @@ const onDomReady = (() => {
    * @returns {void}
    */
   const setupScrollListener = (() => {
-    let timeout;
+    /** @type {ReturnType<typeof setTimeout> | null} */
+    let timeout = null;
     return () => {
       if (timeout) clearTimeout(timeout);
       timeout = setTimeout(() => {
@@ -616,30 +662,31 @@ const onDomReady = (() => {
             // Use ScrollManager if available for better performance
             if (window.YouTubePlusScrollManager) {
               const cleanup = window.YouTubePlusScrollManager.addScrollListener(
-                scrollTarget,
-                () => handleScroll(scrollTarget, button),
+                /** @type {any} */ (scrollTarget),
+                () =>
+                  handleScroll(
+                    /** @type {any} */ (scrollTarget),
+                    /** @type {HTMLElement} */ (button)
+                  ),
                 { debounce: 100, runInitial: true }
               );
               scrollTarget._scrollCleanup = cleanup;
             } else {
               // Fallback to manual debouncing
-              const debounceFunc =
-                typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
-                  ? YouTubeUtils.debounce
-                  : (fn, delay) => {
-                      let timeoutId;
-                      return (...args) => {
-                        clearTimeout(timeoutId);
-                        timeoutId = setTimeout(() => fn(...args), delay);
-                      };
-                    };
-              const scrollHandler = debounceFunc(() => handleScroll(scrollTarget, button), 100);
+              const scrollHandler = _debounce(
+                () =>
+                  handleScroll(
+                    /** @type {any} */ (scrollTarget),
+                    /** @type {HTMLElement} */ (button)
+                  ),
+                100
+              );
               scrollTarget._topButtonScrollHandler = scrollHandler;
               scrollTarget.addEventListener('scroll', scrollHandler, {
                 passive: true,
                 capture: false,
               });
-              handleScroll(scrollTarget, button);
+              handleScroll(/** @type {any} */ (scrollTarget), /** @type {HTMLElement} */ (button));
             }
           }
         } catch (error) {
@@ -669,7 +716,7 @@ const onDomReady = (() => {
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
       );
 
-      rightTabs.style.position = 'relative';
+      /** @type {any} */ (rightTabs).style.position = 'relative';
       rightTabs.appendChild(button);
       setupScrollListener();
     } catch (error) {
@@ -708,24 +755,13 @@ const onDomReady = (() => {
       // Ensure the button is above YouTube Music/Studio overlays
       const host = window.location.hostname;
       if (host === 'music.youtube.com' || host === 'studio.youtube.com') {
-        button.style.zIndex = '10000';
+        /** @type {any} */ (button).style.zIndex = '10000';
       }
 
       document.body.appendChild(button);
 
       // Setup scroll listener for the active container
-      const debounceFunc =
-        typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
-          ? YouTubeUtils.debounce
-          : (fn, delay) => {
-              let timeoutId;
-              return (...args) => {
-                clearTimeout(timeoutId);
-                timeoutId = setTimeout(() => fn(...args), delay);
-              };
-            };
-
-      const scrollHandler = debounceFunc(() => {
+      const scrollHandler = _debounce(() => {
         const offset = scrollContainer === window ? window.scrollY : scrollContainer.scrollTop;
         button.classList.toggle('visible', offset > 100);
       }, 100);
@@ -741,13 +777,17 @@ const onDomReady = (() => {
       if (host === 'music.youtube.com' || host === 'studio.youtube.com') {
         const getMusicContainers = () => {
           const base = resolveMusicContainers();
-          if (scrollContainer !== window && !base.includes(scrollContainer)) {
-            return [...base, scrollContainer];
+          if (
+            scrollContainer !== window &&
+            scrollContainer instanceof Element &&
+            !base.includes(/** @type {any} */ (scrollContainer))
+          ) {
+            return [...base, /** @type {any} */ (scrollContainer)];
           }
           return base;
         };
 
-        const musicScrollCheck = debounceFunc(() => {
+        const musicScrollCheck = _debounce(() => {
           let anyScrolled = window.scrollY > 100;
           if (!anyScrolled) {
             for (const c of getMusicContainers()) {
@@ -771,8 +811,8 @@ const onDomReady = (() => {
             document.querySelector('ytmusic-app-layout'),
           ];
           for (const target of targets) {
-            if (target && !target._ytpScrollAttached) {
-              target._ytpScrollAttached = true;
+            if (target && !(/** @type {any} */ (target)._ytpScrollAttached)) {
+              /** @type {any} */ (target)._ytpScrollAttached = true;
               target.addEventListener('scroll', musicScrollCheck, { passive: true });
               universalExtraScrollTargets.add(target);
             }
@@ -808,36 +848,36 @@ const onDomReady = (() => {
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
       );
 
-      const scrollContainer = $('#items', playlistPanel);
+      const scrollContainer = $('#items', /** @type {any} */ (playlistPanel));
       if (!scrollContainer) return;
 
       // Ensure the playlist panel is positioned so absolute children are anchored inside it
-      playlistPanel.style.position = playlistPanel.style.position || 'relative';
+      /** @type {any} */ (playlistPanel).style.position =
+        /** @type {any} */ (playlistPanel).style.position || 'relative';
 
       // Force the button to be positioned inside the playlist panel (override global fixed)
-      button.style.position = 'absolute';
-      button.style.bottom = '16px';
-      button.style.right = '16px';
-      button.style.zIndex = '1000';
+      /** @type {any} */ (button).style.position = 'absolute';
+      /** @type {any} */ (button).style.bottom = '16px';
+      /** @type {any} */ (button).style.right = '16px';
+      /** @type {any} */ (button).style.zIndex = '1000';
 
       playlistPanel.appendChild(button);
 
       // Setup scroll listener
-      const debounceFunc =
-        typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
-          ? YouTubeUtils.debounce
-          : (fn, delay) => {
-              let timeoutId;
-              return (...args) => {
-                clearTimeout(timeoutId);
-                timeoutId = setTimeout(() => fn(...args), delay);
-              };
-            };
-
-      const scrollHandler = debounceFunc(() => handleScroll(scrollContainer, button), 100);
+      const scrollHandler = _debounce(
+        () =>
+          handleScroll(
+            /** @type {HTMLElement} */ (scrollContainer),
+            /** @type {HTMLElement} */ (button)
+          ),
+        100
+      );
       scrollContainer._topButtonScrollHandler = scrollHandler;
       scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
-      handleScroll(scrollContainer, button);
+      handleScroll(
+        /** @type {HTMLElement} */ (scrollContainer),
+        /** @type {HTMLElement} */ (button)
+      );
 
       // Hide the button when the playlist panel is collapsed/hidden.
       // Use ResizeObserver + MutationObserver to detect layout/attribute changes.
@@ -845,20 +885,23 @@ const onDomReady = (() => {
         try {
           // If panel not connected or explicitly hidden, hide the button
           if (!playlistPanel.isConnected || playlistPanel.hidden) {
-            button.style.display = 'none';
+            /** @type {any} */ (button).style.display = 'none';
             return;
           }
 
           // Use offsetParent check (cheaper than getComputedStyle) - null means hidden
-          if (playlistPanel.offsetParent === null && playlistPanel.style.position !== 'fixed') {
-            button.style.display = 'none';
+          if (
+            playlistPanel.offsetParent === null &&
+            /** @type {any} */ (playlistPanel).style.position !== 'fixed'
+          ) {
+            /** @type {any} */ (button).style.display = 'none';
             return;
           }
 
           // If bounding box is too small (collapsed), hide button
           const { width, height } = playlistPanel.getBoundingClientRect();
           if (width < 40 || height < 40) {
-            button.style.display = 'none';
+            /** @type {any} */ (button).style.display = 'none';
             return;
           }
 
@@ -868,18 +911,18 @@ const onDomReady = (() => {
             scrollContainer.offsetHeight === 0 ||
             scrollContainer.scrollHeight === 0
           ) {
-            button.style.display = 'none';
+            /** @type {any} */ (button).style.display = 'none';
             return;
           }
 
           // Otherwise keep normal display and let handleScroll control visibility class
-          button.style.display = '';
-        } catch {
+          /** @type {any} */ (button).style.display = '';
+        } catch (e) {
           // On error, prefer hiding to avoid stray UI
           try {
-            button.style.display = 'none';
-          } catch {
-            /* empty */
+            /** @type {any} */ (button).style.display = 'none';
+          } catch (e) {
+            // Non-critical, suppressed
           }
         }
       };
@@ -889,10 +932,10 @@ const onDomReady = (() => {
       try {
         if (typeof ResizeObserver !== 'undefined') {
           ro = new ResizeObserver(updateVisibility);
-          ro.observe(playlistPanel);
-          if (scrollContainer) ro.observe(scrollContainer);
+          ro.observe(/** @type {Element} */ (playlistPanel));
+          if (scrollContainer) ro.observe(/** @type {Element} */ (scrollContainer));
         }
-      } catch {
+      } catch (e) {
         ro = null;
       }
 
@@ -903,8 +946,8 @@ const onDomReady = (() => {
           attributes: true,
           attributeFilter: ['class', 'style', 'hidden'],
         });
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       // Initial visibility pass
@@ -913,19 +956,19 @@ const onDomReady = (() => {
       // Register cleanup with YouTubeUtils.cleanupManager when available
       try {
         if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-          YouTubeUtils.cleanupManager.registerObserver(mo, playlistPanel);
+          /** @type {any} */ (YouTubeUtils.cleanupManager).registerObserver(mo, playlistPanel);
           if (ro) {
             YouTubeUtils.cleanupManager.register(() => {
               try {
                 ro.disconnect();
-              } catch {
-                /* empty */
+              } catch (e) {
+                // Non-critical, suppressed
               }
             });
           }
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     } catch (error) {
       console.error('[YouTube+][Enhanced] Error creating playlist panel button:', error);
@@ -966,26 +1009,16 @@ const onDomReady = (() => {
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
       );
 
-      panel.style.position = panel.style.position || 'relative';
-      button.style.position = 'absolute';
-      button.style.bottom = '16px';
-      button.style.right = '16px';
-      button.style.zIndex = '1000';
+      /** @type {any} */ (panel).style.position =
+        /** @type {any} */ (panel).style.position || 'relative';
+      /** @type {any} */ (button).style.position = 'absolute';
+      /** @type {any} */ (button).style.bottom = '16px';
+      /** @type {any} */ (button).style.right = '16px';
+      /** @type {any} */ (button).style.zIndex = '1000';
 
       panel.appendChild(button);
 
-      const debounceFunc =
-        typeof YouTubeUtils !== 'undefined' && YouTubeUtils.debounce
-          ? YouTubeUtils.debounce
-          : (fn, delay) => {
-              let timeoutId;
-              return (...args) => {
-                clearTimeout(timeoutId);
-                timeoutId = setTimeout(() => fn(...args), delay);
-              };
-            };
-
-      const scrollHandler = debounceFunc(() => {
+      const scrollHandler = _debounce(() => {
         button.classList.toggle('visible', panel.scrollTop > 100);
       }, 100);
 
@@ -1002,23 +1035,25 @@ const onDomReady = (() => {
   const RETURN_DISLIKE_API = 'https://returnyoutubedislikeapi.com/votes';
   const DISLIKE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
   const dislikeCache = new Map(); // videoId -> { value, expiresAt }
+  /** @type {MutationObserver | null} */
   let dislikeObserver = null;
+  /** @type {MutationObserver | null} */
   let dislikePollTimer = null;
 
-  const formatCompactNumber = number => {
+  const formatCompactNumber = (/** @type {any} */ number) => {
     try {
       return new Intl.NumberFormat(_getLanguage() || 'en', {
         notation: 'compact',
         compactDisplay: 'short',
       }).format(Number(number) || 0);
-    } catch {
+    } catch (e) {
       // Intentional: Intl.NumberFormat may not support locale; fall back to plain string
       return String(number || 0);
     }
   };
 
   const DISLIKE_CACHE_MAX_SIZE = 50;
-  const fetchDislikes = async videoId => {
+  const fetchDislikes = async (/** @type {any} */ videoId) => {
     if (!videoId) return 0;
     const cached = dislikeCache.get(videoId);
     if (cached && Date.now() < cached.expiresAt) return cached.value;
@@ -1050,12 +1085,12 @@ const onDomReady = (() => {
             url: `${RETURN_DISLIKE_API}?videoId=${encodeURIComponent(videoId)}`,
             timeout: 8000,
             headers: { Accept: 'application/json' },
-            onload: r => {
+            onload: (/** @type {any} */ r) => {
               clearTimeout(timeoutId);
               if (r.status >= 200 && r.status < 300) resolve(r.responseText);
               else reject(new Error(`HTTP ${r.status}`));
             },
-            onerror: e => {
+            onerror: (/** @type {any} */ e) => {
               clearTimeout(timeoutId);
               reject(e || new Error('network'));
             },
@@ -1066,7 +1101,10 @@ const onDomReady = (() => {
           });
         });
         const parsed = JSON.parse(text || '{}');
-        const val = Number(parsed.dislikes || 0) || 0;
+        const rawDislikes = parsed && typeof parsed === 'object' ? parsed.dislikes : undefined;
+        const val = Number.isFinite(Number(rawDislikes))
+          ? Math.max(0, Math.floor(Number(rawDislikes)))
+          : 0;
         dislikeCache.set(videoId, { value: val, expiresAt: Date.now() + DISLIKE_CACHE_TTL });
         return val;
       }
@@ -1084,13 +1122,16 @@ const onDomReady = (() => {
         clearTimeout(id);
         if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
         const json = await resp.json();
-        const val = Number(json.dislikes || 0) || 0;
+        const rawDislikes2 = json && typeof json === 'object' ? json.dislikes : undefined;
+        const val = Number.isFinite(Number(rawDislikes2))
+          ? Math.max(0, Math.floor(Number(rawDislikes2)))
+          : 0;
         dislikeCache.set(videoId, { value: val, expiresAt: Date.now() + DISLIKE_CACHE_TTL });
         return val;
       } finally {
         clearTimeout(id);
       }
-    } catch {
+    } catch (e) {
       // on any error, return 0 but don't throw
       return 0;
     }
@@ -1106,7 +1147,7 @@ const onDomReady = (() => {
         return meta?.getAttribute('content') || null;
       }
       return urlObj.searchParams.get('v');
-    } catch {
+    } catch (e) {
       return null;
     }
   };
@@ -1129,24 +1170,27 @@ const onDomReady = (() => {
     const activeReel = $('ytd-reel-video-renderer[is-active]');
     if (activeReel) {
       const btn =
-        $('dislike-button-view-model', activeReel) ||
-        $('like-button-view-model', activeReel)
+        $('dislike-button-view-model', /** @type {any} */ (activeReel)) ||
+        $('like-button-view-model', /** @type {any} */ (activeReel))
           ?.parentElement?.querySelector('[aria-label*="islike"]')
           ?.closest('button')?.parentElement ||
-        $('#dislike-button', activeReel);
-      if (btn) return btn;
+        $('#dislike-button', /** @type {any} */ (activeReel));
+      if (btn) return /** @type {HTMLElement} */ (btn);
     }
 
     // Fallback: find in the shorts player container
     const shortsContainer = $('ytd-shorts');
     if (shortsContainer) {
       const btn =
-        $('dislike-button-view-model', shortsContainer) || $('#dislike-button', shortsContainer);
-      if (btn) return btn;
+        $('dislike-button-view-model', /** @type {any} */ (shortsContainer)) ||
+        $('#dislike-button', /** @type {any} */ (shortsContainer));
+      if (btn) return /** @type {HTMLElement} */ (btn);
     }
 
     // Last resort: global search
-    return $('dislike-button-view-model') || $('#dislike-button') || null;
+    return /** @type {HTMLElement | null} */ (
+      $('dislike-button-view-model') || $('#dislike-button') || null
+    );
   };
 
   /**
@@ -1154,7 +1198,7 @@ const onDomReady = (() => {
    * @param {HTMLElement} buttons - Buttons container
    * @returns {HTMLElement|null} Dislike button element
    */
-  const getDislikeButtonFromContainer = buttons => {
+  const getDislikeButtonFromContainer = (/** @type {any} */ buttons) => {
     if (!buttons) return null;
 
     // Check for segmented like/dislike button (newer YouTube layout)
@@ -1194,7 +1238,7 @@ const onDomReady = (() => {
     return getDislikeButtonFromContainer(buttons);
   };
 
-  const getOrCreateDislikeText = dislikeButton => {
+  const getOrCreateDislikeText = (/** @type {any} */ dislikeButton) => {
     if (!dislikeButton) return null;
 
     // Check if our custom text already exists (prevent duplicates)
@@ -1236,7 +1280,7 @@ const onDomReady = (() => {
     created.className = 'yt-core-attributed-string yt-core-attributed-string--white-space-no-wrap';
     const isShorts = window.location.pathname.startsWith('/shorts');
     // Added min-width to reserve space and prevent CLS
-    created.style.cssText = isShorts
+    /** @type {any} */ (created).style.cssText = isShorts
       ? 'margin-left: 4px; font-size: 1.2rem; line-height: 1.8rem; font-weight: 500; min-width: 1.5em; display: inline-block; text-align: center;'
       : 'margin-left: 6px; font-size: 1.4rem; line-height: 2rem; font-weight: 500; min-width: 2em; display: inline-block; text-align: center;';
 
@@ -1252,10 +1296,10 @@ const onDomReady = (() => {
       }
 
       // Ensure button has proper width
-      buttonShape.style.minWidth = 'auto';
-      buttonShape.style.width = 'auto';
+      /** @type {any} */ (buttonShape).style.minWidth = 'auto';
+      /** @type {any} */ (buttonShape).style.width = 'auto';
       if (viewModelHost !== dislikeButton) {
-        viewModelHost.style.minWidth = 'auto';
+        /** @type {any} */ (viewModelHost).style.minWidth = 'auto';
       }
     } catch (e) {
       console.warn('YTP: Failed to create dislike text:', e);
@@ -1263,7 +1307,7 @@ const onDomReady = (() => {
     return created;
   };
 
-  const setDislikeDisplay = (dislikeButton, count) => {
+  const setDislikeDisplay = (/** @type {any} */ dislikeButton, /** @type {any} */ count) => {
     try {
       const container = getOrCreateDislikeText(dislikeButton);
       if (!container) return;
@@ -1273,15 +1317,15 @@ const onDomReady = (() => {
         container.innerText = String(formatted);
 
         // Ensure the text is visible and properly styled
-        container.style.display = 'inline-block';
-        container.style.visibility = 'visible';
-        container.style.opacity = '1';
+        /** @type {any} */ (container).style.display = 'inline-block';
+        /** @type {any} */ (container).style.visibility = 'visible';
+        /** @type {any} */ (container).style.opacity = '1';
 
         // Make sure parent button container is wide enough
         const buttonShape = container.closest('button') || dislikeButton.querySelector('button');
         if (buttonShape) {
-          buttonShape.style.minWidth = 'fit-content';
-          buttonShape.style.width = 'auto';
+          /** @type {any} */ (buttonShape).style.minWidth = 'fit-content';
+          /** @type {any} */ (buttonShape).style.width = 'auto';
         }
       }
     } catch (e) {
@@ -1289,7 +1333,7 @@ const onDomReady = (() => {
     }
   };
 
-  const setupDislikeObserver = dislikeButton => {
+  const setupDislikeObserver = (/** @type {any} */ dislikeButton) => {
     if (!dislikeButton) return;
     if (dislikeObserver) {
       dislikeObserver.disconnect();
@@ -1313,9 +1357,12 @@ const onDomReady = (() => {
     });
     try {
       dislikeObserver.observe(dislikeButton, { childList: true, subtree: true, attributes: true });
-      window.YouTubeUtils?.cleanupManager?.registerObserver?.(dislikeObserver, dislikeButton);
-    } catch {
-      /* empty */
+      /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
+        dislikeObserver,
+        dislikeButton
+      );
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
@@ -1351,7 +1398,7 @@ const onDomReady = (() => {
 
       dislikePollTimer = new MutationObserver(async () => {
         if (Date.now() - startTime > maxTime) {
-          dislikePollTimer.disconnect();
+          if (dislikePollTimer) dislikePollTimer.disconnect();
           dislikePollTimer = null;
           return;
         }
@@ -1361,8 +1408,13 @@ const onDomReady = (() => {
       // Observe more targeted containers to reduce mutation callbacks
       const targetEl = isShorts ? $('#shorts-container') : $('ytd-watch-flexy #below');
       if (targetEl) {
-        dislikePollTimer.observe(targetEl, { childList: true, subtree: true });
-        window.YouTubeUtils?.cleanupManager?.registerObserver?.(dislikePollTimer, targetEl);
+        if (dislikePollTimer) {
+          dislikePollTimer.observe(targetEl, { childList: true, subtree: true });
+        }
+        /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
+          dislikePollTimer,
+          targetEl
+        );
       } else {
         // Fallback: observe document.body briefly for the container to appear,
         // then switch to the targeted observer once found.
@@ -1376,8 +1428,13 @@ const onDomReady = (() => {
             fallbackObs.disconnect();
             if (await checkButton()) return;
             // Container appeared but button not ready — observe it now
-            dislikePollTimer.observe(el, { childList: true, subtree: true });
-            window.YouTubeUtils?.cleanupManager?.registerObserver?.(dislikePollTimer, el);
+            if (dislikePollTimer) {
+              dislikePollTimer.observe(el, { childList: true, subtree: true });
+            }
+            /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
+              dislikePollTimer,
+              el
+            );
           }
         });
         if (document.body) {
@@ -1410,8 +1467,8 @@ const onDomReady = (() => {
       $$('#ytp-plus-dislike-text').forEach(el => {
         try {
           if (el.parentNode) el.parentNode.removeChild(el);
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       });
       // Clear cache to free memory
@@ -1448,8 +1505,8 @@ const onDomReady = (() => {
       // Track observer for diagnostics
       try {
         window.YouTubeUtils?.ObserverRegistry?.track?.();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       const rightTabs = $('#right-tabs');
@@ -1461,17 +1518,20 @@ const onDomReady = (() => {
         });
         // Register for cleanup
         try {
-          window.YouTubeUtils?.cleanupManager?.registerObserver?.(observer, rightTabs);
-        } catch {
-          /* empty */
+          /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
+            observer,
+            rightTabs
+          );
+        } catch (e) {
+          // Non-critical, suppressed
         }
         return observer;
       }
       // No target found — untrack
       try {
         window.YouTubeUtils?.ObserverRegistry?.untrack?.();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
       return null;
     } catch (error) {
@@ -1489,7 +1549,7 @@ const onDomReady = (() => {
     // Always show on Music and Studio
     if (host === 'music.youtube.com' || host === 'studio.youtube.com') return true;
 
-    if (isWatchPage() || isShortsPage()) return false;
+    if (isWatchPage() || isShortsPage()) return !isTabviewEnabled();
 
     const path = window.location.pathname;
     const { search } = window.location;
@@ -1511,7 +1571,7 @@ const onDomReady = (() => {
    * @param {Event} e - Click event
    * @returns {void}
    */
-  const handleTabButtonClick = e => {
+  const handleTabButtonClick = (/** @type {any} */ e) => {
     try {
       const { target } = /** @type {{ target: HTMLElement }} */ (e);
       const tabButton = target?.closest?.('.tab-btn[tyt-tab-content]');
@@ -1532,7 +1592,7 @@ const onDomReady = (() => {
       if (isTabClickListenerAttached) return;
       const delegator = window.YouTubePlusEventDelegation;
       if (delegator?.on) {
-        tabDelegationHandler = (ev, target) => {
+        tabDelegationHandler = (/** @type {any} */ ev, /** @type {any} */ target) => {
           void ev;
           if (!target) return;
           setTimeout(setupScrollListener, 100);
@@ -1576,8 +1636,8 @@ const onDomReady = (() => {
       } else {
         tabCheckTimeoutId = clearTimeoutSafe(tabCheckTimeoutId);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     tabCheckTimeoutId = null;
     try {
@@ -1590,8 +1650,8 @@ const onDomReady = (() => {
       } else {
         playlistPanelCheckTimeoutId = clearTimeoutSafe(playlistPanelCheckTimeoutId);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     playlistPanelCheckTimeoutId = null;
 
@@ -1600,12 +1660,12 @@ const onDomReady = (() => {
       if (tabChangesObserver) {
         try {
           window.YouTubeUtils?.ObserverRegistry?.untrack?.();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     tabChangesObserver = null;
 
@@ -1613,8 +1673,8 @@ const onDomReady = (() => {
 
     try {
       cleanupReturnDislike();
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
@@ -1633,8 +1693,8 @@ const onDomReady = (() => {
           createButton();
           try {
             tabChangesObserver?.disconnect?.();
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
           tabChangesObserver = observeTabChanges();
           return true; // done
@@ -1696,10 +1756,17 @@ const onDomReady = (() => {
         checkPageType();
 
         if (shouldInitReturnDislike()) {
-          try {
-            initReturnDislike();
-          } catch (e) {
-            console.warn('[YouTube+] initReturnDislike error:', e);
+          const _doInitDislike = () => {
+            try {
+              initReturnDislike();
+            } catch (e) {
+              console.warn('[YouTube+] initReturnDislike error:', e);
+            }
+          };
+          if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(_doInitDislike, { timeout: 3000 });
+          } else {
+            setTimeout(_doInitDislike, 0);
           }
         }
 
@@ -1711,7 +1778,7 @@ const onDomReady = (() => {
       onNavigate();
 
       // Listen for navigation changes (YouTube is SPA)
-      if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+      if (typeof window.YouTubeUtils?.cleanupManager?.registerListener === 'function') {
         YouTubeUtils.cleanupManager.registerListener(
           document,
           'yt-navigate-finish',
@@ -1733,18 +1800,19 @@ const onDomReady = (() => {
             createMusicSidePanelButton();
           }
         });
-        const observeTarget = $('ytmusic-app-layout') || $('ytmusic-app') || document.body;
+        const observeTarget =
+          $('ytmusic-player-page') || $('ytmusic-app-layout') || $('ytmusic-app') || $('#layout');
         if (observeTarget) {
           sidePanelObserver.observe(observeTarget, {
             childList: true,
             subtree: true,
           });
           try {
-            window.YouTubeUtils?.cleanupManager?.registerObserver?.(
+            /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
               sidePanelObserver,
               observeTarget
             );
-          } catch {
+          } catch (e) {
             /* cleanup registration best-effort */
           }
         }
@@ -1762,10 +1830,11 @@ const onDomReady = (() => {
     }
   };
 
-  window.addEventListener('youtube-plus-settings-updated', e => {
+  window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {
     try {
       const nextEnabled = e?.detail?.enableScrollToTopButton !== false;
-      if (nextEnabled === config.enabled) return;
+      const tabviewEnabled = e?.detail?.enableTabview !== false;
+      const shouldUseUniversalOnWatch = (isWatchPage() || isShortsPage()) && !tabviewEnabled;
       config.enabled = nextEnabled;
       if (!config.enabled) {
         cleanupTopButtons();
@@ -1773,19 +1842,215 @@ const onDomReady = (() => {
         return;
       }
       addStyles();
-      if (needsUniversalButton() && !byId('universal-top-button')) {
+      cleanupTopButtons();
+      stopWatchEnhancements();
+
+      if ((needsUniversalButton() || shouldUseUniversalOnWatch) && !byId('universal-top-button')) {
         createUniversalButton();
       }
       if (window.location.hostname === 'music.youtube.com' && !byId('music-side-top-button')) {
         createMusicSidePanelButton();
       }
       startWatchEnhancements();
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   });
 
   onDomReady(scheduleInit);
+})();
+
+// Remember Manual Playback Quality
+(function () {
+  'use strict';
+
+  const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
+  const QUALITY_STORAGE_KEY = 'youtube_plus_manual_playback_quality';
+  const APPLY_ATTEMPTS = 16;
+  const APPLY_INTERVAL_MS = 350;
+
+  /** @type {Array<ReturnType<typeof setTimeout>>} */
+  let pendingApplyTimeouts = [];
+  let lastAppliedVideoId = '';
+
+  const isVideoPage = () => {
+    try {
+      const path = window.location.pathname || '';
+      return path === '/watch' || path.startsWith('/shorts/');
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const loadFeatureEnabled = () => {
+    try {
+      const raw = localStorage.getItem(SETTINGS_KEY);
+      if (raw) {
+        const parsed = JSON.parse(raw);
+        return parsed.enableRememberManualQuality !== false;
+      }
+    } catch (e) {
+      // Non-critical, suppressed
+    }
+    return true;
+  };
+
+  const normalizeQuality = (/** @type {any} */ value) => {
+    const normalized = String(value || '')
+      .trim()
+      .toLowerCase();
+    return normalized && normalized !== 'unknown' ? normalized : '';
+  };
+
+  const getCurrentVideoId = () => {
+    try {
+      const path = window.location.pathname || '';
+      if (path === '/watch') {
+        return new URLSearchParams(window.location.search || '').get('v') || '';
+      }
+      if (path.startsWith('/shorts/')) {
+        return path.split('/')[2] || '';
+      }
+    } catch (e) {
+      // Non-critical, suppressed
+    }
+    return '';
+  };
+
+  const getPlayer = () => /** @type {any} */ (document.getElementById('movie_player'));
+
+  const clearPendingApplyTimeouts = () => {
+    pendingApplyTimeouts.forEach(timeoutId => clearTimeout(timeoutId));
+    pendingApplyTimeouts = [];
+  };
+
+  const getStoredQuality = () => {
+    try {
+      return normalizeQuality(localStorage.getItem(QUALITY_STORAGE_KEY));
+    } catch (e) {
+      return '';
+    }
+  };
+
+  const storeQuality = (/** @type {string} */ quality) => {
+    const normalized = normalizeQuality(quality);
+    try {
+      if (!normalized || normalized === 'auto') {
+        localStorage.removeItem(QUALITY_STORAGE_KEY);
+        return;
+      }
+      localStorage.setItem(QUALITY_STORAGE_KEY, normalized);
+    } catch (e) {
+      // Non-critical, suppressed
+    }
+  };
+
+  const applyStoredQualityOnce = () => {
+    if (!loadFeatureEnabled() || !isVideoPage()) return true;
+
+    const preferredQuality = getStoredQuality();
+    if (!preferredQuality) return true;
+
+    const player = getPlayer();
+    if (!player) return false;
+
+    const currentVideoId = getCurrentVideoId();
+    if (currentVideoId && lastAppliedVideoId === currentVideoId) return true;
+
+    try {
+      const availableQualityLevels =
+        typeof player.getAvailableQualityLevels === 'function'
+          ? player.getAvailableQualityLevels().map(normalizeQuality).filter(Boolean)
+          : [];
+
+      if (availableQualityLevels.length && !availableQualityLevels.includes(preferredQuality)) {
+        lastAppliedVideoId = currentVideoId;
+        return true;
+      }
+
+      if (typeof player.setPlaybackQualityRange === 'function') {
+        player.setPlaybackQualityRange(preferredQuality, preferredQuality);
+      }
+      if (typeof player.setPlaybackQuality === 'function') {
+        player.setPlaybackQuality(preferredQuality);
+      }
+
+      lastAppliedVideoId = currentVideoId;
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const scheduleApplyStoredQuality = () => {
+    clearPendingApplyTimeouts();
+    if (!loadFeatureEnabled() || !isVideoPage()) return;
+
+    for (let attempt = 0; attempt < APPLY_ATTEMPTS; attempt += 1) {
+      const timeoutId = setTimeout(() => {
+        if (applyStoredQualityOnce()) {
+          clearPendingApplyTimeouts();
+        }
+      }, attempt * APPLY_INTERVAL_MS);
+      pendingApplyTimeouts.push(timeoutId);
+    }
+  };
+
+  const handleQualityMenuInteraction = (/** @type {Event} */ event) => {
+    const target = /** @type {HTMLElement | null} */ (
+      event.target instanceof HTMLElement ? event.target : null
+    );
+    const menuItem = target?.closest?.(
+      '.ytp-quality-menu .ytp-menuitem, .ytp-panel-menu .ytp-menuitem'
+    );
+    if (!menuItem) return;
+
+    const label = String(menuItem.textContent || '')
+      .trim()
+      .toLowerCase();
+
+    if (!label) return;
+    if (!/(\bauto\b|\d{3,4}p|\bhd\b|\b4k\b|\b8k\b)/.test(label)) return;
+
+    setTimeout(() => {
+      if (!loadFeatureEnabled()) return;
+
+      if (label.includes('auto')) {
+        storeQuality('auto');
+        return;
+      }
+
+      const currentQuality = normalizeQuality(getPlayer()?.getPlaybackQuality?.());
+      if (currentQuality) {
+        storeQuality(currentQuality);
+      }
+    }, 150);
+  };
+
+  const handleNavigation = () => {
+    lastAppliedVideoId = '';
+    scheduleApplyStoredQuality();
+  };
+
+  document.addEventListener('click', handleQualityMenuInteraction, true);
+  document.addEventListener(
+    'loadedmetadata',
+    event => {
+      const target = /** @type {EventTarget | null} */ (event.target);
+      if (target instanceof HTMLElement && target.tagName === 'VIDEO') {
+        scheduleApplyStoredQuality();
+      }
+    },
+    true
+  );
+
+  window.addEventListener('youtube-plus-settings-updated', () => {
+    lastAppliedVideoId = '';
+    scheduleApplyStoredQuality();
+  });
+
+  window.addEventListener('yt-navigate-finish', handleNavigation, { passive: true });
+  onDomReady(scheduleApplyStoredQuality);
 })();
 
 // Styles
@@ -1799,6 +2064,7 @@ const onDomReady = (() => {
     const STYLE_ELEMENT_ID = 'ytp-zen-features-style';
     const NON_CRITICAL_STYLE_ID = 'ytp-zen-features-style-noncritical';
     const STYLE_MANAGER_KEY = 'zen-features-style';
+    /** @type {any} */
     let nonCriticalTimer = null;
 
     const DEFAULTS = {
@@ -1806,6 +2072,7 @@ const onDomReady = (() => {
       // legacy (kept for backward compat)
       hideSideGuide: false,
       zenStyles: {
+        themeVariant: 'glass',
         thumbnailHover: true,
         immersiveSearch: true,
         hideVoiceSearch: true,
@@ -1813,6 +2080,8 @@ const onDomReady = (() => {
         hideSideGuide: true,
         cleanSideGuide: false,
         fixFeedLayout: true,
+        sideVideosColumns: 0,
+        compactFeed: true,
         betterCaptions: true,
         playerBlur: true,
         theaterEnhancements: true,
@@ -1844,6 +2113,23 @@ const onDomReady = (() => {
       if (merged.hideSideGuide === true && merged.zenStyles.hideSideGuide !== true) {
         merged.zenStyles.hideSideGuide = true;
       }
+
+      // Backward compat: migrate old boolean sideVideosTwoColumns → sideVideosColumns number
+      if (
+        merged.zenStyles.sideVideosTwoColumns === true &&
+        (merged.zenStyles.sideVideosColumns === undefined ||
+          merged.zenStyles.sideVideosColumns === null ||
+          merged.zenStyles.sideVideosColumns === '')
+      ) {
+        merged.zenStyles.sideVideosColumns = 2;
+      }
+      const parsedSideCols = Number(merged.zenStyles.sideVideosColumns);
+      if (!Number.isFinite(parsedSideCols) || parsedSideCols < 0) {
+        merged.zenStyles.sideVideosColumns = 1;
+      } else {
+        merged.zenStyles.sideVideosColumns = parsedSideCols;
+      }
+      merged.zenStyles.sideVideosColumns = Math.min(2, merged.zenStyles.sideVideosColumns);
 
       return merged;
     };
@@ -1904,6 +2190,7 @@ const onDomReady = (() => {
         /* Fix new feed layout */
         ytd-rich-item-renderer[rendered-from-rich-grid] {  @media only screen and (min-width: 1400px) { --ytd-rich-grid-items-per-row: 4 !important; @media only screen and (min-width: 1700px) { --ytd-rich-grid-items-per-row: 5 !important; @media only screen and (min-width: 2180px) {--ytd-rich-grid-items-per-row: 6 !important;}}}} ytd-rich-item-renderer[is-in-first-column="\"] { margin-left: calc(var(--ytd-rich-grid-item-margin) / 2) !important;}#contents { padding-left: calc(var(--ytd-rich-grid-item-margin) / 2 + var(--ytd-rich-grid-gutter-margin)) !important;}
       `,
+      // sideVideosColumns CSS is generated dynamically in buildNonCriticalCss
       betterCaptions: `
         /* Better captions */
         .caption-window { backdrop-filter: blur(10px) brightness(70%) !important; border-radius: 1em !important; padding: 1em !important; box-shadow: #0008 0 0 20px !important; width: fit-content !important; }
@@ -1969,8 +2256,13 @@ const onDomReady = (() => {
         ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #player-full-bleed-container { overflow: hidden !important;}
         ytd-watch-flexy[fullscreen] ytd-live-chat-frame { background-color: var(--app-drawer-content-container-background-color) !important;}
       `,
-      misc: `
-        /* Compact feed – reduced spacing, hover menus, inline details */
+      misc: `        
+        /* Show video meta on hover */
+        #content #dismissible:hover ytd-video-meta-block { opacity: 1 !important;}
+        #frosted-glass { display: none !important;}
+      `,
+      compactFeed: `
+      /* Compact feed – reduced spacing, hover menus, inline details */
         ytd-rich-item-renderer { margin-bottom: 15px !important;}
         ytd-rich-item-renderer[rendered-from-rich-grid] { --ytd-rich-item-row-usable-width: calc(100% - var(--ytd-rich-grid-gutter-margin) * 1) !important;}
         ytd-rich-item-renderer #metadata.ytd-video-meta-block { flex-direction: row !important;}
@@ -1978,9 +2270,55 @@ const onDomReady = (() => {
         ytd-rich-grid-media { border-radius: 1.2em;height: 100% !important;}
         ytd-rich-grid-media ytd-menu-renderer #button { opacity: 0 !important;transition: opacity 0.3s ease-in-out !important;}
         ytd-rich-grid-media:hover ytd-menu-renderer #button { opacity: 1 !important;}
-        /* Show video meta on hover */
-        #content #dismissible:hover ytd-video-meta-block { opacity: 1 !important;}
-        #frosted-glass { display: none !important;}
+      `,
+      themeSolid: `
+        html {
+          --yt-glass-blur:none !important;
+          --yt-glass-blur-light:none !important;
+          --yt-glass-blur-heavy:none !important;
+        }
+        html[dark],html:not([dark]):not([light]) {
+          --yt-glass-bg:rgba(24,24,24,.96) !important;
+          --yt-panel-bg:rgba(30,30,30,.98) !important;
+          --yt-header-bg:rgba(22,22,22,.98) !important;
+          --yt-button-bg:rgba(42,42,42,.98) !important;
+          --yt-input-bg:rgba(34,34,34,.98) !important;
+          --yt-glass-shadow:0 10px 28px rgba(0,0,0,.28) !important;
+        }
+        html[light] {
+          --yt-glass-bg:rgba(255,255,255,.98) !important;
+          --yt-panel-bg:rgba(250,250,250,.99) !important;
+          --yt-header-bg:rgba(245,245,245,.99) !important;
+          --yt-button-bg:rgba(236,236,236,.98) !important;
+          --yt-input-bg:rgba(245,245,245,.98) !important;
+          --yt-glass-shadow:0 10px 24px rgba(0,0,0,.12) !important;
+        }
+        .ytp-plus-settings-panel,
+        .ytp-plus-settings-sidebar,
+        .top-button,
+        .download-options.visible,
+        .speed-options.visible,
+        .glass-dropdown__list,
+        .glass-panel,
+        .glass-card,
+        .ytp-plus-comments-sidepanel,
+        .ytp-plus-comments-item,
+        .youtube-enhancer-notification,
+        .stats-modal-content,
+        .settings-menu,
+        #timecode-panel,
+        #shorts-keyboard-feedback,
+        .shortsStats,
+        .ytp-popup,
+        .ytPlayerQuickActionButtonsHost,
+        .ytPlayerQuickActionButtonsHostCompactControls,
+        .ytPlayerQuickActionButtonsHostDisableBackdropFilter,
+        .caption-window,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) ytd-comments,
+        ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #chat {
+          backdrop-filter:none !important;
+          -webkit-backdrop-filter:none !important;
+        }
       `,
       // CLS Prevention styles - always loaded to reserve space for dynamic elements
       clsPrevention: `
@@ -1988,8 +2326,6 @@ const onDomReady = (() => {
         #ytp-plus-dislike-text { min-width: 1.5em;display: inline-block !important;}
         /* Contain layout only for our own panels (not YouTube layout elements) */
         .ytp-plus-stats-panel, .ytp-plus-modal-content { contain: layout style;}
-        /* Prevent layout shifts from search box animations */
-        yt-searchbox { will-change: transform;}
         /* Reduce CLS from late-loading channel avatars */
         #owner #avatar { min-width: 40px; min-height: 40px; }
         /* Reserve space for action buttons to prevent shift */
@@ -1999,9 +2335,10 @@ const onDomReady = (() => {
       `,
     };
 
-    const buildCriticalCss = settings => {
+    const buildCriticalCss = (/** @type {any} */ settings) => {
       const z = settings?.zenStyles || {};
       let css = CSS_BLOCKS.clsPrevention; // Always include CLS prevention
+      if ((z.themeVariant || 'glass') === 'solid') css += CSS_BLOCKS.themeSolid;
       if (z.hideSideGuide) css += CSS_BLOCKS.hideSideGuide;
       if (z.fixFeedLayout) css += CSS_BLOCKS.fixFeedLayout;
       // theaterEnhancements in critical so overlay CSS applies immediately on DOMContentLoaded
@@ -2010,16 +2347,96 @@ const onDomReady = (() => {
       return css.trim();
     };
 
-    const buildNonCriticalCss = settings => {
+    const buildNonCriticalCss = (/** @type {any} */ settings) => {
       const z = settings?.zenStyles || {};
+      const themeVariant = z.themeVariant || 'glass';
       let css = '';
       if (z.thumbnailHover) css += CSS_BLOCKS.thumbnailHover;
       if (z.immersiveSearch) css += CSS_BLOCKS.immersiveSearch;
       if (z.hideVoiceSearch) css += CSS_BLOCKS.hideVoiceSearch;
       if (z.transparentHeader) css += CSS_BLOCKS.transparentHeader;
       if (z.cleanSideGuide) css += CSS_BLOCKS.cleanSideGuide;
-      if (z.betterCaptions) css += CSS_BLOCKS.betterCaptions;
-      if (z.playerBlur) css += CSS_BLOCKS.playerBlur;
+      const sideColsRaw = Number(z.sideVideosColumns);
+      const sideCols = Number.isFinite(sideColsRaw) ? Math.max(0, Math.min(2, sideColsRaw)) : 1;
+      // Apply only when explicitly enabled (1 or 2). 0 = YouTube default layout.
+      if (sideCols > 0) {
+        css += `
+        /* Side Videos: ${sideCols}-column card grid */
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-item-section-renderer #contents,
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-watch-next-secondary-results-renderer #items {
+          display: grid !important;
+          grid-template-columns: repeat(${sideCols}, minmax(0, 1fr)) !important;
+          gap: 8px !important;
+          padding: 0 !important;
+          align-items: start !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer,
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-radio-renderer,
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-playlist-renderer,
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model {
+          width: 100% !important;
+          min-width: 0 !important;
+          max-width: 100% !important;
+          margin: 0 !important;
+          box-sizing: border-box !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .ytLockupViewModelHost {
+          display: block !important;
+          width: 100% !important;
+          min-width: 0 !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .ytLockupViewModelHorizontal,
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .yt-lockup-view-model-wiz {
+          display: flex !important;
+          flex-direction: column !important;
+          align-items: stretch !important;
+          width: 100% !important;
+          min-width: 0 !important;
+          gap: 6px !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .yt-lockup-view-model-wiz__content-image,
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model [class*="LockupContentImage"],
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model yt-image {
+          width: 100% !important;
+          max-width: 100% !important;
+          min-width: 0 !important;
+          height: auto !important;
+          flex: 0 0 auto !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model yt-image img {
+          width: 100% !important;
+          height: auto !important;
+          object-fit: cover !important;
+          display: block !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .yt-lockup-view-model-wiz__text-container {
+          padding: 4px 0 0 0 !important;
+          min-width: 0 !important;
+          width: 100% !important;
+          box-sizing: border-box !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer #dismissible {
+          display: flex !important;
+          flex-direction: column !important;
+          gap: 6px !important;
+          width: 100% !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer ytd-thumbnail {
+          width: 100% !important;
+          max-width: 100% !important;
+          min-width: 0 !important;
+        }
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer .details,
+        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer #meta {
+          padding-left: 0 !important;
+          min-width: 0 !important;
+          width: 100% !important;
+          box-sizing: border-box !important;
+        }
+      `;
+      }
+      if (z.betterCaptions && themeVariant !== 'solid') css += CSS_BLOCKS.betterCaptions;
+      if (z.playerBlur && themeVariant !== 'solid') css += CSS_BLOCKS.playerBlur;
       if (z.misc) css += CSS_BLOCKS.misc;
       return css.trim();
     };
@@ -2029,16 +2446,16 @@ const onDomReady = (() => {
         if (window.YouTubeUtils?.StyleManager?.remove) {
           window.YouTubeUtils.StyleManager.remove(STYLE_MANAGER_KEY);
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       if (nonCriticalTimer) {
         if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
           try {
             window.cancelIdleCallback(nonCriticalTimer);
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
         } else {
           clearTimeout(nonCriticalTimer);
@@ -2050,8 +2467,8 @@ const onDomReady = (() => {
       if (el) {
         try {
           el.remove();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
 
@@ -2059,13 +2476,13 @@ const onDomReady = (() => {
       if (ncEl) {
         try {
           ncEl.remove();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
     };
 
-    const applyNonCriticalStyles = css => {
+    const applyNonCriticalStyles = (/** @type {any} */ css) => {
       if (!css) {
         const ncEl = document.getElementById(NON_CRITICAL_STYLE_ID);
         if (ncEl) ncEl.remove();
@@ -2081,7 +2498,7 @@ const onDomReady = (() => {
       ncEl.textContent = css;
     };
 
-    const applyStyles = settings => {
+    const applyStyles = (/** @type {any} */ settings, immediateNonCritical = false) => {
       const enabled = settings?.enableZenStyles !== false;
       if (!enabled) {
         removeStyles();
@@ -2105,14 +2522,17 @@ const onDomReady = (() => {
             if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
               try {
                 window.cancelIdleCallback(nonCriticalTimer);
-              } catch {
-                /* empty */
+              } catch (e) {
+                // Non-critical, suppressed
               }
             } else {
               clearTimeout(nonCriticalTimer);
             }
           }
-          if (typeof requestIdleCallback === 'function') {
+          if (immediateNonCritical) {
+            applyNonCriticalStyles(nonCriticalCss);
+            nonCriticalTimer = null;
+          } else if (typeof requestIdleCallback === 'function') {
             nonCriticalTimer = requestIdleCallback(() => applyNonCriticalStyles(nonCriticalCss), {
               timeout: 5000,
             });
@@ -2121,8 +2541,8 @@ const onDomReady = (() => {
           }
           return;
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       let el = document.getElementById(STYLE_ELEMENT_ID);
@@ -2137,14 +2557,17 @@ const onDomReady = (() => {
         if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
           try {
             window.cancelIdleCallback(nonCriticalTimer);
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
         } else {
           clearTimeout(nonCriticalTimer);
         }
       }
-      if (typeof requestIdleCallback === 'function') {
+      if (immediateNonCritical) {
+        applyNonCriticalStyles(nonCriticalCss);
+        nonCriticalTimer = null;
+      } else if (typeof requestIdleCallback === 'function') {
         nonCriticalTimer = requestIdleCallback(() => applyNonCriticalStyles(nonCriticalCss), {
           timeout: 5000,
         });
@@ -2159,10 +2582,42 @@ const onDomReady = (() => {
     applyFromStorage();
 
     // Live updates
-    window.addEventListener('youtube-plus-settings-updated', e => {
+    // Dynamic will-change for yt-searchbox: only active during focus to avoid constant GPU layers
+    try {
+      const _applySearchboxWillChange = () => {
+        const sb = document.querySelector('yt-searchbox');
+        if (sb instanceof HTMLElement) sb.style.willChange = 'transform';
+      };
+      const _clearSearchboxWillChange = () => {
+        const sb = document.querySelector('yt-searchbox');
+        if (sb instanceof HTMLElement) sb.style.willChange = '';
+      };
+      document.addEventListener(
+        'focusin',
+        e => {
+          if (e.target instanceof Element && e.target.closest('yt-searchbox')) {
+            _applySearchboxWillChange();
+          }
+        },
+        { passive: true, capture: true }
+      );
+      document.addEventListener(
+        'focusout',
+        e => {
+          if (e.target instanceof Element && e.target.closest('yt-searchbox')) {
+            _clearSearchboxWillChange();
+          }
+        },
+        { passive: true, capture: true }
+      );
+    } catch (e) {
+      // Non-critical, suppressed
+    }
+
+    window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {
       try {
-        applyStyles(e?.detail || loadSettings());
-      } catch {
+        applyStyles(e?.detail || loadSettings(), true);
+      } catch (e) {
         applyFromStorage();
       }
     });
@@ -2190,8 +2645,9 @@ const onDomReady = (() => {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (!raw) return null;
-      return JSON.parse(raw);
-    } catch {
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
+    } catch (e) {
       return null;
     }
   };
@@ -2204,22 +2660,22 @@ const onDomReady = (() => {
     return true;
   };
 
-  const clickElement = element => {
+  const clickElement = (/** @type {any} */ element) => {
     if (!element) return;
     try {
       element.dispatchEvent(
         new window.MouseEvent('click', { bubbles: true, cancelable: true, view: window })
       );
-    } catch {
+    } catch (e) {
       try {
         element.click();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     }
   };
 
-  const preloadCommentsInBackground = flexy => {
+  const preloadCommentsInBackground = (/** @type {any} */ flexy) => {
     const commentsTab = document.querySelector('#tab-comments');
     const commentsBtn = document.querySelector('#material-tabs a[tyt-tab-content="#tab-comments"]');
     if (!commentsTab || !commentsBtn || commentsTab.getAttribute(PRELOADED_ATTR) === '1') return;
@@ -2273,8 +2729,8 @@ const onDomReady = (() => {
           if (cnt.isHiddenByUser === true) cnt.isHiddenByUser = false;
           expanded = cnt.collapsed === false;
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       // Method 2: click the "Show chat" button as fallback
@@ -2313,9 +2769,10 @@ const onDomReady = (() => {
     preloadCommentsInBackground(flexy);
   };
 
-  let debounceTimer = 0;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let debounceTimer = null;
   const scheduleRun = () => {
-    clearTimeout(debounceTimer);
+    if (debounceTimer) clearTimeout(debounceTimer);
     debounceTimer = setTimeout(runOverlayFixes, 150);
   };
 
@@ -2323,6 +2780,7 @@ const onDomReady = (() => {
   const setupOverlayObservers = () => {
     // Observer 1: watch ytd-watch-flexy for theater / fullscreen attribute changes
     const flexyObserver = new MutationObserver(scheduleRun);
+    /** @type {Element | null} */
     let observedFlexy = null;
 
     const attachFlexyObserver = () => {
@@ -2340,6 +2798,7 @@ const onDomReady = (() => {
     // Observer 2: watch #chat for [collapsed] changes
     // (CSS handles display; observer just schedules overlay fixes like comment preloading)
     const chatObserver = new MutationObserver(scheduleRun);
+    /** @type {Element | null} */
     let observedChat = null;
 
     const attachChatObserver = () => {
@@ -2376,8 +2835,8 @@ const onDomReady = (() => {
         window.YouTubeUtils.cleanupManager.registerObserver(flexyObserver);
         window.YouTubeUtils.cleanupManager.registerObserver(chatObserver);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
@@ -2409,6 +2868,9 @@ const onDomReady = (() => {
   const TRANSLATE_BTN_CLASS = 'ytp-comment-translate-btn';
   const TRANSLATED_ATTR = 'data-ytp-translated';
   const ORIGINAL_ATTR = 'data-ytp-original-text';
+  const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
+  /** @type {MutationObserver | null} */
+  let translateObserver = null;
 
   /**
    * Map YouTube+/YouTube locale codes → Google Translate BCP-47 codes.
@@ -2473,13 +2935,13 @@ const onDomReady = (() => {
   };
 
   /** Normalise any locale/YouTube+ code to a Google-Translate-compatible code */
-  const toGoogleLang = code => {
+  const toGoogleLang = (/** @type {any} */ code) => {
     if (!code) return 'en';
     const lower = code.toLowerCase();
-    if (LANG_MAP[lower]) return LANG_MAP[lower];
+    if (/** @type {any} */ (LANG_MAP)[lower]) return /** @type {any} */ (LANG_MAP)[lower];
     // Strip region suffix for unknown codes (e.g. 'es-419' → 'es')
     const base = lower.split('-')[0];
-    return LANG_MAP[base] || base || 'en';
+    return /** @type {any} */ (LANG_MAP)[base] || base || 'en';
   };
 
   /** Detect user's preferred language (returns Google-Translate-compatible code) */
@@ -2492,25 +2954,31 @@ const onDomReady = (() => {
       // 2. <html lang="..."> attribute set by YouTube
       const htmlLang = document.documentElement.lang;
       if (htmlLang) return toGoogleLang(htmlLang);
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     // 3. Browser navigator.language
     return toGoogleLang(navigator.language) || 'en';
   };
 
   /** Translate text using Google Translate (free endpoint) */
-  const translateText = async (text, targetLang) => {
+  const translateText = async (/** @type {any} */ text, /** @type {any} */ targetLang) => {
+    const controller = new AbortController();
+    const timerId = setTimeout(() => controller.abort(), 8000); // 8 s timeout
     try {
       const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
-      const resp = await fetch(url);
+      const resp = await fetch(url, { signal: controller.signal });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
       if (Array.isArray(data) && Array.isArray(data[0])) {
-        return data[0].map(s => (s && s[0]) || '').join('');
+        return data[0].map((/** @type {any} */ s) => (s && s[0]) || '').join('');
       }
     } catch (e) {
-      console.warn('[YouTube+] Translation failed:', e);
+      if (/** @type {any} */ (e)?.name !== 'AbortError') {
+        console.warn('[YouTube+] Translation failed:', e);
+      }
+    } finally {
+      clearTimeout(timerId);
     }
     return null;
   };
@@ -2546,8 +3014,8 @@ const onDomReady = (() => {
           window.YouTubeUtils.StyleManager.add('ytp-comment-translate-styles', css);
           return;
         }
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
       const style = document.createElement('style');
       style.id = 'ytp-comment-translate-styles';
@@ -2558,8 +3026,41 @@ const onDomReady = (() => {
 
   const translateIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>`;
 
+  const isCommentTranslateEnabled = (settings = null) => {
+    try {
+      const currentSettings =
+        settings ||
+        /** @type {any} */ (window).youtubePlus?.settings ||
+        (() => {
+          const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+          return parsed && typeof parsed === 'object' ? parsed : {};
+        })();
+      return currentSettings?.enableCommentTranslate !== false;
+    } catch (e) {
+      return true;
+    }
+  };
+
+  const removeTranslateButtons = () => {
+    document.querySelectorAll(`.${TRANSLATE_BTN_CLASS}`).forEach(btn => btn.remove());
+    document.querySelectorAll(`[${TRANSLATED_ATTR}][${ORIGINAL_ATTR}]`).forEach(
+      /** @param {Element} node */ node => {
+        const original = node.getAttribute(ORIGINAL_ATTR);
+        if (original) node.textContent = original;
+        node.removeAttribute(TRANSLATED_ATTR);
+        node.removeAttribute(ORIGINAL_ATTR);
+      }
+    );
+  };
+
+  const stopTranslateObserver = () => {
+    if (!translateObserver) return;
+    translateObserver.disconnect();
+    translateObserver = null;
+  };
+
   /** Add translate button to a comment element */
-  const addTranslateButton = commentEl => {
+  const addTranslateButton = (/** @type {any} */ commentEl) => {
     if (commentEl.querySelector(`.${TRANSLATE_BTN_CLASS}`)) return;
 
     // Find the text content element
@@ -2643,22 +3144,30 @@ const onDomReady = (() => {
   };
 
   /** Debounced processing */
+  /** @type {ReturnType<typeof setTimeout> | null} */
   let processTimeout = null;
   const scheduleProcess = () => {
     if (processTimeout) clearTimeout(processTimeout);
     processTimeout = setTimeout(processComments, 300);
   };
 
-  /** Initialize */
-  const init = () => {
+  const startTranslateFeature = () => {
+    if (!isCommentTranslateEnabled()) {
+      stopTranslateObserver();
+      removeTranslateButtons();
+      return;
+    }
+
     injectStyles();
     processComments();
+
+    if (translateObserver) return;
 
     // Observe for new comments
     const commentsContainer = document.querySelector('#comments, #tab-comments, #content');
     const target = commentsContainer || document.body;
 
-    const observer = new MutationObserver(mutations => {
+    translateObserver = new MutationObserver(mutations => {
       let hasNewComments = false;
       for (const m of mutations) {
         for (const node of m.addedNodes) {
@@ -2678,14 +3187,14 @@ const onDomReady = (() => {
       if (hasNewComments) scheduleProcess();
     });
 
-    observer.observe(target, { childList: true, subtree: true });
+    translateObserver.observe(target, { childList: true, subtree: true });
 
     try {
       if (window.YouTubeUtils?.cleanupManager) {
-        window.YouTubeUtils.cleanupManager.registerObserver(observer);
+        window.YouTubeUtils.cleanupManager.registerObserver(translateObserver);
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
@@ -2695,9 +3204,9 @@ const onDomReady = (() => {
     if (!isVideoPage) return;
 
     if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(() => init(), { timeout: 3000 });
+      requestIdleCallback(() => startTranslateFeature(), { timeout: 3000 });
     } else {
-      setTimeout(init, 1500);
+      setTimeout(startTranslateFeature, 1500);
     }
   };
 
@@ -2708,4 +3217,12 @@ const onDomReady = (() => {
   }
 
   window.addEventListener('yt-navigate-finish', scheduleInit, { passive: true });
+  window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {
+    if (isCommentTranslateEnabled(e?.detail)) {
+      startTranslateFeature();
+      return;
+    }
+    stopTranslateObserver();
+    removeTranslateButtons();
+  });
 })();

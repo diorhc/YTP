@@ -3,48 +3,76 @@
  */
 
 describe('Download Module', () => {
-  let originalLocation;
+  // originalLocation removed (unused)
 
   beforeEach(() => {
     // Set up required globals
     window._ytplusCreateHTML = s => s;
-    window.YouTubeUtils = {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
-      byId: jest.fn(id => document.getElementById(id)),
-      t: jest.fn(key => key || ''),
-      cleanupManager: {
-        registerInterval: jest.fn(id => id),
-        registerTimeout: jest.fn(id => id),
-        registerObserver: jest.fn(obs => obs),
-        registerListener: jest.fn(),
-        cleanup: jest.fn(),
-        observers: new Set(),
-        intervals: new Set(),
-        timeouts: new Set(),
-        animationFrames: new Set(),
-        getListenerStats: jest.fn(() => ({ total: 0 })),
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(sel => document.querySelector(sel)),
+        $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
+        byId: jest.fn(id => document.getElementById(id)),
+        t: jest.fn(key => key || ''),
+        cleanupManager: {
+          registerInterval: jest.fn(id => id),
+          registerTimeout: jest.fn(id => id),
+          registerObserver: jest.fn(obs => obs),
+          registerListener: jest.fn(),
+          cleanup: jest.fn(),
+          registerAnimationFrame: jest.fn(id => id),
+        },
+        NotificationManager: jest.fn(() => ({ show: jest.fn(), hide: jest.fn() })),
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        logError: jest.fn(),
+        createElement: jest.fn(tag => document.createElement(tag)),
+        loadFeatureEnabled: jest.fn(() => true),
+        storage: { get: jest.fn(), set: jest.fn(), remove: jest.fn() },
+        logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
+        SETTINGS_KEY: 'youtube_plus_settings',
       },
-      NotificationManager: jest.fn(() => ({
-        show: jest.fn(),
-        hide: jest.fn(),
-      })),
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
-      logError: jest.fn(),
-      createElement: jest.fn(tag => document.createElement(tag)),
-      loadFeatureEnabled: jest.fn(() => true),
-      storage: { get: jest.fn(), set: jest.fn(), remove: jest.fn() },
-      logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
-      SETTINGS_KEY: 'youtube_plus_settings',
-    };
-    window.YouTubePlusI18n = { t: jest.fn(key => key) };
-    window.YouTubePlusLogger = {
-      error: jest.fn(),
-      warn: jest.fn(),
-      info: jest.fn(),
-      debug: jest.fn(),
-    };
-    window.YouTubeDOMCache = { get: jest.fn(), querySelector: jest.fn() };
+    });
+    Object.defineProperty(window, 'YouTubePlusI18n', {
+      configurable: true,
+      writable: true,
+      value: {
+        t: jest.fn(key => key),
+        getLanguage: jest.fn(() => 'en'),
+        loadTranslations: jest.fn(),
+        isReady: jest.fn(() => true),
+      },
+    });
+    Object.defineProperty(window, 'YouTubePlusLogger', {
+      configurable: true,
+      writable: true,
+      value: {
+        error: jest.fn(),
+        warn: jest.fn(),
+        info: jest.fn(),
+        debug: jest.fn(),
+        setLevel: jest.fn(),
+        getLevel: jest.fn(() => 'info'),
+        getRecent: jest.fn(() => []),
+        export: jest.fn(),
+        createChild: jest.fn(),
+      },
+    });
+    Object.defineProperty(window, 'YouTubeDOMCache', {
+      configurable: true,
+      writable: true,
+      value: {
+        get: jest.fn(),
+        querySelector: jest.fn(),
+        getAll: jest.fn(),
+        querySelectorAll: jest.fn(),
+        getElementById: jest.fn(),
+        waitForElement: jest.fn(),
+        invalidate: jest.fn(),
+        clear: jest.fn(),
+      },
+    });
 
     // Mock location for watch page
     global.mockLocation({
@@ -71,7 +99,7 @@ describe('Download Module', () => {
   });
 
   test('should detect relevant routes', () => {
-    const isRelevantRoute = path => {
+    const isRelevantRoute = /** @param {string} path */ path => {
       try {
         return path === '/watch' || path.startsWith('/shorts');
       } catch {

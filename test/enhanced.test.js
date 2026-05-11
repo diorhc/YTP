@@ -30,6 +30,7 @@ describe('Enhanced Tabviews Module', () => {
 
       const stylesAfter = document.getElementById('custom-styles');
       expect(stylesAfter).not.toBeNull();
+      if (!stylesAfter) throw new Error('custom styles not created');
       expect(stylesAfter.tagName).toBe('STYLE');
     });
 
@@ -66,6 +67,7 @@ describe('Enhanced Tabviews Module', () => {
 
       const createdButton = document.getElementById('right-tabs-top-button');
       expect(createdButton).not.toBeNull();
+      if (!createdButton) throw new Error('button was not created');
       expect(createdButton.className).toBe('top-button');
       expect(createdButton.getAttribute('aria-label')).toBe('Scroll to top');
     });
@@ -109,13 +111,15 @@ describe('Enhanced Tabviews Module', () => {
 
     test('should handle scroll event with debouncing', done => {
       const mockFn = jest.fn();
-      let timeoutId;
+      /** @type {ReturnType<typeof setTimeout> | null} */
+      let timeoutId = null;
 
       // Simple debounce implementation
+      /** @param {() => void} fn @param {number} delay */
       const debounce = (fn, delay) => {
-        return (...args) => {
-          clearTimeout(timeoutId);
-          timeoutId = setTimeout(() => fn(...args), delay);
+        return () => {
+          if (timeoutId !== null) clearTimeout(timeoutId);
+          timeoutId = setTimeout(() => fn(), delay);
         };
       };
 
@@ -143,6 +147,7 @@ describe('Enhanced Tabviews Module', () => {
 
       const styleEl = document.getElementById('end-screen-remover');
       expect(styleEl).not.toBeNull();
+      if (!styleEl) throw new Error('end screen style not created');
       expect(styleEl.textContent).toContain('display:none');
     });
 
@@ -152,7 +157,9 @@ describe('Enhanced Tabviews Module', () => {
       document.body.appendChild(endScreenElement);
 
       // Simulate removal
-      endScreenElement.style.cssText = 'display:none!important;visibility:hidden!important';
+      if (endScreenElement.style) {
+        endScreenElement.style.cssText = 'display:none!important;visibility:hidden!important';
+      }
       endScreenElement.remove();
 
       const elements = document.querySelectorAll('.ytp-ce-element-show');
@@ -163,7 +170,9 @@ describe('Enhanced Tabviews Module', () => {
       const settings = { enabled: true };
       localStorage.setItem('youtube_endscreen_settings', JSON.stringify(settings));
 
-      const loaded = JSON.parse(localStorage.getItem('youtube_endscreen_settings'));
+      const raw = localStorage.getItem('youtube_endscreen_settings');
+      if (!raw) throw new Error('settings were not saved');
+      const loaded = JSON.parse(raw);
       expect(loaded.enabled).toBe(true);
     });
 
@@ -173,6 +182,7 @@ describe('Enhanced Tabviews Module', () => {
       let enabled = true;
       try {
         const data = localStorage.getItem('youtube_endscreen_settings');
+        if (!data) throw new Error('settings missing');
         enabled = JSON.parse(data).enabled ?? true;
       } catch {
         enabled = true;
@@ -212,7 +222,8 @@ describe('Enhanced Tabviews Module', () => {
       rightTabs.id = 'right-tabs';
       document.body.appendChild(rightTabs);
 
-      let observer;
+      /** @type {MutationObserver | null} */
+      let observer = null;
       try {
         observer = new MutationObserver(() => {});
         observer.observe(rightTabs, {
@@ -225,7 +236,7 @@ describe('Enhanced Tabviews Module', () => {
       }
 
       expect(observer).toBeDefined();
-      observer.disconnect();
+      if (observer) observer.disconnect();
     });
   });
 

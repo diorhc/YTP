@@ -1,6 +1,5 @@
 const YouTubeUtils = (() => {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
 
   // Import helper modules
   const Security = window.YouTubePlusSecurity || {};
@@ -11,7 +10,7 @@ const YouTubeUtils = (() => {
    * Translation function with fallback support
    * Uses centralized i18n from YouTubePlusI18n
    * @param {string} key - Translation key
-   * @param {Object} params - Parameters for interpolation
+   * @param {any} params - Parameters for interpolation
    * @returns {string} Translated string
    */
   // Shared translation helper from YouTubeUtils
@@ -30,13 +29,13 @@ const YouTubeUtils = (() => {
   // Use helper modules or fallback to local implementations
   const safeExecute =
     Security.safeExecute ||
-    ((fn, context = 'Unknown') => {
+    ((/** @type {any} */ fn, context = 'Unknown') => {
       /** @this {any} */
-      return function (...args) {
+      return function (/** @type {any[]} */ ...args) {
         try {
           return fn.call(this, ...args);
         } catch (error) {
-          logError(context, 'Execution failed', error);
+          logError(context, 'Execution failed', /** @type {Error} */ (/** @type {any} */ (error)));
           return null;
         }
       };
@@ -44,13 +43,17 @@ const YouTubeUtils = (() => {
 
   const safeExecuteAsync =
     Security.safeExecuteAsync ||
-    ((fn, context = 'Unknown') => {
+    ((/** @type {any} */ fn, context = 'Unknown') => {
       /** @this {any} */
-      return async function (...args) {
+      return async function (/** @type {any[]} */ ...args) {
         try {
           return await fn.call(this, ...args);
         } catch (error) {
-          logError(context, 'Async execution failed', error);
+          logError(
+            context,
+            'Async execution failed',
+            /** @type {Error} */ (/** @type {any} */ (error))
+          );
           return null;
         }
       };
@@ -58,59 +61,62 @@ const YouTubeUtils = (() => {
 
   const sanitizeHTML =
     Security.sanitizeHTML ||
-    (html => {
+    ((/** @type {any} */ html) => {
       if (typeof html !== 'string') return '';
       return html.replace(/[<>&"'\/`=]/g, '');
     });
 
   const isValidURL =
     Security.isValidURL ||
-    (url => {
+    ((/** @type {any} */ url) => {
       if (typeof url !== 'string') return false;
       try {
         const parsed = new URL(url);
         return ['http:', 'https:'].includes(parsed.protocol);
-      } catch {
+      } catch (e) {
         return false;
       }
     });
 
   // Use storage helper or fallback
-  const storage = Storage || {
-    get: (key, defaultValue = null) => {
-      try {
-        const value = localStorage.getItem(key);
-        return value ? JSON.parse(value) : defaultValue;
-      } catch {
-        return defaultValue;
-      }
-    },
-    set: (key, value) => {
-      try {
-        localStorage.setItem(key, JSON.stringify(value));
-        return true;
-      } catch {
-        return false;
-      }
-    },
-    remove: key => {
-      try {
-        localStorage.removeItem(key);
-        return true;
-      } catch {
-        return false;
-      }
-    },
-  };
+  /** @type {{ get: <T = unknown>(key: string, defaultValue?: T) => T; set: (key: string, value: unknown) => boolean; remove: (key: string) => void }} */
+  const storage = /** @type {any} */ (
+    Storage || {
+      get: (/** @type {any} */ key, defaultValue = null) => {
+        try {
+          const value = localStorage.getItem(key);
+          return value ? JSON.parse(value) : defaultValue;
+        } catch (e) {
+          return defaultValue;
+        }
+      },
+      set: (/** @type {any} */ key, /** @type {any} */ value) => {
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+          return true;
+        } catch (e) {
+          return false;
+        }
+      },
+      remove: (/** @type {any} */ key) => {
+        try {
+          localStorage.removeItem(key);
+          return true;
+        } catch (e) {
+          return false;
+        }
+      },
+    }
+  );
 
   // Shared debounce/throttle from YouTubeUtils (with fallback)
   const debounce =
     window.YouTubeUtils?.debounce ||
     Performance?.debounce ||
     ((func, wait, options = {}) => {
-      let timeout = null;
-      const debounced = function (...args) {
-        if (timeout !== null) clearTimeout(timeout);
+      /** @type {ReturnType<typeof setTimeout> | null} */ let timeout = null;
+      const debounced = /** @this {any} */ function (/** @type {any[]} */ ...args) {
+        if (timeout !== null) clearTimeout(/** @type {any} */ (timeout));
         if (options.leading && timeout === null) func.call(this, ...args);
         timeout = setTimeout(() => {
           if (!options.leading) func.call(this, ...args);
@@ -118,7 +124,7 @@ const YouTubeUtils = (() => {
         }, wait);
       };
       debounced.cancel = () => {
-        if (timeout !== null) clearTimeout(timeout);
+        if (timeout !== null) clearTimeout(/** @type {any} */ (timeout));
         timeout = null;
       };
       return debounced;
@@ -127,9 +133,9 @@ const YouTubeUtils = (() => {
   const throttle =
     window.YouTubeUtils?.throttle ||
     Performance?.throttle ||
-    ((func, limit) => {
+    ((/** @type {any} */ func, /** @type {any} */ limit) => {
       let inThrottle = false;
-      return function (...args) {
+      return /** @this {any} */ function (/** @type {any[]} */ ...args) {
         if (!inThrottle) {
           func.call(this, ...args);
           inThrottle = true;
@@ -143,7 +149,7 @@ const YouTubeUtils = (() => {
   /**
    * Safe DOM element creation with props and children
    * @param {string} tag - HTML tag name
-   * @param {Object} props - Element properties
+   * @param {any} props - Element properties
    * @param {Array<string | Node>} children - Child elements or text
    * @returns {HTMLElement} Created element
    */
@@ -161,11 +167,11 @@ const YouTubeUtils = (() => {
       if (key === 'className') {
         element.className = value;
       } else if (key === 'style' && typeof value === 'object') {
-        Object.assign(element.style, value);
+        Object.assign(/** @type {any} */ (element).style || {}, value);
       } else if (key.startsWith('on') && typeof value === 'function') {
         element.addEventListener(key.substring(2).toLowerCase(), value);
       } else if (key === 'dataset' && typeof value === 'object') {
-        Object.assign(element.dataset, value);
+        Object.assign(/** @type {any} */ (element).dataset || {}, value);
       } else if (key === 'innerHTML' || key === 'outerHTML') {
         // Prevent direct HTML injection
         logError(
@@ -177,7 +183,7 @@ const YouTubeUtils = (() => {
         try {
           element.setAttribute(key, value);
         } catch (e) {
-          logError('createElement', `Failed to set attribute ${key}`, e);
+          logError('createElement', `Failed to set attribute ${key}`, /** @type {any} */ (e));
         }
       }
     });
@@ -207,7 +213,7 @@ const YouTubeUtils = (() => {
    * @returns {HTMLElement|null} Found element
    */
   const querySelector = (selector, nocache = false) => {
-    if (nocache) return document.querySelector(selector);
+    if (nocache) return /** @type {HTMLElement | null} */ (document.querySelector(selector));
 
     const now = Date.now();
     const cached = selectorCache.get(selector);
@@ -234,7 +240,7 @@ const YouTubeUtils = (() => {
       selectorCache.set(selector, { element, timestamp: now });
     }
 
-    return element;
+    return /** @type {HTMLElement | null} */ (element);
   };
 
   /**
@@ -262,8 +268,8 @@ const YouTubeUtils = (() => {
   const tryQuerySelector = (parent, selector) => {
     try {
       const element = parent.querySelector(selector);
-      return { element, error: null };
-    } catch {
+      return { element: /** @type {HTMLElement | null} */ (element), error: null };
+    } catch (e) {
       return { element: null, error: new Error(`Invalid selector: ${selector}`) };
     }
   };
@@ -280,7 +286,7 @@ const YouTubeUtils = (() => {
       try {
         observer.disconnect();
       } catch (e) {
-        logError('waitForElement', 'Observer disconnect failed', e);
+        logError('waitForElement', 'Observer disconnect failed', /** @type {any} */ (e));
       }
     }
     clearTimeout(timeoutId);
@@ -303,7 +309,7 @@ const YouTubeUtils = (() => {
           resolve(/** @type {HTMLElement} */ (/** @type {unknown} */ (element)));
         }
       } catch (e) {
-        logError('waitForElement', 'Observer callback error', e);
+        logError('waitForElement', 'Observer callback error', /** @type {any} */ (e));
       }
     });
   };
@@ -321,11 +327,11 @@ const YouTubeUtils = (() => {
       }
       observer.observe(parent, { childList: true, subtree: true });
       return null;
-    } catch {
+    } catch (e) {
       try {
         observer.observe(parent, { childList: true, subtree: true });
         return null;
-      } catch {
+      } catch (e) {
         return new Error('Failed to observe DOM');
       }
     }
@@ -360,6 +366,7 @@ const YouTubeUtils = (() => {
       /** @type {MutationObserver | null} */
       let observer = null;
 
+      /** @type {any} */
       const timeoutId = setTimeout(() => {
         cleanupWaitResources(observer, timeoutId, controller);
         reject(new Error(`Element ${selector} not found within ${timeout}ms`));
@@ -426,7 +433,7 @@ const YouTubeUtils = (() => {
         try {
           observer.disconnect();
         } catch (e) {
-          logError('Cleanup', 'Observer disconnect failed', e);
+          logError('Cleanup', 'Observer disconnect failed', /** @type {any} */ (e));
         }
         cleanupManager.observers.delete(observer);
       }
@@ -437,15 +444,15 @@ const YouTubeUtils = (() => {
      * @param {EventTarget|Document|Window} element - Target element
      * @param {string} event - Event name
      * @param {EventListener|EventListenerObject} handler - Event handler
-     * @param {Object} options - Event listener options
-     * @returns {Symbol} Listener key for later removal
+     * @param {boolean | AddEventListenerOptions} [options] - Event listener options
+     * @returns {symbol | null} Listener key for later removal
      */
     registerListener: (element, event, handler, options) => {
       const key = Symbol('listener');
       cleanupManager.listeners.set(key, { element, event, handler, options });
       try {
         element.addEventListener(event, /** @type {EventListener} */ (handler), options);
-      } catch {
+      } catch (e) {
         // best-effort: if addEventListener fails, still register the listener record
       }
       return key;
@@ -462,7 +469,7 @@ const YouTubeUtils = (() => {
         try {
           element.removeEventListener(event, handler, options);
         } catch (e) {
-          logError('Cleanup', 'Listener removal failed', e);
+          logError('Cleanup', 'Listener removal failed', /** @type {any} */ (e));
         }
         cleanupManager.listeners.delete(key);
       }
@@ -534,7 +541,7 @@ const YouTubeUtils = (() => {
         try {
           fn();
         } catch (e) {
-          logError('Cleanup', 'Cleanup function failed', e);
+          logError('Cleanup', 'Cleanup function failed', /** @type {any} */ (e));
         }
       });
       cleanupManager.cleanupFunctions.clear();
@@ -544,7 +551,7 @@ const YouTubeUtils = (() => {
         try {
           obs.disconnect();
         } catch (e) {
-          logError('Cleanup', 'Observer disconnect failed', e);
+          logError('Cleanup', 'Observer disconnect failed', /** @type {any} */ (e));
         }
       });
       cleanupManager.observers.clear();
@@ -554,7 +561,7 @@ const YouTubeUtils = (() => {
         try {
           element.removeEventListener(event, handler, options);
         } catch (e) {
-          logError('Cleanup', 'Listener removal failed', e);
+          logError('Cleanup', 'Listener removal failed', /** @type {any} */ (e));
         }
       });
       cleanupManager.listeners.clear();
@@ -593,7 +600,7 @@ const YouTubeUtils = (() => {
 
     /**
      * Load all settings
-     * @returns {Object} Settings object
+     * @returns {any} Settings object
      */
     load() {
       const saved = storage.get(this.storageKey);
@@ -602,7 +609,7 @@ const YouTubeUtils = (() => {
 
     /**
      * Save all settings
-     * @param {Object} settings - Settings to save
+     * @param {any} settings - Settings to save
      */
     save(settings) {
       storage.set(this.storageKey, settings);
@@ -691,7 +698,7 @@ const YouTubeUtils = (() => {
         }
         this.element.textContent = Array.from(this.styles.values()).join('\n');
       } catch (error) {
-        logError('StyleManager', 'Failed to update styles', error);
+        logError('StyleManager', 'Failed to update styles', /** @type {any} */ (error));
       }
     },
 
@@ -704,7 +711,7 @@ const YouTubeUtils = (() => {
         try {
           this.element.remove();
         } catch (e) {
-          logError('StyleManager', 'Failed to remove style element', e);
+          logError('StyleManager', 'Failed to remove style element', /** @type {any} */ (e));
         }
         this.element = null;
       }
@@ -761,21 +768,23 @@ const YouTubeUtils = (() => {
 
       try {
         // Use shared enhancer notification class for consistent appearance
-        const notification = createElement('div', {
-          className: 'youtube-enhancer-notification',
-          dataset: { message }, // Store message for deduplication
-          // Keep minimal inline styles; main visuals come from the shared CSS class
-          style: {
-            zIndex: '10001',
-            width: 'auto',
-            display: 'flex',
-            alignItems: 'center',
-            gap: '10px',
-            ...(position && /** @type {any} */ (positions)[position]
-              ? /** @type {any} */ (positions)[position]
-              : {}),
-          },
-        });
+        const notification = /** @type {any} */ (
+          createElement('div', {
+            className: 'youtube-enhancer-notification',
+            dataset: { message }, // Store message for deduplication
+            // Keep minimal inline styles; main visuals come from the shared CSS class
+            style: {
+              zIndex: '10001',
+              width: 'auto',
+              display: 'flex',
+              alignItems: 'center',
+              gap: '10px',
+              ...(position && /** @type {any} */ (positions)[position]
+                ? /** @type {any} */ (positions)[position]
+                : {}),
+            },
+          })
+        );
 
         // Add message (with accessibility attributes)
         notification.setAttribute('role', 'status');
@@ -827,7 +836,7 @@ const YouTubeUtils = (() => {
           });
           try {
             document.body.appendChild(_notifContainer);
-          } catch {
+          } catch (e) {
             // fallback to body append if container append fails
             document.body.appendChild(notification);
             this.activeNotifications.add(notification);
@@ -837,14 +846,14 @@ const YouTubeUtils = (() => {
         try {
           // Prepend so newest notifications appear on top
           _notifContainer.insertBefore(notification, _notifContainer.firstChild);
-        } catch {
+        } catch (e) {
           // fallback
           document.body.appendChild(notification);
         }
         // ensure notification accepts pointer events (container is pointer-events:none)
         try {
           notification.style.pointerEvents = 'auto';
-        } catch {
+        } catch (e) {
           /* style may be read-only */
         }
         this.activeNotifications.add(notification);
@@ -852,7 +861,7 @@ const YouTubeUtils = (() => {
         // Apply entry animation from bottom
         try {
           notification.style.animation = 'slideInFromBottom 0.38s ease-out forwards';
-        } catch {
+        } catch (e) {
           /* animation may be unsupported */
         }
 
@@ -870,7 +879,7 @@ const YouTubeUtils = (() => {
 
         return notification;
       } catch (error) {
-        logError('NotificationManager', 'Failed to show notification', error);
+        logError('NotificationManager', 'Failed to show notification', /** @type {any} */ (error));
         return null;
       }
     },
@@ -879,7 +888,7 @@ const YouTubeUtils = (() => {
      * Remove notification
      * @param {HTMLElement} notification - Notification element
      */
-    remove(notification) {
+    remove(/** @type {any} */ notification) {
       if (!notification || !notification.isConnected) return;
 
       try {
@@ -890,21 +899,33 @@ const YouTubeUtils = (() => {
               notification.remove();
               this.activeNotifications.delete(notification);
             } catch (e) {
-              logError('NotificationManager', 'Failed to remove notification', e);
+              logError(
+                'NotificationManager',
+                'Failed to remove notification',
+                /** @type {any} */ (e)
+              );
             }
           }, 340);
           cleanupManager.registerTimeout(timeoutId);
-        } catch {
+        } catch (e) {
           // Fallback: immediate removal
           try {
             notification.remove();
             this.activeNotifications.delete(notification);
           } catch (e) {
-            logError('NotificationManager', 'Failed to remove notification (fallback)', e);
+            logError(
+              'NotificationManager',
+              'Failed to remove notification (fallback)',
+              /** @type {any} */ (e)
+            );
           }
         }
       } catch (error) {
-        logError('NotificationManager', 'Failed to animate notification removal', error);
+        logError(
+          'NotificationManager',
+          'Failed to animate notification removal',
+          /** @type {any} */ (error)
+        );
         // Force remove
         notification.remove();
         this.activeNotifications.delete(notification);
@@ -919,7 +940,7 @@ const YouTubeUtils = (() => {
         try {
           notif.remove();
         } catch (e) {
-          logError('NotificationManager', 'Failed to clear notification', e);
+          logError('NotificationManager', 'Failed to clear notification', /** @type {any} */ (e));
         }
       });
       this.activeNotifications.clear();
@@ -982,13 +1003,13 @@ const YouTubeUtils = (() => {
   cleanupManager.registerInterval(cacheCleanupInterval);
 
   // Global error handler for uncaught promise rejections
-  cleanupManager.registerListener(window, 'unhandledrejection', event => {
+  cleanupManager.registerListener(window, 'unhandledrejection', (/** @type {any} */ event) => {
     logError('Global', 'Unhandled promise rejection', event.reason);
     event.preventDefault(); // Prevent console spam
   });
 
   // Global error handler for uncaught errors
-  cleanupManager.registerListener(window, 'error', event => {
+  cleanupManager.registerListener(window, 'error', (/** @type {any} */ event) => {
     const message = String(event?.message || '');
     const errorMessage = String(event?.error?.message || '');
     if (message.includes('ResizeObserver loop') || errorMessage.includes('ResizeObserver loop')) {
@@ -1013,7 +1034,7 @@ const YouTubeUtils = (() => {
    */
   const measurePerformance = (label, fn) => {
     /** @this {any} */
-    return function (...args) {
+    return function (/** @type {any[]} */ ...args) {
       const start = performance.now();
       try {
         const result = fn.apply(this, args);
@@ -1023,7 +1044,7 @@ const YouTubeUtils = (() => {
         }
         return result;
       } catch (error) {
-        logError('Performance', `${label} failed`, error);
+        logError('Performance', `${label} failed`, /** @type {any} */ (error));
         throw error;
       }
     };
@@ -1037,7 +1058,7 @@ const YouTubeUtils = (() => {
    */
   const measurePerformanceAsync = (label, fn) => {
     /** @this {any} */
-    return async function (...args) {
+    return async function (/** @type {any[]} */ ...args) {
       const start = performance.now();
       try {
         const result = await fn.apply(this, args);
@@ -1047,7 +1068,7 @@ const YouTubeUtils = (() => {
         }
         return result;
       } catch (error) {
-        logError('Performance', `${label} failed`, error);
+        logError('Performance', `${label} failed`, /** @type {any} */ (error));
         throw error;
       }
     };
@@ -1066,7 +1087,7 @@ const YouTubeUtils = (() => {
 
   /**
    * Get viewport dimensions
-   * @returns {Object} Width and height
+   * @returns {any} Width and height
    */
   const getViewport = () => ({
     width: Math.max(document.documentElement.clientWidth || 0, window.innerWidth || 0),
@@ -1078,7 +1099,7 @@ const YouTubeUtils = (() => {
    * @param {Function} fn - Async function to retry
    * @param {number} retries - Number of retries
    * @param {number} delay - Delay between retries
-   * @returns {Promise} Result or error
+   * @returns {Promise<any>} Result or error
    */
   const retryAsync = async (fn, retries = 3, delay = 1000) => {
     for (let i = 0; i < retries; i++) {
@@ -1123,11 +1144,11 @@ const YouTubeUtils = (() => {
 // Make available globally
 if (typeof window !== 'undefined') {
   // Merge utilities into existing global YouTubeUtils without overwriting
-  window.YouTubeUtils = window.YouTubeUtils || {};
-  const existing = window.YouTubeUtils;
+  window.YouTubeUtils = /** @type {any} */ (window.YouTubeUtils || {});
+  const existing = /** @type {any} */ (window.YouTubeUtils);
   try {
     for (const k of Object.keys(YouTubeUtils)) {
-      if (existing[k] === undefined) existing[k] = YouTubeUtils[k];
+      if (existing[k] === undefined) existing[k] = /** @type {any} */ (YouTubeUtils)[k];
     }
   } catch (e) {
     console.error('[YouTube+] Failed to merge core utilities:', e);
@@ -1135,12 +1156,12 @@ if (typeof window !== 'undefined') {
 
   // Add initialization health check (non-intrusive)
   window.YouTubeUtils &&
-    YouTubeUtils.logger &&
-    YouTubeUtils.logger.debug &&
-    YouTubeUtils.logger.debug('[YouTube+ v2.4.5] Core utilities merged');
+    /** @type {any} */ (YouTubeUtils).logger &&
+    /** @type {any} */ (YouTubeUtils).logger.debug &&
+    /** @type {any} */ (YouTubeUtils).logger.debug('[YouTube+ v2.4.5] Core utilities merged');
 
   // Expose debug info
-  window.YouTubePlusDebug = {
+  window.YouTubePlusDebug = /** @type {any} */ ({
     version: '2.4.5',
     cacheSize: () =>
       YouTubeUtils.cleanupManager.observers.size +
@@ -1152,9 +1173,9 @@ if (typeof window !== 'undefined') {
       YouTubeUtils.StyleManager.clear();
       YouTubeUtils.NotificationManager.clearAll();
       window.YouTubeUtils &&
-        YouTubeUtils.logger &&
-        YouTubeUtils.logger.debug &&
-        YouTubeUtils.logger.debug('[YouTube+] All resources cleared');
+        /** @type {any} */ (YouTubeUtils).logger &&
+        /** @type {any} */ (YouTubeUtils).logger.debug &&
+        /** @type {any} */ (YouTubeUtils).logger.debug('[YouTube+] All resources cleared');
     },
     stats: () => ({
       observers: YouTubeUtils.cleanupManager.observers.size,
@@ -1165,7 +1186,7 @@ if (typeof window !== 'undefined') {
       styles: YouTubeUtils.StyleManager.styles.size,
       notifications: YouTubeUtils.NotificationManager.activeNotifications.size,
     }),
-  };
+  });
 
   // Show subtle startup notification (only once per session)
   if (!sessionStorage.getItem('youtube_plus_started')) {
@@ -1230,6 +1251,7 @@ if (typeof window !== 'undefined') {
         hideSideGuide: true,
         cleanSideGuide: false,
         fixFeedLayout: true,
+        sideVideosColumns: 1,
         betterCaptions: true,
         playerBlur: true,
         theaterEnhancements: true,
@@ -1238,12 +1260,15 @@ if (typeof window !== 'undefined') {
 
       // Enhanced features (advanced tab)
       enableEnhanced: true,
+      enableTabview: true,
+      enableCommentTranslate: true,
       enablePlayAll: true,
       enableResumeTime: true,
       enableZoom: true,
       enableThumbnail: true,
       enablePlaylistSearch: true,
       enableScrollToTopButton: true,
+      enableRememberManualQuality: true,
 
       // Loop settings
       enableLoop: true,
@@ -1276,7 +1301,7 @@ if (typeof window !== 'undefined') {
     _cache: new Map(),
 
     // Cached element getter
-    getElement(selector, useCache = true) {
+    getElement(/** @type {string} */ selector, useCache = true) {
       if (useCache && this._cache.has(selector)) {
         const element = this._cache.get(selector);
         if (element?.isConnected) return element;
@@ -1303,7 +1328,7 @@ if (typeof window !== 'undefined') {
                 Object.prototype.hasOwnProperty.call(parsed, key) &&
                 !['__proto__', 'constructor', 'prototype'].includes(key)
               ) {
-                this.settings[key] = parsed[key];
+                /** @type {any} */ (this.settings)[key] = parsed[key];
               }
             }
           }
@@ -1321,25 +1346,28 @@ if (typeof window !== 'undefined') {
             if (!globalSettings) return;
 
             // Map known flags (shallow mapping) to this.settings to preserve user's choices
-            const sc = globalSettings.speedControl;
+            const sc = /** @type {any} */ (globalSettings).speedControl;
             if (sc && typeof sc.enabled === 'boolean') {
               this.settings.enableSpeedControl = sc.enabled;
             }
 
-            const ss = globalSettings.screenshot;
+            const ss = /** @type {any} */ (globalSettings).screenshot;
             if (ss && typeof ss.enabled === 'boolean') this.settings.enableScreenshot = ss.enabled;
 
-            const dl = globalSettings.download;
+            const dl = /** @type {any} */ (globalSettings).download;
             if (dl && typeof dl.enabled === 'boolean') this.settings.enableDownload = dl.enabled;
 
-            if (globalSettings.downloadSites && typeof globalSettings.downloadSites === 'object') {
+            if (
+              /** @type {any} */ (globalSettings).downloadSites &&
+              typeof (/** @type {any} */ (globalSettings).downloadSites) === 'object'
+            ) {
               this.settings.downloadSites = {
                 ...(this.settings.downloadSites || {}),
-                ...globalSettings.downloadSites,
+                .../** @type {any} */ (globalSettings).downloadSites,
               };
             }
           }
-        } catch {
+        } catch (e) {
           // best-effort migration; ignore failures
         }
       } catch (e) {
@@ -1381,7 +1409,7 @@ if (typeof window !== 'undefined') {
               console.warn('[YouTube+] Failed to save migrated loop hotkeys', e);
             }
           }
-        } catch {
+        } catch (e) {
           /* ignore migration errors */
         }
         this.settings.speedControlHotkeys = this.settings.speedControlHotkeys || {};
@@ -1452,7 +1480,7 @@ if (typeof window !== 'undefined') {
 
       // Keyboard shortcut: press 'S' to take a screenshot when not typing
       try {
-        const screenshotKeyHandler = e => {
+        const screenshotKeyHandler = (/** @type {any} */ e) => {
           // Only react to plain 's' key without modifiers
           if (!e || !e.key) return;
           if (!(e.key === 's' || e.key === 'S')) return;
@@ -1467,7 +1495,11 @@ if (typeof window !== 'undefined') {
             this.captureFrame();
           } catch (err) {
             if (YouTubeUtils && YouTubeUtils.logError) {
-              YouTubeUtils.logError('Basic', 'Keyboard screenshot failed', err);
+              YouTubeUtils.logError(
+                'Basic',
+                'Keyboard screenshot failed',
+                /** @type {any} */ (err)
+              );
             }
           }
         };
@@ -1480,13 +1512,17 @@ if (typeof window !== 'undefined') {
         );
       } catch (e) {
         if (YouTubeUtils && YouTubeUtils.logError) {
-          YouTubeUtils.logError('Basic', 'Failed to register screenshot keyboard shortcut', e);
+          YouTubeUtils.logError(
+            'Basic',
+            'Failed to register screenshot keyboard shortcut',
+            /** @type {any} */ (e)
+          );
         }
       }
 
       // Keyboard shortcuts: adjust speed (decrease/increase)
       try {
-        const speedHotkeyHandler = e => {
+        const speedHotkeyHandler = (/** @type {any} */ e) => {
           if (!this.settings.enableSpeedControl || !e || !e.key) return;
           if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
           if (this.isEditableTarget(document.activeElement)) return;
@@ -1517,13 +1553,17 @@ if (typeof window !== 'undefined') {
         YouTubeUtils.cleanupManager.registerListener(document, 'keydown', speedHotkeyHandler, true);
       } catch (e) {
         if (YouTubeUtils && YouTubeUtils.logError) {
-          YouTubeUtils.logError('Basic', 'Failed to register speed keyboard shortcuts', e);
+          YouTubeUtils.logError(
+            'Basic',
+            'Failed to register speed keyboard shortcuts',
+            /** @type {any} */ (e)
+          );
         }
       }
 
       // Keyboard shortcuts: loop control
       try {
-        const loopHotkeyHandler = e => {
+        const loopHotkeyHandler = (/** @type {any} */ e) => {
           if (!this.settings.enableLoop || !e || !e.key) return;
           if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
           if (this.isEditableTarget(document.activeElement)) return;
@@ -1558,12 +1598,16 @@ if (typeof window !== 'undefined') {
         YouTubeUtils.cleanupManager.registerListener(document, 'keydown', loopHotkeyHandler, true);
       } catch (e) {
         if (YouTubeUtils && YouTubeUtils.logError) {
-          YouTubeUtils.logError('Basic', 'Failed to register loop keyboard shortcuts', e);
+          YouTubeUtils.logError(
+            'Basic',
+            'Failed to register loop keyboard shortcuts',
+            /** @type {any} */ (e)
+          );
         }
       }
     },
 
-    isEditableTarget(target) {
+    isEditableTarget(/** @type {any} */ target) {
       const active = /** @type {HTMLElement | null | undefined} */ (target);
       if (!active) return false;
       const tag = (active.tagName || '').toLowerCase();
@@ -1575,7 +1619,7 @@ if (typeof window !== 'undefined') {
       );
     },
 
-    normalizeSpeedHotkey(value, fallback) {
+    normalizeSpeedHotkey(/** @type {any} */ value, /** @type {any} */ fallback) {
       const candidate = typeof value === 'string' ? value.trim().toLowerCase() : '';
       if (candidate) return candidate.slice(0, 1);
       return (
@@ -1586,7 +1630,7 @@ if (typeof window !== 'undefined') {
       );
     },
 
-    adjustSpeedByStep(direction) {
+    adjustSpeedByStep(/** @type {any} */ direction) {
       const speeds = this.speedControl.availableSpeeds;
       if (!Array.isArray(speeds) || !speeds.length) return;
       const current = Number(this.speedControl.currentSpeed);
@@ -1629,7 +1673,7 @@ if (typeof window !== 'undefined') {
           video.loop = true;
         } else {
           video.loop = false;
-          this.setupLoopListener(video);
+          this.setupLoopListener(/** @type {HTMLVideoElement} */ (/** @type {any} */ (video)));
         }
         YouTubeUtils.NotificationManager.show(t('loopEnabled') || 'Loop enabled', {
           duration: 1500,
@@ -1683,7 +1727,7 @@ if (typeof window !== 'undefined') {
         const video = document.querySelector('video');
         if (video) {
           video.loop = false;
-          this.setupLoopListener(video);
+          this.setupLoopListener(/** @type {HTMLVideoElement} */ (/** @type {any} */ (video)));
         }
       }
 
@@ -1727,16 +1771,25 @@ if (typeof window !== 'undefined') {
 
       if (this.loopControl.pointA === null || this.loopControl.pointB === null) return;
 
-      const startTime = Math.min(this.loopControl.pointA, this.loopControl.pointB);
-      const endTime = Math.max(this.loopControl.pointA, this.loopControl.pointB);
+      const startTime = Math.min(
+        /** @type {number} */ (/** @type {any} */ (this.loopControl.pointA)),
+        /** @type {number} */ (/** @type {any} */ (this.loopControl.pointB))
+      );
+      const endTime = Math.max(
+        /** @type {number} */ (/** @type {any} */ (this.loopControl.pointA)),
+        /** @type {number} */ (/** @type {any} */ (this.loopControl.pointB))
+      );
 
-      this.loopControl.timeUpdateListener = () => {
+      /** @type {any} */ (this.loopControl).timeUpdateListener = () => {
         if (this.loopControl.enabled && video.currentTime >= endTime) {
           video.currentTime = startTime;
         }
       };
 
-      video.addEventListener('timeupdate', this.loopControl.timeUpdateListener);
+      video.addEventListener(
+        'timeupdate',
+        /** @type {EventListener} */ (/** @type {any} */ (this.loopControl).timeUpdateListener)
+      );
     },
 
     /**
@@ -1783,7 +1836,7 @@ if (typeof window !== 'undefined') {
       if (!progressBar) return;
 
       // Get or create loop indicator
-      let indicator = document.querySelector('.ytp-plus-loop-indicator');
+      let indicator = /** @type {any} */ (document.querySelector('.ytp-plus-loop-indicator'));
       if (!indicator) {
         indicator = document.createElement('div');
         indicator.className = 'ytp-plus-loop-indicator';
@@ -1791,9 +1844,9 @@ if (typeof window !== 'undefined') {
         try {
           const compStyle = window.getComputedStyle(progressBar);
           if (!compStyle || compStyle.position === 'static') {
-            progressBar.style.position = 'relative';
+            /** @type {any} */ (progressBar).style.position = 'relative';
           }
-        } catch {
+        } catch (e) {
           /* getComputedStyle may fail on detached elements */
         }
         // append indicator after ensuring positioning
@@ -1832,8 +1885,14 @@ if (typeof window !== 'undefined') {
       }
 
       // Both A and B set: draw the range and color it blue
-      const startTime = Math.min(this.loopControl.pointA, this.loopControl.pointB);
-      const endTime = Math.max(this.loopControl.pointA, this.loopControl.pointB);
+      const startTime = Math.min(
+        /** @type {number} */ (/** @type {any} */ (this.loopControl.pointA)),
+        /** @type {number} */ (/** @type {any} */ (this.loopControl.pointB))
+      );
+      const endTime = Math.max(
+        /** @type {number} */ (/** @type {any} */ (this.loopControl.pointA)),
+        /** @type {number} */ (/** @type {any} */ (this.loopControl.pointB))
+      );
 
       // Calculate percentage positions
       const startPercent = (startTime / video.duration) * 100;
@@ -1866,7 +1925,7 @@ if (typeof window !== 'undefined') {
 
       if (this.loopControl.pointA !== null && this.loopControl.pointB !== null) {
         video.loop = false;
-        this.setupLoopListener(video);
+        this.setupLoopListener(/** @type {HTMLVideoElement} */ (/** @type {any} */ (video)));
       } else {
         video.loop = true;
       }
@@ -1935,8 +1994,8 @@ if (typeof window !== 'undefined') {
 
       // Expose and broadcast updated settings so other modules can react live.
       try {
-        window.youtubePlus = window.youtubePlus || {};
-        window.youtubePlus.settings = this.settings;
+        /** @type {any} */ (window).youtubePlus = /** @type {any} */ (window).youtubePlus || {};
+        /** @type {any} */ (window).youtubePlus.settings = this.settings;
         window.dispatchEvent(
           new CustomEvent('youtube-plus-settings-updated', {
             detail: this.settings,
@@ -1956,13 +2015,19 @@ if (typeof window !== 'undefined') {
 
       Object.entries(settingsMap).forEach(([className, setting]) => {
         const button = this.getElement(`.${className}`, false);
-        if (button) button.style.display = this.settings[setting] ? '' : 'none';
+        if (button) {
+          /** @type {any} */ (button).style.display = /** @type {any} */ (this.settings)[setting]
+            ? ''
+            : 'none';
+        }
       });
 
       // Also handle speed options dropdown (attached to body)
       const speedOptions = document.querySelector('.speed-options');
       if (speedOptions) {
-        speedOptions.style.display = this.settings.enableSpeedControl ? '' : 'none';
+        /** @type {any} */ (speedOptions).style.display = this.settings.enableSpeedControl
+          ? ''
+          : 'none';
       }
     },
 
@@ -1999,7 +2064,7 @@ if (typeof window !== 'undefined') {
       // === CRITICAL CSS: variables, player controls, speed, notifications ===
       // Injected synchronously — minimal set needed before first paint
       const criticalStyles = `:root{--yt-accent:#ff0000;--yt-accent-hover:#cc0000;--yt-radius-sm:6px;--yt-radius-md:10px;--yt-radius-lg:16px;--yt-transition:all .2s ease;--yt-space-xs:4px;--yt-space-sm:8px;--yt-space-md:16px;--yt-space-lg:24px;--yt-glass-blur:blur(18px) saturate(180%);--yt-glass-blur-light:blur(12px) saturate(160%);--yt-glass-blur-heavy:blur(24px) saturate(200%);}
-        html[dark],html:not([dark]):not([light]){--yt-bg-primary:rgba(15,15,15,.85);--yt-bg-secondary:rgba(28,28,28,.85);--yt-bg-tertiary:rgba(34,34,34,.85);--yt-text-primary:#fff;--yt-text-secondary:#aaa;--yt-border-color:rgba(255,255,255,.2);--yt-hover-bg:rgba(255,255,255,.1);--yt-shadow:0 4px 12px rgba(0,0,0,.25);--yt-glass-bg:rgba(255,255,255,.1);--yt-glass-border:rgba(255,255,255,.2);--yt-glass-shadow:0 8px 32px rgba(0,0,0,.2);--yt-modal-bg:rgba(0,0,0,.75);--yt-notification-bg:rgba(28,28,28,.9);--yt-panel-bg:rgba(34,34,34,.3);--yt-header-bg:rgba(20,20,20,.6);--yt-input-bg:rgba(255,255,255,.1);--yt-button-bg:rgba(255,255,255,.2);--yt-text-stroke:white;}
+        html[dark],html:not([dark]):not([light]){--yt-bg-primary:rgba(15,15,15,.85);--yt-bg-secondary:rgba(28,28,28,.85);--yt-bg-tertiary:rgba(34,34,34,.85);--yt-text-primary:#fff;--yt-text-secondary:#aaa;--yt-border-color:rgba(255,255,255,.2);--yt-hover-bg:rgba(255,255,255,.1);--yt-shadow:0 4px 12px rgba(0,0,0,.25);--yt-glass-bg:rgba(50, 50, 50, 0.5);--yt-glass-border:rgba(255,255,255,.2);--yt-glass-shadow:0 8px 32px rgba(0,0,0,.2);--yt-modal-bg:rgba(0,0,0,.75);--yt-notification-bg:rgba(28,28,28,.9);--yt-panel-bg:rgba(34,34,34,.3);--yt-header-bg:rgba(20,20,20,.6);--yt-input-bg:rgba(255,255,255,.1);--yt-button-bg:rgba(255,255,255,.2);--yt-text-stroke:white;}
         html[light]{--yt-bg-primary:rgba(255,255,255,.85);--yt-bg-secondary:rgba(248,248,248,.85);--yt-bg-tertiary:rgba(240,240,240,.85);--yt-text-primary:#030303;--yt-text-secondary:#606060;--yt-border-color:rgba(0,0,0,.2);--yt-hover-bg:rgba(0,0,0,.05);--yt-shadow:0 4px 12px rgba(0,0,0,.15);--yt-glass-bg:rgba(255,255,255,.7);--yt-glass-border:rgba(0,0,0,.1);--yt-glass-shadow:0 8px 32px rgba(0,0,0,.1);--yt-modal-bg:rgba(0,0,0,.5);--yt-notification-bg:rgba(255,255,255,.95);--yt-panel-bg:rgba(255,255,255,.7);--yt-header-bg:rgba(248,248,248,.8);--yt-input-bg:rgba(0,0,0,.05);--yt-button-bg:rgba(0,0,0,.1);--yt-text-stroke:#030303;}
         .ytp-screenshot-button,.ytp-cobalt-button,.ytp-pip-button{position:relative;width:44px;height:100%;display:inline-flex;align-items:center;justify-content:center;vertical-align:top;transition:opacity .15s,transform .15s;}
         .ytp-screenshot-button:hover,.ytp-cobalt-button:hover,.ytp-pip-button:hover{transform:scale(1.1);}
@@ -2024,23 +2089,27 @@ if (typeof window !== 'undefined') {
       // Deferred via requestIdleCallback — only needed when user opens settings
       const nonCriticalStyles = `
         .ytp-plus-settings-modal{position:fixed;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,0.45);display:flex;align-items:center;justify-content:center;z-index:100000;backdrop-filter:blur(8px) saturate(140%);-webkit-backdrop-filter:blur(8px) saturate(140%);animation:ytEnhanceFadeIn .25s ease-out;contain:layout style paint;}
-        .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:20px;width:760px;max-width:94%;max-height:60vh;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.45);animation:ytEnhanceScaleIn .28s cubic-bezier(.4,0,.2,1);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-glass-border);will-change:transform,opacity;display:flex;flex-direction:row;contain:layout style paint;}
-        .ytp-plus-settings-sidebar{width:240px;background:var(--yt-header-bg);border-right:1px solid var(--yt-glass-border);display:flex;flex-direction:column;backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
-        .ytp-plus-settings-sidebar-header{padding:var(--yt-space-md) var(--yt-space-lg);border-bottom:1px solid var(--yt-glass-border);display:flex;justify-content:space-between;align-items:center;}
-        .ytp-plus-settings-title{font-size:18px;font-weight:500;margin:0;color:var(--yt-text-primary);}
-        .ytp-plus-settings-sidebar-close{padding:var(--yt-space-md) var(--yt-space-lg);display:flex;justify-content:flex-end;background:transparent;}
-        .ytp-plus-settings-close{background:none;border:none;cursor:pointer;padding:var(--yt-space-sm);margin:-8px;color:var(--yt-text-primary);transition:color .2s,transform .2s;}
-        .ytp-plus-settings-close:hover{color:var(--yt-accent);transform:scale(1.25) rotate(90deg);}
-        .ytp-plus-settings-nav{flex:1;padding:var(--yt-space-md) 0;}
-        .ytp-plus-settings-nav-item{display:flex;align-items:center;padding:12px var(--yt-space-lg);cursor:pointer;transition:all .2s cubic-bezier(.4,0,.2,1);font-size:14px;border-left:3px solid transparent;color:var(--yt-text-primary);}
-        .ytp-plus-settings-nav-item:hover{background:var(--yt-hover-bg);}
-        .ytp-plus-settings-nav-item.active{background:rgba(255,0,0,.1);border-left-color:var(--yt-accent);color:var(--yt-accent);font-weight:500;}
-        .ytp-plus-settings-nav-item svg{width:18px;height:18px;margin-right:12px;opacity:.8;transition:opacity .2s,transform .2s;}
+        .ytp-plus-settings-shell{max-width:45vw;max-height:65vh;display:flex;flex-direction:row;gap:12px;animation:ytEnhanceScaleIn .28s cubic-bezier(.4,0,.2,1);will-change:transform,opacity;}
+        .ytp-plus-settings-sidebar{display:flex;align-items:center;justify-content:center;padding-top:44px;box-sizing:border-box;}
+        .ytp-plus-settings-column{flex:1;min-width:0;display:flex;flex-direction:column;gap:12px;}
+        .ytp-plus-settings-topbar{display:flex;align-items:center;gap:12px;padding:0 2px;}
+        .ytp-plus-settings-title{font-size:14px;font-weight:500;margin:0;padding:var(--yt-space-sm) var(--yt-space-md);border-radius:18px;border:1px solid var(--yt-glass-border);color:var(--yt-text-primary);cursor:default;transition:all .25s cubic-bezier(.4,0,.2,1);white-space:nowrap;}
+        .ytp-plus-settings-active-label{flex:1;font-size:13px;font-weight:600;color:var(--yt-text-secondary);text-align:center;white-space:nowrap;letter-spacing:.03em;text-transform:uppercase;opacity:.75;}
+        .ytp-plus-settings-panel{background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:24px;flex:1;min-width:0;min-height:0;overflow:hidden;box-shadow:0 12px 40px rgba(0,0,0,0.45);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-glass-border);contain:layout style paint;display:flex;}
+        .ytp-plus-settings-side-actions{display:flex;flex-direction:column;gap:10px;padding-top:50px;align-self:flex-start;}
+        .ytp-plus-settings-close{width:40px;height:40px;border-radius:50%;background:rgba(255,255,255,.08);border:1px solid rgba(255,255,255,.12);display:flex;align-items:center;justify-content:center;cursor:pointer;box-shadow:0 4px 14px rgba(0,0,0,.2);transition:transform .12s ease,background .12s ease,color .2s;color:var(--yt-text-primary);padding:0;}
+        .ytp-plus-settings-close:hover{transform:translateY(-2px);background:rgba(255,0,0,.12);color:var(--yt-accent);}
+        .ytp-plus-settings-nav{display:flex;flex-direction:column;align-items:center;justify-content:center;gap:8px;width:100%;}
+        .ytp-plus-settings-nav-rail{border:1px solid var(--yt-glass-border);border-radius:24px;background:linear-gradient(180deg,rgba(255,255,255,.06),rgba(255,255,255,.03));box-shadow:inset 0 1px 0 rgba(255,255,255,.08);padding:10px 8px;}
+        .ytp-plus-settings-nav-item{position:relative;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:0;width:44px;height:44px;border-radius:14px;cursor:pointer;transition:all .2s cubic-bezier(.4,0,.2,1);font-size:11px;border:none;color:var(--yt-text-primary);padding:4px 4px;text-align:center;}
+        .ytp-plus-settings-nav-item-label{display:none;}
+        .ytp-plus-settings-nav-item:hover{background:var(--yt-hover-bg);transform:translateY(-1px);}
+        .ytp-plus-settings-nav-item.active{background:rgba(255,255,255,.12);color:var(--yt-accent);box-shadow:inset 0 0 0 1px rgba(255,255,255,.14);}
+        .ytp-plus-settings-nav-item svg{width:20px;height:20px;margin-right:0;opacity:.92;transition:opacity .2s,transform .2s;flex-shrink:0;}
         .ytp-plus-settings-nav-item.active svg{opacity:1;transform:scale(1.1);}
-        .ytp-plus-settings-nav-item:hover svg{transform:scale(1.05);}
-        .ytp-plus-settings-main{flex:1;display:flex;flex-direction:column;overflow-y:auto;}
-        .ytp-plus-settings-header{padding:var(--yt-space-md) var(--yt-space-lg);border-bottom:1px solid var(--yt-glass-border);background:var(--yt-header-bg);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);}
-        .ytp-plus-settings-content{flex:1;padding:var(--yt-space-md) var(--yt-space-lg);overflow-y:auto;}
+        .ytp-plus-settings-nav-item:hover svg{transform:scale(1.06);}
+        .ytp-plus-settings-main{flex:1;display:flex;flex-direction:column;min-height:0;overflow:hidden;}
+        .ytp-plus-settings-content{flex:1;padding:var(--yt-space-md) var(--yt-space-lg);overflow-y:auto;min-height:0;}
         .ytp-plus-settings-section{margin-bottom:var(--yt-space-lg);}
         .ytp-plus-settings-section-title{font-size:16px;font-weight:500;margin-bottom:var(--yt-space-md);color:var(--yt-text-primary);}
         .ytp-plus-settings-section.hidden{display:none !important;}
@@ -2064,19 +2133,26 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-checkbox:checked{transform:rotate(0deg) scale(1.15);}
         .ytp-plus-settings-checkbox:checked::before{width:9px;opacity:1;background:#fff;transition:width 150ms ease 100ms,opacity 150ms ease 100ms;}
         .ytp-plus-settings-checkbox:checked::after{width:16px;opacity:1;background:#fff;transition:width 150ms ease 250ms,opacity 150ms ease 250ms;}
-        .ytp-plus-footer{padding:var(--yt-space-md) var(--yt-space-lg);border-top:1px solid var(--yt-glass-border);display:flex;justify-content:flex-end;background:transparent;}
+        .ytp-plus-settings-select{margin-left:auto;flex-shrink:0;background:var(--yt-glass-bg,rgba(255,255,255,.08));border:1px solid var(--yt-glass-border,rgba(255,255,255,.15));border-radius:8px;color:var(--yt-text-primary);font-size:13px;padding:4px 8px;cursor:pointer;outline:none;transition:border-color .2s;}
+        .ytp-plus-settings-select:focus{border-color:var(--yt-accent,#f00);}
+        html:not([dark]) .ytp-plus-settings-select{background:rgba(0,0,0,.05);border-color:rgba(0,0,0,.2);}
         .ytp-plus-button{padding:var(--yt-space-sm) var(--yt-space-md);border-radius:18px;border:none;font-size:14px;font-weight:500;cursor:pointer;transition:all .25s cubic-bezier(.4,0,.2,1);}
         .ytp-plus-button-primary{background:transparent;border:1px solid var(--yt-glass-border);color:var(--yt-text-primary);}
         .ytp-plus-button-primary:hover{background:var(--yt-accent);color:#fff;box-shadow:0 6px 16px rgba(255,0,0,.35);transform:translateY(-2px);}
         .app-icon{fill:var(--yt-text-primary);stroke:var(--yt-text-primary);transition:all .3s;}
-        @media(max-width:768px){.ytp-plus-settings-panel{width:95%;max-height:80vh;flex-direction:column;}
-        .ytp-plus-settings-sidebar{width:100%;max-height:120px;flex-direction:row;overflow-x:auto;}
-        .ytp-plus-settings-nav{display:flex;flex-direction:row;padding:0;}
-        .ytp-plus-settings-nav-item{white-space:nowrap;border-left:none;border-bottom:3px solid transparent;}
-        .ytp-plus-settings-nav-item.active{border-left:none;border-bottom-color:var(--yt-accent);}
+        .about-section-content{display:flex;flex-direction:row;align-items:center;justify-content:center;flex-wrap:nowrap;width:fit-content;max-width:100%;line-height:1;gap:12px;text-align:center;margin:6px auto 12px;}
+        .about-section-content .app-icon{display:block;flex:0 0 auto;margin:0;}
+        @media(max-width:768px){.ytp-plus-settings-shell{max-height:86vh;flex-direction:column;gap:8px;}
+        .ytp-plus-settings-sidebar{width:100%;max-height:70px;overflow-x:auto;padding-top:0;}
+        .ytp-plus-settings-nav{flex-direction:row;}
+        .ytp-plus-settings-nav-rail{max-width:none;border:none;border-radius:0;background:transparent;box-shadow:none;padding:0;flex-direction:row;display:flex;gap:4px;}
+        .ytp-plus-settings-nav-item{width:40px;height:40px;}
+        .ytp-plus-settings-side-actions{flex-direction:row;padding-top:0;align-self:auto;}
+        .ytp-plus-settings-panel{min-height:0;}
+        .ytp-plus-settings-active-label{display:none;}
         .ytp-plus-settings-item{padding:10px 12px;}}
-        .ytp-plus-settings-section h1{margin:-95px 90px 8px;font-family:'Montserrat',sans-serif;font-size:52px;font-weight:600;color:transparent;-webkit-text-stroke-width:1px;-webkit-text-stroke-color:var(--yt-text-stroke);cursor:pointer;transition:color .2s;}
-        .ytp-plus-settings-section h1:hover{color:var(--yt-accent);-webkit-text-stroke-width:1px;-webkit-text-stroke-color:transparent;}
+        .about-section-content h1{margin:0;white-space:nowrap;font-family:'Montserrat',sans-serif;font-size:52px;font-weight:600;line-height:1.05;color:transparent;-webkit-text-stroke-width:1px;-webkit-text-stroke-color:var(--yt-text-stroke);cursor:pointer;transition:color .2s;}
+        .about-section-content h1:hover{color:var(--yt-accent);-webkit-text-stroke-width:1px;-webkit-text-stroke-color:transparent;}
         .download-options{position:fixed;background:var(--yt-glass-bg);color:var(--yt-text-primary);border-radius:var(--yt-radius-md);width:150px;z-index:2147483647;box-shadow:var(--yt-glass-shadow);border:1px solid var(--yt-glass-border);overflow:hidden;opacity:0;pointer-events:none;transition:opacity .2s ease,transform .2s ease;transform:translateY(8px);box-sizing:border-box;}
         .download-options.visible{opacity:1;pointer-events:auto;transform:translateY(0);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);}
         .download-options-list{display:flex;flex-direction:column;align-items:center;justify-content:center;width:100%;}
@@ -2126,6 +2202,12 @@ if (typeof window !== 'undefined') {
         .ytp-plus-settings-panel select,
         .ytp-plus-settings-panel select option {background: var(--yt-panel-bg) !important; color: var(--yt-text-primary) !important;}
         .ytp-plus-settings-panel select {-webkit-appearance: menulist !important; appearance: menulist !important; padding: 6px 8px !important; border-radius: 6px !important; border: 1px solid var(--yt-glass-border) !important;}
+        .ytp-plus-theme-item{display:flex;flex-direction:column;align-items:stretch;gap:12px}
+        .ytp-plus-theme-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:10px;width:100%}
+        .ytp-plus-theme-card{display:flex;align-items:center;justify-content:center;min-height:44px;border-radius:12px;border:1px solid var(--yt-glass-border);background:var(--yt-panel-bg);color:var(--yt-text-secondary);font-size:13px;font-weight:500;cursor:pointer;transition:all .18s ease}
+        .ytp-plus-theme-card:hover{background:var(--yt-hover-bg);color:var(--yt-text-primary)}
+        .ytp-plus-theme-card.active{color:#fff;background:linear-gradient(180deg,rgba(255,0,0,.28),rgba(255,0,0,.16));border-color:rgba(255,0,0,.45);box-shadow:0 0 0 1px rgba(255,0,0,.22) inset}
+        @media(max-width:580px){.ytp-plus-theme-grid{grid-template-columns:1fr}}
         .glass-dropdown{position:relative;display:inline-block;min-width:110px}
         .glass-dropdown__toggle{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;padding:6px 8px;border-radius:8px;background:linear-gradient(180deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02));color:inherit;border:1px solid rgba(255,255,255,0.06);cursor:pointer}
         .glass-dropdown__toggle:focus{outline:2px solid rgba(255,255,255,0.06)}
@@ -2146,7 +2228,7 @@ if (typeof window !== 'undefined') {
         .ytp-plus-voting-item-content{flex:1;padding-right:16px;}
         .ytp-plus-voting-item-title{font-size:14px;font-weight:500;color:var(--yt-text-primary);margin-bottom:4px;}
         .ytp-plus-voting-item-desc{font-size:12px;color:var(--yt-text-secondary);line-height:1.4;}
-        .ytp-plus-voting-item-status{font-size:11px;padding:2px 8px;border-radius:10px;display:inline-block;margin-top:8px;background:rgba(255,255,255,0.1);color:var(--yt-text-secondary);}
+        .ytp-plus-voting-item-status{font-size:11px;min-height:28px;padding:0 10px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:rgba(255,255,255,0.1);color:var(--yt-text-secondary);border:1px solid var(--yt-glass-border);line-height:1;}
         .ytp-plus-voting-item-status.completed{background:rgba(76,175,80,0.2);color:#4caf50;}
         .ytp-plus-voting-item-status.in-progress{background:rgba(255,193,7,0.2);color:#ffc107;}
         .ytp-plus-voting-item-votes{display:flex;flex-direction:column;align-items:stretch;gap:8px;min-width:120px;}
@@ -2174,7 +2256,7 @@ if (typeof window !== 'undefined') {
         .ytp-plus-voting-submit:hover{transform:translateY(-2px);box-shadow:0 4px 12px rgba(255,0,0,.3);}
         @media (max-width: 680px){.ytp-plus-voting-item{flex-direction:column;align-items:stretch}.ytp-plus-voting-item-content{padding-right:0}.ytp-plus-voting-item-votes{min-width:0;width:100%}}
         .ytp-plus-voting-preview{margin-bottom:20px;}
-        .ytp-plus-ba-container{position:relative;width:100%;height:260px;overflow:hidden;border-radius:var(--yt-radius-md);border:1px solid var(--yt-glass-border);user-select:none;cursor:ew-resize;background:#000;}
+        .ytp-plus-ba-container{position:relative;width:100%;height:260px;overflow:hidden;border-radius:var(--yt-radius-md);border:1px solid var(--yt-glass-border);user-select:none;cursor:ew-resize;background:var(--yt-glass-bg);}
         .ytp-plus-ba-before,.ytp-plus-ba-after{position:absolute;top:0;left:0;width:100%;height:100%;overflow:hidden;}
         .ytp-plus-ba-before img,.ytp-plus-ba-after img{position:absolute;top:0;left:0;width:100%;height:100%;object-fit:contain;display:block;pointer-events:none;}
         .ytp-plus-ba-after{clip-path:inset(0 0 0 50%);}
@@ -2192,7 +2274,8 @@ if (typeof window !== 'undefined') {
         .ytp-plus-vote-bar-btn:first-of-type{border-right:1px solid var(--yt-glass-border);}
         .ytp-plus-vote-bar-btn:hover{color:var(--yt-text-primary);}
         .ytp-plus-vote-bar-btn.active{color:#fff;}
-        .ytp-plus-vote-bar-btn svg{fill:currentColor;}
+        .ytp-plus-vote-bar-btn svg{fill:currentColor;width:20px;height:20px;display:block;}
+        .ytp-plus-vote-bar-btn svg path{fill:currentColor;}
         .ytp-plus-vote-bar-count{font-size:12px;color:var(--yt-text-secondary);}`;
 
       const injectNonCritical = () => {
@@ -2203,7 +2286,7 @@ if (typeof window !== 'undefined') {
           (document.head || document.documentElement).appendChild(ncEl);
         }
       };
-      this.ensureNonCriticalStyles = injectNonCritical;
+      /** @type {any} */ (this).ensureNonCriticalStyles = injectNonCritical;
 
       if (!document.getElementById('yt-enhancer-main')) {
         // Inject critical CSS immediately
@@ -2248,12 +2331,19 @@ if (typeof window !== 'undefined') {
      * Handle modal click actions (extracted to reduce complexity)
      * @param {HTMLElement} target - Click target
      * @param {HTMLElement} modal - Modal element
-     * @param {Object} handlers - Modal handlers
-     * @param {Function} markDirty - Mark dirty function
-     * @param {Object} context - Context object
+     * @param {any} handlers - Modal handlers
+     * @param {Function} _markDirty - Mark dirty function
+     * @param {any} _context - Context object
      * @param {Function} translate - Translation function
      */
-    handleModalClickActions(target, modal, handlers, markDirty, context, translate) {
+    handleModalClickActions(
+      target,
+      modal,
+      handlers,
+      /** @type {any} */ _markDirty,
+      /** @type {any} */ _context,
+      translate
+    ) {
       // Sidebar navigation
       const navItem = /** @type {HTMLElement | null} */ (
         target.classList && target.classList.contains('ytp-plus-settings-nav-item')
@@ -2268,6 +2358,13 @@ if (typeof window !== 'undefined') {
       // Save button
       if (target.id === 'ytp-plus-save-settings' || target.id === 'ytp-plus-save-settings-icon') {
         this.saveSettings();
+        try {
+          document.dispatchEvent(
+            new CustomEvent('youtube-plus-settings-modal-closed', { bubbles: true })
+          );
+        } catch (e) {
+          // Non-critical, suppressed
+        }
         modal.remove();
         this.showNotification(translate('settingsSaved'));
         return;
@@ -2304,19 +2401,38 @@ if (typeof window !== 'undefined') {
       // Use helper functions from settings-helpers.js
       const helpers = window.YouTubePlusSettingsHelpers;
       const handlers = window.YouTubePlusModalHandlers;
-      modal.innerHTML = _createHTML(
-        `<div class="ytp-plus-settings-panel">${helpers.createSettingsSidebar(t)}${helpers.createMainContent(this.settings, t)}</div>`
-      );
+      modal.innerHTML = _createHTML(`
+        <div class="ytp-plus-settings-shell">
+          <div class="ytp-plus-settings-sidebar">${helpers.createSettingsSidebar(t)}</div>
+          <div class="ytp-plus-settings-column">
+            <div class="ytp-plus-settings-topbar">
+              <h2 class="ytp-plus-settings-title">${t('settingsTitle')}</h2>
+              <div class="ytp-plus-settings-active-label" id="ytp-plus-active-section-label"></div>
+              <button class="ytp-plus-button ytp-plus-button-primary" id="ytp-plus-save-settings">${t('saveChanges')}</button>
+            </div>
+            <div class="ytp-plus-settings-panel">${helpers.createMainContent(this.settings, t)}</div>
+          </div>
+          <div class="ytp-plus-settings-side-actions">
+            <button class="ytp-plus-settings-close" id="ytp-plus-close-settings" aria-label="${t('closeButton')}">
+              <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      `);
 
-      // Track unsaved changes
-      let dirty = false;
-      const saveIconBtn = modal.querySelector('#ytp-plus-save-settings-icon');
-      if (saveIconBtn) saveIconBtn.style.display = 'none';
-      const markDirty = () => {
-        if (dirty) return;
-        dirty = true;
-        if (saveIconBtn) saveIconBtn.style.display = '';
-      };
+      // Sync topbar active-section label with initially active nav item
+      const _initialNav = /** @type {HTMLElement|null} */ (
+        modal.querySelector('.ytp-plus-settings-nav-item.active')
+      );
+      const _activeLabel = modal.querySelector('#ytp-plus-active-section-label');
+      if (_initialNav && _activeLabel) {
+        _activeLabel.textContent = _initialNav.dataset?.label || '';
+      }
+
+      // Track unsaved changes (callback passed to handlers)
+      const markDirty = () => {};
 
       // Context for handlers
       const context = {
@@ -2329,8 +2445,8 @@ if (typeof window !== 'undefined') {
       };
 
       // Create click handler
-      const handleModalClick = e => {
-        const { target } = /** @type {{ target: HTMLElement }} */ (e);
+      const handleModalClick = (/** @type {any} */ e) => {
+        const target = /** @type {HTMLElement} */ (e.target);
 
         // Submenu toggle buttons (e.g., YouTube Music)
         const submenuToggleBtn = target.closest('.ytp-plus-submenu-toggle');
@@ -2368,10 +2484,12 @@ if (typeof window !== 'undefined') {
             const submenuEl = panel.querySelector(submenuSelector);
             if (!(submenuEl instanceof HTMLElement)) return;
 
-            const computedDisplay = window.getComputedStyle(submenuEl).display;
+            const computedDisplay = window.getComputedStyle(
+              /** @type {Element} */ (submenuEl)
+            ).display;
             const currentlyHidden = computedDisplay === 'none' || submenuEl.hidden;
             const nextHidden = !currentlyHidden;
-            submenuEl.style.display = nextHidden ? 'none' : '';
+            /** @type {any} */ (submenuEl).style.display = nextHidden ? 'none' : '';
             submenuToggleBtn.setAttribute('aria-expanded', nextHidden ? 'false' : 'true');
 
             // Persist submenu expanded state to localStorage
@@ -2381,7 +2499,7 @@ if (typeof window !== 'undefined') {
               );
               submenuStates[submenuKey] = !nextHidden;
               localStorage.setItem('ytp-plus-submenu-states', JSON.stringify(submenuStates));
-            } catch {
+            } catch (e) {
               // Ignore storage errors
             }
           } catch (e) {
@@ -2390,8 +2508,36 @@ if (typeof window !== 'undefined') {
           return;
         }
 
+        const themeCard = target.closest('.ytp-plus-theme-card[data-setting-card][data-value]');
+        if (themeCard instanceof HTMLElement) {
+          const setting = themeCard.dataset.settingCard;
+          const value = themeCard.dataset.value;
+          if (setting && typeof value === 'string') {
+            handlers.setSettingByPath(this.settings, setting, value);
+            const group = themeCard.closest('.ytp-plus-theme-grid');
+            if (group) {
+              group.querySelectorAll('.ytp-plus-theme-card').forEach(card => {
+                const isActive = card === themeCard;
+                card.classList.toggle('active', isActive);
+                card.setAttribute('aria-checked', isActive ? 'true' : 'false');
+              });
+            }
+            markDirty();
+            handlers.applySettingLive(setting, context);
+            this.saveSettings();
+          }
+          return;
+        }
+
         // Close modal
         if (target === modal) {
+          try {
+            document.dispatchEvent(
+              new CustomEvent('youtube-plus-settings-modal-closed', { bubbles: true })
+            );
+          } catch (e) {
+            // Non-critical, suppressed
+          }
           modal.remove();
           return;
         }
@@ -2405,6 +2551,13 @@ if (typeof window !== 'undefined') {
           target.closest('#ytp-plus-close-settings') ||
           target.closest('#ytp-plus-close-settings-icon')
         ) {
+          try {
+            document.dispatchEvent(
+              new CustomEvent('youtube-plus-settings-modal-closed', { bubbles: true })
+            );
+          } catch (e) {
+            // Non-critical, suppressed
+          }
           modal.remove();
           return;
         }
@@ -2415,18 +2568,51 @@ if (typeof window !== 'undefined') {
           return;
         }
 
+        if (target.id === 'open-ytp-github' || target.closest('#open-ytp-github')) {
+          window.open('https://github.com/diorhc/YTP', '_blank');
+          return;
+        }
+
+        if (target.id === 'open-ytp-discussions' || target.closest('#open-ytp-discussions')) {
+          window.open('https://github.com/diorhc/YTP/discussions', '_blank');
+          return;
+        }
+
+        if (target.id === 'open-ytp-greasyfork' || target.closest('#open-ytp-greasyfork')) {
+          window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
+          return;
+        }
+
         // Handle different actions
         this.handleModalClickActions(target, modal, handlers, markDirty, context, t);
       };
 
       modal.addEventListener('click', handleModalClick);
 
-      // Change event delegation for checkboxes
-      modal.addEventListener('change', e => {
-        const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
+      // Change event delegation for checkboxes and selects
+      modal.addEventListener('change', (/** @type {any} */ e) => {
+        const target = /** @type {HTMLElement} */ (e.target);
+
+        // Handle select elements with data-setting
+        if (
+          /** @type {any} */ (target).tagName === 'SELECT' &&
+          /** @type {any} */ (target).dataset?.setting
+        ) {
+          const setting = /** @type {any} */ (target).dataset.setting;
+          const rawValue = /** @type {any} */ (target).value;
+          const numericValue = Number(rawValue);
+          const parsedValue =
+            rawValue !== '' && Number.isNaN(numericValue) ? rawValue : numericValue;
+          handlers.setSettingByPath(this.settings, setting, parsedValue);
+          markDirty();
+          handlers.applySettingLive(setting, context);
+          this.saveSettings();
+          return;
+        }
+
         if (!target.classList.contains('ytp-plus-settings-checkbox')) return;
 
-        const { dataset } = /** @type {HTMLElement} */ (target);
+        const { dataset } = /** @type {any} */ (target);
         const { setting } = dataset;
         if (!setting) return;
 
@@ -2462,8 +2648,8 @@ if (typeof window !== 'undefined') {
       });
 
       // Input event delegation - allow free editing
-      modal.addEventListener('input', e => {
-        const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
+      modal.addEventListener('input', (/** @type {any} */ e) => {
+        const target = /** @type {HTMLElement} */ (e.target);
         if (target.classList.contains('speed-hotkey-input')) {
           const keyType = target.dataset?.speedHotkey;
           if (keyType !== 'decrease' && keyType !== 'increase' && keyType !== 'reset') return;
@@ -2483,7 +2669,7 @@ if (typeof window !== 'undefined') {
         }
 
         if (target.classList.contains('download-site-input')) {
-          const { dataset } = /** @type {HTMLElement} */ (target);
+          const { dataset } = /** @type {any} */ (target);
           const { site, field } = dataset;
           if (!site || !field) return;
           handlers.handleDownloadSiteInput(target, site, field, this.settings, markDirty, t);
@@ -2493,8 +2679,8 @@ if (typeof window !== 'undefined') {
       // Blur event delegation - normalize hotkey inputs when editing ends
       modal.addEventListener(
         'blur',
-        e => {
-          const { target } = /** @type {{ target: EventTarget & HTMLElement }} */ (e);
+        (/** @type {any} */ e) => {
+          const target = /** @type {HTMLElement} */ (e.target);
           if (target.classList.contains('speed-hotkey-input')) {
             const keyType = target.dataset?.speedHotkey;
             if (keyType !== 'decrease' && keyType !== 'increase' && keyType !== 'reset') return;
@@ -2549,11 +2735,15 @@ if (typeof window !== 'undefined') {
           try {
             window.youtubePlusReport.render(modal);
           } catch (e) {
-            YouTubeUtils.logError('Report', 'report.render failed', e);
+            YouTubeUtils.logError('Report', 'report.render failed', /** @type {any} */ (e));
           }
         }
       } catch (e) {
-        YouTubeUtils.logError('Report', 'Failed to initialize report section', e);
+        YouTubeUtils.logError(
+          'Report',
+          'Failed to initialize report section',
+          /** @type {any} */ (e)
+        );
       }
 
       // Restore submenu expanded states from localStorage
@@ -2582,12 +2772,12 @@ if (typeof window !== 'undefined') {
             const submenuEl = modal.querySelector(submenuSelector);
             if (submenuEl instanceof HTMLElement) {
               const isExpanded = !!expanded;
-              submenuEl.style.display = isExpanded ? '' : 'none';
+              /** @type {any} */ (submenuEl).style.display = isExpanded ? '' : 'none';
               toggleBtn.setAttribute('aria-expanded', isExpanded ? 'true' : 'false');
             }
           }
         });
-      } catch {
+      } catch (e) {
         // Ignore storage errors
       }
 
@@ -2598,7 +2788,11 @@ if (typeof window !== 'undefined') {
           '.ytp-plus-settings-section[data-section="advanced"]'
         );
         if (advancedSection instanceof HTMLElement) {
-          const ensureVisibleWhenEnabled = (key, setting, submenuSelector) => {
+          const ensureVisibleWhenEnabled = (
+            /** @type {any} */ key,
+            /** @type {any} */ setting,
+            /** @type {any} */ submenuSelector
+          ) => {
             if (Object.prototype.hasOwnProperty.call(submenuStates, key)) return;
             const checkbox = advancedSection.querySelector(
               `.ytp-plus-settings-checkbox[data-setting="${setting}"]`
@@ -2613,7 +2807,7 @@ if (typeof window !== 'undefined') {
               /** @type {HTMLInputElement} */ (checkbox).checked &&
               submenu instanceof HTMLElement
             ) {
-              submenu.style.display = '';
+              /** @type {any} */ (submenu).style.display = '';
               if (toggleBtn instanceof HTMLElement) {
                 toggleBtn.setAttribute('aria-expanded', 'true');
               }
@@ -2627,7 +2821,7 @@ if (typeof window !== 'undefined') {
           );
           ensureVisibleWhenEnabled('music', 'enableMusic', '.music-submenu[data-submenu="music"]');
         }
-      } catch {
+      } catch (e) {
         // Ignore layout recovery errors
       }
 
@@ -2652,7 +2846,7 @@ if (typeof window !== 'undefined') {
             if (targetSection) targetSection.classList.remove('hidden');
           }
         }
-      } catch {
+      } catch (e) {
         // Ignore storage errors
       }
 
@@ -2661,9 +2855,18 @@ if (typeof window !== 'undefined') {
 
     openSettingsModal() {
       const existingModal = this.getElement('.ytp-plus-settings-modal', false);
-      if (existingModal) existingModal.remove();
-      if (typeof this.ensureNonCriticalStyles === 'function') {
-        this.ensureNonCriticalStyles();
+      if (existingModal) {
+        try {
+          document.dispatchEvent(
+            new CustomEvent('youtube-plus-settings-modal-closed', { bubbles: true })
+          );
+        } catch (e) {
+          // Non-critical, suppressed
+        }
+        existingModal.remove();
+      }
+      if (typeof (/** @type {any} */ (this).ensureNonCriticalStyles) === 'function') {
+        /** @type {any} */ (this).ensureNonCriticalStyles();
       }
       document.body.appendChild(this.createSettingsModal());
       // Initialize voting system
@@ -2687,12 +2890,12 @@ if (typeof window !== 'undefined') {
         document.dispatchEvent(
           new CustomEvent('youtube-plus-settings-modal-opened', { bubbles: true })
         );
-      } catch {
+      } catch (e) {
         // ignore event dispatch errors
       }
     },
 
-    waitForElement(selector, timeout = 5000) {
+    waitForElement(/** @type {any} */ selector, timeout = 5000) {
       return YouTubeUtils.waitForElement(selector, timeout);
     },
 
@@ -2714,7 +2917,7 @@ if (typeof window !== 'undefined') {
       this.handleFullscreenChange();
     },
 
-    addScreenshotButton(controls) {
+    addScreenshotButton(/** @type {any} */ controls) {
       const button = document.createElement('button');
       button.className = 'ytp-button ytp-screenshot-button';
       button.setAttribute('title', t('takeScreenshot'));
@@ -2733,7 +2936,7 @@ if (typeof window !== 'undefined') {
      * Add download button to controls - Delegates to download-button module
      * @param {HTMLElement} controls - Controls container
      */
-    addDownloadButton(controls) {
+    addDownloadButton(/** @type {HTMLElement} */ controls) {
       // Use extracted download button module
       if (typeof window !== 'undefined' && window.YouTubePlusDownloadButton) {
         const manager = window.YouTubePlusDownloadButton.createDownloadButtonManager({
@@ -2748,7 +2951,7 @@ if (typeof window !== 'undefined') {
       }
     },
 
-    addSpeedControlButton(controls) {
+    addSpeedControlButton(/** @type {any} */ controls) {
       // Check if speed control is enabled in settings
       if (!this.settings.enableSpeedControl) return;
 
@@ -2764,7 +2967,7 @@ if (typeof window !== 'undefined') {
       speedOptions.className = 'speed-options';
       speedOptions.setAttribute('role', 'menu');
 
-      const selectSpeed = speed => {
+      const selectSpeed = (/** @type {any} */ speed) => {
         this.changeSpeed(speed);
         hideDropdown();
       };
@@ -2773,7 +2976,7 @@ if (typeof window !== 'undefined') {
         const option = document.createElement('div');
         option.className = `speed-option-item${Number(speed) === this.speedControl.currentSpeed ? ' speed-option-active' : ''}`;
         option.textContent = `${speed}x`;
-        option.dataset.speed = String(speed);
+        /** @type {any} */ (option).dataset.speed = String(speed);
         option.setAttribute('role', 'menuitem');
         option.tabIndex = 0;
         option.addEventListener('click', () => selectSpeed(speed));
@@ -2795,14 +2998,14 @@ if (typeof window !== 'undefined') {
       // Append speedOptions to body to avoid Firefox positioning/hover issues
       try {
         document.body.appendChild(speedOptions);
-      } catch {
+      } catch (e) {
         // fallback keep as child
       }
 
       const positionDropdown = () => {
         const rect = speedBtn.getBoundingClientRect();
-        speedOptions.style.left = `${rect.left + rect.width / 2}px`;
-        speedOptions.style.bottom = `${window.innerHeight - rect.top + 8}px`;
+        /** @type {any} */ (speedOptions).style.left = `${rect.left + rect.width / 2}px`;
+        /** @type {any} */ (speedOptions).style.bottom = `${window.innerHeight - rect.top + 8}px`;
       };
 
       const hideDropdown = () => {
@@ -2824,9 +3027,9 @@ if (typeof window !== 'undefined') {
         }
       };
 
-      let documentClickKey;
+      /** @type {symbol | null | undefined} */ let documentClickKey;
 
-      const documentClickHandler = event => {
+      const documentClickHandler = (/** @type {any} */ event) => {
         if (!speedBtn.isConnected) {
           if (documentClickKey) {
             YouTubeUtils.cleanupManager.unregisterListener(documentClickKey);
@@ -2844,7 +3047,7 @@ if (typeof window !== 'undefined') {
         hideDropdown();
       };
 
-      const documentKeydownHandler = event => {
+      const documentKeydownHandler = (/** @type {any} */ event) => {
         if (event.key === 'Escape' && speedOptions.classList.contains('visible')) {
           hideDropdown();
           speedBtn.focus();
@@ -2882,7 +3085,7 @@ if (typeof window !== 'undefined') {
       );
 
       // Hover behaviour: show on mouseenter, hide on mouseleave (with small delay)
-      let speedHideTimer;
+      /** @type {ReturnType<typeof setTimeout> | undefined} */ let speedHideTimer;
       speedBtn.addEventListener('mouseenter', () => {
         clearTimeout(speedHideTimer);
         showDropdown();
@@ -2948,7 +3151,7 @@ if (typeof window !== 'undefined') {
         const btn = document.createElement('button');
         btn.id = 'ytplus-guide-toggle-btn';
         btn.type = 'button';
-        btn.style.cssText =
+        /** @type {any} */ (btn).style.cssText =
           'position:fixed;right:12px;bottom:12px;z-index:100000;background:var(--yt-spec-call-to-action);color:#fff;border:none;border-radius:8px;padding:8px 10px;box-shadow:0 6px 18px rgba(0,0,0,0.3);cursor:pointer;opacity:0.95;font-size:13px;';
         btn.setAttribute('aria-pressed', 'false');
         btn.setAttribute('aria-label', 'Hide side guide');
@@ -2984,6 +3187,7 @@ if (typeof window !== 'undefined') {
       canvas.width = video.videoWidth;
       canvas.height = video.videoHeight;
       const ctx = canvas.getContext('2d');
+      if (!ctx) return;
       ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
 
       const videoTitle = document.title.replace(/\s-\sYouTube$/, '').trim();
@@ -2999,12 +3203,12 @@ if (typeof window !== 'undefined') {
           const message =
             translated && translated !== 'screenshotSaved' ? translated : 'Screenshot saved';
           this.showNotification(message, 2000);
-        } catch {
+        } catch (e) {
           this.showNotification('Screenshot saved', 2000);
         }
       } catch (err) {
         if (YouTubeUtils && YouTubeUtils.logError) {
-          YouTubeUtils.logError('Basic', 'Screenshot download failed', err);
+          YouTubeUtils.logError('Basic', 'Screenshot download failed', /** @type {any} */ (err));
         }
         try {
           const translatedFail = typeof t === 'function' ? t('screenshotFailed') : null;
@@ -3013,24 +3217,24 @@ if (typeof window !== 'undefined') {
               ? translatedFail
               : 'Screenshot failed';
           this.showNotification(failMsg, 3000);
-        } catch {
+        } catch (e) {
           this.showNotification('Screenshot failed', 3000);
         }
       }
     },
 
-    showNotification(message, duration = 2000) {
+    showNotification(/** @type {any} */ message, duration = 2000) {
       YouTubeUtils.NotificationManager.show(message, { duration, type: 'info' });
     },
 
     handleFullscreenChange() {
       const isFullscreen = document.fullscreenElement || document.webkitFullscreenElement;
       document.querySelectorAll('.ytp-screenshot-button, .ytp-cobalt-button').forEach(button => {
-        button.style.bottom = isFullscreen ? '0px' : '0px';
+        /** @type {any} */ (button).style.bottom = isFullscreen ? '0px' : '0px';
       });
     },
 
-    changeSpeed(speed) {
+    changeSpeed(/** @type {any} */ speed) {
       const numericSpeed = Number(speed);
       this.speedControl.currentSpeed = numericSpeed;
       localStorage.setItem(this.speedControl.storageKey, String(numericSpeed));
@@ -3041,7 +3245,7 @@ if (typeof window !== 'undefined') {
       document.querySelectorAll('.speed-option-item').forEach(option => {
         option.classList.toggle(
           'speed-option-active',
-          parseFloat(option.dataset.speed) === numericSpeed
+          parseFloat(/** @type {any} */ (option).dataset?.speed || '0') === numericSpeed
         );
       });
 
@@ -3063,29 +3267,31 @@ if (typeof window !== 'undefined') {
     },
 
     setupVideoObserver() {
-      if (this._speedInterval) clearInterval(this._speedInterval);
-      this._speedInterval = null;
+      if (/** @type {any} */ (this)._speedInterval) {
+        clearInterval(/** @type {any} */ (this)._speedInterval);
+      }
+      /** @type {any} */ (this)._speedInterval = null;
 
       // Track left-mouse-button hold state so we can detect YouTube's native
       // hold-to-2× speed feature. When the user presses and holds the left
       // button on the player, YouTube temporarily sets playbackRate = 2. We
       // must NOT override that, or the feature is immediately cancelled.
-      if (!this._mouseHoldTracked) {
-        this._mouseHoldTracked = true;
-        this._mouseButtonHeld = false;
+      if (!(/** @type {any} */ (this)._mouseHoldTracked)) {
+        /** @type {any} */ (this)._mouseHoldTracked = true;
+        /** @type {any} */ (this)._mouseButtonHeld = false;
         YouTubeUtils.cleanupManager.registerListener(
           document,
           'mousedown',
-          e => {
-            if (e.button === 0) this._mouseButtonHeld = true;
+          (/** @type {any} */ e) => {
+            if (e.button === 0) /** @type {any} */ (this)._mouseButtonHeld = true;
           },
           { passive: true, capture: true }
         );
         YouTubeUtils.cleanupManager.registerListener(
           document,
           'mouseup',
-          e => {
-            if (e.button === 0) this._mouseButtonHeld = false;
+          (/** @type {any} */ e) => {
+            if (e.button === 0) /** @type {any} */ (this)._mouseButtonHeld = false;
           },
           { passive: true, capture: true }
         );
@@ -3095,7 +3301,7 @@ if (typeof window !== 'undefined') {
       const applySpeed = () => this.applyCurrentSpeed();
       const updateLoopBar = () => this.updateLoopProgressBar();
       const applyLoop = () => this.applyLoopStateToCurrentVideo();
-      const attachSpeedListeners = video => {
+      const attachSpeedListeners = (/** @type {any} */ video) => {
         if (video._ytpSpeedListenerAttached) return;
         video._ytpSpeedListenerAttached = true;
         video.addEventListener('loadedmetadata', applySpeed);
@@ -3109,7 +3315,12 @@ if (typeof window !== 'undefined') {
           // YouTube's hold-to-2× temporarily raises playbackRate above the
           // user-chosen speed while the left mouse button is held. Skip the
           // reset so YouTube's native feature isn't cancelled.
-          if (this._mouseButtonHeld && video.playbackRate > this.speedControl.currentSpeed) return;
+          if (
+            /** @type {any} */ (this)._mouseButtonHeld &&
+            video.playbackRate > this.speedControl.currentSpeed
+          ) {
+            return;
+          }
           if (video.playbackRate !== this.speedControl.currentSpeed) {
             _settingRate = true;
             video.playbackRate = this.speedControl.currentSpeed;
@@ -3179,14 +3390,16 @@ if (typeof window !== 'undefined') {
       YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-start', checkUrlChange);
     },
 
-    showSpeedIndicator(speed) {
-      const indicator = document.getElementById('speed-indicator');
+    showSpeedIndicator(/** @type {any} */ speed) {
+      const indicator = /** @type {any} */ (document.getElementById('speed-indicator'));
       if (!indicator) return;
 
       if (this.speedControl.activeAnimationId) {
-        cancelAnimationFrame(this.speedControl.activeAnimationId);
-        YouTubeUtils.cleanupManager.unregisterAnimationFrame(this.speedControl.activeAnimationId);
-        this.speedControl.activeAnimationId = null;
+        cancelAnimationFrame(/** @type {any} */ (this.speedControl).activeAnimationId);
+        YouTubeUtils.cleanupManager.unregisterAnimationFrame(
+          /** @type {any} */ (this.speedControl).activeAnimationId
+        );
+        /** @type {any} */ (this.speedControl).activeAnimationId = null;
       }
 
       indicator.textContent = `${speed}×`;
@@ -3194,25 +3407,23 @@ if (typeof window !== 'undefined') {
       indicator.style.opacity = '0.8';
 
       const startTime = performance.now();
-      const fadeOut = timestamp => {
+      const fadeOut = (/** @type {any} */ timestamp) => {
         const elapsed = timestamp - startTime;
         const progress = Math.min(elapsed / 1500, 1);
 
         indicator.style.opacity = String(0.8 * (1 - progress));
 
         if (progress < 1) {
-          this.speedControl.activeAnimationId = YouTubeUtils.cleanupManager.registerAnimationFrame(
-            requestAnimationFrame(fadeOut)
-          );
+          /** @type {any} */ (this.speedControl).activeAnimationId =
+            YouTubeUtils.cleanupManager.registerAnimationFrame(requestAnimationFrame(fadeOut));
         } else {
           indicator.style.display = 'none';
-          this.speedControl.activeAnimationId = null;
+          /** @type {any} */ (this.speedControl).activeAnimationId = null;
         }
       };
 
-      this.speedControl.activeAnimationId = YouTubeUtils.cleanupManager.registerAnimationFrame(
-        requestAnimationFrame(fadeOut)
-      );
+      /** @type {any} */ (this.speedControl).activeAnimationId =
+        YouTubeUtils.cleanupManager.registerAnimationFrame(requestAnimationFrame(fadeOut));
     },
   };
 

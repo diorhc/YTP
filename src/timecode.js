@@ -1,7 +1,8 @@
 // YouTube Timecode Panel
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const _createHTML =
+    window._ytplusCreateHTML || /** @type {any} */ ((/** @type {string} */ s) => s);
 
   // Shared helpers from YouTubeUtils
   const { $, $$, byId } = window.YouTubeUtils || {};
@@ -15,9 +16,10 @@
   window._timecodeModuleInitialized = true;
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils?.t || (key => key || '');
+  const t = window.YouTubeUtils?.t || /** @type {any} */ ((/** @type {string} */ key) => key || '');
 
   // Configuration
+  /** @type {any} */
   const config = {
     enabled: true,
     autoDetect: true,
@@ -30,6 +32,7 @@
   };
 
   // State management
+  /** @type {any} */
   const state = {
     timecodes: new Map(),
     dom: {},
@@ -46,7 +49,7 @@
   const isRelevantRoute = () => {
     try {
       return location.pathname === '/watch';
-    } catch {
+    } catch (e) {
       return false;
     }
   };
@@ -212,7 +215,7 @@
    * @param {HTMLElement} panel - The panel element to position
    * @returns {void}
    */
-  const applySavedPanelPosition = panel => {
+  const applySavedPanelPosition = (/** @type {any} */ panel) => {
     if (!panel || !config.panelPosition) return;
 
     requestAnimationFrame(() => {
@@ -221,9 +224,9 @@
         config.panelPosition.left,
         config.panelPosition.top
       );
-      panel.style.left = `${left}px`;
-      panel.style.top = `${top}px`;
-      panel.style.right = 'auto';
+      /** @type {any} */ (panel).style.left = `${left}px`;
+      /** @type {any} */ (panel).style.top = `${top}px`;
+      /** @type {any} */ (panel).style.right = 'auto';
     });
   };
 
@@ -333,7 +336,7 @@
    * @param {string} timeStr - Time string (MM:SS or HH:MM:SS)
    * @returns {number|null} Seconds or null if invalid
    */
-  const parseTime = timeStr => {
+  const parseTime = (/** @type {any} */ timeStr) => {
     try {
       if (!timeStr || typeof timeStr !== 'string') return null;
 
@@ -485,6 +488,7 @@
    * @returns {string} Concatenated description text
    */
   const collectDescriptionText = () => {
+    /** @type {string[]} */
     const snippets = [];
     DESCRIPTION_SELECTORS.forEach(selector => {
       $$(selector).forEach(node => {
@@ -513,6 +517,7 @@
    */
   const collectCommentsText = (maxComments = 30) => {
     try {
+      /** @type {string[]} */
       const snippets = [];
       for (const sel of COMMENT_SELECTORS) {
         $$(sel).forEach(node => {
@@ -524,7 +529,11 @@
       }
       return snippets.join('\n');
     } catch (error) {
-      YouTubeUtils.logError('TimecodePanel', 'collectCommentsText failed', error);
+      YouTubeUtils.logError(
+        'TimecodePanel',
+        'collectCommentsText failed',
+        /** @type {any} */ (error)
+      );
       return '';
     }
   };
@@ -556,7 +565,11 @@
       try {
         inlineExpander.removeAttribute('collapsed');
       } catch (error) {
-        YouTubeUtils.logError('TimecodePanel', 'Failed to expand description', error);
+        YouTubeUtils.logError(
+          'TimecodePanel',
+          'Failed to expand description',
+          /** @type {any} */ (error)
+        );
       }
       await sleep(300);
       return true;
@@ -573,7 +586,7 @@
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         await YouTubeUtils.waitForElement(DESCRIPTION_SELECTOR_COMBINED, 1500);
-      } catch {
+      } catch (e) {
         // Continue trying
       }
 
@@ -591,7 +604,7 @@
   const getCurrentVideoId = () => new URLSearchParams(window.location.search).get('v');
 
   // Detection
-  const detectTimecodes = async (options = {}) => {
+  const detectTimecodes = async (/** @type {any} */ options = {}) => {
     const { force = false } = options;
 
     if (!config.enabled) return [];
@@ -653,7 +666,11 @@
           });
         }
       } catch (error) {
-        YouTubeUtils.logError('TimecodePanel', 'Comment scanning failed', error);
+        YouTubeUtils.logError(
+          'TimecodePanel',
+          'Comment scanning failed',
+          /** @type {any} */ (error)
+        );
       }
     }
 
@@ -681,7 +698,7 @@
    * @param {HTMLElement|null} [buttonOverride=null] - Optional reload button element
    * @returns {Promise<void>}
    */
-  const reloadTimecodes = async (buttonOverride = null) => {
+  const reloadTimecodes = async (/** @type {any} */ buttonOverride = null) => {
     const button = buttonOverride || state.dom.reloadButton || byId('timecode-reload');
 
     if (state.isReloading || !config.enabled) return;
@@ -696,13 +713,13 @@
       const result = await detectTimecodes({ force: true });
 
       if (Array.isArray(result) && result.length) {
-        showNotification(t('foundTimecodes').replace('{count}', result.length));
+        showNotification(t('foundTimecodes').replace('{count}', String(result.length)));
       } else {
         updateTimecodePanel([]);
         showNotification(t('noTimecodesFound'));
       }
     } catch (error) {
-      YouTubeUtils.logError('TimecodePanel', 'Reload failed', error);
+      YouTubeUtils.logError('TimecodePanel', 'Reload failed', /** @type {any} */ (error));
       showNotification(t('reloadError'));
     } finally {
       if (button) {
@@ -802,8 +819,8 @@
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.timecode === 'boolean') return parsed.timecode;
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
       return null;
     };
@@ -854,20 +871,21 @@
 
     const submenuWrap = document.createElement('div');
     submenuWrap.className = 'timecode-submenu';
-    submenuWrap.dataset.submenu = 'timecode';
-    submenuWrap.style.display = config.enabled && initialExpanded ? 'block' : 'none';
-    submenuWrap.style.marginLeft = '12px';
-    submenuWrap.style.marginBottom = '12px';
+    /** @type {any} */ (submenuWrap).dataset.submenu = 'timecode';
+    /** @type {any} */ (submenuWrap).style.display =
+      config.enabled && initialExpanded ? 'block' : 'none';
+    /** @type {any} */ (submenuWrap).style.marginLeft = '12px';
+    /** @type {any} */ (submenuWrap).style.marginBottom = '12px';
 
     const submenuCard = document.createElement('div');
     submenuCard.className = 'glass-card';
-    submenuCard.style.display = 'flex';
-    submenuCard.style.flexDirection = 'column';
-    submenuCard.style.gap = '8px';
+    /** @type {any} */ (submenuCard).style.display = 'flex';
+    /** @type {any} */ (submenuCard).style.flexDirection = 'column';
+    /** @type {any} */ (submenuCard).style.gap = '8px';
 
     const shortcutDiv = document.createElement('div');
     shortcutDiv.className = 'ytp-plus-settings-item timecode-settings-item timecode-shortcut-item';
-    shortcutDiv.style.display = 'flex';
+    /** @type {any} */ (shortcutDiv).style.display = 'flex';
     shortcutDiv.innerHTML = _createHTML(`
         <div>
           <label class="ytp-plus-settings-item-label">${t('keyboardShortcut')}</label>
@@ -893,7 +911,7 @@
                       ? 'None'
                       : v
                           .split('+')
-                          .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+                          .map((/** @type {any} */ k) => k.charAt(0).toUpperCase() + k.slice(1))
                           .join('+')
                   }</option>`
               )
@@ -907,7 +925,7 @@
                   ? 'None'
                   : modifierValue
                       .split('+')
-                      .map(k => k.charAt(0).toUpperCase() + k.slice(1))
+                      .map((/** @type {any} */ k) => k.charAt(0).toUpperCase() + k.slice(1))
                       .join('+')
               }</span>
               <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
@@ -953,23 +971,24 @@
       const dropdown = byId('timecode-modifier-dropdown');
       if (!hiddenSelect || !dropdown) return;
 
-      const toggle = $('.glass-dropdown__toggle', dropdown);
-      const list = $('.glass-dropdown__list', dropdown);
-      const label = $('.glass-dropdown__label', dropdown);
+      const toggle = $('.glass-dropdown__toggle', /** @type {any} */ (dropdown));
+      const list = /** @type {any} */ ($('.glass-dropdown__list', /** @type {any} */ (dropdown)));
+      const label = /** @type {any} */ ($('.glass-dropdown__label', /** @type {any} */ (dropdown)));
+      if (!toggle || !list || !label) return;
 
-      let items = Array.from($$('.glass-dropdown__item', list));
+      let items = Array.from($$('.glass-dropdown__item', /** @type {any} */ (list)));
       let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
       if (idx < 0) idx = 0;
 
       const closeList = () => {
         dropdown.setAttribute('aria-expanded', 'false');
-        list.style.display = 'none';
+        /** @type {any} */ (list).style.display = 'none';
       };
 
       const openList = () => {
         dropdown.setAttribute('aria-expanded', 'true');
-        list.style.display = 'block';
-        items = Array.from($$('.glass-dropdown__item', list));
+        /** @type {any} */ (list).style.display = 'block';
+        items = Array.from($$('.glass-dropdown__item', /** @type {any} */ (list)));
       };
 
       // Set initial state
@@ -982,7 +1001,7 @@
       });
 
       // Click outside to close
-      const outsideClickHandler = e => {
+      const outsideClickHandler = (/** @type {any} */ e) => {
         if (!dropdown.contains(e.target)) closeList();
       };
       if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
@@ -992,15 +1011,15 @@
       }
 
       // Item selection
-      list.addEventListener('click', e => {
-        const it = e.target.closest('.glass-dropdown__item');
+      list.addEventListener('click', (/** @type {any} */ e) => {
+        const it = /** @type {any} */ (e.target).closest('.glass-dropdown__item');
         if (!it) return;
-        const val = it.dataset.value;
+        const val = /** @type {any} */ (it).dataset.value;
         hiddenSelect.value = val;
         // update aria-selected
         list
           .querySelectorAll('.glass-dropdown__item')
-          .forEach(li => li.removeAttribute('aria-selected'));
+          .forEach((/** @type {any} */ li) => li.removeAttribute('aria-selected'));
         it.setAttribute('aria-selected', 'true');
         idx = items.indexOf(it);
         label.textContent = it.textContent;
@@ -1010,7 +1029,7 @@
       });
 
       // keyboard support with arrow navigation
-      dropdown.addEventListener('keydown', e => {
+      dropdown.addEventListener('keydown', (/** @type {any} */ e) => {
         const expanded = dropdown.getAttribute('aria-expanded') === 'true';
         if (e.key === 'ArrowDown') {
           e.preventDefault();
@@ -1034,7 +1053,7 @@
           }
           const it = items[idx];
           if (it) {
-            hiddenSelect.value = it.dataset.value;
+            hiddenSelect.value = /** @type {any} */ (it).dataset.value;
             hiddenSelect.dispatchEvent(new Event('change', { bubbles: true }));
             label.textContent = it.textContent;
             closeList();
@@ -1061,13 +1080,13 @@
             const stored = getSubmenuExpanded();
             const nextExpanded = typeof stored === 'boolean' ? stored : true;
             submenuToggle.removeAttribute('disabled');
-            submenuToggle.style.display = 'inline-flex';
+            /** @type {any} */ (submenuToggle).style.display = 'inline-flex';
             submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
-            submenuWrap.style.display = nextExpanded ? 'block' : 'none';
+            /** @type {any} */ (submenuWrap).style.display = nextExpanded ? 'block' : 'none';
           } else {
             submenuToggle.setAttribute('disabled', '');
-            submenuToggle.style.display = 'none';
-            submenuWrap.style.display = 'none';
+            /** @type {any} */ (submenuToggle).style.display = 'none';
+            /** @type {any} */ (submenuWrap).style.display = 'none';
           }
         }
         toggleTimecodePanel(config.enabled);
@@ -1238,7 +1257,7 @@
   };
 
   // Event handling
-  const handlePanelClick = e => {
+  const handlePanelClick = (/** @type {any} */ e) => {
     const { target } = e;
     const item = target.closest('.timecode-item');
 
@@ -1299,7 +1318,7 @@
   };
 
   // Edit timecode
-  const editTimecode = index => {
+  const editTimecode = (/** @type {any} */ index) => {
     const timecodes = getCurrentTimecodes();
     if (index < 0 || index >= timecodes.length) return;
 
@@ -1311,7 +1330,7 @@
     if (item) {
       item.classList.add('editing');
       // Hide other editing items
-      state.dom.list.querySelectorAll('.timecode-item.editing').forEach(el => {
+      state.dom.list.querySelectorAll('.timecode-item.editing').forEach((/** @type {any} */ el) => {
         if (el !== item) el.classList.remove('editing');
       });
     }
@@ -1320,7 +1339,7 @@
   };
 
   // Delete timecode
-  const deleteTimecode = index => {
+  const deleteTimecode = (/** @type {any} */ index) => {
     const timecodes = getCurrentTimecodes();
     if (index < 0 || index >= timecodes.length) return;
 
@@ -1342,7 +1361,10 @@
   };
 
   // Form handling
-  const showTimecodeForm = (currentTime, existingLabel = '') => {
+  const showTimecodeForm = (
+    /** @type {any} */ currentTime,
+    /** @type {any} */ existingLabel = ''
+  ) => {
     const { form, timeInput, labelInput } = state.dom;
     form.classList.add('visible');
     timeInput.value = formatTime(currentTime);
@@ -1354,7 +1376,7 @@
     state.dom.form.classList.remove('visible');
     state.editingIndex = null;
     // Remove editing class from all items
-    state.dom.list?.querySelectorAll('.timecode-item.editing').forEach(el => {
+    state.dom.list?.querySelectorAll('.timecode-item.editing').forEach((/** @type {any} */ el) => {
       el.classList.remove('editing');
     });
   };
@@ -1434,7 +1456,7 @@
   };
 
   // Panel updates
-  const updateTimecodePanel = timecodes => {
+  const updateTimecodePanel = (/** @type {any} */ timecodes) => {
     const { list, empty } = state.dom;
     if (!list || !empty) return;
 
@@ -1449,7 +1471,7 @@
 
     list.innerHTML = _createHTML(
       timecodes
-        .map((tc, i) => {
+        .map((/** @type {any} */ tc, /** @type {any} */ i) => {
           const timeStr = formatTime(tc.time);
           // Only use label if it exists and is different from time
           let rawLabel = tc.label?.trim() || '';
@@ -1477,9 +1499,16 @@
             rawLabel !== tc.originalText &&
             rawLabel.length > 0;
           const displayLabel = hasCustomLabel ? rawLabel : '';
+          const escapeMap = /** @type {any} */ ({
+            '<': '&lt;',
+            '>': '&gt;',
+            '&': '&amp;',
+            '"': '&quot;',
+            "'": '&#39;',
+          });
           const safeLabel = displayLabel.replace(
             /[<>&"']/g,
-            c => ({ '<': '&lt;', '>': '&gt;', '&': '&amp;', '"': '&quot;', "'": '&#39;' })[c]
+            (/** @type {any} */ c) => escapeMap[c]
           );
           const isEditable = !tc.isChapter || tc.isUserAdded;
 
@@ -1505,11 +1534,11 @@
     );
   };
 
-  const updateActiveItem = activeItem => {
+  const updateActiveItem = (/** @type {any} */ activeItem) => {
     const items = state.dom.list?.querySelectorAll('.timecode-item');
     if (!items) return;
 
-    items.forEach(item => item.classList.remove('active', 'pulse'));
+    items.forEach((/** @type {any} */ item) => item.classList.remove('active', 'pulse'));
     if (activeItem) {
       activeItem.classList.add('active', 'pulse');
       setTimeout(() => activeItem.classList.remove('pulse'), 800);
@@ -1571,7 +1600,7 @@
               items[activeIndex].classList.add('active');
               try {
                 items[activeIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-              } catch {
+              } catch (e) {
                 // Fallback for browsers that don't support smooth scrolling
                 items[activeIndex].scrollIntoView(false);
               }
@@ -1627,13 +1656,16 @@
   };
 
   // Drag functionality
-  const makeDraggable = panel => {
+  const makeDraggable = (/** @type {any} */ panel) => {
     const header = panel.querySelector('#timecode-header');
     if (!header) return;
 
-    let startX, startY, startLeft, startTop;
+    /** @type {any} */ let startX;
+    /** @type {any} */ let startY;
+    /** @type {any} */ let startLeft;
+    /** @type {any} */ let startTop;
 
-    const mouseDownHandler = e => {
+    const mouseDownHandler = (/** @type {any} */ e) => {
       if (e.button !== 0) return;
 
       state.dragging = true;
@@ -1654,7 +1686,7 @@
       startLeft = parseFloat(panel.style.left) || rect.left;
       startTop = parseFloat(panel.style.top) || rect.top;
 
-      const handleMove = event => {
+      const handleMove = (/** @type {any} */ event) => {
         if (!state.dragging) return;
 
         const deltaX = event.clientX - startX;
@@ -1691,20 +1723,20 @@
   };
 
   // Storage
-  const saveTimecodesToStorage = timecodes => {
+  const saveTimecodesToStorage = (/** @type {any} */ timecodes) => {
     const videoId = new URLSearchParams(window.location.search).get('v');
     if (!videoId) return;
 
     try {
-      const minimal = timecodes.map(tc => ({
+      const minimal = timecodes.map((/** @type {any} */ tc) => ({
         t: tc.time,
         l: tc.label?.trim() || '',
         c: tc.isChapter || false,
         u: tc.isUserAdded || false,
       }));
       localStorage.setItem(`yt_tc_${videoId}`, JSON.stringify(minimal));
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
   };
 
@@ -1716,15 +1748,15 @@
       const data = localStorage.getItem(`yt_tc_${videoId}`);
       return data
         ? JSON.parse(data)
-            .map(tc => ({
+            .map((/** @type {any} */ tc) => ({
               time: tc.t,
               label: tc.l,
               isChapter: tc.c,
               isUserAdded: tc.u || false,
             }))
-            .sort((a, b) => a.time - b.time)
+            .sort((/** @type {any} */ a, /** @type {any} */ b) => a.time - b.time)
         : null;
-    } catch {
+    } catch (e) {
       return null;
     }
   };
@@ -1734,7 +1766,7 @@
     if (!items) return [];
 
     return Array.from(items)
-      .map(item => {
+      .map((/** @type {any} */ item) => {
         const time = parseFloat(item.dataset.time);
         const labelEl = item.querySelector('.timecode-label');
         // Only use label if element exists and has actual text content
@@ -1751,7 +1783,7 @@
   };
 
   // Toggle panel
-  const toggleTimecodePanel = show => {
+  const toggleTimecodePanel = (/** @type {any} */ show = undefined) => {
     // Close any existing panels first (cleanup)
     $$('#timecode-panel').forEach(panel => {
       if (panel !== state.dom.panel) panel.remove();
@@ -1769,7 +1801,9 @@
       if (saved?.length) {
         updateTimecodePanel(saved);
       } else if (config.autoDetect) {
-        detectTimecodes().catch(err => console.error('[Timecode] Detection failed:', err));
+        detectTimecodes().catch((/** @type {any} */ err) =>
+          console.error('[Timecode] Detection failed:', err)
+        );
       }
 
       if (config.autoTrackPlayback) startTracking();
@@ -1820,7 +1854,7 @@
 
   // Keyboard shortcuts
   const setupKeyboard = () => {
-    const keydownHandler = e => {
+    const keydownHandler = (/** @type {any} */ e) => {
       if (!config.enabled) return;
 
       const target = /** @type {EventTarget & HTMLElement} */ (e.target);
@@ -1876,16 +1910,16 @@
     setupNavigation();
 
     // Settings modal observer
-    let modalObserver = null;
-    let modalObserverTimeout = null;
+    /** @type {any} */ let modalObserver = null;
+    /** @type {ReturnType<typeof setTimeout> | null} */ let modalObserverTimeout = null;
 
-    const attachModalObserver = modalEl => {
+    const attachModalObserver = (/** @type {any} */ modalEl) => {
       if (!modalEl || !(modalEl instanceof Element)) return;
       if (modalObserver) {
         try {
           modalObserver.disconnect();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         modalObserver = null;
       }
@@ -1931,7 +1965,7 @@
       document.addEventListener('youtube-plus-settings-modal-opened', settingsModalHandler);
     }
 
-    const clickHandler = e => {
+    const clickHandler = (/** @type {any} */ e) => {
       const target = /** @type {HTMLElement} */ (e.target);
       const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
       if (navItem?.dataset?.section === 'advanced') {
@@ -1982,7 +2016,7 @@
     }
   }
 
-  if (window.YouTubeUtils?.cleanupManager?.registerListener) {
+  if (typeof window.YouTubeUtils?.cleanupManager?.registerListener === 'function') {
     YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
       passive: true,
     });

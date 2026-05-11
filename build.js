@@ -1,3 +1,4 @@
+// @ts-nocheck
 /**
  * YouTube Plus Modular Build System
  *
@@ -51,13 +52,6 @@ const endPerfTimer = name => {
     return duration;
   }
   return 0;
-};
-
-// Clear old timers periodically to prevent memory leaks
-const _cleanPerfTimers = () => {
-  if (perfTimings.size > 50) {
-    perfTimings.clear();
-  }
 };
 
 // Cache for metadata extraction and file processing (with size limits)

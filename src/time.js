@@ -3,9 +3,11 @@
   'use strict';
 
   let featureEnabled = true;
+  /** @type {(() => void) | null} */
   let activeCleanup = null;
   const loadFeatureEnabled = () =>
     window.YouTubeUtils?.loadFeatureEnabled?.('enableResumeTime') ?? true;
+  /** @param {boolean} [nextEnabled] */
   const setFeatureEnabled = nextEnabled => {
     featureEnabled = nextEnabled !== false;
     if (!featureEnabled) {
@@ -13,23 +15,23 @@
       if (existingOverlay) {
         try {
           existingOverlay.remove();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
       if (typeof activeCleanup === 'function') {
         try {
           activeCleanup();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         activeCleanup = null;
       }
     } else {
       try {
         initResume();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     }
   };
@@ -40,20 +42,21 @@
   const { $, byId } = window.YouTubeUtils || {};
   const onDomReady = (() => {
     let ready = document.readyState !== 'loading';
+    /** @type {Array<() => void>} */
     const queue = [];
     const run = () => {
       ready = true;
       while (queue.length) {
         const cb = queue.shift();
         try {
-          cb();
+          cb?.();
         } catch (e) {
           console.error('[YouTube+] DOMReady callback error:', e);
         }
       }
     };
     if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
-    return cb => {
+    return /** @param {() => void} cb */ cb => {
       if (ready) cb();
       else queue.push(cb);
     };
@@ -66,9 +69,9 @@
       attached = true;
 
       const delegator = window.YouTubePlusEventDelegation;
-      const handler = (ev, target) => {
-        const action = target?.dataset?.ytpResumeAction;
-        if (!action) return;
+      const handler = (/** @type {Event} */ _ev, /** @type {HTMLElement | null} */ target) => {
+        const action = target?.getAttribute('data-ytp-resume-action');
+        if (!action || !target) return;
         const wrap = target.closest('.ytp-resume-overlay');
         if (!wrap) return;
 
@@ -81,23 +84,28 @@
 
       if (delegator?.on) {
         delegator.on(document, 'click', '.ytp-resume-btn', handler);
-        delegator.on(document, 'keydown', '.ytp-resume-btn', (ev, target) => {
-          if (ev.key === 'Enter' || ev.key === ' ') {
-            ev.preventDefault();
-            handler(ev, target);
+        delegator.on(
+          document,
+          'keydown',
+          '.ytp-resume-btn',
+          (/** @type {KeyboardEvent} */ ev, /** @type {HTMLElement} */ target) => {
+            if (ev.key === 'Enter' || ev.key === ' ') {
+              ev.preventDefault();
+              handler(ev, target);
+            }
           }
-        });
+        );
       } else {
-        const clickHandler = ev => {
-          const target = ev.target?.closest?.('.ytp-resume-btn');
-          if (target) handler(ev, target);
+        const clickHandler = /** @param {Event} ev */ ev => {
+          const target1 = /** @type {Element|null} */ (ev.target)?.closest?.('.ytp-resume-btn');
+          if (target1) handler(ev, /** @type {HTMLElement} */ (target1));
         };
-        const keyHandler = ev => {
-          const target = ev.target?.closest?.('.ytp-resume-btn');
-          if (!target) return;
+        const keyHandler = /** @param {KeyboardEvent} ev */ ev => {
+          const target2 = /** @type {Element|null} */ (ev.target)?.closest?.('.ytp-resume-btn');
+          if (!target2) return;
           if (ev.key === 'Enter' || ev.key === ' ') {
             ev.preventDefault();
-            handler(ev, target);
+            handler(ev, /** @type {HTMLElement} */ (target2));
           }
         };
         if (window.YouTubeUtils?.cleanupManager?.registerListener) {
@@ -110,7 +118,7 @@
           window.YouTubeUtils.cleanupManager.registerListener(
             document,
             'keydown',
-            keyHandler,
+            /** @type {EventListener} */ (keyHandler),
             true
           );
         } else {
@@ -125,15 +133,19 @@
   const OVERLAY_ID = 'yt-resume-overlay';
   const AUTO_HIDE_MS = 10000; // hide overlay after 10s
 
-  // Localization: prefer centralized i18n with local fallback for critical keys
+  /** @type {Record<string, {en: string, ru: string}>} */
   const _localFallback = {
     resumePlayback: { en: 'Resume playback?', ru: 'Продолжить воспроизведение?' },
     resume: { en: 'Resume', ru: 'Продолжить' },
     startOver: { en: 'Start over', ru: 'Начать сначала' },
   };
 
-  const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapeRegex = /** @param {string} s */ s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
+  /**
+   * @param {string} key
+   * @param {Record<string,any>} [params]
+   */
   const t = (key, params = {}) => {
     // Prefer centralized i18n
     const U = window.YouTubeUtils;
@@ -153,11 +165,14 @@
   const readStorage = () => {
     try {
       return JSON.parse(localStorage.getItem(RESUME_STORAGE_KEY) || '{}');
-    } catch {
+    } catch (e) {
       return {};
     }
   };
 
+  /**
+   * @param {Record<string, any>} obj
+   */
   const writeStorage = obj => {
     try {
       localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(obj));
@@ -200,11 +215,16 @@
       if (pathMatch && pathMatch[2]) return pathMatch[2];
 
       return null;
-    } catch {
+    } catch (e) {
       return null;
     }
   };
 
+  /**
+   * @param {number} seconds
+   * @param {() => void} onResume
+   * @param {() => void} onRestart
+   */
   const createOverlay = (seconds, onResume, onRestart) => {
     if (byId(OVERLAY_ID)) return null;
     const wrap = document.createElement('div');
@@ -218,7 +238,7 @@
 
     // Ensure glassmorphism styles are available for the overlay
     const resumeOverlayStyles = `
-      .ytp-resume-overlay{min-width:180px;max-width:36vw;background:rgba(24, 24, 24, 0.3);color:var(--yt-spec-text-primary,#fff);padding:12px 14px;border-radius:12px;backdrop-filter:blur(8px) saturate(150%);-webkit-backdrop-filter:blur(8px) saturate(150%);box-shadow:0 14px 40px rgba(0,0,0,0.48);border:1.25px solid rgba(255,255,255,0.06);font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;align-items:center;text-align:center;animation:ytp-resume-fadein 0.3s ease-out}
+      .ytp-resume-overlay{min-width:180px;max-width:36vw;background:var(--yt-glass-bg);color:var(--yt-text-primary,#fff);padding:12px 14px;border-radius:12px;backdrop-filter:blur(8px) saturate(150%);-webkit-backdrop-filter:blur(8px) saturate(150%);box-shadow:0 14px 40px rgba(0,0,0,0.48);border:1.25px solid rgba(255,255,255,0.06);font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;align-items:center;text-align:center;animation:ytp-resume-fadein 0.3s ease-out}
       @keyframes ytp-resume-fadein{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
       .ytp-resume-overlay .ytp-resume-title{font-weight:600;margin-bottom:8px;font-size:13px}
       .ytp-resume-overlay .ytp-resume-actions{display:flex;gap:8px;justify-content:center;margin-top:6px}
@@ -250,22 +270,26 @@
         const playerStyle = window.getComputedStyle(
           /** @type {Element} */ (/** @type {unknown} */ (player))
         );
-        if (playerStyle.position === 'static') player.style.position = 'relative';
-      } catch {
+        if (playerStyle.position === 'static') player.setAttribute('style', 'position:relative;');
+      } catch (e) {
         /* Intentional: player element may be detached */
       }
 
       // Position centered inside the player
       wrap.className = 'ytp-resume-overlay';
       // absolute center (use transform to center by both axes)
-      wrap.style.cssText =
-        'position:absolute;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:9999;pointer-events:auto;';
+      wrap.setAttribute(
+        'style',
+        'position:absolute;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:9999;pointer-events:auto;'
+      );
       player.appendChild(wrap);
     } else {
       // Fallback: fixed centered on the page
       wrap.className = 'ytp-resume-overlay';
-      wrap.style.cssText =
-        'position:fixed;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:1200;pointer-events:auto;';
+      wrap.setAttribute(
+        'style',
+        'position:fixed;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:1200;pointer-events:auto;'
+      );
       document.body.appendChild(wrap);
     }
 
@@ -278,14 +302,14 @@
     btnResume.textContent = t('resume');
     btnResume.setAttribute('aria-label', `${t('resume')} at ${formatTime(seconds)}`);
     btnResume.tabIndex = 0;
-    btnResume.dataset.ytpResumeAction = 'resume';
+    btnResume.setAttribute('data-ytp-resume-action', 'resume');
 
     const btnRestart = document.createElement('button');
     btnRestart.className = 'ytp-resume-btn ghost';
     btnRestart.textContent = t('startOver');
     btnRestart.setAttribute('aria-label', t('startOver'));
     btnRestart.tabIndex = 0;
-    btnRestart.dataset.ytpResumeAction = 'restart';
+    btnRestart.setAttribute('data-ytp-resume-action', 'restart');
 
     const handleResume = () => {
       try {
@@ -295,8 +319,8 @@
       }
       try {
         wrap.remove();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     };
 
@@ -308,8 +332,8 @@
       }
       try {
         wrap.remove();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     };
 
@@ -332,15 +356,15 @@
       requestAnimationFrame(() => {
         btnResume.focus();
       });
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
 
     const to = setTimeout(() => {
       try {
         wrap.remove();
-      } catch {
-        /* empty */
+      } catch (e) {
+        // Non-critical, suppressed
       }
     }, AUTO_HIDE_MS);
 
@@ -352,13 +376,13 @@
       YouTubeUtils.cleanupManager.register(() => {
         try {
           cancel();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         try {
           wrap.remove();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       });
     }
@@ -366,6 +390,7 @@
     return cancel;
   };
 
+  /** @param {number} secs */
   const formatTime = secs => {
     const s = Math.floor(secs % 60)
       .toString()
@@ -375,6 +400,7 @@
     return h ? `${h}:${m.padStart(2, '0')}:${s}` : `${m}:${s}`;
   };
 
+  /** @param {HTMLVideoElement} videoEl */
   const attachResumeHandlers = videoEl => {
     if (!featureEnabled) return null;
     if (!videoEl || videoEl.tagName !== 'VIDEO') {
@@ -395,6 +421,7 @@
     const saved = storage[vid];
 
     // Save current time using `timeupdate` event (throttled) instead of interval
+    /** @type {(() => void) | null} */
     let timeUpdateHandler = null;
     let lastSavedAt = 0;
     const SAVE_THROTTLE_MS = 800; // minimum ms between writes
@@ -425,8 +452,8 @@
       if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
         YouTubeUtils.cleanupManager.register(() => {
           try {
-            videoEl.removeEventListener('timeupdate', timeUpdateHandler);
-          } catch {
+            if (timeUpdateHandler) videoEl.removeEventListener('timeupdate', timeUpdateHandler);
+          } catch (e) {
             /* Intentional: element may be detached */
           }
         });
@@ -437,7 +464,7 @@
       if (!timeUpdateHandler) return;
       try {
         videoEl.removeEventListener('timeupdate', timeUpdateHandler);
-      } catch {
+      } catch (e) {
         /* Intentional: element may be detached */
       }
       timeUpdateHandler = null;
@@ -469,9 +496,9 @@
       // Tag overlay with current video id so future init calls won't immediately remove it
       try {
         const overlayEl = byId(OVERLAY_ID);
-        if (overlayEl && vid) overlayEl.dataset.vid = vid;
-      } catch {
-        /* empty */
+        if (overlayEl && vid) overlayEl.setAttribute('data-vid', vid);
+      } catch (e) {
+        // Non-critical, suppressed
       }
 
       // register cleanup for overlay timeout
@@ -535,8 +562,8 @@
       if (existingOverlay) {
         try {
           existingOverlay.remove();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
       return;
@@ -556,16 +583,16 @@
     const existingOverlay = byId(OVERLAY_ID);
     if (existingOverlay) {
       try {
-        if (existingOverlay.dataset && existingOverlay.dataset.vid === currentVid) {
+        if (existingOverlay.dataset && existingOverlay.getAttribute('data-vid') === currentVid) {
           // overlay matches current video; keep it (prevents immediate disappearance during SPA re-inits)
         } else {
           existingOverlay.remove();
         }
-      } catch {
+      } catch (e) {
         try {
           existingOverlay.remove();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
     }
@@ -596,12 +623,12 @@
     }
   }
 
-  const settingsUpdatedHandler = e => {
+  const settingsUpdatedHandler = /** @param {Event} e */ e => {
     try {
-      const nextEnabled = e?.detail?.enableResumeTime !== false;
+      const nextEnabled = /** @type {CustomEvent} */ (e)?.detail?.enableResumeTime !== false;
       if (nextEnabled === featureEnabled) return;
       setFeatureEnabled(nextEnabled);
-    } catch {
+    } catch (e) {
       /* empty */
       setFeatureEnabled(loadFeatureEnabled());
     }

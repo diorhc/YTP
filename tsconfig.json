@@ -1,17 +1,18 @@
 {
   "compilerOptions": {
     "allowJs": true,
-    "checkJs": false,
+    "checkJs": true,
     "noEmit": true,
-    "moduleResolution": "node",
+    "moduleResolution": "bundler",
     "module": "ES2020",
     "target": "ES2020",
-    "lib": ["ES2020", "DOM"],
-    "strict": false,
-    "noImplicitAny": false,
-    "strictNullChecks": false,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
+    "types": ["node", "jest"],
+    "strict": true,
+    "noImplicitAny": true,
+    "strictNullChecks": true,
     "strictFunctionTypes": true,
-    "strictPropertyInitialization": false,
+    "strictPropertyInitialization": true,
     "noImplicitThis": true,
     "alwaysStrict": true,
     "noUnusedLocals": true,
@@ -29,6 +30,6 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["src/**/*.js", "build.js", "test/**/*.js", "types/**/*.d.ts"],
+  "include": ["src/**/*.js", "src/**/*.d.ts", "build.js", "test/**/*.js", "types/**/*.d.ts"],
   "exclude": ["node_modules", "youtube.user.js", "dist", "coverage"]
 }

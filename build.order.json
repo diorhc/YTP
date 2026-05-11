@@ -1,4 +1,5 @@
 [
+  "shared-defaults.js",
   "logger.js",
   "module-registry.js",
   "utils.js",

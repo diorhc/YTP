@@ -49,25 +49,58 @@ global.sessionStorage = {
 
 // Ensure fetch is available (some jsdom/Node combos lack it)
 if (typeof global.fetch !== 'function') {
-  global.fetch = jest.fn(() =>
-    Promise.resolve({
-      ok: true,
-      json: () => Promise.resolve({}),
-      text: () => Promise.resolve(''),
-    })
-  );
+  Object.defineProperty(globalThis, 'fetch', {
+    configurable: true,
+    writable: true,
+    value: jest.fn(() =>
+      Promise.resolve(
+        /** @type {Response} */ ({
+          ok: true,
+          status: 200,
+          statusText: 'OK',
+          headers: new Headers(),
+          redirected: false,
+          type: 'default',
+          url: '',
+          body: null,
+          bodyUsed: false,
+          clone: () => /** @type {Response} */ ({}),
+          arrayBuffer: () => Promise.resolve(new ArrayBuffer(0)),
+          blob: () => Promise.resolve(new Blob()),
+          formData: () => Promise.resolve(new FormData()),
+          json: () => Promise.resolve({}),
+          text: () => Promise.resolve(''),
+        })
+      )
+    ),
+  });
 }
 
 // Ensure structuredClone is available (Node < 17 / old jsdom)
 if (typeof global.structuredClone !== 'function') {
-  global.structuredClone = obj => JSON.parse(JSON.stringify(obj));
+  global.structuredClone = /** @param {unknown} obj */ obj => JSON.parse(JSON.stringify(obj));
 }
 
 // Polyfill performance.mark/getEntriesByType/clearMarks for jsdom
 if (typeof global.performance.mark !== 'function') {
+  /** @type {PerformanceMark[]} */
   const _marks = [];
-  global.performance.mark = name => _marks.push({ name, entryType: 'mark', startTime: Date.now() });
-  global.performance.getEntriesByType = type => (type === 'mark' ? [..._marks] : []);
+  global.performance.mark = /** @param {string} name */ name => {
+    /** @type {PerformanceMark} */
+    const entry = /** @type {PerformanceMark} */ ({
+      name,
+      entryType: 'mark',
+      startTime: Date.now(),
+      duration: 0,
+      detail: null,
+      toJSON: () => ({}),
+    });
+    _marks.push(entry);
+    return entry;
+  };
+  global.performance.getEntriesByType =
+    /** @param {string} type @returns {PerformanceEntryList} */ type =>
+      type === 'mark' ? [..._marks] : [];
   global.performance.clearMarks = () => {
     _marks.length = 0;
   };
@@ -75,9 +108,22 @@ if (typeof global.performance.mark !== 'function') {
 
 // Mock userscript globals
 // expose GM_xmlhttpRequest on both global and window to match how code references it
-global.GM_xmlhttpRequest = jest.fn();
-global.window.GM_xmlhttpRequest = global.GM_xmlhttpRequest;
-global.unsafeWindow = global.window;
+const gmMock = jest.fn();
+Object.defineProperty(globalThis, 'GM_xmlhttpRequest', {
+  configurable: true,
+  writable: true,
+  value: gmMock,
+});
+Object.defineProperty(window, 'GM_xmlhttpRequest', {
+  configurable: true,
+  writable: true,
+  value: gmMock,
+});
+Object.defineProperty(globalThis, 'unsafeWindow', {
+  configurable: true,
+  writable: true,
+  value: window,
+});
 
 // Mock console methods for cleaner test output
 global.console = {
@@ -90,8 +136,14 @@ global.console = {
 };
 
 // Helper function to mock window.location in jsdom
-// Uses delete + reassign pattern for reliable cross-platform behavior
-global.mockLocation = locationConfig => {
+// Uses Object.defineProperty for strict-safe behavior
+
+/**
+ * @typedef {{ href?: string; hostname?: string; pathname?: string; search?: string; hash?: string; origin?: string; protocol?: string; host?: string; port?: string; [key: string]: unknown }} LocationConfig
+ */
+
+/** @param {LocationConfig} locationConfig */
+const mockLocationFn = locationConfig => {
   const href = locationConfig.href || 'https://www.youtube.com/';
   let parsedUrl;
   try {
@@ -100,6 +152,7 @@ global.mockLocation = locationConfig => {
     parsedUrl = new URL('https://www.youtube.com/');
   }
 
+  /** @type {Record<string, unknown>} */
   const locationObj = {
     href: locationConfig.href || parsedUrl.href,
     hostname: locationConfig.hostname || parsedUrl.hostname,
@@ -123,10 +176,50 @@ global.mockLocation = locationConfig => {
     }
   }
 
-  // Delete and recreate window.location (works in both jsdom versions)
-  delete window.location;
-  window.location = locationObj;
+  const locationDescriptor = Object.getOwnPropertyDescriptor(window, 'location');
+
+  // Prefer redefining when configurable; newer jsdom can expose non-configurable location.
+  if (locationDescriptor?.configurable) {
+    Object.defineProperty(window, 'location', {
+      configurable: true,
+      writable: true,
+      value: locationObj,
+    });
+    return;
+  }
+
+  // Fallback for non-configurable location: drive URL via History API.
+  try {
+    window.history.replaceState({}, '', String(locationObj.href || 'https://www.youtube.com/'));
+  } catch {
+    // ignore; some tests may run without history support
+  }
+
+  // Patch location methods where possible so tests can assert calls.
+  const setLocationMethod = (/** @type {string} */ name, /** @type {any} */ value) => {
+    try {
+      Object.defineProperty(window.location, name, {
+        configurable: true,
+        writable: true,
+        value,
+      });
+    } catch {
+      // ignore; read-only properties are acceptable fallback
+    }
+  };
+
+  setLocationMethod('assign', locationObj.assign);
+  setLocationMethod('replace', locationObj.replace);
+  setLocationMethod('reload', locationObj.reload);
+  setLocationMethod('toString', locationObj.toString);
 };
+
+// Expose mockLocation on globalThis via defineProperty to avoid implicit-any global index
+Object.defineProperty(globalThis, 'mockLocation', {
+  configurable: true,
+  writable: true,
+  value: mockLocationFn,
+});
 
 // Reset mocks before each test
 beforeEach(() => {

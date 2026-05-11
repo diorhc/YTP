@@ -17,6 +17,7 @@ describe('Main Module - DOM Observer Optimizations', () => {
 
   describe('Debouncing Logic', () => {
     test('should debounce rapid function calls', () => {
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let debounceTimer = null;
       const callback = jest.fn();
       const debounceInterval = 50;
@@ -45,11 +46,14 @@ describe('Main Module - DOM Observer Optimizations', () => {
     });
 
     test('should handle plugin detection logic', () => {
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let debounceTimer = null;
+      /** @type {Record<string, boolean>} */
       const pluginsDetected = {};
       const processPlugin = jest.fn();
       const debounceInterval = 50;
 
+      /** @param {string} attributeName */
       const handleMutation = attributeName => {
         if (debounceTimer) return;
         debounceTimer = setTimeout(() => {
@@ -75,9 +79,11 @@ describe('Main Module - DOM Observer Optimizations', () => {
     });
 
     test('should prevent duplicate plugin activation', () => {
+      /** @type {Record<string, boolean>} */
       const pluginsDetected = {};
       const activatePlugin = jest.fn();
 
+      /** @param {string} pluginName */
       const processPlugin = pluginName => {
         if (!pluginsDetected[pluginName]) {
           pluginsDetected[pluginName] = true;
@@ -97,10 +103,13 @@ describe('Main Module - DOM Observer Optimizations', () => {
 
   describe('Comment Observer Throttling', () => {
     test('should throttle comment processing logic', () => {
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let throttleTimer = null;
+      /** @type {Array<Record<string, unknown>>} */
       let pendingMutations = [];
       const processCommentMutations = jest.fn();
 
+      /** @param {Record<string, unknown>} mutation */
       const handleMutation = mutation => {
         pendingMutations.push(mutation);
         if (throttleTimer) return;
@@ -126,10 +135,13 @@ describe('Main Module - DOM Observer Optimizations', () => {
     });
 
     test('should accumulate pending mutations', () => {
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let throttleTimer = null;
+      /** @type {Array<Record<string, unknown>>} */
       let pendingMutations = [];
       const processMutations = jest.fn();
 
+      /** @param {Record<string, unknown>} mutation */
       const handleMutation = mutation => {
         pendingMutations.push(mutation);
         if (throttleTimer) return;
@@ -160,6 +172,7 @@ describe('Main Module - DOM Observer Optimizations', () => {
 
   describe('EGM Panels Observer Debouncing', () => {
     test('should debounce EGM panel updates at 60fps', () => {
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let egmPanelsDebounceTimer = null;
       const updateEgmPanels = jest.fn();
       const debounceInterval = 16; // ~60fps
@@ -185,6 +198,7 @@ describe('Main Module - DOM Observer Optimizations', () => {
     });
 
     test('should use 60fps debounce interval', () => {
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let debounceTimer = null;
       const callback = jest.fn();
       const debounceInterval = 16; // ~60fps
@@ -213,6 +227,7 @@ describe('Main Module - DOM Observer Optimizations', () => {
     test('should reduce callback frequency with debouncing', () => {
       const callbackWithoutDebounce = jest.fn();
       const callbackWithDebounce = jest.fn();
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let debounceTimer = null;
 
       // Without debounce
@@ -247,7 +262,9 @@ describe('Main Module - DOM Observer Optimizations', () => {
     test('should handle multiple debounce timings', () => {
       const callback1 = jest.fn();
       const callback2 = jest.fn();
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let timer1 = null;
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let timer2 = null;
 
       const debounced1 = () => {
@@ -280,6 +297,7 @@ describe('Main Module - DOM Observer Optimizations', () => {
 
   describe('Observer Memory Management', () => {
     test('should clear pending timers on cleanup', () => {
+      /** @type {ReturnType<typeof setTimeout> | null} */
       let debounceTimer = null;
       const callback = jest.fn();
 
@@ -305,6 +323,7 @@ describe('Main Module - DOM Observer Optimizations', () => {
     });
 
     test('should handle timer cancellation', () => {
+      /** @type {ReturnType<typeof setTimeout> | number | null} */
       let timer = null;
       const callback = jest.fn();
 

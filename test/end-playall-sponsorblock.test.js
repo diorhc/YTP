@@ -5,20 +5,26 @@
 describe('End Screen Module', () => {
   beforeEach(() => {
     window._ytplusCreateHTML = s => s;
-    window.YouTubeUtils = {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
-      t: jest.fn(key => key || ''),
-      cleanupManager: {
-        registerTimeout: jest.fn(id => id),
-        registerObserver: jest.fn(obs => obs),
-        registerListener: jest.fn(),
-        cleanup: jest.fn(),
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(sel => document.querySelector(sel)),
+        $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
+        t: jest.fn(key => key || ''),
+        cleanupManager: {
+          registerTimeout: jest.fn(id => id),
+          registerObserver: jest.fn(obs => obs),
+          registerListener: jest.fn(),
+          cleanup: jest.fn(),
+          registerInterval: jest.fn(id => id),
+          registerAnimationFrame: jest.fn(id => id),
+        },
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        loadFeatureEnabled: jest.fn(() => true),
+        SETTINGS_KEY: 'youtube_plus_settings',
       },
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
-      loadFeatureEnabled: jest.fn(() => true),
-      SETTINGS_KEY: 'youtube_plus_settings',
-    };
+    });
     global.mockLocation({
       hostname: 'www.youtube.com',
       pathname: '/watch',
@@ -46,30 +52,35 @@ describe('End Screen Module', () => {
   });
 
   test('should respect feature toggle', () => {
-    expect(window.YouTubeUtils.loadFeatureEnabled('enableEndScreenRemover')).toBe(true);
+    expect(window.YouTubeUtils.loadFeatureEnabled?.('enableEndScreenRemover')).toBe(true);
     window.YouTubeUtils.loadFeatureEnabled = jest.fn(() => false);
-    expect(window.YouTubeUtils.loadFeatureEnabled('enableEndScreenRemover')).toBe(false);
+    expect(window.YouTubeUtils.loadFeatureEnabled?.('enableEndScreenRemover')).toBe(false);
   });
 });
 
 describe('PlayAll Module', () => {
   beforeEach(() => {
     window._ytplusCreateHTML = s => s;
-    window.YouTubeUtils = {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => []),
-      t: jest.fn(key => key || ''),
-      loadFeatureEnabled: jest.fn(() => true),
-      cleanupManager: {
-        registerTimeout: jest.fn(id => id),
-        registerInterval: jest.fn(id => id),
-        registerObserver: jest.fn(obs => obs),
-        registerListener: jest.fn(),
-        cleanup: jest.fn(),
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(sel => document.querySelector(sel)),
+        $$: jest.fn(() => []),
+        t: jest.fn(key => key || ''),
+        loadFeatureEnabled: jest.fn(() => true),
+        cleanupManager: {
+          registerTimeout: jest.fn(id => id),
+          registerInterval: jest.fn(id => id),
+          registerObserver: jest.fn(obs => obs),
+          registerListener: jest.fn(),
+          cleanup: jest.fn(),
+          registerAnimationFrame: jest.fn(id => id),
+        },
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        SETTINGS_KEY: 'youtube_plus_settings',
       },
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
-      SETTINGS_KEY: 'youtube_plus_settings',
-    };
+    });
     global.mockLocation({
       hostname: 'www.youtube.com',
       pathname: '/@channel',
@@ -78,7 +89,7 @@ describe('PlayAll Module', () => {
   });
 
   test('should detect channel/playlist pages', () => {
-    const isPlayAllTarget = path => {
+    const isPlayAllTarget = /** @param {string} path */ path => {
       return (
         path.startsWith('/@') ||
         path.startsWith('/channel/') ||
@@ -95,7 +106,7 @@ describe('PlayAll Module', () => {
   });
 
   test('should respect feature toggle', () => {
-    expect(window.YouTubeUtils.loadFeatureEnabled('enablePlayAll')).toBe(true);
+    expect(window.YouTubeUtils.loadFeatureEnabled?.('enablePlayAll')).toBe(true);
   });
 });
 

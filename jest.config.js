@@ -9,16 +9,16 @@ module.exports = {
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html', 'json-summary'],
   coveragePathIgnorePatterns: ['/node_modules/', '/test/', '/coverage/', 'youtube.user.js'],
-  // Coverage thresholds disabled: unit tests mock all functionality inline,
-  // so actual src/ file coverage is expected to be 0%. Use e2e tests for real coverage.
-  // coverageThreshold: {
-  //   global: {
-  //     branches: 15,
-  //     functions: 15,
-  //     lines: 20,
-  //     statements: 20,
-  //   },
-  // },
+  // Coverage thresholds set below current measured levels (40-47% lines, 37% functions)
+  // to catch regressions without being overly restrictive.
+  coverageThreshold: {
+    global: {
+      branches: 35,
+      functions: 30,
+      lines: 40,
+      statements: 40,
+    },
+  },
   verbose: true,
   testTimeout: 10000,
   setupFilesAfterEnv: ['<rootDir>/test/setup.js'],

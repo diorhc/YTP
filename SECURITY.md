@@ -161,8 +161,6 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 - **Next scheduled audit**: Quarterly (Q1 2026: January 1, 2026)
 - **Automated scanning**: Continuous (GitHub Actions)
 - **Audit workflow**: `.github/workflows/security-audit.yml`
-- **Audit schedule**: See [SECURITY_AUDIT_SCHEDULE.md](SECURITY_AUDIT_SCHEDULE.md)
-- **CSP Configuration**: See [SECURITY_CSP.md](SECURITY_CSP.md)
 
 ## Dependencies
 
@@ -191,9 +189,6 @@ We minimize dependencies to reduce attack surface:
 
 ## Additional Security Documentation
 
-- 📋 [SECURITY_CSP.md](SECURITY_CSP.md) - Content Security Policy configuration and innerHTML audit
-- 📅 [SECURITY_AUDIT_SCHEDULE.md](SECURITY_AUDIT_SCHEDULE.md) - Quarterly audit schedule and checklist
-- 🔧 [SECURITY_FIXES_2024-12-16.md](SECURITY_FIXES_2024-12-16.md) - Recent security improvements
 - ⚙️ `.github/dependabot.yml` - Automated dependency update configuration
 - 🤖 `.github/workflows/security-audit.yml` - Automated security audit workflow
 

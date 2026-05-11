@@ -111,10 +111,13 @@ describe('YouTubeSecurityUtils', () => {
   describe('escapeHtml', () => {
     test('escapes HTML entities', () => {
       const testCases = [
-        { input: '<script>', check: s => s.includes('lt;') && s.includes('gt;') },
-        { input: '&', check: s => s.includes('amp;') || s === '&' },
-        { input: '"', check: s => s === '"' || s.includes('quot;') }, // Quotes aren't escaped in textContent
-        { input: "'", check: s => s === "'" || s.includes('#39;') }, // Single quotes aren't escaped in textContent
+        {
+          input: '<script>',
+          check: /** @param {string} s */ s => s.includes('lt;') && s.includes('gt;'),
+        },
+        { input: '&', check: /** @param {string} s */ s => s.includes('amp;') || s === '&' },
+        { input: '"', check: /** @param {string} s */ s => s === '"' || s.includes('quot;') }, // Quotes aren't escaped in textContent
+        { input: "'", check: /** @param {string} s */ s => s === "'" || s.includes('#39;') }, // Single quotes aren't escaped in textContent
       ];
 
       testCases.forEach(({ input, check }) => {
@@ -236,18 +239,13 @@ describe('YouTubeSecurityUtils', () => {
       } catch (error) {
         const elapsed = Date.now() - startTime;
         expect(elapsed).toBeGreaterThanOrEqual(timeout);
-        expect(error.message).toBe('Request timeout');
+        expect(error instanceof Error && error.message).toBe('Request timeout');
       }
     });
   });
 
   describe('validateJSONSchema', () => {
     test('validates required fields', () => {
-      const schema = {
-        id: { required: true, type: 'string' },
-        count: { required: true, type: 'number' },
-      };
-
       const validData = { id: '123', count: 42 };
       const invalidData = { id: '123' }; // missing count
 
@@ -294,11 +292,6 @@ describe('Security Integration', () => {
   });
 
   test('Attribute sanitization prevents XSS', () => {
-    const element = document.createElement('div');
-    const dangerousAttr = 'onclick';
-    const dangerousValue = 'alert(1)';
-
-    // Should be blocked
-    expect(dangerousAttr.startsWith('on')).toBe(true);
+    expect('onclick'.startsWith('on')).toBe(true);
   });
 });

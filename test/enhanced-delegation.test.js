@@ -33,8 +33,10 @@ describe('Enhanced Module - Event Delegation', () => {
       // Add event listener
       const mockNavigate = jest.fn();
       parent.addEventListener('click', event => {
-        const btn = event.target.closest('.ytp-btn');
-        if (btn && btn.href) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const btn = target.closest('.ytp-btn');
+        if (btn instanceof HTMLAnchorElement && btn.href) {
           event.preventDefault();
           mockNavigate(btn.href);
         }
@@ -61,8 +63,10 @@ describe('Enhanced Module - Event Delegation', () => {
 
       const mockNavigate = jest.fn();
       parent.addEventListener('click', event => {
-        const btn = event.target.closest('.ytp-play-all-btn:not(.ytp-unsupported)');
-        if (btn && btn.href) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const btn = target.closest('.ytp-play-all-btn:not(.ytp-unsupported)');
+        if (btn instanceof HTMLAnchorElement && btn.href) {
           event.preventDefault();
           event.stopPropagation();
           mockNavigate(btn.href);
@@ -87,8 +91,10 @@ describe('Enhanced Module - Event Delegation', () => {
 
       const mockNavigate = jest.fn();
       parent.addEventListener('click', event => {
-        const btn = event.target.closest('.ytp-play-all-btn:not(.ytp-unsupported)');
-        if (btn && btn.href) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const btn = target.closest('.ytp-play-all-btn:not(.ytp-unsupported)');
+        if (btn instanceof HTMLAnchorElement && btn.href) {
           event.preventDefault();
           mockNavigate(btn.href);
         }
@@ -114,8 +120,10 @@ describe('Enhanced Module - Event Delegation', () => {
 
       const mockNavigate = jest.fn();
       popover.addEventListener('click', event => {
-        const link = event.target.closest('a');
-        if (link && link.href) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const link = target.closest('a');
+        if (link instanceof HTMLAnchorElement && link.href) {
           event.preventDefault();
           event.stopPropagation();
           mockNavigate(link.href);
@@ -160,8 +168,10 @@ describe('Enhanced Module - Event Delegation', () => {
 
       const mockNavigate = jest.fn();
       container.addEventListener('click', event => {
-        const link = event.target.closest('a[data-ytp-random-link]');
-        if (link && link.href) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const link = target.closest('a[data-ytp-random-link]');
+        if (link instanceof HTMLAnchorElement && link.href) {
           event.preventDefault();
           mockNavigate(link.href);
         }
@@ -190,8 +200,10 @@ describe('Enhanced Module - Event Delegation', () => {
 
       const mockNavigate = jest.fn();
       container.addEventListener('click', event => {
-        const link = event.target.closest('a[data-ytp-random-link]');
-        if (link && link.href) {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const link = target.closest('a[data-ytp-random-link]');
+        if (link instanceof HTMLAnchorElement && link.href) {
           event.preventDefault();
           mockNavigate(link.href);
         }
@@ -238,9 +250,12 @@ describe('Enhanced Module - Event Delegation', () => {
       span.textContent = 'Click me';
       button.appendChild(span);
 
+      /** @type {Element | null} */
       let clickedElement = null;
       container.addEventListener('click', event => {
-        const target = event.target.closest('.target-button');
+        const eventTarget = event.target;
+        if (!(eventTarget instanceof Element)) return;
+        const target = eventTarget.closest('.target-button');
         if (target) {
           clickedElement = target;
         }
@@ -250,7 +265,7 @@ describe('Enhanced Module - Event Delegation', () => {
       span.click();
 
       expect(clickedElement).toBe(button);
-      expect(clickedElement.className).toBe('target-button');
+      expect(button.className).toBe('target-button');
     });
   });
 });

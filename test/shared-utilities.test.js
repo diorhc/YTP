@@ -10,14 +10,25 @@
  * - sanitizeHTML
  */
 
+/**
+ * @typedef {Object} RetrySchedulerOptions
+ * @property {() => boolean} check
+ * @property {number} [maxAttempts]
+ * @property {number} [interval]
+ * @property {() => void} [onGiveUp]
+ * @property {string} [label]
+ */
+
 describe('createRetryScheduler', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
   /** @returns {{ stop: () => void }} */
+  /** @param {RetrySchedulerOptions} opts */
   function createRetryScheduler(opts) {
     const { check, maxAttempts = 20, interval = 250, onGiveUp } = opts;
     let attempts = 0;
+    /** @type {ReturnType<typeof setTimeout> | null} */
     let timerId = null;
     let stopped = false;
 
@@ -287,8 +298,10 @@ describe('RateLimiter with FIFO eviction', () => {
       this.requests = new Map();
     }
 
+    /** @param {string} key */
     canRequest(key) {
       const now = Date.now();
+      /** @type {number[]} */
       const requests = this.requests.get(key) || [];
       const recentRequests = requests.filter(time => now - time < this.timeWindow);
 
@@ -366,14 +379,16 @@ describe('EventDelegator _getElementKey', () => {
     const elementKeyMap = new WeakMap();
     let elementKeyCounter = 0;
 
+    /** @param {unknown} element */
     function getElementKey(element) {
       if (element === document) return 'document';
       if (element === window) return 'window';
       if (element === document.body) return 'body';
-      if (element.id) return element.id;
+      if (typeof element !== 'object' || element === null) return 'invalid';
+      if (element instanceof Element && element.id) return element.id;
       let key = elementKeyMap.get(element);
       if (!key) {
-        key = `${element.tagName || 'ELEM'}_${++elementKeyCounter}`;
+        key = `${element instanceof Element ? element.tagName : 'ELEM'}_${++elementKeyCounter}`;
         elementKeyMap.set(element, key);
       }
       return key;
@@ -396,14 +411,16 @@ describe('EventDelegator _getElementKey', () => {
     const elementKeyMap = new WeakMap();
     let elementKeyCounter = 0;
 
+    /** @param {unknown} element */
     function getElementKey(element) {
       if (element === document) return 'document';
       if (element === window) return 'window';
       if (element === document.body) return 'body';
-      if (element.id) return element.id;
+      if (typeof element !== 'object' || element === null) return 'invalid';
+      if (element instanceof Element && element.id) return element.id;
       let key = elementKeyMap.get(element);
       if (!key) {
-        key = `${element.tagName || 'ELEM'}_${++elementKeyCounter}`;
+        key = `${element instanceof Element ? element.tagName : 'ELEM'}_${++elementKeyCounter}`;
         elementKeyMap.set(element, key);
       }
       return key;
@@ -423,11 +440,13 @@ describe('EventDelegator _getElementKey', () => {
       const elementKeyMap = new WeakMap();
       let elementKeyCounter = 0;
 
+      /** @param {unknown} element */
       function getElementKey(element) {
-        if (element.id) return element.id;
+        if (typeof element !== 'object' || element === null) return 'invalid';
+        if (element instanceof Element && element.id) return element.id;
         let key = elementKeyMap.get(element);
         if (!key) {
-          key = `${element.tagName || 'ELEM'}_${++elementKeyCounter}`;
+          key = `${element instanceof Element ? element.tagName : 'ELEM'}_${++elementKeyCounter}`;
           elementKeyMap.set(element, key);
         }
         return key;
@@ -445,6 +464,7 @@ describe('EventDelegator _getElementKey', () => {
 describe('FeatureToggle validation', () => {
   // Tests for the basic loadFeatureEnabled pattern
   test('should return default value when settings not present', () => {
+    /** @param {string} featureKey @param {boolean} [defaultValue=true] */
     const loadFeatureEnabled = (featureKey, defaultValue = true) => {
       try {
         const raw = localStorage.getItem('youtube_plus_settings');
@@ -465,6 +485,7 @@ describe('FeatureToggle validation', () => {
   });
 
   test('should read feature state from localStorage', () => {
+    /** @param {string} featureKey @param {boolean} [defaultValue=true] */
     const loadFeatureEnabled = (featureKey, defaultValue = true) => {
       try {
         const raw = localStorage.getItem('youtube_plus_settings');
@@ -489,6 +510,7 @@ describe('FeatureToggle validation', () => {
   });
 
   test('should handle corrupted localStorage gracefully', () => {
+    /** @param {string} featureKey @param {boolean} [defaultValue=true] */
     const loadFeatureEnabled = (featureKey, defaultValue = true) => {
       try {
         const raw = localStorage.getItem('youtube_plus_settings');
@@ -510,10 +532,12 @@ describe('FeatureToggle validation', () => {
 });
 
 describe('sanitizeHTML', () => {
+  /** @param {unknown} html */
   const sanitizeHTML = html => {
     if (!html || typeof html !== 'string') return '';
-    if (html.length > 1048576) html = html.substring(0, 1048576);
-    return html
+    let value = html;
+    if (value.length > 1048576) value = value.substring(0, 1048576);
+    return value
       .replace(/&/g, '&amp;')
       .replace(/</g, '&lt;')
       .replace(/>/g, '&gt;')
@@ -553,25 +577,17 @@ describe('sanitizeHTML', () => {
 });
 
 describe('createRetryScheduler — advanced', () => {
-  // jest.useFakeTimers() replaces the performance object, so exclude it
-  const _marks = [];
-
   beforeEach(() => {
     jest.useFakeTimers({ doNotFake: ['performance'] });
-    _marks.length = 0;
-    global.performance.mark = name => {
-      _marks.push({ name, entryType: 'mark' });
-    };
-    global.performance.getEntriesByType = type => (type === 'mark' ? [..._marks] : []);
-    global.performance.clearMarks = () => {
-      _marks.length = 0;
-    };
+    performance.clearMarks();
   });
   afterEach(() => jest.useRealTimers());
 
+  /** @param {RetrySchedulerOptions} opts */
   function createRetryScheduler(opts) {
     const { check, maxAttempts = 20, interval = 250, onGiveUp, label } = opts;
     let attempts = 0;
+    /** @type {ReturnType<typeof setTimeout> | null} */
     let timerId = null;
     let stopped = false;
     const _label = label || 'retry';
@@ -637,7 +653,7 @@ describe('createRetryScheduler — advanced', () => {
 
   afterEach(() => {
     jest.clearAllTimers();
-    _marks.length = 0;
+    performance.clearMarks();
   });
 
   test('should emit performance marks with custom label', () => {
@@ -720,6 +736,7 @@ describe('createRetryScheduler — advanced', () => {
 describe('createFeatureToggle', () => {
   const SETTINGS_KEY = 'youtube_plus_settings';
 
+  /** @param {string} featureKey @param {boolean} [defaultValue=true] */
   function loadFeatureEnabled(featureKey, defaultValue = true) {
     try {
       const raw = localStorage.getItem(SETTINGS_KEY);
@@ -734,14 +751,17 @@ describe('createFeatureToggle', () => {
     }
   }
 
+  /** @param {string} featureKey @param {boolean} [defaultEnabled=true] */
   function createFeatureToggle(featureKey, defaultEnabled = true) {
     let _enabled = loadFeatureEnabled(featureKey, defaultEnabled);
+    /** @type {Set<(value: boolean) => void>} */
     const _listeners = new Set();
 
     return {
       isEnabled() {
         return _enabled;
       },
+      /** @param {boolean} value */
       setEnabled(value) {
         const prev = _enabled;
         _enabled = !!value;
@@ -764,6 +784,7 @@ describe('createFeatureToggle', () => {
           }
         }
       },
+      /** @param {(value: boolean) => void} cb */
       onChange(cb) {
         _listeners.add(cb);
         return () => _listeners.delete(cb);
@@ -796,7 +817,12 @@ describe('createFeatureToggle', () => {
     const toggle = createFeatureToggle('enableStats', true);
     toggle.setEnabled(false);
 
-    const stored = JSON.parse(localStorage.getItem(SETTINGS_KEY));
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    expect(raw).not.toBeNull();
+    if (!raw) {
+      return;
+    }
+    const stored = JSON.parse(raw);
     expect(stored.enableStats).toBe(false);
     expect(toggle.isEnabled()).toBe(false);
   });
@@ -877,7 +903,10 @@ describe('resolveMusicContainers TTL cache (simulated)', () => {
   beforeEach(() => jest.useFakeTimers());
   afterEach(() => jest.useRealTimers());
 
+  /** @typedef {{browseResults: HTMLElement | null, tabContent: HTMLElement | null}} MusicContainerResult */
+  /** @param {number} [ttl=5000] */
   function createMusicContainerResolver(ttl = 5000) {
+    /** @type {MusicContainerResult | null} */
     let _cached = null;
     let _cacheTime = 0;
 
@@ -887,8 +916,14 @@ describe('resolveMusicContainers TTL cache (simulated)', () => {
 
       // Simulate DOM query
       const result = {
-        browseResults: document.querySelector('ytmusic-browse-response'),
-        tabContent: document.querySelector('ytmusic-tab-content'),
+        browseResults: (() => {
+          const el = document.querySelector('ytmusic-browse-response');
+          return el instanceof HTMLElement ? el : null;
+        })(),
+        tabContent: (() => {
+          const el = document.querySelector('ytmusic-tab-content');
+          return el instanceof HTMLElement ? el : null;
+        })(),
       };
       _cached = result;
       _cacheTime = now;
@@ -905,11 +940,11 @@ describe('resolveMusicContainers TTL cache (simulated)', () => {
 
   afterEach(() => {
     jest.clearAllTimers();
-    jest.setSystemTime(new Date());
+    jest.setSystemTime(Date.now());
   });
 
   test('should cache results for the TTL duration', () => {
-    jest.setSystemTime(new Date('2026-01-01T00:00:00'));
+    jest.setSystemTime(Date.parse('2026-01-01T00:00:00Z'));
     const querySpy = jest.spyOn(document, 'querySelector');
     const resolver = createMusicContainerResolver(5000);
 
@@ -923,14 +958,14 @@ describe('resolveMusicContainers TTL cache (simulated)', () => {
   });
 
   test('should refresh cache after TTL expires', () => {
-    jest.setSystemTime(new Date('2026-01-01T00:00:00'));
+    jest.setSystemTime(Date.parse('2026-01-01T00:00:00Z'));
     const querySpy = jest.spyOn(document, 'querySelector');
     const resolver = createMusicContainerResolver(5000);
 
     resolver.resolve();
     expect(querySpy).toHaveBeenCalledTimes(2);
 
-    jest.setSystemTime(new Date('2026-01-01T00:00:06')); // 6s later
+    jest.setSystemTime(Date.parse('2026-01-01T00:00:06Z')); // 6s later
     resolver.resolve();
     expect(querySpy).toHaveBeenCalledTimes(4); // Re-queried
 
@@ -938,7 +973,7 @@ describe('resolveMusicContainers TTL cache (simulated)', () => {
   });
 
   test('invalidate() should force re-query on next resolve', () => {
-    jest.setSystemTime(new Date('2026-01-01T00:00:00'));
+    jest.setSystemTime(Date.parse('2026-01-01T00:00:00Z'));
     const querySpy = jest.spyOn(document, 'querySelector');
     const resolver = createMusicContainerResolver(5000);
 
@@ -953,7 +988,7 @@ describe('resolveMusicContainers TTL cache (simulated)', () => {
   });
 
   test('should return same reference within TTL', () => {
-    jest.setSystemTime(new Date('2026-01-01T00:00:00'));
+    jest.setSystemTime(Date.parse('2026-01-01T00:00:00Z'));
     const resolver = createMusicContainerResolver(5000);
 
     const result1 = resolver.resolve();
@@ -964,6 +999,12 @@ describe('resolveMusicContainers TTL cache (simulated)', () => {
 
 describe('cleanupManager lifecycle', () => {
   function createCleanupManager() {
+    /**
+     * @typedef {Object} ListenerTarget
+     * @property {(type: string, listener: EventListener, options?: AddEventListenerOptions | boolean) => void} addEventListener
+     * @property {(type: string, listener: EventListener, options?: EventListenerOptions | boolean) => void} removeEventListener
+     */
+
     const observers = new Set();
     const listeners = new Map();
     const intervals = new Set();
@@ -973,10 +1014,12 @@ describe('cleanupManager lifecycle', () => {
     let registeredTotal = 0;
 
     return {
+      /** @param {MutationObserver | null} o */
       registerObserver(o) {
         if (o) observers.add(o);
         return o;
       },
+      /** @param {ListenerTarget} target @param {string} ev @param {EventListener} fn @param {AddEventListenerOptions | boolean} [opts] */
       registerListener(target, ev, fn, opts) {
         target.addEventListener(ev, fn, opts);
         const key = Symbol();
@@ -984,18 +1027,22 @@ describe('cleanupManager lifecycle', () => {
         registeredTotal++;
         return key;
       },
+      /** @param {number | ReturnType<typeof setInterval>} id */
       registerInterval(id) {
         intervals.add(id);
         return id;
       },
+      /** @param {number | ReturnType<typeof setTimeout>} id */
       registerTimeout(id) {
         timeouts.add(id);
         return id;
       },
+      /** @param {number} id */
       registerAnimationFrame(id) {
         animationFrames.add(id);
         return id;
       },
+      /** @param {() => void} cb */
       register(cb) {
         callbacks.add(cb);
       },

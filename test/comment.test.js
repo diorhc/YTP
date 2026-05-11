@@ -3,8 +3,24 @@
  */
 
 describe('Comment Manager Module', () => {
+  /**
+   * @type {{
+   *   getItem: jest.Mock<string | null, [string]>,
+   *   setItem: jest.Mock<void, [string, string]>,
+   *   removeItem: jest.Mock<void, [string]>
+   * }}
+   */
   let mockLocalStorage;
+  /**
+   * @type {{
+   *   debounce: (fn: (...args: unknown[]) => unknown, ms: number) => ((...args: unknown[]) => unknown) & { cancel: () => void },
+   *   StyleManager: { add: jest.Mock; remove: jest.Mock; clear: jest.Mock },
+   *   cleanupManager: { registerObserver: jest.Mock; registerListener: jest.Mock; registerTimer: jest.Mock; registerInterval: jest.Mock; cleanup: jest.Mock },
+   *   logError: jest.Mock
+   * }}
+   */
   let mockYouTubeUtils;
+  /** @type {{ withErrorBoundary: jest.Mock<Function, [Function, string?]>, logError: jest.Mock<void, [Error, object?]> }} */
   let mockYouTubeErrorBoundary;
 
   beforeEach(() => {
@@ -14,29 +30,49 @@ describe('Comment Manager Module', () => {
       setItem: jest.fn(),
       removeItem: jest.fn(),
     };
-    global.localStorage = /** @type {any} */ (mockLocalStorage);
+    localStorage.getItem = mockLocalStorage.getItem;
+    localStorage.setItem = mockLocalStorage.setItem;
+    localStorage.removeItem = mockLocalStorage.removeItem;
 
     // Mock window.YouTubeUtils
     mockYouTubeUtils = {
-      debounce: jest.fn(fn => fn),
+      debounce: jest.fn((fn, _ms) => {
+        const wrapped = /** @type {typeof fn & { cancel: () => void }} */ (
+          (...args) => fn(...args)
+        );
+        wrapped.cancel = () => {};
+        return wrapped;
+      }),
       StyleManager: {
         add: jest.fn(),
         remove: jest.fn(),
+        clear: jest.fn(),
       },
       cleanupManager: {
         registerObserver: jest.fn(),
-        registerListener: jest.fn(() => 'listener-key'),
+        registerListener: jest.fn(() => Symbol('listener-key')),
+        registerTimer: jest.fn(id => id),
+        registerInterval: jest.fn(id => id),
+        cleanup: jest.fn(),
       },
       logError: jest.fn(),
     };
-    global.window.YouTubeUtils = /** @type {any} */ (mockYouTubeUtils);
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: mockYouTubeUtils,
+    });
 
     // Mock window.YouTubeErrorBoundary
     mockYouTubeErrorBoundary = {
       withErrorBoundary: jest.fn(fn => fn),
       logError: jest.fn(),
     };
-    global.window.YouTubeErrorBoundary = /** @type {any} */ (mockYouTubeErrorBoundary);
+    Object.defineProperty(window, 'YouTubeErrorBoundary', {
+      configurable: true,
+      writable: true,
+      value: mockYouTubeErrorBoundary,
+    });
 
     // Reset DOM
     document.body.innerHTML = '';
@@ -84,7 +120,8 @@ describe('Comment Manager Module', () => {
       // Should not throw when parsing invalid JSON
       expect(() => {
         try {
-          JSON.parse(mockLocalStorage.getItem('test'));
+          const raw = mockLocalStorage.getItem('test');
+          if (raw) JSON.parse(raw);
         } catch (e) {
           // Expected to fail
         }
@@ -169,6 +206,7 @@ describe('Comment Manager Module', () => {
 
       const element = document.querySelector('.test');
       expect(element).toBeTruthy();
+      if (!element) throw new Error('test element not found');
       expect(element.textContent).toBe('Test');
     });
 
@@ -214,7 +252,7 @@ describe('Comment Manager Module', () => {
         passive: true,
       });
 
-      expect(key).toBe('listener-key');
+      expect(typeof key).toBe('symbol');
       expect(mockYouTubeUtils.cleanupManager.registerListener).toHaveBeenCalled();
     });
   });
@@ -227,7 +265,11 @@ describe('Comment Manager Module', () => {
     });
 
     test('should handle missing dependencies gracefully', () => {
-      delete window.YouTubeUtils;
+      Object.defineProperty(window, 'YouTubeUtils', {
+        configurable: true,
+        writable: true,
+        value: undefined,
+      });
 
       // Should not throw when dependencies are missing
       expect(() => {

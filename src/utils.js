@@ -3,7 +3,7 @@
   'use strict';
 
   // DOM cache helper with fallback
-  const qs = selector => {
+  const qs = (/** @type {string} */ selector) => {
     if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
       return window.YouTubeDOMCache.get(selector);
     }
@@ -47,18 +47,23 @@
   const byId = id => {
     const cache = window.YouTubeDOMCache;
     if (cache && typeof cache.getElementById === 'function') return cache.getElementById(id);
-    return document.getElementById(id);
+    return /** @type {Element|null} */ (document.getElementById(id));
   };
 
   // --- Shared translation helper (canonical) ---
+  /**
+   * Escape regex metacharacters in text
+   * @param {string} s
+   * @returns {string}
+   */
+  const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
   /**
    * Translation helper with fallback interpolation
    * @param {string} key - Translation key
    * @param {Object<string, string|number>} [params] - Interpolation parameters
    * @returns {string}
    */
-  const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
   const t = (key, params = {}) => {
     if (window.YouTubePlusI18n?.t) return window.YouTubePlusI18n.t(key, params);
     if (!key) return '';
@@ -83,7 +88,7 @@
   const isStudioPage = () => {
     try {
       return location.hostname.includes('studio.youtube.com');
-    } catch {
+    } catch (e) {
       return false;
     }
   };
@@ -101,8 +106,8 @@
         const parsed = JSON.parse(settings);
         return parsed[featureKey] !== false;
       }
-    } catch {
-      /* empty */
+    } catch (e) {
+      // Non-critical, suppressed
     }
     return defaultValue;
   };
@@ -160,29 +165,29 @@
           return !!(/** @type {any} */ (window).YTP_DEBUG);
         }
         return false;
-      } catch {
+      } catch (e) {
         return false;
       }
     })();
 
     return {
-      debug: (...args) => {
+      debug: function (/** @type {any[]} */ ...args) {
         // Route debug/info level messages to console.warn to avoid eslint no-console warnings
         if (isDebugEnabled && console?.warn) {
           console.warn('[YouTube+][DEBUG]', ...args);
         }
       },
-      info: (...args) => {
+      info: function (/** @type {any[]} */ ...args) {
         if (isDebugEnabled && console?.warn) {
           console.warn('[YouTube+][INFO]', ...args);
         }
       },
-      warn: (...args) => {
+      warn: function (/** @type {any[]} */ ...args) {
         if (console?.warn) {
           console.warn('[YouTube+]', ...args);
         }
       },
-      error: (...args) => {
+      error: function (/** @type {any[]} */ ...args) {
         if (console?.error) {
           console.error('[YouTube+]', ...args);
         }
@@ -199,13 +204,16 @@
    * @returns {T & {cancel: () => void}} The debounced function with a cancel method
    */
   const debounce = (fn, ms, options = {}) => {
+    /** @type {ReturnType<typeof setTimeout>|null} */
     let timeout = null;
+    /** @type {any[]|null} */
     let lastArgs = null;
+    /** @type {any} */
     let lastThis = null;
     let isDestroyed = false;
 
     /** @this {any} */
-    const debounced = function (...args) {
+    const debounced = function (/** @type {any[]} */ ...args) {
       if (isDestroyed) return;
 
       lastArgs = args;
@@ -259,9 +267,10 @@
    */
   const throttle = (fn, limit) => {
     let inThrottle = false;
+    /** @type {any} */
     let lastResult;
     /** @this {any} */
-    const throttled = function (...args) {
+    const throttled = function (/** @type {any[]} */ ...args) {
       if (!inThrottle) {
         lastResult = /** @type {Function} */ (fn).apply(this, args);
         inThrottle = true;
@@ -275,7 +284,7 @@
   const StyleManager = (function () {
     const styles = new Map();
     return {
-      add(id, css) {
+      add(/** @type {string} */ id, /** @type {string} */ css) {
         try {
           let el = document.getElementById(id);
           styles.set(id, css);
@@ -286,9 +295,12 @@
               document.addEventListener(
                 'DOMContentLoaded',
                 () => {
-                  if (!document.getElementById(id) && document.head) {
-                    document.head.appendChild(el);
-                    el.textContent = Array.from(styles.values()).join('\n\n');
+                  const target = document.getElementById(id);
+                  if (!target && document.head) {
+                    const lateEl = document.createElement('style');
+                    lateEl.id = id;
+                    document.head.appendChild(lateEl);
+                    lateEl.textContent = Array.from(styles.values()).join('\n\n');
                   }
                 },
                 { once: true }
@@ -302,7 +314,7 @@
           logError('StyleManager', 'add failed', e);
         }
       },
-      remove(id) {
+      remove(/** @type {string} */ id) {
         try {
           styles.delete(id);
           const el = document.getElementById(id);
@@ -312,7 +324,7 @@
         }
       },
       clear() {
-        for (const id of Array.from(styles.keys())) this.remove(id);
+        for (const styleId of Array.from(styles.keys())) this.remove(styleId);
       },
     };
   })();
@@ -333,8 +345,13 @@
        * @param {Function} handler - Event handler
        * @returns {Function} Cleanup function
        */
-      delegate(parent, selector, event, handler) {
-        const delegateHandler = e => {
+      delegate(
+        /** @type {Element} */ parent,
+        /** @type {string} */ selector,
+        /** @type {string} */ event,
+        /** @type {Function} */ handler
+      ) {
+        const delegateHandler = (/** @type {Event} */ e) => {
           const target = /** @type {Element} */ (e.target);
           const match = target.closest(selector);
           if (match && parent.contains(match)) {
@@ -364,11 +381,11 @@
        * Clear all delegations for a parent
        * @param {Element} parent - Parent element
        */
-      clearFor(parent) {
+      clearFor(/** @type {Element} */ parent) {
         const parentMap = delegations.get(parent);
         if (!parentMap) return;
 
-        parentMap.forEach((handler, key) => {
+        parentMap.forEach((/** @type {any} */ handler, /** @type {string} */ key) => {
           const event = key.split('_')[0];
           parent.removeEventListener(event, handler);
         });
@@ -380,7 +397,7 @@
        */
       clearAll() {
         delegations.forEach((map, parent) => {
-          map.forEach((handler, key) => {
+          map.forEach((/** @type {any} */ handler, /** @type {string} */ key) => {
             const event = key.split('_')[0];
             parent.removeEventListener(event, handler);
           });
@@ -420,16 +437,21 @@
                 elementObservers.set(el, set);
               }
               set.add(o);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         return o;
       },
-      registerListener(target, ev, fn, opts) {
+      registerListener(
+        /** @type {EventTarget} */ target,
+        /** @type {string} */ ev,
+        /** @type {EventListenerOrEventListenerObject} */ fn,
+        /** @type {AddEventListenerOptions|boolean|undefined} */ opts
+      ) {
         try {
           target.addEventListener(ev, fn, opts);
           const key = Symbol();
@@ -447,23 +469,23 @@
             active: listeners.size,
             registeredTotal: listenerStats.registeredTotal,
           };
-        } catch {
+        } catch (e) {
           return { active: 0, registeredTotal: 0 };
         }
       },
-      registerInterval(id) {
+      registerInterval(/** @type {ReturnType<typeof setInterval>} */ id) {
         intervals.add(id);
         return id;
       },
-      registerTimeout(id) {
+      registerTimeout(/** @type {ReturnType<typeof setTimeout>} */ id) {
         timeouts.add(id);
         return id;
       },
-      registerAnimationFrame(id) {
+      registerAnimationFrame(/** @type {number} */ id) {
         animationFrames.add(id);
         return id;
       },
-      register(cb) {
+      register(/** @type {Function} */ cb) {
         if (typeof cb === 'function') callbacks.add(cb);
       },
       cleanup() {
@@ -481,8 +503,8 @@
           for (const o of observers) {
             try {
               if (o && typeof o.disconnect === 'function') o.disconnect();
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
           observers.clear();
@@ -491,14 +513,14 @@
           try {
             // We cannot iterate WeakMap keys; instead we iterate observers set already
             // which covers all observers registered via registerObserver above.
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
           for (const keyEntry of listeners.values()) {
             try {
               keyEntry.target.removeEventListener(keyEntry.ev, keyEntry.fn, keyEntry.opts);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
           listeners.clear();
@@ -527,8 +549,8 @@
             try {
               if (o && typeof o.disconnect === 'function') o.disconnect();
               observers.delete(o);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
           elementObservers.delete(el);
@@ -545,8 +567,8 @@
           if (!o) return;
           try {
             if (typeof o.disconnect === 'function') o.disconnect();
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
           observers.delete(o);
           // remove from any element sets
@@ -554,8 +576,8 @@
             // Can't iterate WeakMap directly; attempt best-effort sweep by checking
             // known element keys via listeners map as a hint (not comprehensive).
             // This is a noop if not found; primary removal is from observers set.
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
         } catch (e) {
           logError('cleanupManager', 'disconnectObserver failed', e);
@@ -568,16 +590,22 @@
     };
   })();
 
-  const createElement = (tag, props = {}, children = []) => {
+  const createElement = (
+    /** @type {string} */ tag,
+    /** @type {Record<string, any>} */ props = {},
+    /** @type {any[]} */ children = []
+  ) => {
     try {
       const element = document.createElement(tag);
       Object.entries(props).forEach(([k, v]) => {
-        if (k === 'className') element.className = v;
-        else if (k === 'style' && typeof v === 'object') Object.assign(element.style, v);
-        else if (k === 'dataset' && typeof v === 'object') Object.assign(element.dataset, v);
-        else if (k.startsWith('on') && typeof v === 'function') {
+        if (k === 'className') element.className = String(v);
+        else if (k === 'style' && typeof v === 'object') {
+          Object.assign(/** @type {any} */ (element).style, v);
+        } else if (k === 'dataset' && typeof v === 'object') {
+          Object.assign(/** @type {any} */ (element).dataset, v);
+        } else if (k.startsWith('on') && typeof v === 'function') {
           element.addEventListener(k.slice(2), v);
-        } else element.setAttribute(k, v);
+        } else element.setAttribute(k, String(v));
       });
       children.forEach(c => {
         if (typeof c === 'string') element.appendChild(document.createTextNode(c));
@@ -590,7 +618,11 @@
     }
   };
 
-  const waitForElement = (selector, timeout = 5000, parent = document.body) =>
+  const waitForElement = (
+    /** @type {string} */ selector,
+    /** @type {number} */ timeout = 5000,
+    /** @type {Element|Document} */ parent = document
+  ) =>
     new Promise((resolve, reject) => {
       if (!selector || typeof selector !== 'string') return reject(new Error('Invalid selector'));
       try {
@@ -604,8 +636,8 @@
         if (el) {
           try {
             obs.disconnect();
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
           resolve(el);
         }
@@ -614,8 +646,8 @@
       const id = setTimeout(() => {
         try {
           obs.disconnect();
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
         reject(new Error('timeout'));
       }, timeout);
@@ -693,7 +725,7 @@
       // Only allow http/https protocols
       if (!['http:', 'https:'].includes(parsed.protocol)) return false;
       return true;
-    } catch {
+    } catch (e) {
       return false;
     }
   };
@@ -701,12 +733,14 @@
   /**
    * Safely merge objects without prototype pollution
    * Prevents __proto__, constructor, and prototype pollution attacks
-   * @template T
-   * @param {T} target - Target object
-   * @param {Object} source - Source object to merge
-   * @returns {T} Merged target object
+   * @param {Record<string, any>} target - Target object
+   * @param {Record<string, any>} source - Source object to merge
+   * @returns {Record<string, any>} Merged target object
    */
-  const safeMerge = (target, source) => {
+  const safeMerge = (
+    /** @type {Record<string, any>} */ target,
+    /** @type {Record<string, any>} */ source
+  ) => {
     if (!source || typeof source !== 'object') return target;
     if (!target || typeof target !== 'object') return target;
 
@@ -909,7 +943,7 @@
     has(key) {
       try {
         return localStorage.getItem(key) !== null;
-      } catch {
+      } catch (e) {
         return false;
       }
     },
@@ -930,7 +964,7 @@
        * @param {Element} [parent=document] - Parent element
        * @returns {Element|null} Found element
        */
-      get(selector, parent = document) {
+      get(/** @type {string} */ selector, /** @type {Element|Document} */ parent = document) {
         const key = `${selector}_${parent === document ? 'doc' : ''}`;
         const cached = cache.get(key);
 
@@ -944,7 +978,7 @@
 
           // Manage cache size
           if (cache.size > MAX_CACHE_SIZE) {
-            const oldestKey = cache.keys().next().value;
+            const oldestKey = /** @type {string} */ (cache.keys().next().value);
             cache.delete(oldestKey);
           }
         }
@@ -956,7 +990,7 @@
        * Clear specific cache entry
        * @param {string} selector - CSS selector
        */
-      clear(selector) {
+      clear(/** @type {string} */ selector) {
         const keys = Array.from(cache.keys()).filter(k => k.startsWith(selector));
         keys.forEach(k => cache.delete(k));
       },
@@ -981,10 +1015,14 @@
      * Add optimized scroll listener
      * @param {Element} element - Element to listen to
      * @param {Function} callback - Callback function
-     * @param {Object} options - Options {debounce: number, throttle: number, runInitial: boolean}
+     * @param {{debounce?: number, throttle?: number, runInitial?: boolean}} [options] - Options
      * @returns {Function} Cleanup function
      */
-    const addScrollListener = (element, callback, options = {}) => {
+    const addScrollListener = (
+      /** @type {Element} */ element,
+      /** @type {Function} */ callback,
+      /** @type {{debounce?: number, throttle?: number, runInitial?: boolean}} */ options = {}
+    ) => {
       try {
         const { debounce: debounceMs = 0, throttle: throttleMs = 0, runInitial = false } = options;
 
@@ -1007,7 +1045,9 @@
         listeners.get(element).add(handler);
 
         // Add event listener
-        element.addEventListener('scroll', handler, { passive: true });
+        element.addEventListener('scroll', /** @type {EventListener} */ (handler), {
+          passive: true,
+        });
 
         // Run initial callback if requested
         if (runInitial) {
@@ -1021,7 +1061,7 @@
         // Return cleanup function
         return () => {
           try {
-            element.removeEventListener('scroll', handler);
+            element.removeEventListener('scroll', /** @type {EventListener} */ (handler));
             const set = listeners.get(element);
             if (set) {
               set.delete(handler);
@@ -1043,16 +1083,16 @@
      * Remove all listeners for an element
      * @param {Element} element - Element to clean up
      */
-    const removeAllListeners = element => {
+    const removeAllListeners = (/** @type {Element} */ element) => {
       try {
         const set = listeners.get(element);
         if (!set) return;
 
-        set.forEach(handler => {
+        set.forEach((/** @type {any} */ handler) => {
           try {
-            element.removeEventListener('scroll', handler);
-          } catch {
-            /* empty */
+            element.removeEventListener('scroll', /** @type {EventListener} */ (handler));
+          } catch (e) {
+            // Non-critical, suppressed
           }
         });
 
@@ -1067,12 +1107,15 @@
      * @param {Element} element - Element to scroll
      * @param {Object} options - Options {duration: number, easing: string}
      */
-    const scrollToTop = (element, options = {}) => {
+    const scrollToTop = (
+      /** @type {Element & {scrollTop: number, scrollTo: Function}} */ element,
+      /** @type {{duration?: number, easing?: string}} */ options = {}
+    ) => {
       const { duration = 300, easing = 'ease-out' } = options;
 
       try {
         // Try native smooth scroll first
-        if ('scrollBehavior' in document.documentElement.style) {
+        if ('scrollBehavior' in /** @type {any} */ (document.documentElement.style || {})) {
           element.scrollTo({ top: 0, behavior: 'smooth' });
           return;
         }
@@ -1081,12 +1124,12 @@
         const start = element.scrollTop;
         const startTime = performance.now();
 
-        const scroll = currentTime => {
+        const scroll = (/** @type {number} */ currentTime) => {
           const elapsed = currentTime - startTime;
           const progress = Math.min(elapsed / duration, 1);
 
           // Easing function
-          const easeOutQuad = t => t * (2 - t);
+          const easeOutQuad = (/** @type {number} */ t) => t * (2 - t);
           const easedProgress = easing === 'ease-out' ? easeOutQuad(progress) : progress;
 
           element.scrollTop = start * (1 - easedProgress);
@@ -1116,7 +1159,7 @@
     const _origPush = history.pushState;
     const _origReplace = history.replaceState;
     history.pushState = function () {
-      const result = _origPush.apply(this, arguments);
+      const result = /** @type {any} */ (_origPush).apply(this, arguments);
       try {
         window.dispatchEvent(
           new CustomEvent('ytp-history-navigate', { detail: { type: 'pushState' } })
@@ -1127,7 +1170,7 @@
       return result;
     };
     history.replaceState = function () {
-      const result = _origReplace.apply(this, arguments);
+      const result = /** @type {any} */ (_origReplace).apply(this, arguments);
       try {
         window.dispatchEvent(
           new CustomEvent('ytp-history-navigate', { detail: { type: 'replaceState' } })
@@ -1148,11 +1191,13 @@
    * @param {number} [opts.maxAttempts=20] - Maximum retry attempts
    * @param {number} [opts.interval=250] - Delay between attempts (ms)
    * @param {() => void} [opts.onGiveUp] - Called when max attempts reached
+   * @param {string} [opts.label] - Diagnostic label
    * @returns {{ stop: () => void }} Control handle
    */
   const createRetryScheduler = opts => {
     const { check, maxAttempts = 20, interval = 250, onGiveUp, label } = opts;
     let attempts = 0;
+    /** @type {ReturnType<typeof setTimeout>|null} */
     let timerId = null;
     let stopped = false;
     const _label = label || 'retry';
@@ -1165,8 +1210,8 @@
       if (_hasPerfApi) {
         try {
           performance.mark(`ytp:${_label}:attempt:${attempts}`);
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
       }
       try {
@@ -1175,8 +1220,8 @@
           if (_hasPerfApi) {
             try {
               performance.mark(`ytp:${_label}:success`);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
           }
           return;
@@ -1189,15 +1234,15 @@
         if (_hasPerfApi) {
           try {
             performance.mark(`ytp:${_label}:giveup`);
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
         }
         if (typeof onGiveUp === 'function') {
           try {
             onGiveUp();
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
         }
         return;
@@ -1281,7 +1326,7 @@
   /**
    * @param {string} featureKey - localStorage key within youtube_plus_settings (e.g. 'enableZoom')
    * @param {boolean} [defaultEnabled=true] - Default state when not configured
-   * @returns {{ isEnabled: () => boolean, setEnabled: (v: boolean) => void, onChange: (cb: (enabled: boolean) => void) => () => void }}
+   * @returns {{ isEnabled: () => boolean, setEnabled: (v: boolean) => void, onChange: (cb: (enabled: boolean) => void) => () => void, reload: () => void }}
    */
   const createFeatureToggle = (featureKey, defaultEnabled = true) => {
     let _enabled = loadFeatureEnabled(featureKey, defaultEnabled);
@@ -1304,15 +1349,15 @@
           const settings = raw ? JSON.parse(raw) : {};
           settings[featureKey] = _enabled;
           localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-        } catch {
+        } catch (e) {
           // Storage write failure — state still updated in memory
         }
         // Notify listeners
         for (const cb of _listeners) {
           try {
             cb(_enabled);
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
         }
       },
@@ -1330,8 +1375,9 @@
 
   // Expose a global YouTubeUtils if not present (non-destructive)
   if (typeof window !== 'undefined') {
-    window.YouTubeUtils = window.YouTubeUtils || {};
-    const U = window.YouTubeUtils;
+    const wAny = /** @type {any} */ (window);
+    if (!wAny.YouTubeUtils) wAny.YouTubeUtils = {};
+    const U = /** @type {any} */ (wAny.YouTubeUtils);
     U.logError = U.logError || logError;
     U.debounce = U.debounce || debounce;
     U.throttle = U.throttle || throttle;
@@ -1369,7 +1415,7 @@
 
     // Dev-only diagnostics — call window.__ytpDiagnostics() in browser console
     if (!window.__ytpDiagnostics) {
-      window.__ytpDiagnostics = function (verbose) {
+      window.__ytpDiagnostics = function (/** @type {boolean|undefined} */ verbose) {
         const obs = ObserverRegistry.getStats();
         const cm = {
           observers: cleanupManager.observers.size,
@@ -1390,6 +1436,7 @@
               .getEntriesByType('mark')
               .filter(m => m.name.startsWith('ytp:'));
             const retryLabels = new Set();
+            /** @type {Record<string, {attempts: number, success: boolean, giveup: boolean}>} */
             const retryData = {};
             for (const m of marks) {
               const parts = m.name.split(':');
@@ -1406,8 +1453,8 @@
             }
             retryMetrics = { totalMarks: marks.length, schedulers: retryData };
           }
-        } catch {
-          /* empty */
+        } catch (e) {
+          // Non-critical, suppressed
         }
 
         const report = {
@@ -1428,39 +1475,47 @@
     U.channelStatsHelpers = U.channelStatsHelpers || null;
     // Wrap global timer functions to auto-register with cleanupManager for safe cleanup.
     try {
-      const w = window;
+      const w = /** @type {any} */ (window);
       if (w && !w.__ytp_timers_wrapped) {
         const origSetTimeout = w.setTimeout.bind(w);
         const origSetInterval = w.setInterval.bind(w);
         const origRaf = w.requestAnimationFrame ? w.requestAnimationFrame.bind(w) : null;
 
-        w.setTimeout = function (fn, ms, ...args) {
+        w.setTimeout = function (
+          /** @type {any} */ fn,
+          /** @type {any} */ ms,
+          /** @type {any[]} */ ...args
+        ) {
           const id = origSetTimeout(fn, ms, ...args);
           try {
             U.cleanupManager.registerTimeout(id);
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
           return id;
         };
 
-        w.setInterval = function (fn, ms, ...args) {
+        w.setInterval = function (
+          /** @type {any} */ fn,
+          /** @type {any} */ ms,
+          /** @type {any[]} */ ...args
+        ) {
           const id = origSetInterval(fn, ms, ...args);
           try {
             U.cleanupManager.registerInterval(id);
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
           return id;
         };
 
         if (origRaf) {
-          w.requestAnimationFrame = function (cb) {
+          w.requestAnimationFrame = function (/** @type {FrameRequestCallback} */ cb) {
             const id = origRaf(cb);
             try {
               U.cleanupManager.registerAnimationFrame(id);
-            } catch {
-              /* empty */
+            } catch (e) {
+              // Non-critical, suppressed
             }
             return id;
           };
@@ -1471,9 +1526,31 @@
     } catch (e) {
       logError('utils', 'timer wrapper failed', e);
     }
+
+    // Auto-cleanup on SPA navigation — prevents listener and timer leaks between pages
+    try {
+      const wAny2 = /** @type {any} */ (window);
+      if (!wAny2.__ytp_nav_cleanup_registered) {
+        wAny2.__ytp_nav_cleanup_registered = true;
+        document.addEventListener('yt-navigate-start', () => {
+          try {
+            U.cleanupManager.cleanup();
+          } catch (e) {
+            // Non-critical: cleanup best-effort on navigation
+          }
+        });
+      }
+    } catch (e) {
+      // Non-critical: navigation cleanup hook failed to register
+    }
+
     if (!window.YouTubePlusChannelStatsHelpers) {
       window.YouTubePlusChannelStatsHelpers = {
-        async fetchWithRetry(fetchFn, maxRetries = 2, logger = console) {
+        async fetchWithRetry(
+          /** @type {() => Promise<any>} */ fetchFn,
+          maxRetries = 2,
+          logger = console
+        ) {
           let attempt = 0;
           while (attempt <= maxRetries) {
             try {
@@ -1494,22 +1571,30 @@
           }
           return null;
         },
-        cacheStats(mapLike, channelId, stats) {
+        cacheStats(
+          /** @type {any} */ mapLike,
+          /** @type {string} */ channelId,
+          /** @type {any} */ stats
+        ) {
           try {
             if (!mapLike || typeof mapLike.set !== 'function') return;
             mapLike.set(channelId, stats);
-          } catch {
-            /* empty */
+          } catch (e) {
+            // Non-critical, suppressed
           }
         },
-        getCachedStats(mapLike, channelId, cacheDuration = 60000) {
+        getCachedStats(
+          /** @type {any} */ mapLike,
+          /** @type {string} */ channelId,
+          cacheDuration = 60000
+        ) {
           try {
             if (!mapLike || typeof mapLike.get !== 'function') return null;
             const s = mapLike.get(channelId);
             if (!s) return null;
             if (s.timestamp && Date.now() - s.timestamp > cacheDuration) return null;
             return s;
-          } catch {
+          } catch (e) {
             return null;
           }
         },
@@ -1520,7 +1605,7 @@
             const txt = el.textContent || '';
             const digits = txt.replace(/[^0-9]/g, '');
             return digits ? parseInt(digits, 10) : 0;
-          } catch {
+          } catch (e) {
             return 0;
           }
         },

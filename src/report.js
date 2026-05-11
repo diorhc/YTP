@@ -16,10 +16,14 @@
   const t = Y.t || (key => key || '');
 
   /**
+   * @typedef {{ version: string; userAgent: string; url: string; language: string; settings: any; error?: string }} DebugInfo
+   */
+
+  /**
    * Create DOM element with properties and children
    * @param {string} tag - HTML tag name
    * @param {Object} props - Element properties
-   * @param {Array} children - Child elements or text
+   * @param {Array<any>} children - Child elements or text
    * @returns {HTMLElement} Created element
    */
   function mk(tag, props = {}, children = []) {
@@ -67,7 +71,10 @@
       '`': '&#x60;',
       '=': '&#x3D;',
     };
-    return html.replace(/[<>&"'\/`=]/g, char => map[char] || char);
+    return html.replace(
+      /[<>&"'\/`=]/g,
+      char => /** @type {Record<string,string>} */ (map)[char] || char
+    );
   }
 
   /**
@@ -107,6 +114,9 @@
   /**
    * Collect debug information for reports
    * @returns {Object} Debug information object
+   */
+  /**
+   * @returns {DebugInfo}
    */
   function getDebugInfo() {
     try {
@@ -170,7 +180,7 @@
         };
         try {
           lines.push(JSON.stringify(minimalDebug, null, 2));
-        } catch {
+        } catch (e) {
           lines.push('{ "error": "Failed to stringify debug info" }');
         }
       }
@@ -185,17 +195,24 @@
   }
 
   /**
-   * Open GitHub issue in a new tab
+   * Open GitHub issue/discussion in a new tab
    * @param {{title: string, body: string}} payload - Issue payload
+   * @param {'bug'|'feature'|'other'} type - Report type
    */
-  function openGitHubIssue(payload) {
+  function openGitHubIssue(payload, type) {
     try {
-      // Repository configured for issue creation
       const repoOwner = 'diorhc';
       const repo = 'YTP';
-      const url = `https://github.com/${repoOwner}/${repo}/issues/new?title=${encodeURIComponent(
-        payload.title
-      )}&body=${encodeURIComponent(payload.body)}`;
+
+      // Route feature suggestions to GitHub Discussions, others to Issues.
+      const url =
+        type === 'feature'
+          ? `https://github.com/${repoOwner}/${repo}/discussions/new?category=ideas&title=${encodeURIComponent(
+              payload.title
+            )}&body=${encodeURIComponent(payload.body)}`
+          : `https://github.com/${repoOwner}/${repo}/issues/new?title=${encodeURIComponent(
+              payload.title
+            )}&body=${encodeURIComponent(payload.body)}`;
       window.open(url, '_blank');
     } catch (err) {
       if (Y && typeof Y.logError === 'function') {
@@ -219,9 +236,7 @@
     return new Promise((resolve, reject) => {
       const ta = document.createElement('textarea');
       ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.left = '-9999px';
-      ta.style.opacity = '0';
+      ta.setAttribute('style', 'position:fixed;left:-9999px;opacity:0');
       document.body.appendChild(ta);
       try {
         ta.select();
@@ -400,35 +415,43 @@
         const toggle = dropdown.querySelector('.glass-dropdown__toggle');
         const list = dropdown.querySelector('.glass-dropdown__list');
         const label = dropdown.querySelector('.glass-dropdown__label');
-        let items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+        let items = Array.from(list ? list.querySelectorAll('.glass-dropdown__item') : []);
         let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
         if (idx < 0) idx = 0;
 
         const openList = () => {
           dropdown.setAttribute('aria-expanded', 'true');
-          list.style.display = 'block';
-          items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+          if (list) {
+            list.setAttribute('style', 'display:block');
+          }
+          items = Array.from(list ? list.querySelectorAll('.glass-dropdown__item') : []);
         };
         const closeList = () => {
           dropdown.setAttribute('aria-expanded', 'false');
-          list.style.display = 'none';
+          if (list) {
+            list.setAttribute('style', 'display:none');
+          }
         };
 
         // ensure initial hidden select value matches selected item
         const selectedItem = items[idx];
         if (selectedItem) {
-          hidden.value = selectedItem.dataset.value || '';
-          label.textContent = selectedItem.textContent || '';
+          hidden.value = selectedItem.getAttribute('data-value') || '';
+          if (label) label.textContent = selectedItem.textContent || '';
         }
 
-        toggle.addEventListener('click', () => {
-          const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-          if (expanded) closeList();
-          else openList();
-        });
+        if (toggle) {
+          toggle.addEventListener('click', () => {
+            const expanded = dropdown.getAttribute('aria-expanded') === 'true';
+            if (expanded) closeList();
+            else openList();
+          });
+        }
 
-        const _rDocClick = e => {
-          if (!dropdown.contains(e.target)) closeList();
+        const _rDocClick = /** @param {Event} e */ e => {
+          if (!dropdown.contains(/** @type {Node|null} */ (/** @type {MouseEvent} */ (e).target))) {
+            closeList();
+          }
         };
         if (window.YouTubeUtils?.cleanupManager?.registerListener) {
           window.YouTubeUtils.cleanupManager.registerListener(document, 'click', _rDocClick);
@@ -436,54 +459,63 @@
           document.addEventListener('click', _rDocClick);
         }
 
-        list.addEventListener('click', e => {
-          const it = e.target.closest('.glass-dropdown__item');
-          if (!it) return;
-          const val = it.dataset.value;
-          hidden.value = val;
-          list
-            .querySelectorAll('.glass-dropdown__item')
-            .forEach(li => li.removeAttribute('aria-selected'));
-          it.setAttribute('aria-selected', 'true');
-          label.textContent = it.textContent;
-          hidden.dispatchEvent(new Event('change', { bubbles: true }));
-          closeList();
-        });
-
-        // keyboard navigation
-        dropdown.addEventListener('keydown', e => {
-          const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-          if (e.key === 'ArrowDown') {
-            e.preventDefault();
-            if (!expanded) openList();
-            idx = Math.min(idx + 1, items.length - 1);
-            items.forEach(it => it.removeAttribute('aria-selected'));
-            items[idx].setAttribute('aria-selected', 'true');
-            items[idx].scrollIntoView({ block: 'nearest' });
-          } else if (e.key === 'ArrowUp') {
-            e.preventDefault();
-            if (!expanded) openList();
-            idx = Math.max(idx - 1, 0);
-            items.forEach(it => it.removeAttribute('aria-selected'));
-            items[idx].setAttribute('aria-selected', 'true');
-            items[idx].scrollIntoView({ block: 'nearest' });
-          } else if (e.key === 'Enter' || e.key === ' ') {
-            e.preventDefault();
-            if (!expanded) {
-              openList();
-              return;
-            }
-            const it = items[idx];
-            if (it) {
-              hidden.value = it.dataset.value;
+        if (list) {
+          list.addEventListener(
+            'click',
+            /** @param {Event} e */ e => {
+              const it =
+                e.target instanceof Element ? e.target.closest('.glass-dropdown__item') : null;
+              if (!it) return;
+              const val = it.getAttribute('data-value');
+              hidden.value = val ?? '';
+              list
+                .querySelectorAll('.glass-dropdown__item')
+                .forEach(li => li.removeAttribute('aria-selected'));
+              it.setAttribute('aria-selected', 'true');
+              if (label) label.textContent = it.textContent;
               hidden.dispatchEvent(new Event('change', { bubbles: true }));
-              label.textContent = it.textContent;
               closeList();
             }
-          } else if (e.key === 'Escape') {
-            closeList();
+          );
+        }
+
+        // keyboard navigation
+        dropdown.addEventListener(
+          'keydown',
+          /** @param {KeyboardEvent} e */ e => {
+            const expanded = dropdown.getAttribute('aria-expanded') === 'true';
+            if (e.key === 'ArrowDown') {
+              e.preventDefault();
+              if (!expanded) openList();
+              idx = Math.min(idx + 1, items.length - 1);
+              items.forEach(it => it.removeAttribute('aria-selected'));
+              items[idx].setAttribute('aria-selected', 'true');
+              items[idx].scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'ArrowUp') {
+              e.preventDefault();
+              if (!expanded) openList();
+              idx = Math.max(idx - 1, 0);
+              items.forEach(it => it.removeAttribute('aria-selected'));
+              items[idx].setAttribute('aria-selected', 'true');
+              items[idx].scrollIntoView({ block: 'nearest' });
+            } else if (e.key === 'Enter' || e.key === ' ') {
+              e.preventDefault();
+              if (!expanded) {
+                openList();
+                return;
+              }
+              const it = items[idx];
+              if (it) {
+                hidden.value = it.getAttribute('data-value') ?? '';
+                hidden.dispatchEvent(new Event('change', { bubbles: true }));
+                if (label) label.textContent = it.textContent;
+                closeList();
+              }
+            } else if (e.key === 'Escape') {
+              closeList();
+            }
           }
-        });
+        );
       } catch (err) {
         if (Y && typeof Y.logError === 'function') {
           Y.logError('Report', 'initReportTypeDropdown', err);
@@ -571,10 +603,10 @@
           );
           debugPreview.appendChild(fullDetails);
 
-          debugPreview.style.display = 'block';
+          debugPreview.setAttribute('style', 'display:block');
         } else {
           debugPreview.replaceChildren();
-          debugPreview.style.display = 'none';
+          debugPreview.setAttribute('style', 'display:none');
         }
       } catch (err) {
         if (Y && typeof Y.logError === 'function') {
@@ -652,10 +684,13 @@
         const originalText = submitBtn.textContent;
         submitBtn.disabled = true;
         submitBtn.textContent = t('opening');
-        submitBtn.style.opacity = '0.6';
+        submitBtn.setAttribute('style', 'opacity:0.6');
 
         const payload = buildIssuePayload(data);
-        openGitHubIssue(payload);
+        openGitHubIssue(
+          payload,
+          data.type === 'feature' ? 'feature' : data.type === 'other' ? 'other' : 'bug'
+        );
 
         if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
           Y.NotificationManager.show(t('openingGithubNotification'), { duration: 2500 });
@@ -665,7 +700,7 @@
         setTimeout(() => {
           submitBtn.disabled = false;
           submitBtn.textContent = originalText;
-          submitBtn.style.opacity = '1';
+          submitBtn.setAttribute('style', 'opacity:1');
         }, 2000);
       } catch (err) {
         if (Y.logError) Y.logError('Report', 'Failed to open GitHub issue', err);
@@ -677,7 +712,7 @@
         }
         submitBtn.disabled = false;
         submitBtn.textContent = t('openGitHub');
-        submitBtn.style.opacity = '1';
+        submitBtn.setAttribute('style', 'opacity:1');
       }
     });
 
@@ -703,7 +738,7 @@
         const originalText = copyBtn.textContent;
         copyBtn.disabled = true;
         copyBtn.textContent = t('copying');
-        copyBtn.style.opacity = '0.6';
+        copyBtn.setAttribute('style', 'opacity:0.6');
 
         const payload = buildIssuePayload(data);
         const full = `Title: ${payload.title}\n\n${payload.body}`;
@@ -714,7 +749,7 @@
               Y.NotificationManager.show(t('reportCopied'), { duration: 2000 });
             }
             copyBtn.textContent = t('copied');
-            copyBtn.style.opacity = '1';
+            copyBtn.setAttribute('style', 'opacity:1');
             setTimeout(() => {
               copyBtn.disabled = false;
               copyBtn.textContent = originalText;
@@ -732,13 +767,13 @@
             }
             copyBtn.disabled = false;
             copyBtn.textContent = originalText;
-            copyBtn.style.opacity = '1';
+            copyBtn.setAttribute('style', 'opacity:1');
           });
       } catch (err) {
         if (Y.logError) Y.logError('Report', 'Failed to copy report', err);
         copyBtn.disabled = false;
         copyBtn.textContent = t('copyReport');
-        copyBtn.style.opacity = '1';
+        copyBtn.setAttribute('style', 'opacity:1');
       }
     });
 
@@ -763,7 +798,7 @@
         const originalText = emailBtn.textContent;
         emailBtn.disabled = true;
         emailBtn.textContent = t('opening');
-        emailBtn.style.opacity = '0.6';
+        emailBtn.setAttribute('style', 'opacity:0.6');
 
         const payload = buildIssuePayload(data);
         const subject = payload.title;
@@ -776,13 +811,13 @@
         setTimeout(() => {
           emailBtn.disabled = false;
           emailBtn.textContent = originalText;
-          emailBtn.style.opacity = '1';
+          emailBtn.setAttribute('style', 'opacity:1');
         }, 2000);
       } catch (err) {
         if (Y.logError) Y.logError('Report', 'Failed to prepare email', err);
         emailBtn.disabled = false;
         emailBtn.textContent = t('prepareEmail');
-        emailBtn.style.opacity = '1';
+        emailBtn.setAttribute('style', 'opacity:1');
       }
     });
   }

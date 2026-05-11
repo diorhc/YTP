@@ -16,14 +16,15 @@
 
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const _createHTML = window._ytplusCreateHTML || ((/** @type {string} */ s) => s);
 
   if (typeof location !== 'undefined' && location.hostname !== 'music.youtube.com') {
     return;
   }
 
   // DOM cache helper from YouTubeUtils
-  const qs = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+  const qs = (/** @type {string} */ sel) =>
+    window.YouTubeUtils?.$(sel) || document.querySelector(sel);
 
   /**
    * Read YouTube Music settings from localStorage with defaults.
@@ -40,14 +41,14 @@
     miniPlayerStyles: true,
   };
 
-  function mergeMusicSettings(parsed) {
+  function mergeMusicSettings(/** @type {any} */ parsed) {
     const merged = { ...MUSIC_SETTINGS_DEFAULTS };
     if (!parsed || typeof parsed !== 'object') return merged;
 
     if (typeof parsed.enableMusic === 'boolean') merged.enableMusic = parsed.enableMusic;
     for (const key of Object.keys(MUSIC_SETTINGS_DEFAULTS)) {
       if (key === 'enableMusic') continue;
-      if (typeof parsed[key] === 'boolean') merged[key] = parsed[key];
+      if (typeof parsed[key] === 'boolean') /** @type {any} */ (merged)[key] = parsed[key];
     }
 
     // Legacy flags mapping
@@ -84,7 +85,7 @@
           return mergeMusicSettings(parsed);
         }
       }
-    } catch {
+    } catch (e) {
       // fall back to localStorage
     }
 
@@ -93,18 +94,18 @@
       if (!stored) return { ...MUSIC_SETTINGS_DEFAULTS };
       const parsed = JSON.parse(stored);
       return mergeMusicSettings(parsed);
-    } catch {
+    } catch (e) {
       return { ...MUSIC_SETTINGS_DEFAULTS };
     }
   }
 
-  function isMusicModuleEnabled(settings) {
+  function isMusicModuleEnabled(/** @type {any} */ settings) {
     return !!(settings && settings.enableMusic);
   }
 
   // Scroll-to-top is now handled globally by enhanced.js
   // This function is kept for backward compatibility but always returns false
-  function isScrollToTopEnabled() {
+  function isScrollToTopEnabled(/** @type {any} */ _settings) {
     return false;
   }
 
@@ -120,7 +121,7 @@
   /** @type {MutationObserver|null} */
   let observer = null;
 
-  /** @type {number|null} */
+  /** @type {ReturnType<typeof setInterval>|null} */
   let healthCheckIntervalId = null;
 
   /** @type {(() => void)|null} */
@@ -251,17 +252,17 @@
 
     try {
       if (typeof GM_addStyle !== 'undefined') {
-        const el = GM_addStyle(allStyles);
+        const el = /** @type {any} */ (GM_addStyle(allStyles));
         if (el && el.tagName === 'STYLE') {
           musicStyleEl = /** @type {HTMLStyleElement} */ (el);
           try {
             musicStyleEl.id = 'youtube-plus-music-styles';
-          } catch {
+          } catch (e) {
             /* style ID assignment optional */
           }
         }
       }
-    } catch {
+    } catch (e) {
       // ignore and fallback
     }
 
@@ -294,10 +295,11 @@
       return window.YouTubeUtils.debounce;
     }
     // Fallback debounce implementation
-    return (fn, delay) => {
-      let timeoutId;
-      return (...args) => {
-        clearTimeout(timeoutId);
+    return (/** @type {Function} */ fn, /** @type {number} */ delay) => {
+      /** @type {ReturnType<typeof setTimeout>|null} */
+      let timeoutId = null;
+      return (/** @type {any[]} */ ...args) => {
+        if (timeoutId) clearTimeout(timeoutId);
         timeoutId = setTimeout(() => fn(...args), delay);
       };
     };
@@ -354,7 +356,10 @@
    * @returns {HTMLElement|null} Scroll container or null
    * @private
    */
-  function findScrollContainer(sidePanel, MusicUtils) {
+  function findScrollContainer(
+    /** @type {HTMLElement} */ sidePanel,
+    /** @type {any} */ MusicUtils
+  ) {
     // Check cache first
     if (scrollContainerCache.has(sidePanel)) {
       const cached = scrollContainerCache.get(sidePanel);
@@ -413,8 +418,8 @@
             '[YouTube+][Music]',
             `✓ Found scroll container: ${selector}`
           );
-          scrollContainerCache.set(sidePanel, container);
-          return container;
+          scrollContainerCache.set(sidePanel, /** @type {any} */ (container));
+          return /** @type {any} */ (container);
         }
       }
     }
@@ -452,7 +457,7 @@
               best = el;
             }
           }
-        } catch {
+        } catch (e) {
           // ignore
         }
       }
@@ -465,8 +470,8 @@
           `✓ Best scroll container chosen: ${tag}${id}`,
           { scrollHeight: best.scrollHeight, clientHeight: best.clientHeight }
         );
-        scrollContainerCache.set(sidePanel, best);
-        return best;
+        scrollContainerCache.set(sidePanel, /** @type {any} */ (best));
+        return /** @type {any} */ (best);
       }
     }
 
@@ -485,18 +490,23 @@
    * @param {Object} MusicUtils - Utility module
    * @private
    */
-  function setupScrollBehavior(button, sc, MusicUtils, sidePanel) {
+  function setupScrollBehavior(
+    /** @type {HTMLElement} */ button,
+    /** @type {HTMLElement} */ sc,
+    /** @type {any} */ MusicUtils,
+    /** @type {HTMLElement} */ sidePanel
+  ) {
     if (MusicUtils.setupScrollToTop) {
       MusicUtils.setupScrollToTop(button, sc);
       return;
     }
 
-    const findNearestScrollable = startEl => {
+    const findNearestScrollable = (/** @type {HTMLElement|null} */ startEl) => {
       let el = startEl;
       while (el && el !== document.body) {
         try {
           if (el.scrollHeight > el.clientHeight + 10) return el;
-        } catch {
+        } catch (e) {
           // ignore errors accessing scroll properties on cross-origin or detached nodes
         }
         el = el.parentElement;
@@ -504,20 +514,21 @@
       return null;
     };
 
-    const clickHandler = ev => {
+    const clickHandler = (/** @type {any} */ ev) => {
       // Prevent other handlers or navigation from interfering
       try {
         ev.preventDefault?.();
-      } catch {
+      } catch (e) {
         /* optional event method */
       }
       try {
         ev.stopPropagation?.();
-      } catch {
+      } catch (e) {
         /* optional event method */
       }
 
       // Determine best candidate to scroll: provided sc, fallback to nearest scrollable in sidePanel, then walk from button
+      /** @type {any} */
       let target = sc;
       if (!target || !(target.scrollHeight > target.clientHeight + 1)) {
         target = sidePanel && findNearestScrollable(sidePanel);
@@ -542,17 +553,17 @@
         try {
           window.YouTubeMusic = window.YouTubeMusic || {};
           window.YouTubeMusic._lastClickDebug = info;
-        } catch {
+        } catch (e) {
           /* debug store non-critical */
         }
         // Log via available logger or console
         window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'ScrollToTop click target', info);
-      } catch {
+      } catch (e) {
         /* debug info collection non-critical */
       }
 
       // Try smooth scroll then fallback to instant. Attempt multiple targets (target, sc, document)
-      const tryScroll = el => {
+      const tryScroll = (/** @type {any} */ el) => {
         if (!el) return false;
         try {
           if (typeof el.scrollTo === 'function') {
@@ -563,7 +574,7 @@
             el.scrollTop = 0;
             return true;
           }
-        } catch {
+        } catch (e) {
           // ignore and continue
         }
         return false;
@@ -603,7 +614,12 @@
    * @param {Object} MusicUtils - Utility module
    * @private
    */
-  function setupButtonPosition(button, sidePanel, MusicUtils, options = {}) {
+  function setupButtonPosition(
+    /** @type {HTMLElement} */ button,
+    /** @type {HTMLElement} */ sidePanel,
+    /** @type {any} */ MusicUtils,
+    /** @type {{insideSidePanel?: boolean}} */ options = {}
+  ) {
     // options.insideSidePanel: boolean - if true, position the button inside the side panel
     if (MusicUtils.setupButtonStyles) {
       MusicUtils.setupButtonStyles(button, sidePanel, options);
@@ -613,28 +629,28 @@
     if (options.insideSidePanel && sidePanel) {
       // When visually aligning with the side-panel but appending to `body`,
       // use fixed positioning so the button won't be clipped by panel transforms.
-      button.style.setProperty('position', 'absolute', 'important');
-      button.style.setProperty('bottom', '20px', 'important');
-      button.style.setProperty('right', '20px', 'important');
+      /** @type {any} */ (button).style.setProperty('position', 'absolute', 'important');
+      /** @type {any} */ (button).style.setProperty('bottom', '20px', 'important');
+      /** @type {any} */ (button).style.setProperty('right', '20px', 'important');
       // Keep z-index high enough to be above panel content but below full-screen overlays
-      button.style.setProperty('z-index', '1200', 'important');
-      button.style.setProperty('pointer-events', 'auto', 'important');
-      button.style.display = 'flex';
+      /** @type {any} */ (button).style.setProperty('z-index', '1200', 'important');
+      /** @type {any} */ (button).style.setProperty('pointer-events', 'auto', 'important');
+      /** @type {any} */ (button).style.display = 'flex';
     } else {
       // Use fixed positioning so button stays visible regardless of side-panel state
-      button.style.position = 'fixed';
-      button.style.bottom = '100px'; // Above player bar (player bar is ~72px height)
-      button.style.right = '20px'; // Match CSS definition
-      button.style.zIndex = '10000'; // Higher than side-panel
-      button.style.pointerEvents = 'auto';
-      button.style.display = 'flex'; // Ensure flex display
+      /** @type {any} */ (button).style.position = 'fixed';
+      /** @type {any} */ (button).style.bottom = '100px'; // Above player bar (player bar is ~72px height)
+      /** @type {any} */ (button).style.right = '20px'; // Match CSS definition
+      /** @type {any} */ (button).style.zIndex = '10000'; // Higher than side-panel
+      /** @type {any} */ (button).style.pointerEvents = 'auto';
+      /** @type {any} */ (button).style.display = 'flex'; // Ensure flex display
     }
 
     window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Button positioned:', {
-      position: button.style.position,
-      bottom: button.style.bottom,
-      right: button.style.right,
-      zIndex: button.style.zIndex,
+      position: /** @type {any} */ (button).style.position,
+      bottom: /** @type {any} */ (button).style.bottom,
+      right: /** @type {any} */ (button).style.right,
+      zIndex: /** @type {any} */ (button).style.zIndex,
       insideSidePanel: !!options.insideSidePanel,
     });
   }
@@ -646,7 +662,11 @@
    * @param {Object} MusicUtils - Utility module
    * @private
    */
-  function setupScrollVisibility(button, sc, MusicUtils) {
+  function setupScrollVisibility(
+    /** @type {HTMLElement} */ button,
+    /** @type {HTMLElement} */ sc,
+    /** @type {any} */ MusicUtils
+  ) {
     // Try to use ScrollManager for better performance
     if (window.YouTubePlusScrollManager && window.YouTubePlusScrollManager.addScrollListener) {
       try {
@@ -669,7 +689,7 @@
           'Using ScrollManager for scroll handling'
         );
         return;
-      } catch {
+      } catch (e) {
         console.error('[YouTube+][Music] ScrollManager failed, using fallback');
       }
     }
@@ -681,6 +701,7 @@
 
     // Fallback implementation
     let isTabVisible = !document.hidden;
+    /** @type {number|null} */
     let rafId = null;
 
     const updateVisibility = () => {
@@ -798,10 +819,16 @@
           scrollHeight: sc.scrollHeight,
           clientHeight: sc.clientHeight,
           scrollTop: initialScroll,
-          position: button.style.position,
-          computedDisplay: window.getComputedStyle(button).display,
-          computedOpacity: window.getComputedStyle(button).opacity,
-          computedVisibility: window.getComputedStyle(button).visibility,
+          position: /** @type {any} */ (button).style.position,
+          computedDisplay: window.getComputedStyle(
+            /** @type {Element} */ (/** @type {any} */ (button))
+          ).display,
+          computedOpacity: window.getComputedStyle(
+            /** @type {Element} */ (/** @type {any} */ (button))
+          ).opacity,
+          computedVisibility: window.getComputedStyle(
+            /** @type {Element} */ (/** @type {any} */ (button))
+          ).visibility,
         }
       );
     } catch (err) {
@@ -814,6 +841,7 @@
    * @type {Object}
    * @private
    */
+  /** @type {{attempts: number, maxAttempts: number, lastAttempt: number, minInterval: number}} */
   const buttonCreationState = {
     attempts: 0,
     maxAttempts: 5,
@@ -875,8 +903,8 @@
         `Creating button (attempt ${buttonCreationState.attempts}/${buttonCreationState.maxAttempts})`
       );
 
-      const sidePanel = qs('#side-panel');
-      const MusicUtils = window.YouTubePlusMusicUtils || {};
+      const sidePanel = /** @type {HTMLElement|null} */ (qs('#side-panel'));
+      const MusicUtils = /** @type {any} */ (window.YouTubePlusMusicUtils || {});
       const button = createButton();
 
       // If no side-panel, try to find the main content area or queue
@@ -891,7 +919,12 @@
         if (queueRenderer) {
           const queueContents = queueRenderer.querySelector('#contents');
           if (queueContents) {
-            attachButtonToContainer(button, queueRenderer, queueContents, MusicUtils);
+            attachButtonToContainer(
+              button,
+              /** @type {any} */ (queueRenderer),
+              /** @type {any} */ (queueContents),
+              MusicUtils
+            );
             buttonCreationState.attempts = 0; // Reset on success
             return;
           }
@@ -902,14 +935,19 @@
         if (mainContent) {
           const scrollContainer = mainContent.querySelector('ytmusic-section-list-renderer');
           if (scrollContainer) {
-            attachButtonToContainer(button, mainContent, scrollContainer, MusicUtils);
+            attachButtonToContainer(
+              button,
+              /** @type {any} */ (mainContent),
+              /** @type {any} */ (scrollContainer),
+              MusicUtils
+            );
             buttonCreationState.attempts = 0; // Reset on success
             return;
           }
         }
 
         // Retry later
-        setTimeout(createScrollToTopButton, 1000);
+        setTimeout(() => createScrollToTopButton(), 1000);
         return;
       }
 
@@ -923,7 +961,7 @@
 
         // Retry with exponential backoff
         const backoffDelay = Math.min(500 * buttonCreationState.attempts, 3000);
-        setTimeout(createScrollToTopButton, backoffDelay);
+        setTimeout(() => createScrollToTopButton(), backoffDelay);
         return;
       }
 
@@ -935,7 +973,7 @@
       console.error('[YouTube+][Music] Error creating scroll to top button:', error);
       // Retry on error if we haven't exceeded max attempts
       if (buttonCreationState.attempts < buttonCreationState.maxAttempts) {
-        setTimeout(createScrollToTopButton, 1000);
+        setTimeout(() => createScrollToTopButton(), 1000);
       }
     }
   }
@@ -959,14 +997,14 @@
           if (existingButton._scrollCleanup) {
             try {
               existingButton._scrollCleanup();
-            } catch {
+            } catch (e) {
               // ignore cleanup errors
             }
           }
           if (existingButton._positionCleanup) {
             try {
               existingButton._positionCleanup();
-            } catch {
+            } catch (e) {
               // ignore cleanup errors
             }
           }
@@ -982,7 +1020,7 @@
       }
 
       // Look for containers that need a button
-      const sidePanel = qs('#side-panel');
+      const sidePanel = /** @type {HTMLElement|null} */ (qs('#side-panel'));
       const mainContent = qs('ytmusic-browse');
       const queueRenderer = qs('ytmusic-queue-renderer');
       const tabRenderer = qs('ytmusic-tab-renderer[tab-identifier]');
@@ -992,7 +1030,7 @@
           '[YouTube+][Music]',
           'Found container, scheduling button creation'
         );
-        setTimeout(createScrollToTopButton, 300);
+        setTimeout(() => createScrollToTopButton(), 300);
       } else {
         window.YouTubeUtils?.logger?.debug?.(
           '[YouTube+][Music]',
@@ -1162,7 +1200,7 @@
       if (detachNavigationListeners) {
         try {
           detachNavigationListeners();
-        } catch {
+        } catch (e) {
           /* teardown may fail safely */
         }
         detachNavigationListeners = null;
@@ -1172,14 +1210,14 @@
       if (button?._scrollCleanup) {
         try {
           button._scrollCleanup();
-        } catch {
+        } catch (e) {
           /* cleanup may fail safely */
         }
       }
       if (button?._positionCleanup) {
         try {
           button._positionCleanup();
-        } catch {
+        } catch (e) {
           /* cleanup may fail safely */
         }
       }
@@ -1253,7 +1291,7 @@
         }
 
         if (!button) {
-          const sidePanel = qs('#side-panel');
+          const sidePanel = /** @type {HTMLElement|null} */ (qs('#side-panel'));
           if (sidePanel) checkAndCreateButton();
         }
       } catch (error) {
@@ -1263,7 +1301,9 @@
 
     // Register the health check interval with cleanupManager for SPA cleanup
     if (window.YouTubeUtils?.cleanupManager?.registerInterval) {
-      window.YouTubeUtils.cleanupManager.registerInterval(healthCheckIntervalId);
+      window.YouTubeUtils.cleanupManager.registerInterval(
+        /** @type {any} */ (healthCheckIntervalId)
+      );
     }
   }
 
@@ -1298,7 +1338,7 @@
         document
           .querySelectorAll('#youtube-plus-music-styles')
           .forEach(el => el !== musicStyleEl && el.remove());
-      } catch {
+      } catch (e) {
         /* stray element cleanup optional */
       }
       musicStyleEl = null;
@@ -1318,7 +1358,7 @@
     }
   }
 
-  function saveSettings(s) {
+  function saveSettings(/** @type {any} */ s) {
     // Caller already saves to localStorage; keep an in-memory snapshot.
     if (s && typeof s === 'object') {
       musicSettingsSnapshot = { ...musicSettingsSnapshot, ...s };
@@ -1365,7 +1405,7 @@
           } else {
             musicSettingsSnapshot = readMusicSettings();
           }
-        } catch {
+        } catch (e) {
           musicSettingsSnapshot = readMusicSettings();
         }
 

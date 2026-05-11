@@ -327,5 +327,20 @@
   "loopDisabled": "Herhaling uitgeschakeld",
   "loopPointASet": "Punt A ingesteld",
   "loopPointBSet": "Punt B ingesteld",
-  "loopPointsReset": "Punten gereset"
+  "loopPointsReset": "Punten gereset",
+  "addCommentPlaceholder": "Add a comment...",
+  "enableTabviewLabel": "Tabview",
+  "enableTabviewDesc": "Show channel videos, shorts, streams, and playlists in tabs",
+  "enableCommentTranslateLabel": "Comment Translate",
+  "enableCommentTranslateDesc": "Add a translate button to each comment",
+  "rememberManualQualityLabel": "Remember Manual Quality",
+  "rememberManualQualityDesc": "Reuse your last manually selected quality when videos start",
+  "zenStyleSideVideosColumnsLabel": "Side Videos Columns",
+  "zenStyleSideVideosColumnsDesc": "Choose how many columns to use for side videos in Zen mode",
+  "zenStyleThemeVariantLabel": "Theme",
+  "zenStyleThemeVariantDesc": "Choose the visual treatment for the Zen interface",
+  "themeVariantGlass": "Glassmorphism",
+  "themeVariantSolid": "Solid",
+  "zenStyleCompactFeedLabel": "Compact Feed",
+  "zenStyleCompactFeedDesc": "Reduce feed spacing and show quick actions inline on hover"
 }
