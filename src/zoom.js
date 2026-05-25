@@ -2,12 +2,33 @@
 (function () {
   'use strict';
 
+  const setTimeout_ = setTimeout.bind(window);
+  const isRelevantRoute = () => {
+    try {
+      const path = window.location.pathname || '';
+      return path === '/watch' || path.startsWith('/shorts');
+    } catch (e) {
+      return false;
+    }
+  };
   const initZoomModule = () => {
-    const _createHTML = window._ytplusCreateHTML || ((/** @type {string} */ s) => s);
+    const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
+    /**
+     * @param {Element} container
+     * @param {string} html
+     */
+    const renderTemplateClone = (container, html) => {
+      if (!(container instanceof Element)) return;
+      const template = document.createElement('template');
+      const range = document.createRange();
+      const root = document.body || document.documentElement;
+      if (root) range.selectNode(root);
+      // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+      template.content.append(range.createContextualFragment(_createHTML(html)));
+      container.replaceChildren(template.content.cloneNode(true));
+    };
 
     let featureEnabled = true;
-    const loadFeatureEnabled = () =>
-      window.YouTubeUtils?.loadFeatureEnabled?.('enableZoom') ?? true;
     const clearZoomUI = () => {
       try {
         const ui = byId('ytp-zoom-control');
@@ -46,7 +67,32 @@
       }
     };
 
-    featureEnabled = loadFeatureEnabled();
+    const isMiniPlayerActive = () => {
+      try {
+        const mini = document.querySelector('ytd-miniplayer[active], ytd-miniplayer[enabled]');
+        if (mini && mini instanceof HTMLElement) {
+          if (mini.offsetParent !== null) return true;
+          if (mini.getClientRects().length > 0) return true;
+        }
+
+        const miniWatch = document.querySelector(
+          'ytd-watch-flexy[is-miniplayer], ytd-watch-flexy[miniplayer-is-active]'
+        );
+        return Boolean(miniWatch);
+      } catch (e) {
+        return false;
+      }
+    };
+
+    const canRenderZoomUI = () => {
+      try {
+        return featureEnabled && isRelevantRoute() && !isMiniPlayerActive();
+      } catch (e) {
+        return false;
+      }
+    };
+
+    featureEnabled = window.YouTubeUtils?.loadFeatureEnabled?.('enableZoom') ?? true;
 
     // Shared DOM helpers from YouTubeUtils
     const { $, byId } = window.YouTubeUtils || {};
@@ -90,7 +136,7 @@
         };
         localStorage.setItem(ZOOM_PAN_STORAGE_KEY, JSON.stringify(obj));
       } catch (e) {
-        console.warn('[YouTube+] Failed to save zoom/pan settings:', e);
+        window.console.warn('[YouTube+] Failed to save zoom/pan settings:', e);
       }
     }
 
@@ -107,12 +153,12 @@
         } catch (e) {
           // fallback: ignore
         }
-        // Console output for live debugging (only when debug mode is active)
+        // console output for live debugging (only when debug mode is active)
         if (
           (typeof window !== 'undefined' && window.YTP_DEBUG) ||
           window.YouTubePlusConfig?.debug
         ) {
-          console.warn('[YouTube+] Zoom restore:', entry);
+          window.console.warn('[YouTube+] Zoom restore:', entry);
         }
       } catch (e) {
         // Non-critical, suppressed
@@ -179,12 +225,12 @@
 
         // Reset flag after a short delay
         if (!skipTransformTracking) {
-          setTimeout(() => {
+          setTimeout_(() => {
             _isApplyingTransform = false;
           }, 100);
         }
       } catch (e) {
-        console.error('[YouTube+] applyZoomToVideo error:', e);
+        window.console.error('[YouTube+] applyZoomToVideo error:', e);
         _isApplyingTransform = false;
       }
     };
@@ -202,19 +248,19 @@
         s.id = 'ytp-zoom-styles';
         s.textContent = `
       /* Compact control bar matching YouTube control style */
-      #ytp-zoom-control{position: absolute; left: 12px; bottom: 70px; z-index: 2200; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 24px; background: rgba(0,0,0,0.35); color: #fff; font-size: 12px; box-shadow: 0 2px 8px rgba(0,0,0,0.5); backdrop-filter: blur(6px);}
+      #ytp-zoom-control{position: absolute; left: 12px; bottom: 70px; z-index: 2200; display: flex; align-items: center; gap: 8px; padding: 6px 8px; border-radius: 24px; background: var(--yt-shadow-inset-strong); color: #fff; font-size: 12px; box-shadow: 0 2px 8px var(--yt-shadow-flyout); backdrop-filter: blur(6px);}
       #ytp-zoom-control input[type=range]{width: 120px; -webkit-appearance: none; background: transparent; height: 24px;}
       /* WebKit track */
-      #ytp-zoom-control input[type=range]::-webkit-slider-runnable-track{height: 4px; background: rgba(255,255,255,0.12); border-radius: 3px;}
-      #ytp-zoom-control input[type=range]::-webkit-slider-thumb{-webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: #fff; box-shadow: 0 0 0 6px rgba(255,255,255,0.06); margin-top: -4px;}
+      #ytp-zoom-control input[type=range]::-webkit-slider-runnable-track{height: 4px; background: var(--yt-button-bg); border-radius: 3px;}
+      #ytp-zoom-control input[type=range]::-webkit-slider-thumb{-webkit-appearance: none; width: 12px; height: 12px; border-radius: 50%; background: var(--yt-text-primary); box-shadow: 0 0 0 6px var(--yt-button-bg); margin-top: -4px;}
       /* Firefox */
-      #ytp-zoom-control input[type=range]::-moz-range-track{height: 4px; background: rgba(255,255,255,0.12); border-radius: 3px;}
+      #ytp-zoom-control input[type=range]::-moz-range-track{height: 4px; background: var(--yt-button-bg); border-radius: 3px;}
       #ytp-zoom-control input[type=range]::-moz-range-thumb{width: 12px; height: 12px; border-radius: 50%; background: #fff; border: none;}
       #ytp-zoom-control .zoom-label{min-width:36px;text-align:center;font-size:11px;padding:0 6px;user-select:none}
-      #ytp-zoom-control::after{content:'Shift + Wheel to zoom';position:absolute;bottom:100%;right:0;padding:4px 8px;background:rgba(0,0,0,0.8);color:#fff;font-size:10px;border-radius:4px;white-space:nowrap;opacity:0;pointer-events:none;transform:translateY(4px);transition:opacity .2s,transform .2s}
+      #ytp-zoom-control::after{content:'Shift + Wheel to zoom';position:absolute;bottom:100%;right:0;padding:4px 8px;background:var(--yt-notification-bg);color:#fff;font-size:10px;border-radius:4px;white-space:nowrap;opacity:0;pointer-events:none;transform:translateY(4px);transition:opacity .2s,transform .2s}
       #ytp-zoom-control:hover::after{opacity:1;transform:translateY(-4px)}
-      #ytp-zoom-control .zoom-reset{background: rgba(255,255,255,0.06); border: none; color: inherit; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 50%; cursor: pointer; width: 28px; height: 28px;}
-      #ytp-zoom-control .zoom-reset:hover{background: rgba(255,255,255,0.12)}
+      #ytp-zoom-control .zoom-reset{background: var(--yt-button-bg); border: none; color: inherit; padding: 4px; display: flex; align-items: center; justify-content: center; border-radius: 50%; cursor: pointer; width: 28px; height: 28px;}
+      #ytp-zoom-control .zoom-reset:hover{background: var(--yt-hover-bg)}
       #ytp-zoom-control .zoom-reset svg{display:block;width:14px;height:14px}
       /* Hidden state to mirror YouTube controls autohide */
       #ytp-zoom-control.ytp-hidden{opacity:0;transform:translateY(6px);pointer-events:none}
@@ -243,11 +289,14 @@
       reset.type = 'button';
       reset.setAttribute('aria-label', 'Reset zoom');
       reset.title = 'Reset zoom';
-      reset.innerHTML = _createHTML(`
+      renderTemplateClone(
+        reset,
+        `
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" aria-hidden="true">
       <path d="M12 4V1l-5 5 5 5V7a7 7 0 1 1-7 7" stroke="currentColor" stroke-width="2" fill="none"/>
     </svg>
-  `);
+  `
+      );
 
       wrap.appendChild(input);
       wrap.appendChild(label);
@@ -279,7 +328,7 @@
                 /* Intentional: video element may be detached */
               }
             } catch (err) {
-              console.error('[YouTube+] Apply zoom error:', err);
+              window.console.error('[YouTube+] Apply zoom error:', err);
             }
           });
         }
@@ -287,7 +336,7 @@
         try {
           saveZoomPan(clamped, panX, panY);
         } catch (err) {
-          console.error('[YouTube+] Save zoom error:', err);
+          window.console.error('[YouTube+] Save zoom error:', err);
         }
       };
 
@@ -305,15 +354,15 @@
             // set via combined storage
             saveZoomPan(DEFAULT_ZOOM, 0, 0);
           } catch (e) {
-            console.warn('[YouTube+] Failed to persist zoom reset:', e);
+            window.console.warn('[YouTube+] Failed to persist zoom reset:', e);
           }
           // Provide visual feedback
           /** @type {any} */ (reset).style.transform = 'scale(0.9)';
-          setTimeout(() => {
+          setTimeout_(() => {
             /** @type {any} */ (reset).style.transform = '';
           }, 150);
         } catch (err) {
-          console.error('[YouTube+] Reset zoom error:', err);
+          window.console.error('[YouTube+] Reset zoom error:', err);
         }
       });
 
@@ -326,17 +375,17 @@
       const scheduleSavePan = () => {
         try {
           if (panSaveTimer) clearTimeout(panSaveTimer);
-          panSaveTimer = setTimeout(() => {
+          panSaveTimer = setTimeout_(() => {
             try {
               const currentZoom = parseFloat(input.value) || readZoomPan().zoom || DEFAULT_ZOOM;
               saveZoomPan(currentZoom, panX, panY);
             } catch (err) {
-              console.error('[YouTube+] Save pan error:', err);
+              window.console.error('[YouTube+] Save pan error:', err);
             }
             panSaveTimer = null;
           }, 220);
         } catch (err) {
-          console.error('[YouTube+] Schedule save pan error:', err);
+          window.console.error('[YouTube+] Schedule save pan error:', err);
         }
       };
       const wheelHandler = (/** @type {WheelEvent} */ ev) => {
@@ -348,7 +397,7 @@
           // Throttle wheel events to prevent excessive zoom changes
           if (wheelThrottleTimer) return;
 
-          wheelThrottleTimer = setTimeout(() => {
+          wheelThrottleTimer = setTimeout_(() => {
             wheelThrottleTimer = null;
           }, 50); // 50ms throttle
 
@@ -362,7 +411,7 @@
             setZoom(newZoom);
           }
         } catch (err) {
-          console.error('[YouTube+] Wheel zoom error:', err);
+          window.console.error('[YouTube+] Wheel zoom error:', err);
         }
       };
       // Attach wheel handler to player and video (if present) so it works over controls
@@ -371,7 +420,7 @@
         try {
           video.addEventListener('wheel', wheelHandler, { passive: false });
         } catch (err) {
-          console.error('[YouTube+] Failed to attach wheel handler to video:', err);
+          window.console.error('[YouTube+] Failed to attach wheel handler to video:', err);
         }
       }
 
@@ -398,7 +447,7 @@
             setZoom(Math.max(MIN_ZOOM, current - ZOOM_STEP));
           }
         } catch (e) {
-          console.error('[YouTube+] Keyboard zoom error:', e);
+          window.console.error('[YouTube+] Keyboard zoom error:', e);
         }
       };
       window.addEventListener('keydown', keydownHandler);
@@ -407,9 +456,12 @@
       // Panning (drag) state
       let panX = 0;
       let panY = 0;
-      // Observer to watch for external changes to the video's style (YouTube may override transform)
-      /** @type {MutationObserver|null} */
+      const mutationCoordinator = window.YouTubeMutationCoordinator;
+      // Coordinator subscription id for external changes to video style
+      /** @type {string|null} */
       let videoStyleObserver = null;
+      const videoStyleSubId = 'zoom::videoStyle';
+      const playerObserverSubId = 'zoom::playerVideoSwap';
 
       let dragging = false;
       let dragStartX = 0;
@@ -449,7 +501,7 @@
             panY = Math.max(-maxY, Math.min(maxY, panY));
           }
         } catch (err) {
-          console.error('[YouTube+] Clamp pan error:', err);
+          window.console.error('[YouTube+] Clamp pan error:', err);
         }
       };
 
@@ -649,7 +701,7 @@
             ev.preventDefault();
           }
         } catch (e) {
-          console.error('[YouTube+] touchStart error:', e);
+          window.console.error('[YouTube+] touchStart error:', e);
         }
       };
 
@@ -678,7 +730,7 @@
             ev.preventDefault();
           }
         } catch (e) {
-          console.error('[YouTube+] touchMove error:', e);
+          window.console.error('[YouTube+] touchMove error:', e);
         }
       };
 
@@ -701,7 +753,7 @@
             }
           }
         } catch (e) {
-          console.error('[YouTube+] touchEnd error:', e);
+          window.console.error('[YouTube+] touchEnd error:', e);
         }
       };
 
@@ -712,7 +764,7 @@
         player.addEventListener('touchend', touchEnd, { passive: true });
         player.addEventListener('touchcancel', touchEnd, { passive: true });
       } catch (e) {
-        console.error('[YouTube+] Failed to attach touch handlers:', e);
+        window.console.error('[YouTube+] Failed to attach touch handlers:', e);
       }
 
       // Fallback mouse handlers for more reliable dragging on desktop
@@ -765,7 +817,7 @@
 
           ev.preventDefault();
         } catch (err) {
-          console.error('[YouTube+] Mouse move error:', err);
+          window.console.error('[YouTube+] Mouse move error:', err);
         }
       };
 
@@ -805,82 +857,76 @@
         }
         // Attach style observer to ensure transform isn't clobbered by YouTube
         try {
-          const attachStyleObserver = () => {
-            try {
-              if (videoStyleObserver) {
-                try {
-                  videoStyleObserver.disconnect();
-                } catch (e) {
-                  // Non-critical, suppressed
-                }
-                videoStyleObserver = null;
-              }
-              if (!video) return;
-              videoStyleObserver = new MutationObserver(muts => {
-                try {
-                  // Skip if we're currently applying a transform
-                  if (_isApplyingTransform) return;
-
-                  for (const m of muts) {
-                    if (m.type === 'attributes' && m.attributeName === 'style') {
-                      // If transform has been changed externally, restore expected transform
-                      const current = (video && video.style && video.style.transform) || '';
-                      const expectedZoom =
-                        readZoomPan().zoom || parseFloat(input.value) || DEFAULT_ZOOM;
-                      const expected = `translate(${panX.toFixed(2)}px, ${panY.toFixed(2)}px) scale(${expectedZoom.toFixed(3)})`;
-
-                      // Only restore if transform was actually changed by YouTube (not by us)
-                      // and the current zoom is not default
-                      if (
-                        expectedZoom !== DEFAULT_ZOOM &&
-                        current !== expected &&
-                        current !== _lastTransformApplied
-                      ) {
-                        // Reapply on next frame to minimize layout thrash
-                        requestAnimationFrame(() => {
-                          try {
-                            applyZoomToVideo(video, expectedZoom, panX, panY);
-                            try {
-                              logRestoreEvent({
-                                action: 'restore_transform',
-                                currentTransform: current,
-                                expectedTransform: expected,
-                                zoom: expectedZoom,
-                                panX,
-                                panY,
-                              });
-                            } catch (e) {
-                              // Non-critical, suppressed
-                            }
-                          } catch (e) {
-                            // Non-critical, suppressed
-                          }
-                        });
-                      }
-                    }
-                  }
-                } catch (e) {
-                  // Non-critical, suppressed
-                }
-              });
-              videoStyleObserver.observe(video, { attributes: true, attributeFilter: ['style'] });
-              try {
-                window.YouTubeUtils?.cleanupManager?.registerObserver?.(videoStyleObserver);
-              } catch (e) {
-                // Non-critical, suppressed
-              }
-            } catch (e) {
-              // Non-critical, suppressed
-            }
-          };
           attachStyleObserver();
         } catch (e) {
           // Non-critical, suppressed
         }
       }
 
+      function handleVideoStyleMutations(/** @type {MutationRecord[]} */ muts) {
+        try {
+          // Skip if we're currently applying a transform
+          if (_isApplyingTransform) return;
+
+          for (const m of muts) {
+            if (m.type === 'attributes' && m.attributeName === 'style') {
+              // If transform has been changed externally, restore expected transform
+              const current = (video && video.style && video.style.transform) || '';
+              const expectedZoom = readZoomPan().zoom || parseFloat(input.value) || DEFAULT_ZOOM;
+              const expected = `translate(${panX.toFixed(2)}px, ${panY.toFixed(2)}px) scale(${expectedZoom.toFixed(3)})`;
+
+              // Only restore if transform was actually changed by YouTube (not by us)
+              // and the current zoom is not default
+              if (
+                expectedZoom !== DEFAULT_ZOOM &&
+                current !== expected &&
+                current !== _lastTransformApplied
+              ) {
+                // Reapply on next frame to minimize layout thrash
+                requestAnimationFrame(() => {
+                  try {
+                    applyZoomToVideo(video, expectedZoom, panX, panY);
+                    try {
+                      logRestoreEvent({
+                        action: 'restore_transform',
+                        currentTransform: current,
+                        expectedTransform: expected,
+                        zoom: expectedZoom,
+                        panX,
+                        panY,
+                      });
+                    } catch (e) {
+                      // Non-critical, suppressed
+                    }
+                  } catch (e) {
+                    // Non-critical, suppressed
+                  }
+                });
+              }
+            }
+          }
+        } catch (e) {
+          // Non-critical, suppressed
+        }
+      }
+
+      function attachStyleObserver() {
+        if (videoStyleObserver) {
+          mutationCoordinator?.unwatch?.(videoStyleObserver);
+          videoStyleObserver = null;
+        }
+        if (!video || !mutationCoordinator?.watchTarget) return;
+        videoStyleObserver = videoStyleSubId;
+        mutationCoordinator.watchTarget(videoStyleObserver, video, handleVideoStyleMutations, {
+          attributes: true,
+          childList: false,
+          subtree: false,
+          attributeFilter: ['style'],
+        });
+      }
+
       // If video element is replaced by YouTube (e.g. fullscreen toggle or navigation), rebind handlers
-      const playerObserver = new MutationObserver(() => {
+      const handlePlayerMutations = () => {
         try {
           const newVideo = findVideoElement();
           if (newVideo && newVideo !== video) {
@@ -895,7 +941,7 @@
                 }
               }
             } catch (err) {
-              console.error('[YouTube+] Error detaching from old video:', err);
+              window.console.error('[YouTube+] Error detaching from old video:', err);
             }
 
             // Update reference
@@ -903,69 +949,9 @@
 
             // Reattach style observer for the new video element
             try {
-              if (videoStyleObserver) {
-                try {
-                  videoStyleObserver.disconnect();
-                } catch (e) {
-                  // Non-critical, suppressed
-                }
-                videoStyleObserver = null;
-              }
-              if (video) {
-                videoStyleObserver = new MutationObserver(muts => {
-                  try {
-                    // Skip if we're currently applying a transform
-                    if (_isApplyingTransform) return;
-
-                    for (const m of muts) {
-                      if (m.type === 'attributes' && m.attributeName === 'style') {
-                        const current = (video && video.style && video.style.transform) || '';
-                        const expectedZoom =
-                          readZoomPan().zoom || parseFloat(input.value) || DEFAULT_ZOOM;
-                        const expected = `translate(${panX.toFixed(2)}px, ${panY.toFixed(2)}px) scale(${expectedZoom.toFixed(3)})`;
-
-                        // Only restore if transform was actually changed by YouTube (not by us)
-                        // and the current zoom is not default
-                        if (
-                          expectedZoom !== DEFAULT_ZOOM &&
-                          current !== expected &&
-                          current !== _lastTransformApplied
-                        ) {
-                          requestAnimationFrame(() => {
-                            try {
-                              applyZoomToVideo(video, expectedZoom, panX, panY);
-                              try {
-                                logRestoreEvent({
-                                  action: 'restore_transform',
-                                  currentTransform: current,
-                                  expectedTransform: expected,
-                                  zoom: expectedZoom,
-                                  panX,
-                                  panY,
-                                });
-                              } catch (e) {
-                                // Non-critical, suppressed
-                              }
-                            } catch (e) {
-                              // Non-critical, suppressed
-                            }
-                          });
-                        }
-                      }
-                    }
-                  } catch (e) {
-                    // Non-critical, suppressed
-                  }
-                });
-                videoStyleObserver.observe(video, { attributes: true, attributeFilter: ['style'] });
-                try {
-                  window.YouTubeUtils?.cleanupManager?.registerObserver?.(videoStyleObserver);
-                } catch (e) {
-                  // Non-critical, suppressed
-                }
-              }
+              attachStyleObserver();
             } catch (err) {
-              console.error('[YouTube+] Error attaching style observer to new video:', err);
+              window.console.error('[YouTube+] Error attaching style observer to new video:', err);
             }
 
             // Reapply zoom to the new video
@@ -974,35 +960,41 @@
               clampPan(current);
               applyZoomToVideo(video, current, panX, panY);
             } catch (err) {
-              console.error('[YouTube+] Error applying zoom to new video:', err);
+              window.console.error('[YouTube+] Error applying zoom to new video:', err);
             }
 
             // Attach listeners to new video
             try {
               video.addEventListener('mousedown', mouseDownHandler);
             } catch (err) {
-              console.error('[YouTube+] Error attaching mousedown to new video:', err);
+              window.console.error('[YouTube+] Error attaching mousedown to new video:', err);
             }
             try {
               video.addEventListener('wheel', wheelHandler, { passive: false });
             } catch (err) {
-              console.error('[YouTube+] Error attaching wheel to new video:', err);
+              window.console.error('[YouTube+] Error attaching wheel to new video:', err);
             }
           }
         } catch (err) {
-          console.error('[YouTube+] Player observer error:', err);
+          window.console.error('[YouTube+] Player observer error:', err);
         }
-      });
+      };
+
+      let playerObserverActive = false;
       try {
-        playerObserver.observe(player, { childList: true, subtree: true });
-        if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
-          window.YouTubeUtils.cleanupManager.registerObserver(playerObserver);
-        }
-        if (window.YouTubeUtils?.ObserverRegistry?.track) {
-          window.YouTubeUtils.ObserverRegistry.track();
+        if (mutationCoordinator?.watchTarget) {
+          mutationCoordinator.watchTarget(playerObserverSubId, player, handlePlayerMutations, {
+            childList: true,
+            subtree: true,
+            attributes: false,
+          });
+          playerObserverActive = true;
+          if (window.YouTubeUtils?.ObserverRegistry?.track) {
+            window.YouTubeUtils.ObserverRegistry.track();
+          }
         }
       } catch (err) {
-        console.error('[YouTube+] Failed to observe player for video changes:', err);
+        window.console.error('[YouTube+] Failed to observe player for video changes:', err);
       }
 
       // Reapply zoom on fullscreen change since layout may move elements.
@@ -1012,7 +1004,7 @@
         try {
           const current = readZoomPan().zoom || DEFAULT_ZOOM;
           // Attempt to find/apply multiple times — YouTube may move/replace the video element
-          setTimeout(() => {
+          setTimeout_(() => {
             try {
               let attempts = 0;
               const tryApply = () => {
@@ -1045,19 +1037,19 @@
                   // If we didn't find/replace video yet, retry a few times
                   if (!swapped && (!video || attempts < FULLSCREEN_APPLY_RETRIES)) {
                     attempts += 1;
-                    setTimeout(tryApply, FULLSCREEN_APPLY_RETRY_DELAY);
+                    setTimeout_(tryApply, FULLSCREEN_APPLY_RETRY_DELAY);
                   }
                 } catch (e) {
-                  console.error('[YouTube+] Fullscreen apply attempt error:', e);
+                  window.console.error('[YouTube+] Fullscreen apply attempt error:', e);
                 }
               };
               tryApply();
             } catch (e) {
-              console.error('[YouTube+] Fullscreen inner apply error:', e);
+              window.console.error('[YouTube+] Fullscreen inner apply error:', e);
             }
           }, FULLSCREEN_APPLY_DELAY);
         } catch (err) {
-          console.error('[YouTube+] Fullscreen handler error:', err);
+          window.console.error('[YouTube+] Fullscreen handler error:', err);
         }
       };
       [
@@ -1082,10 +1074,10 @@
           // Ensure pan is within limits for the initial zoom
           clampPan(initZoomVal);
         } catch (err) {
-          console.error('[YouTube+] Restore pan error:', err);
+          window.console.error('[YouTube+] Restore pan error:', err);
         }
       } catch (err) {
-        console.error('[YouTube+] Initial zoom setup error:', err);
+        window.console.error('[YouTube+] Initial zoom setup error:', err);
       }
 
       // Initialize transform tracking with the initial state
@@ -1254,20 +1246,30 @@
         }
       };
 
-      // Observe player class changes
-      const visObserver = new MutationObserver(() => updateHidden());
+      // Observe player/chrome class changes via centralized coordinator
+      const visObserverPlayerId = 'zoom::visibilityPlayer';
+      const visObserverChromeId = 'zoom::visibilityChrome';
+      let visObserverPlayerActive = false;
+      let visObserverChromeActive = false;
       try {
-        visObserver.observe(player, { attributes: true, attributeFilter: ['class', 'style'] });
-        if (chromeBottom) {
-          visObserver.observe(chromeBottom, {
+        if (mutationCoordinator?.watchTarget) {
+          mutationCoordinator.watchTarget(visObserverPlayerId, player, updateHidden, {
             attributes: true,
+            childList: false,
+            subtree: false,
             attributeFilter: ['class', 'style'],
           });
-        }
-        try {
-          window.YouTubeUtils?.cleanupManager?.registerObserver?.(visObserver);
-        } catch (e) {
-          // Non-critical, suppressed
+          visObserverPlayerActive = true;
+
+          if (chromeBottom) {
+            mutationCoordinator.watchTarget(visObserverChromeId, chromeBottom, updateHidden, {
+              attributes: true,
+              childList: false,
+              subtree: false,
+              attributeFilter: ['class', 'style'],
+            });
+            visObserverChromeActive = true;
+          }
         }
       } catch (e) {
         // Non-critical, suppressed
@@ -1280,7 +1282,7 @@
         try {
           wrap.classList.remove('ytp-hidden');
           if (showTimer) clearTimeout(showTimer);
-          showTimer = setTimeout(updateHidden, 2200);
+          showTimer = setTimeout_(updateHidden, 2200);
         } catch (e) {
           // Non-critical, suppressed
         }
@@ -1353,27 +1355,27 @@
 
           // Disconnect style observer
           if (videoStyleObserver) {
-            try {
-              videoStyleObserver.disconnect();
-            } catch (e) {
-              // Non-critical, suppressed
-            }
+            mutationCoordinator?.unwatch?.(videoStyleObserver);
             videoStyleObserver = null;
           }
 
-          // Disconnect observer
-          if (visObserver) {
+          if (visObserverPlayerActive) {
+            mutationCoordinator?.unwatch?.(visObserverPlayerId);
+            visObserverPlayerActive = false;
+          }
+          if (visObserverChromeActive) {
+            mutationCoordinator?.unwatch?.(visObserverChromeId);
+            visObserverChromeActive = false;
+          }
+
+          if (playerObserverActive) {
+            mutationCoordinator?.unwatch?.(playerObserverSubId);
+            playerObserverActive = false;
             try {
-              visObserver.disconnect();
+              window.YouTubeUtils?.ObserverRegistry?.untrack?.();
             } catch (e) {
               // Non-critical, suppressed
             }
-          }
-          // Disconnect player mutation observer
-          try {
-            if (playerObserver) playerObserver.disconnect();
-          } catch (e) {
-            // Non-critical, suppressed
           }
 
           // Remove fullscreen handler
@@ -1392,7 +1394,7 @@
           // Remove UI element
           wrap.remove();
         } catch (err) {
-          console.error('[YouTube+] Cleanup error:', err);
+          window.console.error('[YouTube+] Cleanup error:', err);
         }
       };
 
@@ -1410,11 +1412,22 @@
     // Call this to initialize zoom (e.g. on page load / SPA navigation)
     function initZoom() {
       try {
-        if (!featureEnabled) return;
+        if (!canRenderZoomUI()) {
+          clearZoomUI();
+          return;
+        }
         const ensure = () => {
+          if (!canRenderZoomUI()) {
+            clearZoomUI();
+            return;
+          }
           const player = /** @type {HTMLElement | null} */ ($('#movie_player'));
           if (!player) {
-            setTimeout(ensure, 400);
+            setTimeout_(ensure, 400);
+            return;
+          }
+          if (player.closest('ytd-miniplayer')) {
+            clearZoomUI();
             return;
           }
           createZoomUI();
@@ -1422,12 +1435,32 @@
         ensure();
         if (!_navigateListenerAdded) {
           _navigateListenerAdded = true;
-          window.addEventListener('yt-navigate-finish', () =>
-            setTimeout(() => createZoomUI(), 300)
+          window.addEventListener('yt-navigate-finish', () => {
+            setTimeout_(() => {
+              try {
+                if (canRenderZoomUI()) createZoomUI();
+                else clearZoomUI();
+              } catch (e) {
+                void e;
+              }
+            }, 300);
+          });
+          // Safety net: LazyLoader dispatches ytp:nav-refresh after every SPA
+          // nav (independent of yt-navigate-finish race timing). createZoomUI
+          // is idempotent — it early-returns if #ytp-zoom-control exists.
+          window.addEventListener('ytp:nav-refresh', () =>
+            setTimeout_(() => {
+              try {
+                if (canRenderZoomUI()) createZoomUI();
+                else clearZoomUI();
+              } catch (e) {
+                void e;
+              }
+            }, 300)
           );
         }
       } catch (e) {
-        console.error('initZoom error');
+        window.console.error('initZoom error', e);
       }
     }
 
@@ -1441,7 +1474,7 @@
             if (nextEnabled === featureEnabled) return;
             setFeatureEnabled(nextEnabled);
           } catch (e) {
-            setFeatureEnabled(loadFeatureEnabled());
+            setFeatureEnabled(window.YouTubeUtils?.loadFeatureEnabled?.('enableZoom') ?? true);
           }
         }
       )
@@ -1457,7 +1490,10 @@
 
   // Defer zoom init to idle time via LazyLoader
   if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register('zoom', initZoomModule, { priority: 1 });
+    window.YouTubePlusLazyLoader.register('zoom', initZoomModule, {
+      priority: 1,
+      shouldLoad: isRelevantRoute,
+    });
   } else {
     initZoomModule();
   }

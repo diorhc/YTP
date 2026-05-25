@@ -23,8 +23,8 @@ describe('LazyLoader', () => {
     // Reset module cache so the IIFE re-executes
     jest.resetModules();
 
-    require('../src/lazy-loader');
-    lazyLoader = window.YouTubePlusLazyLoader || null;
+    require('../src/module-registry');
+    lazyLoader = window.YouTubePlusRegistry?.lazyLoader || window.YouTubePlusLazyLoader || null;
   });
 
   afterEach(() => {
@@ -122,5 +122,51 @@ describe('LazyLoader', () => {
     lazyLoader.register('dup', jest.fn());
     lazyLoader.register('dup', jest.fn());
     expect(lazyLoader.getStats().totalModules).toBe(1);
+  });
+
+  test('should load modules on ready when the document is already interactive', async () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
+    const originalReadyState = document.readyState;
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      get: () => 'interactive',
+    });
+
+    const fn = jest.fn();
+    lazyLoader.register('ready-mod', fn, { loadOnReady: true });
+    lazyLoader.loadOnReady();
+
+    await Promise.resolve();
+
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    Object.defineProperty(document, 'readyState', {
+      configurable: true,
+      get: () => originalReadyState,
+    });
+  });
+
+  test('should reload modules after navigation when reloadOnNavigate is enabled', async () => {
+    if (!lazyLoader) throw new Error('lazyLoader not initialized');
+    jest.useFakeTimers();
+    Object.defineProperty(window, 'requestIdleCallback', {
+      configurable: true,
+      writable: true,
+      value: undefined,
+    });
+
+    const fn = jest.fn();
+    lazyLoader.register('reloadable', fn, { reloadOnNavigate: true });
+    await lazyLoader.load('reloadable');
+    expect(fn).toHaveBeenCalledTimes(1);
+
+    lazyLoader.attachNavRetry();
+    window.dispatchEvent(new Event('yt-navigate-finish'));
+    jest.advanceTimersByTime(300);
+    await Promise.resolve();
+
+    expect(fn).toHaveBeenCalledTimes(2);
+    expect(lazyLoader.isLoaded('reloadable')).toBe(true);
+    jest.useRealTimers();
   });
 });

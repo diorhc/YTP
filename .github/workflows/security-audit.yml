@@ -66,7 +66,7 @@ jobs:
         id: dependency-check
         run: |
           echo "## Dependency Vulnerability Check" >> $GITHUB_STEP_SUMMARY
-          npx better-npm-audit audit --json > dependency-audit.json || true
+          npm audit --json > dependency-audit.json || true
           echo "Check completed - see artifacts for details" >> $GITHUB_STEP_SUMMARY
         continue-on-error: true
 
@@ -186,7 +186,7 @@ jobs:
           
           1. ✅ Keep dependencies up to date via Dependabot
           2. ✅ Continue using TrustedTypes for dynamic content
-          3. ✅ Maintain security-utils.js for sanitization
+          3. ✅ Maintain safe-dom.js as the canonical sanitization module
           4. ⚠️ Review and refactor remaining dynamic innerHTML usage
           
           ## Next Audit

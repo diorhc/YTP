@@ -79,4 +79,61 @@ describe('PiP Module', () => {
     expect(restored.enabled).toBe(false);
     expect(restored.shortcut.key).toBe('I');
   });
+
+  test('should match shortcut by KeyboardEvent.code for non-latin layouts', () => {
+    const keyToCode = key => {
+      const normalized = String(key || '')
+        .trim()
+        .toUpperCase();
+      if (!normalized) return '';
+      if (normalized.length === 1 && /[A-Z]/.test(normalized)) return `Key${normalized}`;
+      if (normalized.length === 1 && /[0-9]/.test(normalized)) return `Digit${normalized}`;
+      return normalized;
+    };
+
+    const shortcut = { key: 'P', shiftKey: true, altKey: false, ctrlKey: false };
+    const event = { key: 'з', code: 'KeyP', shiftKey: true, altKey: false, ctrlKey: false };
+    const expectedCode = keyToCode(shortcut.key);
+    const eventKey = String(event.key || '').toUpperCase();
+    const keyMatches =
+      eventKey === shortcut.key.toUpperCase() || (expectedCode && event.code === expectedCode);
+    const modsMatch =
+      event.shiftKey === shortcut.shiftKey &&
+      event.altKey === shortcut.altKey &&
+      event.ctrlKey === shortcut.ctrlKey;
+
+    expect(keyMatches).toBe(true);
+    expect(modsMatch).toBe(true);
+  });
+
+  test('should match bracket shortcut by KeyboardEvent.code', () => {
+    const keyToCode = key => {
+      const normalized = String(key || '')
+        .trim()
+        .toUpperCase();
+      const map = { ']': 'BracketRight', '[': 'BracketLeft' };
+      if (Object.prototype.hasOwnProperty.call(map, normalized)) return map[normalized];
+      return normalized;
+    };
+
+    const shortcut = { key: ']', shiftKey: false, altKey: false, ctrlKey: true };
+    const event = {
+      key: 'Dead',
+      code: 'BracketRight',
+      shiftKey: false,
+      altKey: false,
+      ctrlKey: true,
+    };
+    const expectedCode = keyToCode(shortcut.key);
+    const eventKey = String(event.key || '').toUpperCase();
+    const keyMatches =
+      eventKey === shortcut.key.toUpperCase() || (expectedCode && event.code === expectedCode);
+    const modsMatch =
+      event.shiftKey === shortcut.shiftKey &&
+      event.altKey === shortcut.altKey &&
+      event.ctrlKey === shortcut.ctrlKey;
+
+    expect(keyMatches).toBe(true);
+    expect(modsMatch).toBe(true);
+  });
 });

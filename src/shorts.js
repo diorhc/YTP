@@ -1,10 +1,33 @@
 // Shorts Keyboard controls
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const setTimeout_ = setTimeout.bind(window);
+  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
+  /**
+   * @param {Element} container
+   * @param {string} html
+   */
+  const renderTemplateClone = (container, html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils?.t || (key => key || '');
+  const t = window.YouTubeUtils.t;
+  const qs =
+    window.YouTubeUtils?.$ ||
+    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
+      (root || document).querySelector(selector));
+  const byId =
+    window.YouTubeUtils?.byId ||
+    ((/** @type {string} */ id) =>
+      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
 
   // Configuration - Using lazy getters for translations to avoid early loading
   const config = {
@@ -70,10 +93,13 @@
     editingShortcut: null,
     /** @type {HTMLVideoElement|null} */
     cachedVideo: null,
+    /** @type {HTMLElement|null} */
+    downloadButton: null,
+    /** @type {MutationObserver|null} */
+    downloadObserver: null,
+    downloadEnsureQueued: false,
     lastVideoCheck: 0,
     initialized: false,
-    /** @type {MutationObserver|null} */
-    routeObserver: null,
   };
 
   /**
@@ -134,7 +160,7 @@
 
         const parsed = JSON.parse(saved);
         if (typeof parsed !== 'object' || parsed === null) {
-          console.warn('[YouTube+][Shorts]', 'Invalid settings format');
+          window.console.warn('[YouTube+][Shorts]', 'Invalid settings format');
           return;
         }
 
@@ -165,7 +191,7 @@
           }
         }
       } catch (error) {
-        console.error('[YouTube+][Shorts]', 'Error loading settings:', error);
+        window.console.error('[YouTube+][Shorts]', 'Error loading settings:', error);
       }
     },
 
@@ -181,7 +207,7 @@
         };
         localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
       } catch (error) {
-        console.error('[YouTube+][Shorts]', 'Error saving settings:', error);
+        window.console.error('[YouTube+][Shorts]', 'Error saving settings:', error);
       }
     },
 
@@ -253,27 +279,27 @@
 
       element = document.createElement('div');
       element.id = 'shorts-keyboard-feedback';
-      element.setAttribute(
-        'style',
-        `
-          position:fixed;top:50%;left:50%;transform:translate(-50%,-50%);
-          background:var(--shorts-feedback-bg,rgba(255,255,255,.1));
-          backdrop-filter:blur(16px) saturate(150%);
-          border:1px solid var(--shorts-feedback-border,rgba(255,255,255,.15));
-          border-radius:20px;
-          color:var(--shorts-feedback-color,#fff);
-          padding:18px 32px;font-size:20px;font-weight:700;
-          z-index:10000;opacity:0;visibility:hidden;pointer-events:none;
-          transition:all .3s cubic-bezier(.4,0,.2,1);text-align:center;
-          box-shadow:0 8px 32px rgba(0,0,0,.4);
-          background: rgba(155, 155, 155, 0.15);
-          border: 1px solid rgba(255,255,255,0.2);
-          box-shadow: 0 8px 32px 0 rgba(31,38,135,0.37);
-          backdrop-filter: blur(12px) saturate(180%);
-          -webkit-backdrop-filter: blur(12px) saturate(180%);
-        `
-      );
       document.body.appendChild(element);
+      element.style.position = 'fixed';
+      element.style.top = '50%';
+      element.style.left = '50%';
+      element.style.transform = 'translate(-50%,-50%)';
+      element.style.background = 'var(--yt-shorts-feedback-bg-dark)';
+      element.style.backdropFilter = 'blur(12px) saturate(180%)';
+      element.style.border = '1px solid var(--yt-shorts-border-light)';
+      element.style.borderRadius = '20px';
+      element.style.color = 'var(--yt-text-primary,#fff)';
+      element.style.padding = '18px 32px';
+      element.style.fontSize = '20px';
+      element.style.fontWeight = '700';
+      element.style.zIndex = '10000';
+      element.style.opacity = '0';
+      element.style.visibility = 'hidden';
+      element.style.pointerEvents = 'none';
+      element.style.transition = 'all .3s cubic-bezier(.4,0,.2,1)';
+      element.style.textAlign = 'center';
+      element.style.boxShadow = '0 8px 32px 0 var(--yt-shorts-shadow-blue)';
+      element.style.setProperty('-webkit-backdrop-filter', 'blur(12px) saturate(180%)');
       return element;
     };
 
@@ -291,24 +317,17 @@
         el.textContent = text;
 
         requestAnimationFrame(() => {
-          el.setAttribute(
-            'style',
-            (el.getAttribute('style') || '') +
-              ';opacity:1;visibility:visible;transform:translate(-50%,-50%) scale(1.05)'
-          );
+          el.style.opacity = '1';
+          el.style.visibility = 'visible';
+          el.style.transform = 'translate(-50%,-50%) scale(1.05)';
         });
 
         state.actionTimeout = /** @type {number} */ (
           /** @type {unknown} */ (
-            setTimeout(() => {
-              el.setAttribute(
-                'style',
-                (el.getAttribute('style') || '')
-                  .replace(/;opacity:[^;]*/g, '')
-                  .replace(/;visibility:[^;]*/g, '')
-                  .replace(/;transform:[^;]*/g, '') +
-                  ';opacity:0;visibility:hidden;transform:translate(-50%,-50%) scale(0.95)'
-              );
+            setTimeout_(() => {
+              el.style.opacity = '0';
+              el.style.visibility = 'hidden';
+              el.style.transform = 'translate(-50%,-50%) scale(0.95)';
             }, 1500)
           )
         );
@@ -351,9 +370,7 @@
       // Try to click a captions/subtitles button first
       try {
         const container =
-          document.querySelector(
-            'ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player'
-          ) || document;
+          qs('ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player') || document;
         const buttons = container.querySelectorAll('button[aria-label]');
         for (const b of buttons) {
           const aria = (b.getAttribute('aria-label') || '').toLowerCase();
@@ -429,9 +446,7 @@
       // Try to click a visible mute/volume button so the player UI updates its icon
       try {
         const container =
-          document.querySelector(
-            'ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player'
-          ) || document;
+          qs('ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player') || document;
         const buttons = container.querySelectorAll('button[aria-label]');
         for (const b of buttons) {
           const aria = (b.getAttribute('aria-label') || '').toLowerCase();
@@ -479,6 +494,63 @@
   const helpPanel = (() => {
     /** @type {HTMLElement|null} */
     let panel = null;
+    /** @type {AbortController|null} */
+    let dragListeners = null;
+
+    /**
+     * Enable dragging the help panel by grabbing the help content area
+     * @param {HTMLElement} panelEl
+     */
+    const setupHelpContentDrag = panelEl => {
+      dragListeners?.abort();
+      dragListeners = new AbortController();
+
+      const { signal } = dragListeners;
+      const dragHandle = panelEl.querySelector('.help-content');
+      if (!(dragHandle instanceof HTMLElement)) return;
+
+      let dragging = false;
+      let offsetX = 0;
+      let offsetY = 0;
+
+      const stopDragging = () => {
+        if (!dragging) return;
+        dragging = false;
+        panelEl.classList.remove('is-dragging');
+      };
+
+      const onPointerMove = /** @param {PointerEvent} ev */ ev => {
+        if (!dragging) return;
+        const maxLeft = Math.max(0, window.innerWidth - panelEl.offsetWidth);
+        const maxTop = Math.max(0, window.innerHeight - panelEl.offsetHeight);
+        const nextLeft = Math.min(Math.max(0, ev.clientX - offsetX), maxLeft);
+        const nextTop = Math.min(Math.max(0, ev.clientY - offsetY), maxTop);
+        panelEl.style.left = `${nextLeft}px`;
+        panelEl.style.top = `${nextTop}px`;
+      };
+
+      const onPointerDown = /** @param {PointerEvent} ev */ ev => {
+        if (ev.button !== 0) return;
+        const target = ev.target instanceof Element ? ev.target : null;
+        if (target?.closest('button,kbd,a,input,textarea,select,label')) return;
+
+        const rect = panelEl.getBoundingClientRect();
+        panelEl.style.left = `${rect.left}px`;
+        panelEl.style.top = `${rect.top}px`;
+        panelEl.style.transform = 'none';
+
+        offsetX = ev.clientX - rect.left;
+        offsetY = ev.clientY - rect.top;
+        dragging = true;
+        panelEl.classList.add('is-dragging');
+      };
+
+      const eventOptions = signal ? { signal } : false;
+      dragHandle.addEventListener('pointerdown', onPointerDown, eventOptions);
+      window.addEventListener('pointermove', onPointerMove, eventOptions);
+      window.addEventListener('pointerup', stopDragging, eventOptions);
+      window.addEventListener('blur', stopDragging, eventOptions);
+    };
 
     /**
      * Create or retrieve the help panel element
@@ -489,7 +561,7 @@
 
       panel = document.createElement('div');
       panel.id = 'shorts-keyboard-help';
-      panel.className = 'glass-panel shorts-help-panel';
+      panel.className = 'shorts-help-panel ytp-plus-shorts-overlay';
       panel.setAttribute('role', 'dialog');
       panel.setAttribute('aria-modal', 'true');
       panel.tabIndex = -1;
@@ -497,30 +569,35 @@
       const render = () => {
         if (!panel) return;
         const p = /** @type {HTMLElement} */ (panel);
-        p.innerHTML = _createHTML(`
-            <div class="help-header">
-              <h3>${t('keyboardShortcuts')}</h3>
-              <button class="ytp-plus-settings-close help-close" type="button" aria-label="${t('closeButton')}">
-                <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
-                </svg>
+        renderTemplateClone(
+          p,
+          `
+            <div class="help-topbar">
+              <div class="help-header ytp-plus-settings-title">${t('keyboardShortcuts')}</div>
+              <button class="ytp-plus-settings-close help-close" data-shared-close-button="ytp-plus-close-settings" type="button" aria-label="${t('closeButton')}">
+                  <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+                  </svg>
               </button>
             </div>
-            <div class="help-content">
-              ${Object.entries(config.shortcuts)
-                .map(([action, shortcut]) => {
-                  const sc = /** @type {Record<string,any>} */ (shortcut);
-                  return `<div class="help-item">
-                  <kbd data-action="${action}" ${sc.editable === false ? 'class="non-editable"' : ''}>${shortcut.key === ' ' ? 'Space' : shortcut.key}</kbd>
-                  <span>${shortcut.description}</span>
-                </div>`;
-                })
-                .join('')}
+            <div class="help-body">
+              <div class="help-content">
+                ${Object.entries(config.shortcuts)
+                  .map(([action, shortcut]) => {
+                    const sc = /** @type {Record<string,any>} */ (shortcut);
+                    return `<div class="help-item">
+                    <kbd data-action="${action}" ${sc.editable === false ? 'class="non-editable"' : ''}>${shortcut.key === ' ' ? 'Space' : shortcut.key}</kbd>
+                    <span>${shortcut.description}</span>
+                  </div>`;
+                  })
+                  .join('')}
+              </div>
+              <div class="help-actions">
+                <button class="ytp-plus-button ytp-plus-button-primary reset-all-shortcuts">${t('resetAll')}</button>
+              </div>
             </div>
-            <div class="help-footer">
-              <button class="ytp-plus-button ytp-plus-button-primary reset-all-shortcuts">${t('resetAll')}</button>
-            </div>
-          `);
+          `
+        );
 
         const helpClose = p.querySelector('.help-close');
         if (helpClose) helpClose.onclick = () => helpPanel.hide();
@@ -545,6 +622,8 @@
             editShortcut(act, sc[act]?.key || '');
           };
         });
+
+        setupHelpContentDrag(p);
       };
 
       render();
@@ -586,6 +665,7 @@
        * @returns {void}
        */
       refresh: () => {
+        dragListeners?.abort();
         if (panel) {
           panel.remove();
           panel = null;
@@ -602,18 +682,21 @@
    */
   const editShortcut = (actionKey, currentKey) => {
     const dialog = document.createElement('div');
-    dialog.className = 'glass-modal shortcut-edit-dialog';
+    dialog.className = 'glass-modal shortcut-edit-dialog ytp-plus-shortcut-modal';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     const sc = /** @type {Record<string,any>} */ (config.shortcuts);
-    dialog.innerHTML = _createHTML(`
+    renderTemplateClone(
+      dialog,
+      `
         <div class="glass-panel shortcut-edit-content">
           <h4>${t('editShortcut')}: ${sc[actionKey]?.description || actionKey}</h4>
           <p>${t('pressAnyKey')}</p>
           <div class="current-shortcut">${t('current')}: <kbd>${currentKey === ' ' ? 'Space' : currentKey}</kbd></div>
           <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">${t('cancel')}</button>
         </div>
-      `);
+      `
+    );
 
     document.body.appendChild(dialog);
     state.editingShortcut = actionKey;
@@ -666,33 +749,34 @@
    * @returns {void}
    */
   const addStyles = () => {
-    if (document.getElementById('shorts-keyboard-styles')) return;
+    if (byId('shorts-keyboard-styles')) return;
 
     const styles = `
-                :root{--shorts-feedback-bg:rgba(255,255,255,.15);--shorts-feedback-border:rgba(255,255,255,.2);--shorts-feedback-color:#fff;--shorts-help-bg:rgba(255,255,255,.15);--shorts-help-border:rgba(255,255,255,.2);--shorts-help-color:#fff;}
-                html[dark],body[dark]{--shorts-feedback-bg:rgba(34,34,34,.7);--shorts-feedback-border:rgba(255,255,255,.15);--shorts-feedback-color:#fff;--shorts-help-bg:rgba(34,34,34,.7);--shorts-help-border:rgba(255,255,255,.1);--shorts-help-color:#fff;}
-                html:not([dark]){--shorts-feedback-bg:rgba(255,255,255,.95);--shorts-feedback-border:rgba(0,0,0,.08);--shorts-feedback-color:#222;--shorts-help-bg:rgba(255,255,255,.98);--shorts-help-border:rgba(0,0,0,.08);--shorts-help-color:#222;}
-                .shorts-help-panel{position:fixed;top:50%;left:25%;transform:translate(-50%,-50%) scale(.9);z-index:10001;opacity:0;visibility:hidden;transition:all .3s ease;width:340px;max-width:95vw;max-height:80vh;overflow:hidden;outline:none;color:var(--shorts-help-color,#fff);}
+                  .shorts-help-panel{position:fixed;top:50%;left:25%;transform:translate(-50%,-50%) scale(.9);z-index:10001;opacity:0;visibility:hidden;transition:opacity .3s ease,visibility .3s ease,transform .3s ease;width:340px;max-width:95vw;max-height:80vh;overflow:hidden;outline:none;color:var(--yt-text-primary,#fff);padding:14px;display:flex;flex-direction:column;gap:12px;}
                 .shorts-help-panel.visible{opacity:1;visibility:visible;transform:translate(-50%,-50%) scale(1);}
-                .help-header{display:flex;justify-content:space-between;align-items:center;padding:24px 24px 12px;border-bottom:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);}
-                html:not([dark]) .help-header{background:rgba(0,0,0,.04);border-bottom:1px solid rgba(0,0,0,.08);}
-                .help-header h3{margin:0;font-size:20px;font-weight:700;}
-                .help-close{display:flex;align-items:center;justify-content:center;padding:4px;}
-                .help-content{padding:18px 24px;max-height:400px;overflow-y:auto;}
+                  .help-topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;}
+                  .help-header{margin:0;line-height:1.2;}
+                  .help-close{position:static;display:flex;align-items:center;justify-content:center;padding:4px;flex-shrink:0;}
+                  .help-body{display:flex;flex-direction:column;gap:12px;min-height:0;}
+                  .help-content{padding:8px 10px;max-height:400px;overflow-y:auto;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;border-radius:12px;background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);}
+                .shorts-help-panel.is-dragging .help-content,.help-content:active{cursor:grabbing;}
                 .help-item{display:flex;align-items:center;margin-bottom:14px;gap:18px;}
-                .help-item kbd{background:rgba(255,255,255,.15);color:inherit;padding:7px 14px;border-radius:8px;font-family:monospace;font-size:15px;font-weight:700;min-width:60px;text-align:center;border:1.5px solid rgba(255,255,255,.2);cursor:pointer;transition:all .2s;position:relative;}
-                html:not([dark]) .help-item kbd{background:rgba(0,0,0,.06);color:#222;border:1.5px solid rgba(0,0,0,.08);}
-                .help-item kbd:hover{background:rgba(255,255,255,.22);transform:scale(1.07);}
+                .help-item kbd{background:var(--yt-shorts-kbd-bg);color:inherit;padding:7px 14px;border-radius:8px;font-family:monospace;font-size:15px;font-weight:700;min-width:60px;text-align:center;border:1.5px solid var(--yt-shorts-kbd-border);cursor:pointer;transition:all .2s;position:relative;}
+                html:not([dark]) .help-item kbd{background:var(--yt-shorts-kbd-bg-light);color:#222;border:1.5px solid var(--yt-shorts-border-dark);}
+                .help-item kbd:hover{background:var(--yt-shorts-kbd-hover);transform:scale(1.07);}
                 .help-item kbd:after{content:"✎";position:absolute;top:-7px;right:-7px;font-size:11px;opacity:0;transition:opacity .2s;}
                 .help-item kbd:hover:after{opacity:.7;}
                 .help-item kbd.non-editable{cursor:default;opacity:.7;}
-                .help-item kbd.non-editable:hover{background:rgba(255,255,255,.15);transform:none;}
+                .help-item kbd.non-editable:hover{background:var(--yt-shorts-kbd-bg);transform:none;}
                 .help-item kbd.non-editable:after{display:none;}
-                .help-item span{font-size:15px;color:rgba(255,255,255,.92);}
+                .help-item span{font-size:15px;color:var(--yt-shorts-text-secondary);}
                 html:not([dark]) .help-item span{color:#222;}
-                .help-footer{padding:16px 24px 20px;border-top:1px solid rgba(255,255,255,.1);background:rgba(255,255,255,.05);text-align:center;}
-                html:not([dark]) .help-footer{background:rgba(0,0,0,.04);border-top:1px solid rgba(0,0,0,.08);}
+                html:not([dark]) .shorts-help-panel{color:var(--yt-text-dark-primary,#222);}
+                .help-actions{display:flex;justify-content:flex-end;align-items:center;}
                 .reset-all-shortcuts{display:inline-flex;align-items:center;justify-content:center;gap:var(--yt-space-sm);}
+                .ytp-plus-shorts-download{width:48px;height:48px;border-radius:999px;display:flex;align-items:center;justify-content:center;z-index:1;cursor:pointer;box-shadow:var(--yt-glass-shadow);background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);margin:0 auto 10px;align-self:center;color:var(--yt-text-primary);transition:all .3s;}
+                .ytp-plus-shorts-download svg{width:22px;height:22px;display:block;pointer-events:none;}
+                .ytp-plus-shorts-download:hover{background:var(--yt-glass-border);}
                 .shortcut-edit-dialog{z-index:10002;}
                 .shortcut-edit-content{padding:28px 32px;min-width:320px;text-align:center;display:flex;flex-direction:column;gap:var(--yt-space-md);color:inherit;}
                 html:not([dark]) .shortcut-edit-content{color:#222;}
@@ -700,14 +784,186 @@
                 .shortcut-edit-content p{margin:0 0 18px;font-size:15px;color:rgba(255,255,255,.85);}
                 html:not([dark]) .shortcut-edit-content p{color:#222;}
                 .current-shortcut{margin:18px 0;font-size:15px;}
-                .current-shortcut kbd{background:rgba(255,255,255,.15);padding:5px 12px;border-radius:6px;font-family:monospace;border:1.5px solid rgba(255,255,255,.2);}
-                html:not([dark]) .current-shortcut kbd{background:rgba(0,0,0,.06);color:#222;border:1.5px solid rgba(0,0,0,.08);}
+                .current-shortcut kbd{background:var(--yt-shorts-kbd-bg);padding:5px 12px;border-radius:6px;font-family:monospace;border:1.5px solid var(--yt-shorts-kbd-border);}
+                html:not([dark]) .current-shortcut kbd{background:var(--yt-shorts-kbd-bg-light);color:#222;border:1.5px solid var(--yt-shorts-border-dark);}
                 .shortcut-cancel{display:inline-flex;align-items:center;justify-content:center;gap:var(--yt-space-sm);}
-                @media(max-width:480px){.shorts-help-panel{width:98vw;max-height:85vh}.help-header{padding:16px 10px 8px 10px}.help-content{padding:12px 10px}.help-item{gap:10px}.help-item kbd{min-width:44px;font-size:13px;padding:5px 7px}.shortcut-edit-content{margin:20px;min-width:auto}}
-                #shorts-keyboard-feedback{background:var(--shorts-feedback-bg,rgba(255,255,255,.15));color:var(--shorts-feedback-color,#fff);border:1.5px solid var(--shorts-feedback-border,rgba(255,255,255,.2));border-radius:20px;box-shadow:0 8px 32px 0 rgba(31,38,135,.37);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);}
-                html:not([dark]) #shorts-keyboard-feedback{background:var(--shorts-feedback-bg,rgba(255,255,255,.95));color:var(--shorts-feedback-color,#222);border:1.5px solid var(--shorts-feedback-border,rgba(0,0,0,.08));}
+                @media(max-width:480px){.shorts-help-panel{width:98vw;max-height:85vh;padding:10px}.help-content{padding:10px 8px}.help-item{gap:10px}.help-item kbd{min-width:44px;font-size:13px;padding:5px 7px}.ytp-plus-shorts-download{width:44px;height:44px;margin-bottom:8px}.shortcut-edit-content{margin:20px;min-width:auto}}
+                #shorts-keyboard-feedback{background:var(--yt-shorts-feedback-bg-dark);color:var(--yt-text-primary,#fff);border:1.5px solid var(--yt-shorts-feedback-bg);border-radius:20px;box-shadow:0 8px 32px 0 var(--yt-shorts-shadow-blue);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);}
+                html:not([dark]) #shorts-keyboard-feedback{background:var(--yt-shorts-feedback-bg-light);color:var(--yt-text-dark-primary,#222);border:1.5px solid var(--yt-shorts-border-dark);}
             `;
     YouTubeUtils.StyleManager.add('shorts-keyboard-styles', styles);
+  };
+
+  /**
+   * Remove Shorts download button if it exists
+   */
+  const removeShortsDownloadButton = () => {
+    if (state.downloadButton && state.downloadButton.isConnected) {
+      state.downloadButton.remove();
+    }
+    state.downloadButton = null;
+  };
+
+  /**
+   * Ensure Shorts download button is visible and wired
+   */
+  const ensureShortsDownloadButton = () => {
+    if (!isOnShortsPage()) {
+      removeShortsDownloadButton();
+      return;
+    }
+
+    const globalSettings = /** @type {{ enableDownload?: boolean }|undefined} */ (
+      window.youtubePlus?.settings
+    );
+    if (globalSettings?.enableDownload === false) {
+      removeShortsDownloadButton();
+      return;
+    }
+
+    const getActiveReel = () =>
+      qs('ytd-reel-video-renderer[is-active]') ||
+      qs('ytd-reel-video-renderer[is-active="true"]') ||
+      qs('#shorts-player ytd-reel-video-renderer');
+
+    const findActionBar = () => {
+      const activeReel = getActiveReel();
+
+      const selectors = [
+        'ytwReelActionBarViewModelHostDesktop',
+        'ytwReelActionBarViewModelHost',
+        '[class*="ytwReelActionBarViewModelHostDesktop"]',
+        '[class*="ytwReelActionBarViewModelHost"]',
+        '.ytwReelActionBarViewModelHostDesktop',
+        '.ytwReelActionBarViewModelHost',
+        'reel-action-bar-view-model',
+        'ytd-reel-player-overlay-renderer #actions',
+        '#actions',
+      ];
+
+      /** @param {ParentNode} root */
+      const pickFrom = root => {
+        for (const selector of selectors) {
+          const nodes = root.querySelectorAll(selector);
+          for (const node of nodes) {
+            if (!(node instanceof HTMLElement)) continue;
+            if (node.offsetParent !== null) return node;
+          }
+        }
+        return null;
+      };
+
+      if (activeReel instanceof Element) {
+        const fromActive = pickFrom(activeReel);
+        if (fromActive) return fromActive;
+      }
+
+      const fromDocument = pickFrom(document);
+      if (fromDocument) return fromDocument;
+
+      if (activeReel instanceof Element) {
+        for (const selector of selectors) {
+          const candidate = activeReel.querySelector(selector);
+          if (candidate instanceof HTMLElement) return candidate;
+        }
+      }
+
+      return null;
+    };
+
+    /** @param {Element} actionBar */
+    const findLikeButton = actionBar => {
+      if (!(actionBar instanceof Element)) return null;
+      const likeSelectors = [
+        'like-button-view-model',
+        '#like-button',
+        'button[aria-label*="Like" i]',
+        'button[aria-label*="Нравится" i]',
+      ];
+      for (const selector of likeSelectors) {
+        const node = actionBar.querySelector(selector);
+        if (node instanceof HTMLElement) return node;
+      }
+      return null;
+    };
+
+    const findLikeButtonFallback = () => {
+      const likeSelectors = [
+        'like-button-view-model',
+        '#like-button',
+        'button[aria-label*="Like" i]',
+        'button[aria-label*="Нравится" i]',
+      ];
+
+      const activeReel = getActiveReel();
+      if (activeReel instanceof Element) {
+        for (const selector of likeSelectors) {
+          const node = activeReel.querySelector(selector);
+          if (node instanceof HTMLElement && node.offsetParent !== null) return node;
+        }
+      }
+
+      for (const selector of likeSelectors) {
+        const node = document.querySelector(selector);
+        if (node instanceof HTMLElement && node.offsetParent !== null) return node;
+      }
+
+      return null;
+    };
+
+    const actionBar = findActionBar();
+    const likeButton = actionBar ? findLikeButton(actionBar) : findLikeButtonFallback();
+    const likeAnchor =
+      (likeButton &&
+        likeButton.closest(
+          'like-button-view-model, #like-button, reel-action-view-model, ytw-reel-action-view-model, [class*="ReelActionViewModel"]'
+        )) ||
+      likeButton;
+    if (!actionBar && !likeAnchor) return;
+
+    if (
+      state.downloadButton?.isConnected &&
+      likeAnchor instanceof Element &&
+      state.downloadButton.nextElementSibling === likeAnchor
+    ) {
+      return;
+    }
+
+    if (state.downloadButton?.isConnected) {
+      state.downloadButton.remove();
+      state.downloadButton = null;
+    }
+
+    const btn = document.createElement('button');
+    btn.className = 'ytp-plus-shorts-download';
+    btn.type = 'button';
+    btn.setAttribute('aria-label', t('download'));
+    btn.setAttribute('title', t('downloadOptions') || t('download'));
+    renderTemplateClone(
+      btn,
+      '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
+    );
+
+    btn.addEventListener('click', ev => {
+      ev.preventDefault();
+      ev.stopPropagation();
+
+      if (typeof window.YouTubePlusDownload?.openModal === 'function') {
+        window.YouTubePlusDownload.openModal();
+        return;
+      }
+
+      feedback.show(t('directDownloadModuleNotAvailable') || t('downloadNotAvailable'));
+    });
+
+    if (likeAnchor instanceof Element && likeAnchor.parentElement) {
+      likeAnchor.insertAdjacentElement('beforebegin', btn);
+    } else if (actionBar) {
+      actionBar.prepend(btn);
+    } else {
+      return;
+    }
+    state.downloadButton = btn;
   };
 
   /**
@@ -766,6 +1022,14 @@
     // Clear cached video
     state.cachedVideo = null;
 
+    if (state.downloadObserver) {
+      state.downloadObserver.disconnect();
+      state.downloadObserver = null;
+    }
+    state.downloadEnsureQueued = false;
+
+    removeShortsDownloadButton();
+
     state.initialized = false;
   };
 
@@ -782,6 +1046,24 @@
     state.initialized = true;
     utils.loadSettings();
     addStyles();
+    ensureShortsDownloadButton();
+
+    if (!state.downloadObserver) {
+      state.downloadObserver = new MutationObserver(() => {
+        if (!isOnShortsPage()) return;
+        if (state.downloadEnsureQueued) return;
+        state.downloadEnsureQueued = true;
+        requestAnimationFrame(() => {
+          state.downloadEnsureQueued = false;
+          ensureShortsDownloadButton();
+        });
+      });
+
+      state.downloadObserver.observe(document.body, { childList: true, subtree: true });
+      if (YouTubeUtils.cleanupManager?.registerObserver) {
+        YouTubeUtils.cleanupManager.registerObserver(state.downloadObserver);
+      }
+    }
 
     YouTubeUtils.cleanupManager.registerListener(
       document,
@@ -813,12 +1095,12 @@
     );
   };
 
-  // Route observer to cleanup when leaving /shorts
+  // Route watcher to cleanup when leaving /shorts
   const observeRoute = () => {
     let lastPath = location.pathname;
     let isCurrentlyOnShorts = isOnShortsPage();
 
-    state.routeObserver = new MutationObserver(() => {
+    const syncRouteState = () => {
       const currentPath = location.pathname;
       // Quick path check first before expensive isOnShortsPage()
       if (currentPath === lastPath) return;
@@ -836,41 +1118,58 @@
           // Entered shorts page
           init();
         }
+      } else if (nowOnShorts) {
+        ensureShortsDownloadButton();
       }
-    });
+    };
 
-    if (document.body) {
-      state.routeObserver.observe(document.body, {
-        childList: true,
-        subtree: false,
-      });
-      if (YouTubeUtils.cleanupManager?.registerObserver) {
-        YouTubeUtils.cleanupManager.registerObserver(state.routeObserver);
-      }
-      if (/** @type {any} */ (YouTubeUtils).ObserverRegistry?.track) {
-        /** @type {any} */ (YouTubeUtils).ObserverRegistry.track();
-      }
+    if (YouTubeUtils.cleanupManager?.registerListener) {
+      YouTubeUtils.cleanupManager.registerListener(window, 'yt-navigate-finish', syncRouteState);
+      YouTubeUtils.cleanupManager.registerListener(window, 'popstate', syncRouteState);
+    } else {
+      window.addEventListener('yt-navigate-finish', syncRouteState);
+      window.addEventListener('popstate', syncRouteState);
     }
   };
 
-  // Initialize if on shorts page
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
+  let shortsRuntimeStarted = false;
+  const startShortsRuntime = () => {
+    if (shortsRuntimeStarted) return;
+    shortsRuntimeStarted = true;
+
+    // Initialize if on shorts page
+    if (document.readyState === 'loading') {
+      document.addEventListener(
+        'DOMContentLoaded',
+        () => {
+          init();
+          observeRoute();
+        },
+        { once: true }
+      );
+    } else {
       init();
       observeRoute();
+    }
+
+    // Show help tip on first visit
+    if (isOnShortsPage() && !localStorage.getItem('shorts_keyboard_help_shown')) {
+      setTimeout_(() => {
+        if (isOnShortsPage()) {
+          feedback.show('Press ? for shortcuts');
+          localStorage.setItem('shorts_keyboard_help_shown', 'true');
+        }
+      }, 2000);
+    }
+  };
+
+  if (window.YouTubePlusLazyLoader?.register) {
+    window.YouTubePlusLazyLoader.register('shorts', startShortsRuntime, {
+      priority: 50,
+      delay: 0,
+      shouldLoad: isOnShortsPage,
     });
   } else {
-    init();
-    observeRoute();
-  }
-
-  // Show help tip on first visit
-  if (isOnShortsPage() && !localStorage.getItem('shorts_keyboard_help_shown')) {
-    setTimeout(() => {
-      if (isOnShortsPage()) {
-        feedback.show('Press ? for shortcuts');
-        localStorage.setItem('shorts_keyboard_help_shown', 'true');
-      }
-    }, 2000);
+    startShortsRuntime();
   }
 })();

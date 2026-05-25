@@ -16,15 +16,54 @@
 
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || ((/** @type {string} */ s) => s);
+  const setTimeout_ = setTimeout.bind(window);
+  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
+  const renderTemplateClone = (/** @type {Element} */ container, /** @type {string} */ html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
+  const createVisibilityAwareInterval =
+    /** @type {any} */ (window.YouTubeUtils)?.createVisibilityAwareInterval ||
+    /**
+     * @type {(callback: () => void, delay: number) => { stop: () => void; pause: () => void; resume: () => void; active: boolean }}
+     */
+    (
+      (callback, delay) => {
+        // Interval fallback is used only when shared visibility-aware scheduler is unavailable.
+        const id = setInterval(() => {
+          if (!document.hidden) callback();
+        }, delay);
+        return {
+          stop() {
+            clearInterval(id);
+          },
+          pause() {
+            clearInterval(id);
+          },
+          resume() {},
+          get active() {
+            return true;
+          },
+        };
+      }
+    );
 
   if (typeof location !== 'undefined' && location.hostname !== 'music.youtube.com') {
     return;
   }
 
   // DOM cache helper from YouTubeUtils
-  const qs = (/** @type {string} */ sel) =>
-    window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+  const qs = window.YouTubeUtils?.$ || document.querySelector.bind(document);
+  const byId =
+    window.YouTubeUtils?.byId ||
+    ((/** @type {string} */ id) =>
+      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
 
   /**
    * Read YouTube Music settings from localStorage with defaults.
@@ -118,10 +157,13 @@
   /** @type {HTMLStyleElement|null} */
   let musicStyleEl = null;
 
-  /** @type {MutationObserver|null} */
-  let observer = null;
+  /** @type {string|null} */
+  let observerSubId = null;
 
-  /** @type {ReturnType<typeof setInterval>|null} */
+  /** @type {{ stop: () => void, pause?: () => void, resume?: () => void, active?: boolean } | null} */
+  let observerFallbackTimerId = null;
+
+  /** @type {{ stop: () => void, pause?: () => void, resume?: () => void, active?: boolean } | null} */
   let healthCheckIntervalId = null;
 
   /** @type {(() => void)|null} */
@@ -150,8 +192,8 @@
       ytmusic-search-box:has(input:focus), ytmusic-searchbox:has(input:focus), ytmusic-search-box:focus-within, ytmusic-searchbox:focus-within {position: fixed !important; left: 50% !important; top: 12vh !important; transform: translateX(-50%) !important; height: auto !important; max-width: 900px !important; width: min(90vw, 900px) !important; z-index: 1200 !important; display: block !important;}
       @media only screen and (min-width: 1400px) {ytmusic-search-box:has(input:focus), ytmusic-searchbox:has(input:focus) {top: 10vh !important; max-width: 1000px !important; transform: translateX(-50%) scale(1.05) !important;}}
       /* Highlight the input and add a soft glow */
-      ytmusic-search-box:has(input:focus) input, ytmusic-searchbox:has(input:focus) input, ytmusic-search-box:focus-within input, ytmusic-searchbox:focus-within input {background-color: #fffb !important; box-shadow: black 0 0 30px !important;}
-      @media (prefers-color-scheme: dark) {ytmusic-search-box:has(input:focus) input, ytmusic-searchbox:has(input:focus) input {background-color: #000b !important;}}
+      ytmusic-search-box:has(input:focus) input, ytmusic-searchbox:has(input:focus) input, ytmusic-search-box:focus-within input, ytmusic-searchbox:focus-within input {background-color: var(--yt-bg-primary) !important; box-shadow: black 0 0 30px !important;}
+      @media (prefers-color-scheme: dark) {ytmusic-search-box:has(input:focus) input, ytmusic-searchbox:has(input:focus) input {background-color: var(--yt-modal-bg) !important;}}
       /* Blur/scale the main content when immersive search is active */
       ytmusic-app-layout:has(ytmusic-search-box:has(input:focus)) #main-panel, ytmusic-app-layout:has(ytmusic-searchbox:has(input:focus)) #main-panel {filter: blur(18px) !important; transform: scale(1.03) !important;}
     `;
@@ -165,7 +207,7 @@
 
   // Боковая панель плеера
   const playerSidebarStyles = `
-        #side-panel {width: 40em !important; height: 80vh !important; padding: 0 2em !important; right: -30em !important; top: 10vh !important; opacity: 0 !important; position: absolute !important; transition: all 0.3s ease-in-out !important; backdrop-filter: blur(5px) !important; background-color: #0005 !important; border-radius: 1em !important; box-shadow: rgba(0, 0, 0, 0.15) 0px -36px 30px inset, rgba(0, 0, 0, 0.1) 0px -79px 40px inset, rgba(0, 0, 0, 0.06) 0px 2px 1px, rgba(0, 0, 0, 0.09) 0px 4px 2px, rgba(0, 0, 0, 0.09) 0px 8px 4px, rgba(0, 0, 0, 0.09) 0px 16px 8px, rgba(0, 0, 0, 0.09) 0px 32px 16px !important;}        
+        #side-panel {width: 40em !important; height: 80vh !important; padding: 0 2em !important; right: -30em !important; top: 10vh !important; opacity: 0 !important; position: absolute !important; transition: all 0.3s ease-in-out !important; backdrop-filter: blur(5px) !important; background-color: var(--yt-panel-overlay-subtle) !important; border-radius: 1em !important; box-shadow: var(--yt-shadow-deep-1) 0px -36px 30px inset, var(--yt-shadow-deep-2) 0px -79px 40px inset, var(--yt-shadow-deep-3) 0px 2px 1px, var(--yt-shadow-deep-4) 0px 4px 2px, var(--yt-shadow-deep-4) 0px 8px 4px, var(--yt-shadow-deep-4) 0px 16px 8px, var(--yt-shadow-deep-4) 0px 32px 16px !important;}        
         #side-panel tp-yt-paper-tabs {transition: height 0.3s ease-in-out !important; height: 0 !important;}        
         #side-panel:hover {right: 0 !important; opacity: 1 !important;}        
         #side-panel:hover tp-yt-paper-tabs {height: 4em !important;}        
@@ -186,8 +228,8 @@
 
   // Стилизация плеер бара (центрированная версия)
   const playerBarStyles = `
-        ytmusic-player-bar, #player-bar-background {margin: 1vw !important; width: 98vw !important; border-radius: 1em !important; overflow: hidden !important; transition: all 0.5s ease-in-out !important; background-color: #0002 !important; box-shadow: rgba(0, 0, 0, 0.15) 0px -36px 30px inset, rgba(0, 0, 0, 0.1) 0px -79px 40px inset, rgba(0, 0, 0, 0.06) 0px 2px 1px, rgba(0, 0, 0, 0.09) 0px 4px 2px, rgba(0, 0, 0, 0.09) 0px 8px 4px, rgba(0, 0, 0, 0.09) 0px 16px 8px, rgba(0, 0, 0, 0.09) 0px 32px 16px !important;}        
-        #layout:not([player-ui-state="PLAYER_PAGE_OPEN"]) #player-bar-background {background-color: #0005 !important;}
+        ytmusic-player-bar, #player-bar-background {margin: 1vw !important; width: 98vw !important; border-radius: 1em !important; overflow: hidden !important; transition: all 0.5s ease-in-out !important; background-color: var(--yt-panel-overlay-weak) !important; box-shadow: var(--yt-shadow-deep-1) 0px -36px 30px inset, var(--yt-shadow-deep-2) 0px -79px 40px inset, var(--yt-shadow-deep-3) 0px 2px 1px, var(--yt-shadow-deep-4) 0px 4px 2px, var(--yt-shadow-deep-4) 0px 8px 4px, var(--yt-shadow-deep-4) 0px 16px 8px, var(--yt-shadow-deep-4) 0px 32px 16px !important;}
+        #layout:not([player-ui-state="PLAYER_PAGE_OPEN"]) #player-bar-background {background-color: var(--yt-panel-overlay-subtle) !important;}
     `;
 
   // Центрирование плеер бара
@@ -291,18 +333,7 @@
    * @private
    */
   const getDebounce = () => {
-    if (window.YouTubeUtils?.debounce) {
-      return window.YouTubeUtils.debounce;
-    }
-    // Fallback debounce implementation
-    return (/** @type {Function} */ fn, /** @type {number} */ delay) => {
-      /** @type {ReturnType<typeof setTimeout>|null} */
-      let timeoutId = null;
-      return (/** @type {any[]} */ ...args) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => fn(...args), delay);
-      };
-    };
+    return window.YouTubeUtils.debounce;
   };
 
   /**
@@ -312,7 +343,7 @@
    * @param {Object} [params={}] - Optional parameters for interpolation
    * @returns {string} Translated string or key if translation not found
    */
-  const t = window.YouTubeUtils?.t || (key => key || '');
+  const t = window.YouTubeUtils.t;
 
   /**
    * Create button element with attributes
@@ -327,7 +358,8 @@
     button.className = 'ytmusic-top-button top-button';
     button.title = t('scrollToTop');
     button.setAttribute('aria-label', t('scrollToTop'));
-    button.innerHTML = _createHTML(
+    renderTemplateClone(
+      button,
       '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
     );
 
@@ -690,7 +722,7 @@
         );
         return;
       } catch (e) {
-        console.error('[YouTube+][Music] ScrollManager failed, using fallback');
+        window.console.error('[YouTube+][Music] ScrollManager failed, using fallback');
       }
     }
 
@@ -832,7 +864,7 @@
         }
       );
     } catch (err) {
-      console.error('[YouTube+][Music] attachButton error:', err);
+      window.console.error('[YouTube+][Music] attachButton error:', err);
     }
   }
 
@@ -861,7 +893,7 @@
       if (window.location.hostname !== 'music.youtube.com') return;
 
       // Check if button already exists and is properly attached
-      const existingButton = document.getElementById('ytmusic-side-panel-top-button');
+      const existingButton = byId('ytmusic-side-panel-top-button');
       if (existingButton) {
         // Verify it's in the DOM and has event listeners
         if (document.body.contains(existingButton) && existingButton._scrollCleanup) {
@@ -947,7 +979,9 @@
         }
 
         // Retry later
-        setTimeout(() => createScrollToTopButton(), 1000);
+        setTimeout_(function () {
+          createScrollToTopButton();
+        }, 1000);
         return;
       }
 
@@ -961,7 +995,9 @@
 
         // Retry with exponential backoff
         const backoffDelay = Math.min(500 * buttonCreationState.attempts, 3000);
-        setTimeout(() => createScrollToTopButton(), backoffDelay);
+        setTimeout_(function () {
+          createScrollToTopButton();
+        }, backoffDelay);
         return;
       }
 
@@ -970,10 +1006,12 @@
 
       window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', '✓ Button created successfully');
     } catch (error) {
-      console.error('[YouTube+][Music] Error creating scroll to top button:', error);
+      window.console.error('[YouTube+][Music] Error creating scroll to top button:', error);
       // Retry on error if we haven't exceeded max attempts
       if (buttonCreationState.attempts < buttonCreationState.maxAttempts) {
-        setTimeout(() => createScrollToTopButton(), 1000);
+        setTimeout_(function () {
+          createScrollToTopButton();
+        }, 1000);
       }
     }
   }
@@ -985,7 +1023,7 @@
    */
   function checkAndCreateButton() {
     try {
-      const existingButton = document.getElementById('ytmusic-side-panel-top-button');
+      const existingButton = byId('ytmusic-side-panel-top-button');
 
       // Clean up if button exists but is orphaned (no scroll listener)
       if (existingButton) {
@@ -1030,7 +1068,9 @@
           '[YouTube+][Music]',
           'Found container, scheduling button creation'
         );
-        setTimeout(() => createScrollToTopButton(), 300);
+        setTimeout(function () {
+          createScrollToTopButton();
+        }, 300);
       } else {
         window.YouTubeUtils?.logger?.debug?.(
           '[YouTube+][Music]',
@@ -1038,103 +1078,11 @@
         );
       }
     } catch (error) {
-      console.error('[YouTube+][Music] Error in checkAndCreateButton:', error);
+      window.console.error('[YouTube+][Music] Error in checkAndCreateButton:', error);
     }
   }
 
   // Lazy init: do not inject styles/observers until settings enable it.
-
-  /**
-   * Create and configure the mutation observer
-   * @function createObserver
-   * @returns {MutationObserver}
-   * @private
-   */
-  const createObserver = () => {
-    const debounce = getDebounce();
-    const debouncedCheck = debounce(checkAndCreateButton, 200);
-    let lastCheckTime = 0;
-    const minCheckInterval = 300; // Minimum 300ms between checks (reduced for better responsiveness)
-
-    return new MutationObserver(mutations => {
-      // Rate limiting: skip if checked too recently
-      const now = Date.now();
-      if (now - lastCheckTime < minCheckInterval) return;
-
-      // Don't disconnect - keep observing for tab changes and navigation
-      const existingButton = document.getElementById('ytmusic-side-panel-top-button');
-
-      // If button exists and is properly attached, just verify it's working
-      if (
-        existingButton &&
-        document.body.contains(existingButton) &&
-        existingButton._scrollCleanup
-      ) {
-        // Button is healthy, no action needed
-        return;
-      }
-
-      // Check if any mutation added side-panel, main content, or queue
-      const hasRelevantChange = mutations.some(mutation => {
-        // Fast path: skip mutations with no added nodes
-        if (mutation.addedNodes.length === 0) return false;
-
-        // Early filter: check if any added node is an Element
-        let hasElements = false;
-        for (let i = 0; i < mutation.addedNodes.length; i++) {
-          if (mutation.addedNodes[i].nodeType === 1) {
-            hasElements = true;
-            break;
-          }
-        }
-        if (!hasElements) return false;
-
-        return Array.from(mutation.addedNodes).some(node => {
-          if (node.nodeType !== 1) return false;
-
-          const element = /** @type {Element} */ (node);
-          // Direct ID check is fastest
-          if (element.id === 'side-panel' || element.id === 'contents') return true;
-
-          // Tag name check is faster than querySelector
-          const tagName = element.tagName;
-          if (
-            tagName === 'YTMUSIC-BROWSE' ||
-            tagName === 'YTMUSIC-PLAYER-PAGE' ||
-            tagName === 'YTMUSIC-QUEUE-RENDERER' ||
-            tagName === 'YTMUSIC-TAB-RENDERER'
-          ) {
-            return true;
-          }
-
-          // Only do querySelector as last resort
-          return (
-            element.querySelector?.(
-              '#side-panel, #contents, ytmusic-browse, ytmusic-queue-renderer, ytmusic-tab-renderer'
-            ) != null
-          );
-        });
-      });
-
-      // Also check for attribute changes that might indicate tab switches
-      const hasTabChange = mutations.some(
-        mutation =>
-          mutation.type === 'attributes' &&
-          mutation.attributeName === 'selected' &&
-          mutation.target instanceof Element &&
-          mutation.target.matches?.('ytmusic-tab-renderer, tp-yt-paper-tab')
-      );
-
-      if (hasRelevantChange || hasTabChange) {
-        lastCheckTime = now;
-        window.YouTubeUtils?.logger?.debug?.(
-          '[YouTube+][Music]',
-          'Detected relevant DOM change, checking button'
-        );
-        debouncedCheck();
-      }
-    });
-  };
 
   /**
    * Safely observe document body for side-panel appearance
@@ -1142,59 +1090,103 @@
    * @returns {void}
    */
   const observeDocumentBodySafely = () => {
-    if (observer) return; // Already observing
+    if (observerSubId || observerFallbackTimerId) return;
 
-    const startObserving = () => {
-      if (!document.body) return;
+    const debounce = getDebounce();
+    const debouncedCheck = debounce(checkAndCreateButton, 200);
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (coordinator?.subscribeRoot) {
+      observerSubId = 'music::sidePanelObserver';
+      coordinator.subscribeRoot(
+        observerSubId,
+        /** @param {MutationRecord[]} mutations */ mutations => {
+          const now = Date.now();
+          const existingButton = byId('ytmusic-side-panel-top-button');
+          if (
+            existingButton &&
+            document.body.contains(existingButton) &&
+            existingButton._scrollCleanup
+          ) {
+            return;
+          }
 
-      try {
-        observer = createObserver();
-        observer.observe(document.body, {
+          const hasRelevantChange = mutations.some((/** @type {MutationRecord} */ mutation) => {
+            if (mutation.addedNodes.length === 0) return false;
+            return Array.from(mutation.addedNodes).some(node => {
+              if (node.nodeType !== 1) return false;
+
+              const element = /** @type {Element} */ (node);
+              if (element.id === 'side-panel' || element.id === 'contents') return true;
+
+              const tagName = element.tagName;
+              if (
+                tagName === 'YTMUSIC-BROWSE' ||
+                tagName === 'YTMUSIC-PLAYER-PAGE' ||
+                tagName === 'YTMUSIC-QUEUE-RENDERER' ||
+                tagName === 'YTMUSIC-TAB-RENDERER'
+              ) {
+                return true;
+              }
+
+              return (
+                element.querySelector?.(
+                  '#side-panel, #contents, ytmusic-browse, ytmusic-queue-renderer, ytmusic-tab-renderer'
+                ) != null
+              );
+            });
+          });
+
+          const hasTabChange = mutations.some(
+            (/** @type {MutationRecord} */ mutation) =>
+              mutation.type === 'attributes' &&
+              mutation.attributeName === 'selected' &&
+              mutation.target instanceof Element &&
+              mutation.target.matches?.('ytmusic-tab-renderer, tp-yt-paper-tab')
+          );
+
+          if (hasRelevantChange || hasTabChange) {
+            window.YouTubeUtils?.logger?.debug?.(
+              '[YouTube+][Music]',
+              'Detected relevant DOM change, checking button'
+            );
+            debouncedCheck();
+          } else if (now % 2 === 0) {
+            debouncedCheck();
+          }
+        },
+        {
+          selector:
+            '#side-panel, #contents, ytmusic-browse, ytmusic-player-page, ytmusic-queue-renderer, ytmusic-tab-renderer',
           childList: true,
           subtree: true,
-          attributes: true, // Watch for attribute changes (tab switches)
-          attributeFilter: ['selected', 'tab-identifier', 'page-type'], // Only specific attributes
-        });
-        window.YouTubeUtils?.logger?.debug?.(
-          '[YouTube+][Music]',
-          '✓ Observer started with enhanced config'
-        );
-      } catch (observeError) {
-        console.error('[YouTube+][Music] Failed to observe document.body:', observeError);
-        // Retry with basic config
-        try {
-          observer = createObserver();
-          observer.observe(document.body, {
-            childList: true,
-            subtree: true,
-          });
-          window.YouTubeUtils?.logger?.debug?.(
-            '[YouTube+][Music]',
-            '✓ Observer started with basic config'
-          );
-        } catch (retryError) {
-          console.error('[YouTube+][Music] Failed to start observer (retry):', retryError);
+          attributes: true,
+          attributeFilter: ['selected', 'tab-identifier', 'page-type'],
         }
-      }
-    };
-
-    if (document.body) {
-      startObserving();
-    } else {
-      document.addEventListener('DOMContentLoaded', startObserving, { once: true });
+      );
+      window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', '✓ Coordinator watcher started');
+      return;
     }
+
+    observerFallbackTimerId = createVisibilityAwareInterval(() => {
+      checkAndCreateButton();
+    }, 500);
   };
 
   function stopScrollToTopRuntime() {
     try {
       if (healthCheckIntervalId != null) {
-        clearInterval(healthCheckIntervalId);
+        healthCheckIntervalId.stop();
         healthCheckIntervalId = null;
       }
 
-      if (observer) {
-        observer.disconnect();
-        observer = null;
+      if (observerSubId && window.YouTubeMutationCoordinator?.unsubscribe) {
+        window.YouTubeMutationCoordinator.unsubscribe(observerSubId);
+        observerSubId = null;
+      }
+
+      if (observerFallbackTimerId) {
+        observerFallbackTimerId.stop();
+        observerFallbackTimerId = null;
       }
 
       if (detachNavigationListeners) {
@@ -1206,7 +1198,7 @@
         detachNavigationListeners = null;
       }
 
-      const button = document.getElementById('ytmusic-side-panel-top-button');
+      const button = byId('ytmusic-side-panel-top-button');
       if (button?._scrollCleanup) {
         try {
           button._scrollCleanup();
@@ -1223,7 +1215,7 @@
       }
       if (button) button.remove();
     } catch (e) {
-      console.error('[YouTube+][Music] stopScrollToTopRuntime error:', e);
+      window.console.error('[YouTube+][Music] stopScrollToTopRuntime error:', e);
     }
   }
 
@@ -1231,7 +1223,14 @@
     if (!isScrollToTopEnabled(musicSettingsSnapshot)) return;
 
     // Already running
-    if (observer || healthCheckIntervalId != null || detachNavigationListeners) return;
+    if (
+      observerSubId ||
+      observerFallbackTimerId ||
+      healthCheckIntervalId != null ||
+      detachNavigationListeners
+    ) {
+      return;
+    }
 
     // Ensure styles (button relies on CSS)
     applyStyles();
@@ -1241,7 +1240,11 @@
       document.addEventListener(
         'DOMContentLoaded',
         () => {
-          checkAndCreateButton();
+          if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(checkAndCreateButton, { timeout: 1000 });
+          } else {
+            setTimeout(checkAndCreateButton, 0);
+          }
         },
         { once: true }
       );
@@ -1270,16 +1273,16 @@
       window.removeEventListener('yt-navigate-finish', ytNavigateHandler);
     };
 
-    // Start observer
+    // Start coordinator-backed watcher
     observeDocumentBodySafely();
 
     // Periodic health check
-    healthCheckIntervalId = setInterval(() => {
+    healthCheckIntervalId = createVisibilityAwareInterval(() => {
       try {
         if (!isScrollToTopEnabled(musicSettingsSnapshot)) return;
         if (document.hidden) return;
 
-        const button = document.getElementById('ytmusic-side-panel-top-button');
+        const button = byId('ytmusic-side-panel-top-button');
 
         if (button && (!button._scrollCleanup || !document.body.contains(button))) {
           window.YouTubeUtils?.logger?.debug?.(
@@ -1295,16 +1298,9 @@
           if (sidePanel) checkAndCreateButton();
         }
       } catch (error) {
-        console.error('[YouTube+][Music] Health check error:', error);
+        window.console.error('[YouTube+][Music] Health check error:', error);
       }
     }, 30000);
-
-    // Register the health check interval with cleanupManager for SPA cleanup
-    if (window.YouTubeUtils?.cleanupManager?.registerInterval) {
-      window.YouTubeUtils.cleanupManager.registerInterval(
-        /** @type {any} */ (healthCheckIntervalId)
-      );
-    }
   }
 
   function startIfEnabled() {
@@ -1352,7 +1348,7 @@
 
     // Scroll-to-top runtime
     if (isScrollToTopEnabled(musicSettingsSnapshot)) {
-      if (!observer) startScrollToTopRuntime();
+      if (!observerSubId && !observerFallbackTimerId) startScrollToTopRuntime();
     } else {
       stopScrollToTopRuntime();
     }
@@ -1380,48 +1376,64 @@
   }
 
   // Cleanup on page unload
-  window.addEventListener('beforeunload', () => {
+  const isMusicRoute = () => window.location.hostname === 'music.youtube.com';
+
+  let musicRuntimeStarted = false;
+  const startMusicRuntime = () => {
+    if (musicRuntimeStarted) return;
+    musicRuntimeStarted = true;
+
+    window.addEventListener('beforeunload', () => {
+      try {
+        stopScrollToTopRuntime();
+        if (musicStyleEl && musicStyleEl.isConnected) musicStyleEl.remove();
+        musicStyleEl = null;
+        window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Cleanup completed');
+      } catch (error) {
+        window.console.error('[YouTube+][Music] Cleanup error:', error);
+      }
+    });
+
+    // Start only if enabled; otherwise remain dormant.
+    startIfEnabled();
+
+    // Cross-subdomain live sync: react to changes made on youtube.com settings UI.
     try {
-      stopScrollToTopRuntime();
-      if (musicStyleEl && musicStyleEl.isConnected) musicStyleEl.remove();
-      musicStyleEl = null;
-      window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Cleanup completed');
-    } catch (error) {
-      console.error('[YouTube+][Music] Cleanup error:', error);
-    }
-  });
-
-  // Start only if enabled; otherwise remain dormant.
-  startIfEnabled();
-
-  // Cross-subdomain live sync: react to changes made on youtube.com settings UI.
-  try {
-    if (typeof GM_addValueChangeListener !== 'undefined') {
-      GM_addValueChangeListener('youtube-plus-music-settings', (_name, _oldValue, newValue) => {
-        try {
-          if (typeof newValue === 'string' && newValue) {
-            const parsed = JSON.parse(newValue);
-            musicSettingsSnapshot = mergeMusicSettings(parsed);
-          } else {
+      if (typeof GM_addValueChangeListener !== 'undefined') {
+        GM_addValueChangeListener('youtube-plus-music-settings', (_name, _oldValue, newValue) => {
+          try {
+            if (typeof newValue === 'string' && newValue) {
+              const parsed = JSON.parse(newValue);
+              musicSettingsSnapshot = mergeMusicSettings(parsed);
+            } else {
+              musicSettingsSnapshot = readMusicSettings();
+            }
+          } catch (e) {
             musicSettingsSnapshot = readMusicSettings();
           }
-        } catch (e) {
-          musicSettingsSnapshot = readMusicSettings();
-        }
 
-        // Apply immediately (will teardown if disabled).
-        applySettingsChanges();
-      });
+          // Apply immediately (will teardown if disabled).
+          applySettingsChanges();
+        });
+      }
+    } catch (e) {
+      window.console.warn('[YouTube+][Music] Settings listener registration error:', e);
     }
-  } catch (e) {
-    console.warn('[YouTube+][Music] Settings listener registration error:', e);
-  }
 
-  window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Module loaded (lazy)', {
-    version: '2.4.5',
-    hostname: window.location.hostname,
-    enabled:
-      window.location.hostname === 'music.youtube.com' &&
-      isMusicModuleEnabled(musicSettingsSnapshot),
-  });
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+][Music]', 'Module loaded (lazy)', {
+      version: '2.4.5',
+      hostname: window.location.hostname,
+      enabled: isMusicRoute() && isMusicModuleEnabled(musicSettingsSnapshot),
+    });
+  };
+
+  if (window.YouTubePlusLazyLoader?.register) {
+    window.YouTubePlusLazyLoader.register('music', startMusicRuntime, {
+      priority: 45,
+      delay: 0,
+      shouldLoad: isMusicRoute,
+    });
+  } else {
+    startMusicRuntime();
+  }
 })();

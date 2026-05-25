@@ -80,12 +80,14 @@ function loadBuildCache() {
       const data = fs.readFileSync(BUILD_CACHE_FILE, 'utf8');
       buildCache = JSON.parse(data);
       if (verbose) {
-        console.log(`Loaded build cache with ${Object.keys(buildCache.files).length} entries`);
+        globalThis.console.log(
+          `Loaded build cache with ${Object.keys(buildCache.files).length} entries`
+        );
       }
     }
   } catch (e) {
     if (verbose) {
-      console.warn('Failed to load build cache:', e.message);
+      globalThis.console.warn('Failed to load build cache:', e.message);
     }
     buildCache = { files: {}, lastBuild: 0 };
   }
@@ -98,7 +100,7 @@ function saveBuildCache() {
   try {
     fs.writeFileSync(BUILD_CACHE_FILE, JSON.stringify(buildCache, null, 2), 'utf8');
   } catch (e) {
-    if (verbose) console.warn('Failed to save build cache:', e.message);
+    if (verbose) globalThis.console.warn('Failed to save build cache:', e.message);
   }
 }
 
@@ -147,28 +149,55 @@ const REGEX_PATTERNS = {
 function readFileSafe(p) {
   try {
     if (!p || typeof p !== 'string') {
-      console.error('[Build Error] Invalid file path provided');
+      globalThis.console.error('[Build Error] Invalid file path provided');
       return null;
     }
     if (!fs.existsSync(p)) {
-      console.warn(`[Build Warning] File not found: ${p}`);
+      globalThis.console.warn(`[Build Warning] File not found: ${p}`);
       return null;
     }
     const stats = fs.statSync(p);
     if (!stats.isFile()) {
-      console.warn(`[Build Warning] Path is not a file: ${p}`);
+      globalThis.console.warn(`[Build Warning] Path is not a file: ${p}`);
       return null;
     }
     return fs.readFileSync(p, 'utf8');
   } catch (err) {
-    console.error(`[Build Error] Failed to read file ${p}:`, err.message);
+    globalThis.console.error(`[Build Error] Failed to read file ${p}:`, err.message);
     if (err.code === 'EACCES') {
-      console.error('[Build Error] Permission denied. Check file permissions.');
+      globalThis.console.error('[Build Error] Permission denied. Check file permissions.');
     } else if (err.code === 'EMFILE') {
-      console.error('[Build Error] Too many open files. Try closing other applications.');
+      globalThis.console.error(
+        '[Build Error] Too many open files. Try closing other applications.'
+      );
     }
     return null;
   }
+}
+
+/**
+ * Inline CSS resources referenced from JS modules via __YTPLUS_INLINE_CSS__('relative/path.css').
+ * @param {string} content
+ * @param {string} filePath
+ * @returns {string}
+ */
+function inlineCssResources(content, filePath) {
+  if (!content || !content.includes('__YTPLUS_INLINE_CSS__')) return content;
+
+  return content.replace(
+    /__YTPLUS_INLINE_CSS__\(\s*['"]([^'"]+?)['"]\s*\)/g,
+    (_match, resourcePath) => {
+      const resolved = path.resolve(path.dirname(filePath), String(resourcePath).trim());
+      const css = readFileSafe(resolved);
+      if (css === null) {
+        globalThis.console.warn(
+          `[Build Warning] CSS resource not found for inline marker in ${path.relative(ROOT, filePath)}: ${String(resourcePath).trim()}`
+        );
+        return '""';
+      }
+      return JSON.stringify(css);
+    }
+  );
 }
 
 /**
@@ -534,7 +563,7 @@ function simpleOptimize(code, headerBlock) {
   const cssSaved = beforeCSS - body.length;
   const cssDuration = endPerfTimer('minifyCSS');
   if (verbose) {
-    console.log(
+    globalThis.console.log(
       `  ⏱️  CSS minification: ${cssDuration.toFixed(2)}ms (saved ${(cssSaved / 1024).toFixed(1)}KB)`
     );
   }
@@ -544,7 +573,7 @@ function simpleOptimize(code, headerBlock) {
   body = _removeCommentsPreserveStrings(body);
   const commentsDuration = endPerfTimer('removeComments');
   if (verbose && commentsDuration > 10) {
-    console.log(`  ⏱️  Comment removal: ${commentsDuration.toFixed(2)}ms`);
+    globalThis.console.log(`  ⏱️  Comment removal: ${commentsDuration.toFixed(2)}ms`);
   }
 
   // remove empty lines (optimized with array pre-allocation estimate)
@@ -559,7 +588,7 @@ function simpleOptimize(code, headerBlock) {
   body = nonEmptyLines.join('\n');
   if (verbose) {
     const emptyLinesDuration = endPerfTimer('removeEmptyLines');
-    console.log(`  ⏱️  Empty line removal: ${emptyLinesDuration.toFixed(2)}ms`);
+    globalThis.console.log(`  ⏱️  Empty line removal: ${emptyLinesDuration.toFixed(2)}ms`);
   }
 
   // normalize whitespace
@@ -567,13 +596,13 @@ function simpleOptimize(code, headerBlock) {
   body = _normalizeWhitespace(body);
   if (verbose) {
     const whitespaceDuration = endPerfTimer('normalizeWhitespace');
-    console.log(`  ⏱️  Whitespace normalization: ${whitespaceDuration.toFixed(2)}ms`);
+    globalThis.console.log(`  ⏱️  Whitespace normalization: ${whitespaceDuration.toFixed(2)}ms`);
   }
 
   const finalCode = `${(headerText ? `${headerText.trim()}\n\n` : '') + body.trim()}\n`;
 
   const totalDuration = endPerfTimer('simpleOptimize');
-  if (verbose) console.log(`  ⏱️  Total optimization: ${totalDuration.toFixed(2)}ms`);
+  if (verbose) globalThis.console.log(`  ⏱️  Total optimization: ${totalDuration.toFixed(2)}ms`);
 
   return finalCode;
 }
@@ -600,9 +629,9 @@ for (const p of metaCandidates) {
 }
 
 if (header) {
-  console.log(`Using userscript metadata from: ${path.relative(ROOT, headerSource)}`);
+  globalThis.console.log(`Using userscript metadata from: ${path.relative(ROOT, headerSource)}`);
 } else {
-  console.warn(
+  globalThis.console.warn(
     'Warning: metadata block not found in userscript.js or youtube.user.js. A default header will be used.'
   );
   header = `// ==UserScript==\n// @name YouTube + UserScript (built)\n// @version 0.0\n// ==/UserScript==\n`;
@@ -629,12 +658,12 @@ function readOrderManifest() {
           .filter(Boolean);
       }
     } catch (e) {
-      console.error(`[Build Error] Failed to read order manifest ${p}:`, e.message);
+      globalThis.console.error(`[Build Error] Failed to read order manifest ${p}:`, e.message);
       return null;
     }
   }
   if (verbose) {
-    console.warn('[Build Warning] No order manifest found. Using default ordering.');
+    globalThis.console.warn('[Build Warning] No order manifest found. Using default ordering.');
   }
   return null;
 }
@@ -649,7 +678,9 @@ function collectModuleFiles() {
   const baseDir = useSrc ? srcDir : ROOT;
 
   if (!useSrc && verbose) {
-    console.warn('[Build Warning] src/ directory not found. Scanning root directory instead.');
+    globalThis.console.warn(
+      '[Build Warning] src/ directory not found. Scanning root directory instead.'
+    );
   }
 
   /**
@@ -671,21 +702,21 @@ function collectModuleFiles() {
       }
       return out;
     } catch (e) {
-      console.error(`[Build Error] Failed to read directory ${dir}:`, e.message);
+      globalThis.console.error(`[Build Error] Failed to read directory ${dir}:`, e.message);
       return [];
     }
   }
 
   const files = walk(baseDir);
   if (files.length === 0) {
-    console.error('[Build Error] No JavaScript module files found!');
-    console.error(`[Build Error] Searched in: ${baseDir}`);
-    console.error('[Build Error] Make sure your source files are in the src/ directory');
+    globalThis.console.error('[Build Error] No JavaScript module files found!');
+    globalThis.console.error(`[Build Error] Searched in: ${baseDir}`);
+    globalThis.console.error('[Build Error] Make sure your source files are in the src/ directory');
     throw new Error('No module files found for build');
   }
 
   if (verbose) {
-    console.log(`[Build Info] Found ${files.length} module file(s)`);
+    globalThis.console.log(`[Build Info] Found ${files.length} module file(s)`);
   }
 
   // If manifest order exists, use it for ordering by basename (keep path from files)
@@ -698,16 +729,20 @@ function collectModuleFiles() {
         ordered.push(rest.get(name));
         rest.delete(name);
       } else {
-        console.warn(`[Build Warning] Module "${name}" listed in manifest but not found in src/`);
-        console.warn(`[Build Warning] Available modules: ${Array.from(rest.keys()).join(', ')}`);
+        globalThis.console.warn(
+          `[Build Warning] Module "${name}" listed in manifest but not found in src/`
+        );
+        globalThis.console.warn(
+          `[Build Warning] Available modules: ${Array.from(rest.keys()).join(', ')}`
+        );
       }
     }
     const others = Array.from(rest.values()).sort((a, b) => a.name.localeCompare(b.name));
     if (others.length > 0) {
-      console.warn(
+      globalThis.console.warn(
         `[Build Warning] ${others.length} module(s) not in manifest: ${others.map(f => f.name).join(', ')}`
       );
-      console.warn('[Build Warning] Consider adding these to build.order.json');
+      globalThis.console.warn('[Build Warning] Consider adding these to build.order.json');
     }
     return ordered.concat(others);
   }
@@ -740,30 +775,36 @@ function watchAndBuild() {
     const chokidar = require('chokidar');
     const watcher = chokidar.watch(watchDir, { ignoreInitial: true });
     watcher.on('all', (_event, filePath) => {
-      if (!filePath || !filePath.endsWith('.js')) return;
+      if (!filePath || (!filePath.endsWith('.js') && !filePath.endsWith('.css'))) return;
       const filename = path.basename(filePath);
       if (EXCLUDE.has(filename)) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        console.log(`\n[${new Date().toLocaleTimeString()}] Change detected: ${filePath}`);
-        console.log('Rebuilding...');
+        globalThis.console.log(
+          `\n[${new Date().toLocaleTimeString()}] Change detected: ${filePath}`
+        );
+        globalThis.console.log('Rebuilding...');
         buildOnce();
       }, DEBOUNCE_MS);
     });
-    console.log(`Watching (chokidar) for changes in: ${path.relative(process.cwd(), watchDir)}/`);
+    globalThis.console.log(
+      `Watching (chokidar) for changes in: ${path.relative(process.cwd(), watchDir)}/`
+    );
     return watcher;
   } catch {
     const watcher = fs.watch(watchDir, { recursive: false }, (_eventType, filename) => {
-      if (!filename || !filename.endsWith('.js')) return;
+      if (!filename || (!filename.endsWith('.js') && !filename.endsWith('.css'))) return;
       if (EXCLUDE.has(filename)) return;
       if (timer) clearTimeout(timer);
       timer = setTimeout(() => {
-        console.log(`\n[${new Date().toLocaleTimeString()}] Change detected: ${filename}`);
-        console.log('Rebuilding...');
+        globalThis.console.log(
+          `\n[${new Date().toLocaleTimeString()}] Change detected: ${filename}`
+        );
+        globalThis.console.log('Rebuilding...');
         buildOnce();
       }, DEBOUNCE_MS);
     });
-    console.log(
+    globalThis.console.log(
       `Watching (fs.watch fallback) for changes in: ${path.relative(process.cwd(), watchDir)}/`
     );
     return watcher;
@@ -782,7 +823,7 @@ if (optimized) {
   // For backward compatibility with previous `--no-eslint` behaviour (build:fast), skip ESLint
   noEslint = true;
   if (verbose) {
-    console.log(
+    globalThis.console.log(
       'Optimized build requested: skipping ESLint and performing aggressive minification'
     );
   }
@@ -815,19 +856,19 @@ function ensureLocalEslint() {
         pkgPath,
         JSON.stringify({ name: 'youtube-plus-modular-build', private: true }, null, 2)
       );
-      console.log('Created minimal package.json');
+      globalThis.console.log('Created minimal package.json');
     } catch (e) {
-      console.warn('Could not create package.json:', e && e.message);
+      globalThis.console.warn('Could not create package.json:', e && e.message);
       return null;
     }
   }
 
   try {
-    console.log('Installing ESLint locally (this may take a moment)...');
+    globalThis.console.log('Installing ESLint locally (this may take a moment)...');
     execSync('npm install --no-audit --no-fund eslint --save-dev', { cwd: ROOT, stdio: 'inherit' });
     if (fs.existsSync(eslintBin)) return eslintBin;
   } catch (e) {
-    console.warn('Automatic ESLint installation failed:', e && e.message);
+    globalThis.console.warn('Automatic ESLint installation failed:', e && e.message);
     return null;
   }
   return null;
@@ -857,21 +898,21 @@ function mergeModuleFiles(files) {
   }); // Process all file contents
   for (const { path: p, displayName, content } of fileContents) {
     if (content === null) {
-      console.warn(`⚠️  Could not read: ${path.relative(ROOT, p)}`);
+      globalThis.console.warn(`⚠️  Could not read: ${path.relative(ROOT, p)}`);
       skippedCount++;
       continue;
     }
 
-    const clean = stripMeta(content).trim();
+    const clean = inlineCssResources(stripMeta(content), p).trim();
     if (!clean) {
-      console.warn(`⚠️  Empty module: ${path.relative(ROOT, p)}`);
+      globalThis.console.warn(`⚠️  Empty module: ${path.relative(ROOT, p)}`);
       skippedCount++;
       continue;
     }
 
     parts.push(`// --- MODULE: ${displayName} ---`);
     parts.push(clean);
-    if (verbose) console.log(`  ✓ Merged: ${displayName}`);
+    if (verbose) globalThis.console.log(`  ✓ Merged: ${displayName}`);
     mergedCount++;
   }
 
@@ -879,9 +920,9 @@ function mergeModuleFiles(files) {
 
   const duration = endPerfTimer('mergeModuleFiles');
   if (verbose) {
-    console.log(`  ⏱️  Merge time: ${duration.toFixed(2)}ms`);
+    globalThis.console.log(`  ⏱️  Merge time: ${duration.toFixed(2)}ms`);
     if (changedCount < mergedCount) {
-      console.log(
+      globalThis.console.log(
         `  📦 Changed files: ${changedCount}/${mergedCount} (${((changedCount / mergedCount) * 100).toFixed(1)}%)`
       );
     }
@@ -900,15 +941,15 @@ function mergeModuleFiles(files) {
  * @returns {boolean} True if valid
  */
 function validateSyntax(code, outPath) {
-  if (verbose) console.log('Running syntax validation...');
+  if (verbose) globalThis.console.log('Running syntax validation...');
   try {
     new vm.Script(code, { filename: outPath });
-    console.log('✓ Basic syntax check passed (vm.Script)');
+    globalThis.console.log('✓ Basic syntax check passed (vm.Script)');
     return true;
   } catch (e) {
-    console.error('❌ Syntax check failed:', e && e.message);
+    globalThis.console.error('❌ Syntax check failed:', e && e.message);
     if (verbose && e.stack) {
-      console.error('Stack trace:', e.stack);
+      globalThis.console.error('Stack trace:', e.stack);
     }
     return false;
   }
@@ -924,7 +965,7 @@ function getEslintCommand(eslintPath, outPath) {
   const flatConfig = path.join(ROOT, 'eslint.config.cjs');
 
   if (fs.existsSync(flatConfig)) {
-    if (verbose) console.log(`Using flat config: ${flatConfig}`);
+    if (verbose) globalThis.console.log(`Using flat config: ${flatConfig}`);
     return `"${eslintPath}" --no-warn-ignored "${outPath}"`;
   }
 
@@ -940,11 +981,11 @@ function getEslintCommand(eslintPath, outPath) {
  */
 function runEslintValidation(outPath) {
   if (noEslint) {
-    if (verbose) console.log('Skipping ESLint (--no-eslint flag)');
+    if (verbose) globalThis.console.log('Skipping ESLint (--no-eslint flag)');
     return true;
   }
 
-  if (verbose) console.log('Preparing ESLint validation...');
+  if (verbose) globalThis.console.log('Preparing ESLint validation...');
 
   let eslintPath = path.join(
     ROOT,
@@ -954,7 +995,7 @@ function runEslintValidation(outPath) {
   );
 
   if (!fs.existsSync(eslintPath)) {
-    if (verbose) console.log('ESLint not found locally, attempting installation...');
+    if (verbose) globalThis.console.log('ESLint not found locally, attempting installation...');
     eslintPath = ensureLocalEslint();
   }
 
@@ -963,17 +1004,17 @@ function runEslintValidation(outPath) {
   }
 
   try {
-    console.log('Running ESLint validation...');
+    globalThis.console.log('Running ESLint validation...');
     const command = getEslintCommand(eslintPath, outPath);
     execSync(command, { stdio: 'inherit' });
 
-    if (verbose) console.log('✓ ESLint validation passed');
-    console.log('✓ ESLint passed');
+    if (verbose) globalThis.console.log('✓ ESLint validation passed');
+    globalThis.console.log('✓ ESLint passed');
     return true;
   } catch (err) {
-    console.error('❌ ESLint reported problems');
+    globalThis.console.error('❌ ESLint reported problems');
     if (verbose) {
-      console.error('ESLint exit code:', err.status || 'unknown');
+      globalThis.console.error('ESLint exit code:', err.status || 'unknown');
     }
     return false;
   }
@@ -987,7 +1028,7 @@ function runEslintValidation(outPath) {
  */
 async function optimizeOrMinify(code, outPath) {
   if (verbose) {
-    console.log(
+    globalThis.console.log(
       minify ? 'Minifying output...' : 'Optimizing output (strip comments/whitespace)...'
     );
   }
@@ -1001,8 +1042,8 @@ async function optimizeOrMinify(code, outPath) {
 
     return await performTerserMinification(code, outPath);
   } catch (e) {
-    console.error('[Build Error] Minification/optimization failed:', e && e.message);
-    if (verbose) console.error(e && e.stack);
+    globalThis.console.error('[Build Error] Minification/optimization failed:', e && e.message);
+    if (verbose) globalThis.console.error(e && e.stack);
     return false;
   }
 }
@@ -1015,12 +1056,12 @@ async function optimizeOrMinify(code, outPath) {
  * @returns {Promise<boolean>} True if successful
  */
 async function performSimpleOptimization(code, outPath) {
-  if (verbose) console.log('Running optimized build (Terser compress, no mangle)');
+  if (verbose) globalThis.console.log('Running optimized build (Terser compress, no mangle)');
 
   // Write unoptimized code for debugging
   const debugPath = outPath.replace('.js', '.unoptimized.js');
   fs.writeFileSync(debugPath, code, 'utf8');
-  console.log(`✓ Wrote unoptimized code to ${path.basename(debugPath)} for debugging`);
+  globalThis.console.log(`✓ Wrote unoptimized code to ${path.basename(debugPath)} for debugging`);
 
   try {
     const terser = require('terser');
@@ -1084,7 +1125,9 @@ async function performSimpleOptimization(code, outPath) {
     });
 
     if (result.error || !result.code) {
-      console.warn('[Build Warning] Terser optimization failed, falling back to simple optimizer');
+      globalThis.console.warn(
+        '[Build Warning] Terser optimization failed, falling back to simple optimizer'
+      );
       const finalCode = simpleOptimize(code, header);
       fs.writeFileSync(outPath, finalCode, 'utf8');
       return true;
@@ -1096,18 +1139,21 @@ async function performSimpleOptimization(code, outPath) {
     const optimizedSize = Buffer.byteLength(result.code, 'utf8');
     const savings = ((1 - optimizedSize / originalSize) * 100).toFixed(2);
 
-    console.log(
+    globalThis.console.log(
       `✓ Optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(optimizedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
     );
     return true;
   } catch (e) {
-    console.warn('[Build Warning] Terser not available, using simple optimizer:', e.message);
+    globalThis.console.warn(
+      '[Build Warning] Terser not available, using simple optimizer:',
+      e.message
+    );
     const finalCode = simpleOptimize(code, header);
     fs.writeFileSync(outPath, finalCode, 'utf8');
     const originalSize = Buffer.byteLength(code, 'utf8');
     const optimizedSize = Buffer.byteLength(finalCode, 'utf8');
     const savings = ((1 - optimizedSize / originalSize) * 100).toFixed(2);
-    console.log(
+    globalThis.console.log(
       `✓ Optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(optimizedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
     );
     return true;
@@ -1170,7 +1216,6 @@ function getTerserCompressOptions() {
     // Additional size optimizations
     toplevel: minify, // Allow top-level compression in full minify mode
     keep_fargs: false, // Remove unused function arguments
-    drop_console: minify, // Drop console only for full minified output
 
     // Global definitions (helps with dead code elimination)
     global_defs: {
@@ -1269,7 +1314,7 @@ async function performTerserMinification(code, outPath) {
   }
 
   if (verbose) {
-    console.log('Terser options:', JSON.stringify(terserOpts, null, 2));
+    globalThis.console.log('Terser options:', JSON.stringify(terserOpts, null, 2));
   }
 
   // Remove any userscript metadata block from the code before minifying.
@@ -1282,19 +1327,19 @@ async function performTerserMinification(code, outPath) {
   const minified = await terser.minify(codeToMinify, terserOpts);
 
   if (minified.error) {
-    console.error('[Build Error] Terser minification error:', minified.error);
+    globalThis.console.error('[Build Error] Terser minification error:', minified.error);
     return false;
   }
 
   if (!minified || !minified.code) {
-    console.error('[Build Error] Minification produced no output');
+    globalThis.console.error('[Build Error] Minification produced no output');
     return false;
   }
 
   // Check for warnings
   if (minified.warnings && minified.warnings.length > 0) {
-    console.warn('[Build Warning] Terser warnings:');
-    minified.warnings.forEach(w => console.warn(`  - ${w}`));
+    globalThis.console.warn('[Build Warning] Terser warnings:');
+    minified.warnings.forEach(w => globalThis.console.warn(`  - ${w}`));
   }
 
   let finalCode = minified.code;
@@ -1303,7 +1348,7 @@ async function performTerserMinification(code, outPath) {
     const mapPath = `${outPath}.map`;
     fs.writeFileSync(mapPath, minified.map, 'utf8');
     finalCode = `${finalCode}\n//# sourceMappingURL=${path.basename(mapPath)}\n`;
-    if (verbose) console.log(`✓ Source map written: ${mapPath}`);
+    if (verbose) globalThis.console.log(`✓ Source map written: ${mapPath}`);
   }
 
   fs.writeFileSync(outPath, finalCode, 'utf8');
@@ -1313,15 +1358,15 @@ async function performTerserMinification(code, outPath) {
   const savings = ((1 - minifiedSize / originalSize) * 100).toFixed(2);
   const savedKb = ((originalSize - minifiedSize) / 1024).toFixed(2);
 
-  console.log(
+  globalThis.console.log(
     `✓ Minified: ${(originalSize / 1024).toFixed(2)}KB → ${(minifiedSize / 1024).toFixed(2)}KB (saved ${savedKb}KB / ${savings}%)`
   );
 
   if (minifyPretty) {
-    console.log('✓ Pretty minify enabled: output is formatted for readability');
+    globalThis.console.log('✓ Pretty minify enabled: output is formatted for readability');
   }
   if (minifySourceMap) {
-    console.log(`✓ Source map: ${path.basename(outPath)}.map`);
+    globalThis.console.log(`✓ Source map: ${path.basename(outPath)}.map`);
   }
 
   return true;
@@ -1340,20 +1385,22 @@ async function buildOnceCustom(outPath) {
     loadBuildCache();
   }
 
-  if (verbose) console.log(`Starting build process for ${outPath}...`);
+  if (verbose) globalThis.console.log(`Starting build process for ${outPath}...`);
 
   startPerfTimer('collectModules');
   const files = collectModuleFiles();
   const collectDuration = endPerfTimer('collectModules');
   if (verbose) {
-    console.log(`Found ${files.length} module(s) to merge (${collectDuration.toFixed(2)}ms)`);
+    globalThis.console.log(
+      `Found ${files.length} module(s) to merge (${collectDuration.toFixed(2)}ms)`
+    );
   }
 
   // Merge module files
   const { code, mergedCount, skippedCount } = mergeModuleFiles(files);
 
   if (skippedCount > 0) {
-    console.warn(`⚠️  Skipped ${skippedCount} module(s) due to errors or empty content`);
+    globalThis.console.warn(`⚠️  Skipped ${skippedCount} module(s) due to errors or empty content`);
   }
 
   startPerfTimer('writeFile');
@@ -1361,7 +1408,7 @@ async function buildOnceCustom(outPath) {
   const writeDuration = endPerfTimer('writeFile');
 
   const fileSize = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2);
-  console.log(
+  globalThis.console.log(
     `\n✓ Built ${path.relative(ROOT, outPath)} from ${mergedCount} modules (${fileSize}KB, ${writeDuration.toFixed(2)}ms):`
   );
 
@@ -1369,7 +1416,7 @@ async function buildOnceCustom(outPath) {
     const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
     const fp = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
     const rel = path.relative(ROOT, fp).replace(/\\/g, '/');
-    console.log('  ✓', rel);
+    globalThis.console.log('  ✓', rel);
   }
 
   // Validate syntax
@@ -1378,7 +1425,7 @@ async function buildOnceCustom(outPath) {
     return false;
   }
   const validateDuration = endPerfTimer('validateSyntax');
-  if (verbose) console.log(`  ⏱️  Syntax validation: ${validateDuration.toFixed(2)}ms`);
+  if (verbose) globalThis.console.log(`  ⏱️  Syntax validation: ${validateDuration.toFixed(2)}ms`);
 
   // Run ESLint
   startPerfTimer('eslint');
@@ -1386,7 +1433,7 @@ async function buildOnceCustom(outPath) {
     return false;
   }
   const eslintDuration = endPerfTimer('eslint');
-  if (!noEslint && verbose) console.log(`  ⏱️  ESLint: ${eslintDuration.toFixed(2)}ms`);
+  if (!noEslint && verbose) globalThis.console.log(`  ⏱️  ESLint: ${eslintDuration.toFixed(2)}ms`);
 
   // Optimize or minify if requested
   if (minify || optimized) {
@@ -1395,11 +1442,11 @@ async function buildOnceCustom(outPath) {
       return false;
     }
     const optimizeDuration = endPerfTimer('optimize');
-    if (verbose) console.log(`  ⏱️  Optimization: ${optimizeDuration.toFixed(2)}ms`);
+    if (verbose) globalThis.console.log(`  ⏱️  Optimization: ${optimizeDuration.toFixed(2)}ms`);
   }
 
   const totalDuration = endPerfTimer('totalBuild');
-  console.log(`✓ Build completed successfully in ${(totalDuration / 1000).toFixed(2)}s`);
+  globalThis.console.log(`✓ Build completed successfully in ${(totalDuration / 1000).toFixed(2)}s`);
 
   // Save build cache for next incremental build
   if (!watch) {
@@ -1409,9 +1456,9 @@ async function buildOnceCustom(outPath) {
 
   // Log performance summary if verbose
   if (verbose) {
-    console.log('\n📊 Performance Summary:');
-    console.log(`  Total: ${(totalDuration / 1000).toFixed(2)}s`);
-    console.log(
+    globalThis.console.log('\n📊 Performance Summary:');
+    globalThis.console.log(`  Total: ${(totalDuration / 1000).toFixed(2)}s`);
+    globalThis.console.log(
       `  Throughput: ${Math.round((code.split('\n').length / totalDuration) * 1000)} lines/sec`
     );
   }
@@ -1424,15 +1471,15 @@ async function buildOnceCli() {
   try {
     return await buildOnceCustom(OUT_PATH);
   } catch (err) {
-    console.error('Build failed:', err && err.message);
-    if (verbose) console.error(err && err.stack);
+    globalThis.console.error('Build failed:', err && err.message);
+    if (verbose) globalThis.console.error(err && err.stack);
     return false;
   }
 }
 
 if (watch) {
   buildOnceCli().then(ok => {
-    if (!ok) console.warn('Initial build failed. Still watching for fixes...');
+    if (!ok) globalThis.console.warn('Initial build failed. Still watching for fixes...');
     watchAndBuild();
   });
 } else {

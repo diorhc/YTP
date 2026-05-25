@@ -61,37 +61,52 @@
     };
   };
 
-  /**
-   * Minimal DOM query helper
-   * @param {string} sel - CSS selector
-   * @param {Element | Document} [ctx] - Context element
-   * @returns {Element | null}
-   */
-  const $ = (sel, ctx = document) => ctx.querySelector(sel);
+  // Shared literals and default timing values to avoid module-level magic numbers.
+  // Canonical DOM helpers ($, $$, byId) live in utils.js (cache-aware via
+  // YouTubeDOMCache). Modules should use window.YouTubeUtils.$ at runtime.
+  const SETTINGS_KEY = 'youtube_plus_settings';
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const TIMEOUTS = Object.freeze({
+    SHORT_UI: 80,
+    CHAT_URL_CHANGED: 136,
+    LONG_OPERATION: 4000,
+  });
 
   /**
-   * Multi-element DOM query helper
-   * @param {string} sel - CSS selector
-   * @param {Element | Document} [ctx] - Context element
-   * @returns {Element[]}
+   * Shared createHTML wrapper around TrustedTypes policy when available.
+   * Canonical sanitization lives in safe-dom.js (YouTubeSafeDOM.sanitizeHTML);
+   * we do NOT ship a naive sanitizer here because no caller relies on it.
+   * @param {string} html
+   * @returns {string}
    */
-  const $$ = (sel, ctx = document) => Array.from(ctx.querySelectorAll(sel));
+  const createHTML = html => {
+    if (typeof window._ytplusCreateHTML === 'function') {
+      return window._ytplusCreateHTML(html);
+    }
+    return typeof html === 'string' ? html : String(html ?? '');
+  };
 
   /**
-   * getElementById shorthand
-   * @param {string} id - Element ID
-   * @returns {Element | null}
+   * Shared safe HTML setter fallback used by modules.
+   * @param {Element} element
+   * @param {string} html
+   * @param {boolean} [sanitize=true]
    */
-  const byId = id => document.getElementById(id);
+  const setSafeHTML = (element, html, sanitize = true) => {
+    if (!(element instanceof HTMLElement)) return;
 
-  /**
-   * Sanitize HTML string (minimal fallback)
-   * @param {string} html - Raw HTML string
-   * @returns {string} Sanitized string
-   */
-  const sanitizeHTML = html => {
-    if (typeof html !== 'string') return '';
-    return html.replace(/[<>&"'\/`=]/g, '');
+    if (window.YouTubeSafeDOM?.setHTML) {
+      window.YouTubeSafeDOM.setHTML(element, html, { sanitize });
+      return;
+    }
+
+    if (window.YouTubeSecurityUtils?.setInnerHTMLSafe) {
+      window.YouTubeSecurityUtils.setInnerHTMLSafe(element, html, sanitize);
+      return;
+    }
+
+    const safeText = String(html || '');
+    element.replaceChildren(document.createTextNode(safeText));
   };
 
   /**
@@ -106,10 +121,11 @@
   window._ytpDefaults = Object.freeze({
     debounce,
     throttle,
-    $,
-    $$,
-    byId,
-    sanitizeHTML,
+    SETTINGS_KEY,
+    SVG_NS,
+    TIMEOUTS,
+    createHTML,
+    setSafeHTML,
     t,
   });
 })();

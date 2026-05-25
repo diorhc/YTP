@@ -94,13 +94,16 @@ describe('PlayAll Module', () => {
         path.startsWith('/@') ||
         path.startsWith('/channel/') ||
         path.startsWith('/playlist') ||
-        path.startsWith('/c/')
+        path.startsWith('/c/') ||
+        path.startsWith('/user/')
       );
     };
     expect(isPlayAllTarget('/@channel')).toBe(true);
+    expect(isPlayAllTarget('/@channel/videos')).toBe(true);
     expect(isPlayAllTarget('/channel/UC123')).toBe(true);
     expect(isPlayAllTarget('/playlist?list=PL123')).toBe(true);
     expect(isPlayAllTarget('/c/SomeChannel')).toBe(true);
+    expect(isPlayAllTarget('/user/SomeChannel')).toBe(true);
     expect(isPlayAllTarget('/watch')).toBe(false);
     expect(isPlayAllTarget('/')).toBe(false);
   });

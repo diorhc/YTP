@@ -1,4 +1,5 @@
 // Event Delegation System - Performance Optimization
+// @ts-check
 (function () {
   'use strict';
 
@@ -25,7 +26,7 @@
      */
     delegate(parent, eventType, selector, handler, options = {}) {
       if (!parent || !eventType || !selector || !handler) {
-        console.warn('[EventDelegator] Invalid parameters');
+        window.console.warn('[EventDelegator] Invalid parameters');
         return;
       }
 
@@ -134,7 +135,7 @@
             try {
               handler.call(target, event, target);
             } catch (error) {
-              console.error('[EventDelegator] Handler error:', error);
+              window.console.error('[EventDelegator] Handler error:', error);
               window.YouTubeUtils?.logger?.error?.('[EventDelegator] Handler error', error);
             }
           }
@@ -277,9 +278,5 @@
         getStats: () => eventDelegator.getStats(),
         clear: () => eventDelegator.clear(),
       });
-  }
-
-  if (typeof module !== 'undefined' && module.exports) {
-    module.exports = { EventDelegator, on, off };
   }
 })();

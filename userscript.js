@@ -25,7 +25,7 @@
 // @name:uz             YouTube +
 // @name:vi             YouTube +
 // @namespace           by
-// @version             2.5
+// @version             2.5.1
 // @author              diorhc
 // @description         Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:ar      Tabview YouTube and download and other features ↴
@@ -80,11 +80,26 @@
 // @grant               unsafeWindow
 // @grant               GM_addElement
 // @connect             api.livecounts.io
+// @connect             livecounts.io
 // @connect             cnv.cx
 // @connect             mp3yt.is
-// @connect             *
+// @connect             returnyoutubedislikeapi.com
+// @connect             translate.googleapis.com
+// @connect             ldpccocxlrdsyejfhrvc.supabase.co
+// @connect             raw.githubusercontent.com
+// @connect             cdn.jsdelivr.net
+// @connect             greasyfork.org
+// @connect             update.greasyfork.org
 // @connect             youtube.com
+// @connect             www.youtube.com
+// @connect             m.youtube.com
 // @connect             googlevideo.com
+// @connect             i.ytimg.com
+// @connect             ytimg.com
+// @connect             yt3.ggpht.com
+// @connect             yt3.googleusercontent.com
+// @connect             fonts.googleapis.com
+// @connect             www.gstatic.com
 // @connect             self
 // @run-at              document-start
 // @noframes

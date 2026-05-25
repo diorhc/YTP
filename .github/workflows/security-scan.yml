@@ -38,6 +38,9 @@ jobs:
         run: npm run lint
         continue-on-error: true
 
+      - name: Run CSP compatibility check
+        run: npm run lint:csp
+
       - name: Check for known vulnerabilities (non-blocking)
         run: |
           set +e
@@ -53,44 +56,13 @@ jobs:
       - name: Security code patterns check
         run: |
           echo "Checking for dangerous patterns..."
-          FOUND_ISSUES=0
-          
-          # Check for eval usage
-          if grep -r "eval(" src/ --include="*.js" 2>/dev/null; then
-            echo "⚠️ WARNING: eval() found in code"
-            FOUND_ISSUES=1
-          fi
-          
-          # Check for Function constructor
-          if grep -r "new Function" src/ --include="*.js" 2>/dev/null; then
-            echo "⚠️ WARNING: Function constructor found"
-            FOUND_ISSUES=1
-          fi
-          
-          # Check for document.write
-          if grep -r "document\.write" src/ --include="*.js" 2>/dev/null; then
-            echo "⚠️ WARNING: document.write found"
-            FOUND_ISSUES=1
-          fi
-          
-          # Check for innerHTML with variables (potential XSS)
+          npm run lint:csp
+
           if grep -rE "innerHTML\s*=\s*[^'\"\`]" src/ --include="*.js" | grep -v "innerHTML = ''" | grep -v "createSafeHTML" | grep -v "//"; then
             echo "⚠️ WARNING: Potentially unsafe innerHTML usage found"
             echo "Use YouTubeSecurityUtils.setInnerHTMLSafe() instead"
           else
             echo "✅ innerHTML usage is safe"
-          fi
-          
-          # Check for javascript: protocol
-          if grep -ri "javascript:" src/ --include="*.js" 2>/dev/null | grep -v "// Remove javascript:" | grep -v "console.warn" | grep -v "//"; then
-            echo "⚠️ WARNING: javascript: protocol found"
-            FOUND_ISSUES=1
-          fi
-          
-          if [ $FOUND_ISSUES -eq 0 ]; then
-            echo "✅ Security pattern check passed"
-          else
-            echo "⚠️ Security warnings found (non-blocking)"
           fi
 
       - name: Check for hardcoded secrets
@@ -118,8 +90,8 @@ jobs:
 
       - name: Validate security utilities exist
         run: |
-          if [ ! -f "src/security-utils.js" ]; then
-            echo "❌ ERROR: security-utils.js not found"
+          if [ ! -f "src/safe-dom.js" ]; then
+            echo "❌ ERROR: safe-dom.js not found"
             exit 1
           fi
           

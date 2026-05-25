@@ -12,7 +12,7 @@
     sampleRate: 0.01, // 1% sampling by default (can be overridden via YouTubePlusConfig)
     storageKey: 'youtube_plus_performance',
     metricsRetention: 100, // Keep last 100 metrics
-    enableConsoleOutput: false,
+    enableconsoleOutput: false,
     logLevel: 'info', // 'debug', 'info', 'warn', 'error'
   };
 
@@ -24,6 +24,19 @@
       return false;
     }
   })();
+
+  const qs =
+    window.YouTubeUtils?.$ ||
+    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
+      (root || document).querySelector(selector));
+  const qsAll =
+    window.YouTubeUtils?.$$ ||
+    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
+      Array.from((root || document).querySelectorAll(selector)));
+  const byId =
+    window.YouTubeUtils?.byId ||
+    ((/** @type {string} */ id) =>
+      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
 
   const getConfiguredSampleRate = () => {
     try {
@@ -104,7 +117,7 @@
       }
       metrics.marks.set(name, Date.now());
     } catch (e) {
-      console.warn('[YouTube+ Perf] Failed to create mark:', e);
+      window.console.warn('[YouTube+ Perf] Failed to create mark:', e);
     }
   };
 
@@ -125,7 +138,7 @@
     try {
       const startTime = metrics.marks.get(startMark);
       if (!startTime) {
-        // console.warn(`[YouTube+ Perf] Start mark "${startMark}" not found`);
+        // window.console.warn(`[YouTube+ Perf] Start mark "${startMark}" not found`);
         return 0;
       }
 
@@ -147,7 +160,7 @@
         metrics.measures.shift();
       }
 
-      if (PerformanceConfig.enableConsoleOutput) {
+      if (PerformanceConfig.enableconsoleOutput) {
         window.YouTubeUtils?.logger?.debug?.(`[YouTube+ Perf] ${name}: ${duration.toFixed(2)}ms`);
       }
 
@@ -162,7 +175,7 @@
 
       return duration;
     } catch (e) {
-      console.warn('[YouTube+ Perf] Failed to measure:', e);
+      window.console.warn('[YouTube+ Perf] Failed to measure:', e);
       return 0;
     }
   };
@@ -181,12 +194,19 @@
       mark(startMark);
 
       try {
-        const fnAny = /** @type {any} */ (fn);
-        const result = fnAny.apply(this, args);
+        const fnCallable = /** @type {(...params: any[]) => unknown} */ (fn);
+        const result = fnCallable.apply(this, args);
+        const promiseLike = /** @type {{ then?: unknown; finally?: unknown }} */ (
+          /** @type {unknown} */ (result)
+        );
 
         // Handle promises
-        if (result && typeof result.then === 'function') {
-          return result.finally(() => {
+        if (
+          result &&
+          typeof promiseLike.then === 'function' &&
+          typeof promiseLike.finally === 'function'
+        ) {
+          return /** @type {(onFinally: () => void) => unknown} */ (promiseLike.finally)(() => {
             measure(name, startMark, undefined);
           });
         }
@@ -214,8 +234,8 @@
       mark(startMark);
 
       try {
-        const fnAny = /** @type {any} */ (fn);
-        const result = await fnAny.apply(this, args);
+        const fnCallable = /** @type {(...params: any[]) => Promise<unknown>} */ (fn);
+        const result = await fnCallable.apply(this, args);
         measure(name, startMark, undefined);
         return result;
       } catch (error) {
@@ -247,7 +267,7 @@
 
     metrics.timings.set(name, metric);
 
-    if (PerformanceConfig.enableConsoleOutput) {
+    if (PerformanceConfig.enableconsoleOutput) {
       window.YouTubeUtils?.logger?.debug?.(`[YouTube+ Perf] ${name}: ${value}`, metadata);
     }
   };
@@ -382,7 +402,7 @@
     try {
       const data = exportMetrics();
       if (typeof Blob === 'undefined') {
-        console.warn('[YouTube+ Perf] Blob API not available');
+        window.console.warn('[YouTube+ Perf] Blob API not available');
         return false;
       }
       const blob = new Blob([data], { type: 'application/json' });
@@ -396,7 +416,7 @@
       URL.revokeObjectURL(url);
       return true;
     } catch (e) {
-      console.error('[YouTube+ Perf] Failed to export to file:', e);
+      window.console.error('[YouTube+ Perf] Failed to export to file:', e);
       return false;
     }
   };
@@ -472,29 +492,38 @@
    * Monitor DOM mutations performance
    * @param {Element} element - Element to monitor
    * @param {string} name - Monitor name
-   * @returns {MutationObserver|null} The observer instance
+   * @returns {{disconnect: () => void, takeRecords: () => MutationRecord[]}|null} Monitor handle
    */
   const monitorMutations = (element, name) => {
     if (!PerformanceConfig.enabled) return null;
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (!coordinator?.watchTarget) return null;
 
     let mutationCount = 0;
     const startTime = Date.now();
+    const subId = `performance::monitorMutations::${name}::${Date.now()}::${Math.random().toString(36).slice(2, 8)}`;
 
-    const observer = new MutationObserver(mutations => {
-      mutationCount += mutations.length;
-      recordMetric(`${name}-mutations`, mutationCount, {
-        elapsed: Date.now() - startTime,
-      });
-    });
+    coordinator.watchTarget(
+      subId,
+      element,
+      /** @param {MutationRecord[]} mutations */ mutations => {
+        mutationCount += mutations.length;
+        recordMetric(`${name}-mutations`, mutationCount, {
+          elapsed: Date.now() - startTime,
+        });
+      },
+      {
+        childList: true,
+        subtree: true,
+        // P8: Removed `attributes: true` — attribute mutations are very frequent on
+        // YouTube's data-driven custom elements and create overhead without value.
+      }
+    );
 
-    observer.observe(element, {
-      childList: true,
-      subtree: true,
-      // P8: Removed `attributes: true` — attribute mutations are very frequent on
-      // YouTube's data-driven custom elements and create overhead without value.
-    });
-
-    return observer;
+    return {
+      disconnect: () => coordinator.unwatch(subId),
+      takeRecords: () => [],
+    };
   };
 
   /**
@@ -526,21 +555,26 @@
         const entries = entryList.getEntries();
         const lastEntry = entries[entries.length - 1];
         metrics.webVitals.LCP = lastEntry.startTime;
-        if (PerformanceConfig.enableConsoleOutput) {
-          console.warn(`[YouTube+ Perf] LCP: ${lastEntry.startTime.toFixed(2)}ms`, lastEntry);
+        if (PerformanceConfig.enableconsoleOutput) {
+          window.console.warn(
+            `[YouTube+ Perf] LCP: ${lastEntry.startTime.toFixed(2)}ms`,
+            lastEntry
+          );
         }
       }).observe({ type: 'largest-contentful-paint', buffered: true });
 
       // Observe CLS
       new PerformanceObserver(entryList => {
         for (const entry of entryList.getEntries()) {
-          const entryAny = /** @type {any} */ (entry);
-          if (!entryAny.hadRecentInput) {
-            metrics.webVitals.CLS += entryAny.value || 0;
+          const layoutShiftEntry = /** @type {{ hadRecentInput?: boolean; value?: number }} */ (
+            entry
+          );
+          if (!layoutShiftEntry.hadRecentInput) {
+            metrics.webVitals.CLS += layoutShiftEntry.value || 0;
           }
         }
-        if (PerformanceConfig.enableConsoleOutput && PerformanceConfig.logLevel === 'debug') {
-          console.warn(`[YouTube+ Perf] CLS: ${metrics.webVitals.CLS.toFixed(4)}`);
+        if (PerformanceConfig.enableconsoleOutput && PerformanceConfig.logLevel === 'debug') {
+          window.console.warn(`[YouTube+ Perf] CLS: ${metrics.webVitals.CLS.toFixed(4)}`);
         }
       }).observe({ type: 'layout-shift', buffered: true });
 
@@ -548,8 +582,8 @@
       new PerformanceObserver(entryList => {
         const firstInput = /** @type {any} */ (entryList.getEntries()[0]);
         metrics.webVitals.FID = (firstInput.processingStart || 0) - (firstInput.startTime || 0);
-        if (PerformanceConfig.enableConsoleOutput) {
-          console.warn(`[YouTube+ Perf] FID: ${metrics.webVitals.FID.toFixed(2)}ms`);
+        if (PerformanceConfig.enableconsoleOutput) {
+          window.console.warn(`[YouTube+ Perf] FID: ${metrics.webVitals.FID.toFixed(2)}ms`);
         }
       }).observe({ type: 'first-input', buffered: true });
 
@@ -565,7 +599,7 @@
         void e; // INP might not be supported; reference `e` to satisfy linters
       }
     } catch (e) {
-      console.warn('[YouTube+ Perf] Failed to init PerformanceObserver:', e);
+      window.console.warn('[YouTube+ Perf] Failed to init PerformanceObserver:', e);
     }
   };
 
@@ -583,7 +617,7 @@
         recordMetric('dom-interactive', navigation.domInteractive);
       }
     } catch (e) {
-      console.warn('[YouTube+ Perf] Failed to log page metrics:', e);
+      window.console.warn('[YouTube+ Perf] Failed to log page metrics:', e);
     }
   };
 
@@ -615,7 +649,7 @@
           try {
             cb();
           } catch (e) {
-            console.error('[RAF] Error:', e);
+            window.console.error('[RAF] Error:', e);
           }
         });
         callbacks.clear();
@@ -900,7 +934,7 @@
       if (!lcpSelector) return;
 
       requestAnimationFrame(() => {
-        const el = /** @type {any} */ (document.querySelector(lcpSelector));
+        const el = /** @type {any} */ (qs(lcpSelector));
         if (el && el.tagName === 'IMG') {
           el.setAttribute('fetchpriority', 'high');
           el.setAttribute('loading', 'eager');
@@ -916,7 +950,7 @@
      */
     const injectContentVisibilityCSS = () => {
       const cssId = 'ytp-perf-content-visibility';
-      if (document.getElementById(cssId)) return;
+      if (byId(cssId)) return;
 
       const css = `
         /* ── YouTube+ LCP Performance Optimizations ── */
@@ -990,7 +1024,7 @@
 
       // Observe below-fold thumbnail images
       const observeImages = () => {
-        const belowFold = document.querySelectorAll(
+        const belowFold = qsAll(
           'ytd-rich-item-renderer:nth-child(n+5) img[src]:not([data-ytp-img-observed]),' +
             'ytd-compact-video-renderer:nth-child(n+4) img[src]:not([data-ytp-img-observed])'
         );
@@ -1029,8 +1063,8 @@
      *    from multiple independent subtree observers.
      */
     const SharedMutationManager = (() => {
-      /** @type {MutationObserver|null} */
-      let observer = null;
+      /** @type {string|null} */
+      let observerSubId = null;
       /** @type {Map<string, {callback: Function, filter?: Function}>} */
       const callbacks = new Map(); // key -> {callback, filter}
       let scheduled = false;
@@ -1048,26 +1082,29 @@
             try {
               callback(filtered);
             } catch (e) {
-              console.warn('[YouTube+ Perf] SharedMutation callback error:', e);
+              window.console.warn('[YouTube+ Perf] SharedMutation callback error:', e);
             }
           }
         }
       };
 
       const start = () => {
-        if (observer) return;
-        observer = new MutationObserver((/** @type {MutationRecord[]} */ mutations) => {
-          pending.push(...mutations);
-          if (!scheduled) {
-            scheduled = true;
-            // Use microtask for fast batching without losing responsiveness
-            queueMicrotask(flush);
-          }
-        });
-        const target = document.body || document.documentElement;
-        if (target) {
-          observer.observe(target, { childList: true, subtree: true });
-        }
+        if (observerSubId) return;
+        const coordinator = window.YouTubeMutationCoordinator;
+        if (!coordinator?.subscribeRoot) return;
+        observerSubId = 'performance::sharedMutation';
+        coordinator.subscribeRoot(
+          observerSubId,
+          (/** @type {MutationRecord[]} */ mutations) => {
+            pending.push(...mutations);
+            if (!scheduled) {
+              scheduled = true;
+              // Use microtask for fast batching without losing responsiveness
+              queueMicrotask(flush);
+            }
+          },
+          { childList: true, attributes: false, subtree: true }
+        );
       };
 
       return {
@@ -1083,9 +1120,10 @@
         },
         unregister(/** @type {string} */ key) {
           callbacks.delete(key);
-          if (callbacks.size === 0 && observer) {
-            observer.disconnect();
-            observer = null;
+          if (callbacks.size === 0 && observerSubId) {
+            const coordinator = window.YouTubeMutationCoordinator;
+            coordinator?.unsubscribe?.(observerSubId);
+            observerSubId = null;
           }
         },
         getCallbackCount: () => callbacks.size,
@@ -1108,7 +1146,7 @@
           try {
             task.fn();
           } catch (e) {
-            console.warn('[YouTube+ Perf] Idle task error:', e);
+            window.console.warn('[YouTube+ Perf] Idle task error:', e);
           }
           if (!deadline) break; // Without deadline, run one task per iteration
         }
@@ -1153,6 +1191,12 @@
      */
     const initLongTaskMonitor = () => {
       if (typeof PerformanceObserver === 'undefined') return;
+      if (
+        Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+        !PerformanceObserver.supportedEntryTypes.includes('longtask')
+      ) {
+        return;
+      }
       try {
         /** @type {{ duration: number, startTime: number, name: string }[]} */
         const longTasks = [];
@@ -1233,7 +1277,7 @@
         // Lower priority (defer to idle)
         IdleScheduler.schedule(() => setupDeferredImageLoading(), 2);
       } catch (e) {
-        console.warn('[YouTube+ Perf] LCP optimization init error:', e);
+        window.console.warn('[YouTube+ Perf] LCP optimization init error:', e);
       }
     };
 

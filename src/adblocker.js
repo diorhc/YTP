@@ -1,7 +1,18 @@
 // Ad Blocker
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const setTimeout_ = setTimeout.bind(window);
+  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
+  const renderTemplateClone = (/** @type {Element} */ container, /** @type {string} */ html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
 
   // Shared helpers from YouTubeUtils (canonical in utils.js)
   const U = window.YouTubeUtils || {};
@@ -26,7 +37,9 @@
    *   isYouTubeMusic: boolean,
    *   lastSkipAttempt: number,
    *   retryCount: number,
-   *   initialized: boolean
+   *   initialized: boolean,
+   *   moviePlayerSubId: string | null,
+   *   adSlotSubId: string | null
    * }} AdBlockerState
    */
 
@@ -93,6 +106,8 @@
       lastSkipAttempt: 0,
       retryCount: 0,
       initialized: false,
+      moviePlayerSubId: null,
+      adSlotSubId: null,
     },
 
     /** @type {AdBlockerCache} */
@@ -142,7 +157,7 @@
 
           const parsed = JSON.parse(saved);
           if (typeof parsed !== 'object' || parsed === null) {
-            console.warn('[AdBlocker] Invalid settings format');
+            window.console.warn('[AdBlocker] Invalid settings format');
             return;
           }
 
@@ -159,7 +174,7 @@
             AdBlocker.config.enableLogging = false; // Default to disabled
           }
         } catch (error) {
-          console.error('[AdBlocker] Error loading settings:', error);
+          window.console.error('[AdBlocker] Error loading settings:', error);
           // Set safe defaults on error
           AdBlocker.config.enabled = true;
           AdBlocker.config.enableLogging = false;
@@ -178,7 +193,7 @@
           };
           localStorage.setItem(AdBlocker.config.storageKey, JSON.stringify(settingsToSave));
         } catch (error) {
-          console.error('[AdBlocker] Error saving settings:', error);
+          window.console.error('[AdBlocker] Error saving settings:', error);
         }
       },
     },
@@ -230,7 +245,7 @@
       try {
         // Strategy 1: Click skip button if available (most natural user action)
         // Uses module-level cached SKIP_SELECTOR constant
-        const skipButtons = document.querySelectorAll(SKIP_SELECTOR);
+        const skipButtons = document['querySelectorAll'](SKIP_SELECTOR);
         for (const skipButton of skipButtons) {
           const rect = skipButton.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
@@ -249,7 +264,7 @@
             try {
               video.currentTime = Math.max(video.duration - 0.1, 0);
             } catch (e) {
-              console.warn('[YouTube+] Ad seek error:', e);
+              window.console.warn('[YouTube+] Ad seek error:', e);
             }
           }
         }
@@ -288,7 +303,7 @@
       if (!AdBlocker.config.enabled) return;
       try {
         // Strategy 1: Handle the enforcement message overlay
-        const enforcement = document.querySelector('ytd-enforcement-message-view-model');
+        const enforcement = document['querySelector']('ytd-enforcement-message-view-model');
         if (enforcement) {
           // Find any dismiss/close/allow button
           const btns = enforcement.querySelectorAll(
@@ -313,7 +328,7 @@
         }
 
         // Strategy 2: Handle paper dialog popups
-        const dialogs = document.querySelectorAll(
+        const dialogs = document['querySelectorAll'](
           'tp-yt-paper-dialog, ytd-popup-container tp-yt-paper-dialog, yt-dialog-container'
         );
         for (const dialog of dialogs) {
@@ -353,7 +368,7 @@
         }
 
         // Strategy 3: Handle overlay/backdrop that blocks interaction
-        const overlays = document.querySelectorAll(
+        const overlays = document['querySelectorAll'](
           'tp-yt-iron-overlay-backdrop, .yt-dialog-overlay'
         );
         for (const overlay of overlays) {
@@ -391,7 +406,7 @@
       const remove = () => {
         // Remove known ad elements directly (these were previously in CSS)
         try {
-          const adElements = document.querySelectorAll(AdBlocker.selectors.elements);
+          const adElements = document['querySelectorAll'](AdBlocker.selectors.elements);
           adElements.forEach(el => {
             try {
               el.remove();
@@ -404,7 +419,7 @@
         }
 
         // Remove ad-slot renderers
-        const elements = document.querySelectorAll(AdBlocker.selectors.removal);
+        const elements = document['querySelectorAll'](AdBlocker.selectors.removal);
         elements.forEach(el => {
           try {
             // Prefer removing a known item wrapper (thumbnail card, reel item, etc.)
@@ -426,9 +441,13 @@
             // If standalone ad-slot-renderer or other ad container, remove the nearest reasonable container
             const container =
               el.closest('ytd-ad-slot-renderer') || el.closest('.ad-container') || el;
-            if (container && container.remove) container.remove();
+            if (container && container.remove) {
+              container.remove();
+            }
           } catch (e) {
-            if (AdBlocker.config.enableLogging) console.warn('[AdBlocker] removeElements error', e);
+            if (AdBlocker.config.enableLogging) {
+              window.console.warn('[AdBlocker] removeElements error', e);
+            }
           }
         });
       };
@@ -449,13 +468,16 @@
       try {
         const item = document.createElement('div');
         item.className = 'ytp-plus-settings-item ab-settings';
-        item.innerHTML = _createHTML(`
+        renderTemplateClone(
+          item,
+          `
           <div>
             <label class="ytp-plus-settings-item-label">${t('adBlocker')}</label>
             <div class="ytp-plus-settings-item-description">${t('adBlockerDescription')}</div>
           </div>
           <input type="checkbox" class="ytp-plus-settings-checkbox" ${AdBlocker.config.enabled ? 'checked' : ''}>
-        `);
+        `
+        );
 
         section.appendChild(item);
 
@@ -518,29 +540,48 @@
       };
 
       // Primary: MutationObserver on #movie_player class attribute (event-driven, no polling)
-      // Fallback polling removed — MutationObserver provides faster detection with lower overhead
+      // Primary: coordinator watcher on #movie_player class attribute (event-driven, no polling)
       try {
         const attachAdObserver = () => {
+          const coordinator = window.YouTubeMutationCoordinator;
+          if (!coordinator?.watchTarget) return;
+
           const moviePlayer = $('#movie_player');
           if (!moviePlayer) {
             // Retry once after short delay if player not yet in DOM
-            setTimeout(attachAdObserver, 1500);
+            setTimeout_(attachAdObserver, 1500);
             return;
           }
-          const adObserver = new MutationObserver(() => {
-            if (AdBlocker.config.enabled && isAdActive()) {
-              AdBlocker.skipAd();
-              AdBlocker.dismissAdBlockerWarning();
-            }
-          });
-          adObserver.observe(moviePlayer, { attributes: true, attributeFilter: ['class'] });
-          if (YouTubeUtils.cleanupManager?.registerObserver) {
-            YouTubeUtils.cleanupManager.registerObserver(adObserver);
+
+          if (AdBlocker.state.moviePlayerSubId) {
+            coordinator.unwatch(AdBlocker.state.moviePlayerSubId);
+          }
+          AdBlocker.state.moviePlayerSubId = 'adblocker::moviePlayerClass';
+
+          coordinator.watchTarget(
+            AdBlocker.state.moviePlayerSubId,
+            moviePlayer,
+            () => {
+              if (AdBlocker.config.enabled && isAdActive()) {
+                AdBlocker.skipAd();
+                AdBlocker.dismissAdBlockerWarning();
+              }
+            },
+            { attributes: true, childList: false, subtree: false, attributeFilter: ['class'] }
+          );
+
+          if (YouTubeUtils.cleanupManager?.register) {
+            YouTubeUtils.cleanupManager.register(() => {
+              if (AdBlocker.state.moviePlayerSubId) {
+                coordinator.unwatch(AdBlocker.state.moviePlayerSubId);
+                AdBlocker.state.moviePlayerSubId = null;
+              }
+            });
           }
         };
         attachAdObserver();
       } catch (e) {
-        console.warn('[YouTube+] Ad observer setup error:', e);
+        window.console.warn('[YouTube+] Ad observer setup error:', e);
       }
 
       // Also monitor video play events for immediate ad detection
@@ -560,7 +601,7 @@
           document.addEventListener('playing', handleVideoPlay, { capture: true, passive: true });
         }
       } catch (e) {
-        console.warn('[YouTube+] Ad play listener error:', e);
+        window.console.warn('[YouTube+] Ad play listener error:', e);
       }
 
       // Navigation handling — also run removeElements on page transitions
@@ -593,84 +634,39 @@
       }
 
       // Observe DOM for dynamically inserted ad slots and remove them
-      // Use targeted observation rather than full subtree to reduce detection risk
+      // Use coordinator root subscription with selector filtering.
       try {
-        const adSlotObserver = new MutationObserver(mutations => {
-          let shouldRemove = false;
-          for (const m of mutations) {
-            for (const node of m.addedNodes) {
-              if (!(node instanceof Element)) continue;
-              try {
-                if (
-                  node.matches &&
-                  node.matches('ytd-ad-slot-renderer, ytd-merch-shelf-renderer')
-                ) {
-                  shouldRemove = true;
-                  break;
-                }
-                if (node.querySelector && node.querySelector('ytd-ad-slot-renderer')) {
-                  shouldRemove = true;
-                  break;
-                }
-              } catch (e) {
-                if (AdBlocker.config.enableLogging) {
-                  console.warn('[AdBlocker] adSlotObserver node check', e);
-                }
-              }
+        const coordinator = window.YouTubeMutationCoordinator;
+        if (coordinator?.subscribeRoot) {
+          if (AdBlocker.state.adSlotSubId) {
+            coordinator.unsubscribe(AdBlocker.state.adSlotSubId);
+          }
+          AdBlocker.state.adSlotSubId = 'adblocker::adSlots';
+          coordinator.subscribeRoot(
+            AdBlocker.state.adSlotSubId,
+            () => {
+              AdBlocker.removeElements();
+            },
+            {
+              selector:
+                'ytd-ad-slot-renderer, ytd-merch-shelf-renderer, #player-ads, ad-slot-renderer',
+              childList: true,
+              attributes: false,
+              subtree: true,
             }
-            if (shouldRemove) break;
-          }
-          if (shouldRemove) {
-            AdBlocker.removeElements();
-          }
-        });
-
-        // Observe only specific content containers, not the entire body
-        const observeContentContainers = () => {
-          const containers = [
-            document.querySelector('#content'),
-            document.querySelector('#page-manager'),
-            document.querySelector('ytd-browse'),
-            document.querySelector('ytd-search'),
-          ].filter(Boolean);
-
-          if (containers.length === 0) {
-            // Retry scoped containers before falling back to body
-            setTimeout(() => {
-              const retryContainers = [
-                document.querySelector('#content'),
-                document.querySelector('#page-manager'),
-              ].filter(Boolean);
-              if (retryContainers.length > 0) {
-                retryContainers.forEach(c => {
-                  if (c instanceof Node) {
-                    adSlotObserver.observe(c, { childList: true, subtree: true });
-                  }
-                });
-              } else {
-                adSlotObserver.observe(document.body, { childList: true, subtree: true });
-              }
-            }, 1000);
-          } else {
-            containers.forEach(container => {
-              if (container instanceof Node) {
-                adSlotObserver.observe(container, { childList: true, subtree: true });
+          );
+          if (YouTubeUtils.cleanupManager?.register) {
+            YouTubeUtils.cleanupManager.register(() => {
+              if (AdBlocker.state.adSlotSubId) {
+                coordinator.unsubscribe(AdBlocker.state.adSlotSubId);
+                AdBlocker.state.adSlotSubId = null;
               }
             });
           }
-        };
-
-        if (document.body) {
-          observeContentContainers();
-        } else {
-          document.addEventListener('DOMContentLoaded', observeContentContainers);
         }
-
-        // Register for cleanup
-        YouTubeUtils.cleanupManager.registerObserver(adSlotObserver);
       } catch (e) {
         if (AdBlocker.config.enableLogging) {
-          console.warn('[AdBlocker] Failed to create adSlotObserver', e);
+          window.console.warn('[AdBlocker] Failed to create adSlotObserver', e);
         }
       }
 

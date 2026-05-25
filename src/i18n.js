@@ -39,6 +39,51 @@
 
   const translationsCache = new Map();
   const loadingPromises = new Map();
+  const setTimeout_ = setTimeout.bind(window);
+
+  /**
+   * Fetch JSON using userscript transport when available (bypasses page CSP/CORS),
+   * then fall back to regular fetch.
+   * @param {string} url
+   * @returns {Promise<Record<string, string>>}
+   */
+  async function fetchJSON(url) {
+    if (typeof GM_xmlhttpRequest !== 'undefined') {
+      const responseText = await new Promise((resolve, reject) => {
+        const timeoutId = setTimeout_(() => reject(new Error('i18n request timeout')), 12000);
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url,
+          timeout: 12000,
+          headers: { Accept: 'application/json' },
+          onload: response => {
+            clearTimeout(timeoutId);
+            if (response.status >= 200 && response.status < 300) {
+              resolve(response.responseText || '');
+              return;
+            }
+            reject(new Error(`HTTP ${response.status}: ${response.statusText || 'request failed'}`));
+          },
+          onerror: err => {
+            clearTimeout(timeoutId);
+            reject(new Error(`Network error: ${String(err)}`));
+          },
+          ontimeout: () => {
+            clearTimeout(timeoutId);
+            reject(new Error('i18n request timeout'));
+          },
+        });
+      });
+      return JSON.parse(String(responseText || '{}'));
+    }
+
+    const response = await fetch(url, {
+      cache: 'default',
+      headers: { Accept: 'application/json' },
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    return response.json();
+  }
 
   /**
    * Fetch translation from CDN or embedded source
@@ -59,36 +104,26 @@
         }
       }
     } catch (e) {
-      console.warn('[YouTube+][i18n]', 'Error reading embedded translations', e);
+      window.console.warn('[YouTube+][i18n]', 'Error reading embedded translations', e);
     }
 
-    // Try raw GitHub first � often contains the latest changes and avoids
+    // Try raw GitHub first: it usually has the latest locale changes.
     // CDN caching delays. If that fails, fall back to jsDelivr with a
     // lightweight cache-bust query param to reduce the chance of stale
     // responses from the CDN.
     try {
       const rawUrl = `${CDN_URLS.github}/${lang}.json`;
-      const response = await fetch(rawUrl, {
-        cache: 'default',
-        headers: { Accept: 'application/json' },
-      });
-      if (!response.ok) throw new Error(`HTTP ${response.status}`);
-      return await response.json();
+      return await fetchJSON(rawUrl);
     } catch (firstErr) {
       try {
-        const cdnUrl = `${CDN_URLS.jsdelivr}/${lang}.json`;
-        console.warn(
+        const cdnUrl = `${CDN_URLS.jsdelivr}/${lang}.json?_=${Date.now()}`;
+        window.console.warn(
           '[YouTube+][i18n]',
           `Raw GitHub fetch failed, trying jsDelivr: ${cdnUrl}`
         );
-        const response = await fetch(cdnUrl, {
-          cache: 'default',
-          headers: { Accept: 'application/json' },
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.json();
+        return await fetchJSON(cdnUrl);
       } catch (err) {
-        console.error(
+        window.console.error(
           '[YouTube+][i18n]',
           `Failed to fetch translations for ${lang}:`,
           err,
@@ -120,7 +155,7 @@
             if (!Object.prototype.hasOwnProperty.call(translations, k)) missing.push(k);
           });
           if (missing.length > 0) {
-            console.warn(
+            window.console.warn(
               '[YouTube+][i18n]',
               `Translations for ${languageCode} missing keys: ${missing.join(', ')} (source may be stale)`
             );
@@ -264,7 +299,7 @@
     try {
       // Try YouTube's language setting first (from HTML lang attribute)
       const ytLang =
-        document.documentElement.lang || document.querySelector('html')?.getAttribute('lang');
+        document.documentElement.lang || window.YouTubeUtils?.$('html')?.getAttribute('lang');
       if (ytLang) {
         const mapped = mapToSupportedLanguage(ytLang);
         return mapped;
@@ -298,7 +333,7 @@
 
       return mapped;
     } catch (error) {
-      console.error('[YouTube+][i18n]', 'Error detecting language:', error);
+      window.console.error('[YouTube+][i18n]', 'Error detecting language:', error);
       return 'en';
     }
   }
@@ -345,7 +380,7 @@
         );
         return true;
       } catch (error) {
-        console.error('[YouTube+][i18n]', 'Failed to load translations:', error);
+        window.console.error('[YouTube+][i18n]', 'Failed to load translations:', error);
         // Use English as fallback
         if (currentLanguage !== 'en') {
           currentLanguage = 'en';
@@ -387,7 +422,7 @@
           // Only warn if English fallback is also loaded (otherwise it's a timing issue,
           // not a genuinely missing key — translations may still be fetching from CDN).
           if (Object.keys(fallbackTranslationsEn).length > 0) {
-            console.warn('[YouTube+][i18n]', `Missing translation for key: ${key}`);
+            window.console.warn('[YouTube+][i18n]', `Missing translation for key: ${key}`);
           }
         }
         text = key;
@@ -396,9 +431,9 @@
 
     // Replace parameters
     if (Object.keys(params).length > 0) {
-      const escapeRegex = /** @param {string} s */ s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       Object.keys(params).forEach(param => {
-        text = text.replace(new RegExp(`\\{${escapeRegex(param)}\\}`, 'g'), params[param]);
+        const token = `{${param}}`;
+        text = text.split(token).join(String(params[param]));
       });
     }
 
@@ -436,7 +471,7 @@
           try {
             listener(currentLanguage, oldLang);
           } catch (error) {
-            console.error('[YouTube+][i18n]', 'Error in language change listener:', error);
+            window.console.error('[YouTube+][i18n]', 'Error in language change listener:', error);
           }
         });
         emitI18nEvent('youtube-plus-language-changed', {
@@ -446,7 +481,7 @@
       }
       return success;
     } catch (error) {
-      console.error('[YouTube+][i18n]', 'Failed to change language:', error);
+      window.console.error('[YouTube+][i18n]', 'Failed to change language:', error);
       currentLanguage = oldLang; // Revert
       return false;
     }
@@ -518,7 +553,7 @@
       const locale = localeMap[lang] || 'en-US';
       return new Intl.NumberFormat(locale, options).format(num);
     } catch (error) {
-      console.error('[YouTube+][i18n]', 'Error formatting number:', error);
+      window.console.error('[YouTube+][i18n]', 'Error formatting number:', error);
       return String(num);
     }
   }
@@ -537,7 +572,7 @@
       const dateObj = date instanceof Date ? date : new Date(date);
       return new Intl.DateTimeFormat(locale, options).format(dateObj);
     } catch (error) {
-      console.error('[YouTube+][i18n]', 'Error formatting date:', error);
+      window.console.error('[YouTube+][i18n]', 'Error formatting date:', error);
       return String(date);
     }
   }
@@ -607,7 +642,7 @@
         language: currentLanguage,
       });
     } catch (error) {
-      console.error('[YouTube+][i18n]', 'Initialization error:', error);
+      window.console.error('[YouTube+][i18n]', 'Initialization error:', error);
       currentLanguage = 'en';
     }
   }
@@ -676,3 +711,9 @@
     window.YouTubeUtils?.logger?.debug?.('[YouTube+][i18n]', 'i18n system initialized successfully');
   });
 })();
+
+
+
+
+
+

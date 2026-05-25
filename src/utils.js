@@ -2,14 +2,6 @@
 (function () {
   'use strict';
 
-  // DOM cache helper with fallback
-  const qs = (/** @type {string} */ selector) => {
-    if (window.YouTubeDOMCache && typeof window.YouTubeDOMCache.get === 'function') {
-      return window.YouTubeDOMCache.get(selector);
-    }
-    return document.querySelector(selector);
-  };
-
   // --- Shared DOM helpers (canonical, used by all modules) ---
   /**
    * Query a single element via DOMCache with context support
@@ -52,13 +44,6 @@
 
   // --- Shared translation helper (canonical) ---
   /**
-   * Escape regex metacharacters in text
-   * @param {string} s
-   * @returns {string}
-   */
-  const escapeRegex = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  /**
    * Translation helper with fallback interpolation
    * @param {string} key - Translation key
    * @param {Object<string, string|number>} [params] - Interpolation parameters
@@ -69,9 +54,39 @@
     if (!key) return '';
     let result = String(key);
     for (const [k, v] of Object.entries(params || {})) {
-      result = result.replace(new RegExp(`\\{${escapeRegex(k)}\\}`, 'g'), String(v));
+      const token = `{${k}}`;
+      result = result.split(token).join(String(v));
     }
     return result;
+  };
+
+  /**
+   * Unified language getter for modules that rely on YouTubeUtils.
+   * @returns {string}
+   */
+  const getLanguage = () => {
+    if (window.YouTubePlusI18n?.getLanguage) {
+      return window.YouTubePlusI18n.getLanguage();
+    }
+    const htmlLang = document.documentElement?.lang || navigator.language || 'en';
+    return String(htmlLang || 'en').toLowerCase();
+  };
+
+  /**
+   * Unified safe HTML setter. Canonical impl: YouTubeSafeDOM.setHTML
+   * (Trusted Types-aware). Falls back to _ytpDefaults.setSafeHTML which in
+   * turn falls back to a textContent assignment when SafeDOM is not loaded.
+   * @param {Element} element
+   * @param {string} html
+   * @param {boolean} [sanitize=true]
+   */
+  const setSafeHTML = (element, html, sanitize = true) => {
+    if (!(element instanceof HTMLElement)) return;
+    if (window.YouTubeSafeDOM?.setHTML) {
+      window.YouTubeSafeDOM.setHTML(element, html, { sanitize });
+      return;
+    }
+    window._ytpDefaults?.setSafeHTML?.(element, html, sanitize);
   };
 
   // --- Shared feature toggle loader ---
@@ -87,7 +102,8 @@
    */
   const isStudioPage = () => {
     try {
-      return location.hostname.includes('studio.youtube.com');
+      const host = String(location.hostname || '').toLowerCase();
+      return host === 'studio.youtube.com' || host.endsWith('.studio.youtube.com');
     } catch (e) {
       return false;
     }
@@ -110,6 +126,75 @@
       // Non-critical, suppressed
     }
     return defaultValue;
+  };
+
+  /**
+   * Resolve pathname from URL-like input or current location.
+   * @param {string} [urlLike]
+   * @returns {string}
+   */
+  const getPathname = urlLike => {
+    try {
+      if (urlLike) return new URL(urlLike, window.location.origin).pathname || '';
+      return window.location.pathname || '';
+    } catch (e) {
+      return '';
+    }
+  };
+
+  /**
+   * Check if a URL/current page is a watch page.
+   * @param {string} [urlLike]
+   * @returns {boolean}
+   */
+  const isWatchPage = urlLike => getPathname(urlLike) === '/watch';
+
+  /**
+   * Check if a URL/current page is a shorts page.
+   * @param {string} [urlLike]
+   * @returns {boolean}
+   */
+  const isShortsPage = urlLike => getPathname(urlLike).startsWith('/shorts');
+
+  /**
+   * Check if a URL/current page is a channel page.
+   * @param {string} [urlLike]
+   * @returns {boolean}
+   */
+  const isChannelPage = urlLike => {
+    const pathname = getPathname(urlLike);
+    return (
+      pathname.startsWith('/@') || pathname.startsWith('/channel/') || pathname.startsWith('/c/')
+    );
+  };
+
+  /**
+   * Format seconds to time string (H:MM:SS or M:SS).
+   * @param {number} seconds
+   * @returns {string}
+   */
+  const formatTime = seconds => {
+    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
+    const totalSeconds = Math.floor(seconds);
+    const h = Math.floor(totalSeconds / 3600);
+    const m = Math.floor((totalSeconds % 3600) / 60);
+    const s = totalSeconds % 60;
+    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+    return `${m}:${String(s).padStart(2, '0')}`;
+  };
+
+  /**
+   * Run callback when DOM is ready.
+   * @param {() => void} cb
+   * @returns {void}
+   */
+  const onDomReady = cb => {
+    if (typeof cb !== 'function') return;
+    if (document.readyState !== 'loading') {
+      cb();
+      return;
+    }
+    document.addEventListener('DOMContentLoaded', cb, { once: true });
   };
 
   /**
@@ -136,18 +221,18 @@
         url: typeof window !== 'undefined' ? window.location.href : 'unknown',
       };
 
-      console.error(`[YouTube+][${module}] ${message}:`, error);
-      // Use console.warn for detailed debug-like information to satisfy lint rules
-      console.warn('[YouTube+] Error details:', errorDetails);
+      window.console.error(`[YouTube+][${module}] ${message}:`, error);
+      // Use window.console.warn for detailed debug-like information to satisfy lint rules
+      window.console.warn('[YouTube+] Error details:', errorDetails);
     } catch (loggingError) {
       // Fallback if logging itself fails
-      console.error('[YouTube+] Error logging failed:', loggingError);
+      window.console.error('[YouTube+] Error logging failed:', loggingError);
     }
   };
 
   /**
    * Lightweight logger that respects a global debug flag.
-   * Use YouTubeUtils.logger.debug/info(...) in modules instead of console.log for
+   * Use YouTubeUtils.logger.debug/info(...) in modules instead of window.console.log for
    * controlled output in development.
    */
   const createLogger = () => {
@@ -172,24 +257,24 @@
 
     return {
       debug: function (/** @type {any[]} */ ...args) {
-        // Route debug/info level messages to console.warn to avoid eslint no-console warnings
-        if (isDebugEnabled && console?.warn) {
-          console.warn('[YouTube+][DEBUG]', ...args);
+        // Route debug/info level messages to window.console.warn to avoid eslint no-console warnings
+        if (isDebugEnabled && window.console?.warn) {
+          window.console.warn('[YouTube+][DEBUG]', ...args);
         }
       },
       info: function (/** @type {any[]} */ ...args) {
-        if (isDebugEnabled && console?.warn) {
-          console.warn('[YouTube+][INFO]', ...args);
+        if (isDebugEnabled && window.console?.warn) {
+          window.console.warn('[YouTube+][INFO]', ...args);
         }
       },
       warn: function (/** @type {any[]} */ ...args) {
-        if (console?.warn) {
-          console.warn('[YouTube+]', ...args);
+        if (window.console?.warn) {
+          window.console.warn('[YouTube+]', ...args);
         }
       },
       error: function (/** @type {any[]} */ ...args) {
-        if (console?.error) {
-          console.error('[YouTube+]', ...args);
+        if (window.console?.error) {
+          window.console.error('[YouTube+]', ...args);
         }
       },
     };
@@ -225,7 +310,7 @@
         try {
           /** @type {Function} */ (fn).apply(this, args);
         } catch (e) {
-          console.error('[YouTube+] Debounced function error:', e);
+          window.console.error('[YouTube+] Debounced function error:', e);
         }
       }
 
@@ -234,7 +319,7 @@
           try {
             /** @type {Function} */ (fn).apply(lastThis, lastArgs);
           } catch (e) {
-            console.error('[YouTube+] Debounced function error:', e);
+            window.console.error('[YouTube+] Debounced function error:', e);
           }
         }
         timeout = null;
@@ -282,34 +367,57 @@
   };
 
   const StyleManager = (function () {
+    const STYLE_HOST_ID = 'youtube-plus-styles';
     const styles = new Map();
+    /** @type {HTMLStyleElement | null} */
+    let element = null;
+
+    const ensureElement = () => {
+      if (element?.isConnected) return element;
+      const existing = /** @type {HTMLStyleElement | null} */ (
+        document.getElementById(STYLE_HOST_ID)
+      );
+      if (existing) {
+        element = existing;
+        return element;
+      }
+      if (!document.head && !document.documentElement) return null;
+      const created = document.createElement('style');
+      created.id = STYLE_HOST_ID;
+      created.type = 'text/css';
+      (document.head || document.documentElement).appendChild(created);
+      element = created;
+      return element;
+    };
+
+    const render = () => {
+      try {
+        const host = ensureElement();
+        if (!host) {
+          document.addEventListener(
+            'DOMContentLoaded',
+            () => {
+              const lateHost = ensureElement();
+              if (lateHost) lateHost.textContent = Array.from(styles.values()).join('\n\n');
+            },
+            { once: true }
+          );
+          return;
+        }
+        host.textContent = Array.from(styles.values()).join('\n\n');
+      } catch (e) {
+        logError('StyleManager', 'render failed', e);
+      }
+    };
+
     return {
+      styles,
       add(/** @type {string} */ id, /** @type {string} */ css) {
         try {
-          let el = document.getElementById(id);
+          if (typeof id !== 'string' || !id) return;
+          if (typeof css !== 'string') return;
           styles.set(id, css);
-          if (!el) {
-            el = document.createElement('style');
-            el.id = id;
-            if (!document.head) {
-              document.addEventListener(
-                'DOMContentLoaded',
-                () => {
-                  const target = document.getElementById(id);
-                  if (!target && document.head) {
-                    const lateEl = document.createElement('style');
-                    lateEl.id = id;
-                    document.head.appendChild(lateEl);
-                    lateEl.textContent = Array.from(styles.values()).join('\n\n');
-                  }
-                },
-                { once: true }
-              );
-              return;
-            }
-            document.head.appendChild(el);
-          }
-          el.textContent = Array.from(styles.values()).join('\n\n');
+          render();
         } catch (e) {
           logError('StyleManager', 'add failed', e);
         }
@@ -317,95 +425,30 @@
       remove(/** @type {string} */ id) {
         try {
           styles.delete(id);
-          const el = document.getElementById(id);
-          if (el) el.remove();
+          render();
         } catch (e) {
           logError('StyleManager', 'remove failed', e);
         }
       },
       clear() {
-        for (const styleId of Array.from(styles.keys())) this.remove(styleId);
+        try {
+          styles.clear();
+          if (element) {
+            element.remove();
+            element = null;
+          }
+        } catch (e) {
+          logError('StyleManager', 'clear failed', e);
+        }
       },
     };
   })();
 
   /**
-   * Efficient event delegation manager
-   * Reduces memory footprint by delegating events to parent containers
+   * Efficient event delegation is owned by event-delegation.js
+   * (window.YouTubePlusEventDelegation). The legacy inline copy that used to
+   * live here was unused dead code and has been removed.
    */
-  const EventDelegator = (() => {
-    const delegations = new Map();
-
-    return {
-      /**
-       * Delegate event on parent element for dynamic children
-       * @param {Element} parent - Parent element
-       * @param {string} selector - Child selector
-       * @param {string} event - Event type
-       * @param {Function} handler - Event handler
-       * @returns {Function} Cleanup function
-       */
-      delegate(
-        /** @type {Element} */ parent,
-        /** @type {string} */ selector,
-        /** @type {string} */ event,
-        /** @type {Function} */ handler
-      ) {
-        const delegateHandler = (/** @type {Event} */ e) => {
-          const target = /** @type {Element} */ (e.target);
-          const match = target.closest(selector);
-          if (match && parent.contains(match)) {
-            handler.call(match, e);
-          }
-        };
-
-        parent.addEventListener(event, delegateHandler, { passive: true });
-
-        const key = `${event}_${selector}`;
-        if (!delegations.has(parent)) {
-          delegations.set(parent, new Map());
-        }
-        delegations.get(parent).set(key, delegateHandler);
-
-        return () => {
-          parent.removeEventListener(event, delegateHandler);
-          const parentMap = delegations.get(parent);
-          if (parentMap) {
-            parentMap.delete(key);
-            if (parentMap.size === 0) delegations.delete(parent);
-          }
-        };
-      },
-
-      /**
-       * Clear all delegations for a parent
-       * @param {Element} parent - Parent element
-       */
-      clearFor(/** @type {Element} */ parent) {
-        const parentMap = delegations.get(parent);
-        if (!parentMap) return;
-
-        parentMap.forEach((/** @type {any} */ handler, /** @type {string} */ key) => {
-          const event = key.split('_')[0];
-          parent.removeEventListener(event, handler);
-        });
-        delegations.delete(parent);
-      },
-
-      /**
-       * Clear all delegations
-       */
-      clearAll() {
-        delegations.forEach((map, parent) => {
-          map.forEach((/** @type {any} */ handler, /** @type {string} */ key) => {
-            const event = key.split('_')[0];
-            parent.removeEventListener(event, handler);
-          });
-        });
-        delegations.clear();
-      },
-    };
-  })();
 
   const cleanupManager = (function () {
     const observers = new Set();
@@ -592,19 +635,19 @@
 
   const createElement = (
     /** @type {string} */ tag,
-    /** @type {Record<string, any>} */ props = {},
-    /** @type {any[]} */ children = []
+    /** @type {Record<string, unknown>} */ props = {},
+    /** @type {(string | Node)[]} */ children = []
   ) => {
     try {
       const element = document.createElement(tag);
       Object.entries(props).forEach(([k, v]) => {
         if (k === 'className') element.className = String(v);
         else if (k === 'style' && typeof v === 'object') {
-          Object.assign(/** @type {any} */ (element).style, v);
+          Object.assign(element.style, v);
         } else if (k === 'dataset' && typeof v === 'object') {
-          Object.assign(/** @type {any} */ (element).dataset, v);
+          Object.assign(element.dataset, v);
         } else if (k.startsWith('on') && typeof v === 'function') {
-          element.addEventListener(k.slice(2), v);
+          element.addEventListener(k.slice(2), /** @type {EventListener} */ (v));
         } else element.setAttribute(k, String(v));
       });
       children.forEach(c => {
@@ -625,49 +668,96 @@
   ) =>
     new Promise((resolve, reject) => {
       if (!selector || typeof selector !== 'string') return reject(new Error('Invalid selector'));
-      try {
-        const el = parent.querySelector(selector);
-        if (el) return resolve(el);
-      } catch (e) {
-        return reject(e);
-      }
-      const obs = new MutationObserver(() => {
-        const el = parent.querySelector(selector);
-        if (el) {
+      /** @type {string | null} */
+      let subId = null;
+      /** @type {ReturnType<typeof setInterval> | null} */
+      let fallbackTimer = null;
+      /** @type {ReturnType<typeof setTimeout> | null} */
+      let timeoutTimer = null;
+
+      const finalize = () => {
+        if (subId && window.YouTubeMutationCoordinator?.unsubscribe) {
           try {
-            obs.disconnect();
+            window.YouTubeMutationCoordinator.unsubscribe(subId);
           } catch (e) {
             // Non-critical, suppressed
           }
-          resolve(el);
         }
-      });
-      obs.observe(parent, { childList: true, subtree: true });
-      const id = setTimeout(() => {
-        try {
-          obs.disconnect();
-        } catch (e) {
-          // Non-critical, suppressed
+        subId = null;
+        if (fallbackTimer) {
+          clearInterval(fallbackTimer);
+          fallbackTimer = null;
         }
+        if (timeoutTimer) {
+          clearTimeout(timeoutTimer);
+          timeoutTimer = null;
+        }
+      };
+
+      const tryResolve = () => {
+        const el = parent.querySelector(selector);
+        if (!el) return false;
+        finalize();
+        resolve(el);
+        return true;
+      };
+
+      try {
+        if (tryResolve()) return;
+      } catch (e) {
+        return reject(e);
+      }
+
+      const coordinator = window.YouTubeMutationCoordinator;
+      if (coordinator?.watchTarget && parent instanceof Node) {
+        subId = `utils::waitForElement::${Date.now()}::${Math.random().toString(36).slice(2, 8)}`;
+        coordinator.watchTarget(
+          subId,
+          parent,
+          () => {
+            try {
+              tryResolve();
+            } catch (e) {
+              finalize();
+              reject(e);
+            }
+          },
+          { childList: true, attributes: false, subtree: true }
+        );
+      } else {
+        // Fallback for browsers/environments without the shared mutation coordinator.
+        fallbackTimer = setInterval(() => {
+          try {
+            tryResolve();
+          } catch (e) {
+            finalize();
+            reject(e);
+          }
+        }, 120);
+      }
+
+      timeoutTimer = setTimeout(() => {
+        finalize();
         reject(new Error('timeout'));
       }, timeout);
-      cleanupManager.registerTimeout(id);
+      cleanupManager.registerTimeout(timeoutTimer);
     });
 
   /**
-   * Sanitize HTML string to prevent XSS attacks
-   * @param {string} html - HTML string to sanitize
-   * @returns {string} Sanitized HTML
+   * Sanitize HTML string to prevent XSS attacks. Canonical impl:
+   * YouTubeSafeDOM.sanitizeHTML. This wrapper exists for callers that
+   * captured a reference to YouTubeUtils.sanitizeHTML before SafeDOM loaded;
+   * we delegate at call time so there is only one sanitizer in the system.
+   * @param {string} html
+   * @returns {string}
    */
   const sanitizeHTML = html => {
     if (typeof html !== 'string') return '';
-
-    // Check for extremely long strings (potential DoS)
-    if (html.length > 1000000) {
-      console.warn('[YouTube+] HTML content too large, truncating');
-      html = html.substring(0, 1000000);
+    if (window.YouTubeSafeDOM?.sanitizeHTML) {
+      return window.YouTubeSafeDOM.sanitizeHTML(html);
     }
-
+    // Conservative pre-SafeDOM fallback (only hit during very early boot).
+    if (html.length > 1000000) html = html.substring(0, 1000000);
     /** @type {Record<string, string>} */
     const map = {
       '<': '&lt;',
@@ -679,7 +769,6 @@
       '`': '&#x60;',
       '=': '&#x3D;',
     };
-
     return html.replace(/[<>&"'\/`=]/g, char => map[char] || char);
   };
 
@@ -733,13 +822,13 @@
   /**
    * Safely merge objects without prototype pollution
    * Prevents __proto__, constructor, and prototype pollution attacks
-   * @param {Record<string, any>} target - Target object
-   * @param {Record<string, any>} source - Source object to merge
-   * @returns {Record<string, any>} Merged target object
+   * @param {Record<string, unknown>} target - Target object
+   * @param {Record<string, unknown>} source - Source object to merge
+   * @returns {Record<string, unknown>} Merged target object
    */
   const safeMerge = (
-    /** @type {Record<string, any>} */ target,
-    /** @type {Record<string, any>} */ source
+    /** @type {Record<string, unknown>} */ target,
+    /** @type {Record<string, unknown>} */ source
   ) => {
     if (!source || typeof source !== 'object') return target;
     if (!target || typeof target !== 'object') return target;
@@ -753,7 +842,7 @@
 
       // Skip dangerous keys
       if (dangerousKeys.includes(key)) {
-        console.warn(`[YouTube+][Security] Blocked attempt to set dangerous key: ${key}`);
+        window.console.warn(`[YouTube+][Security] Blocked attempt to set dangerous key: ${key}`);
         continue;
       }
 
@@ -762,7 +851,10 @@
 
       // Deep clone objects (one level deep for safety)
       if (value && typeof value === 'object' && !Array.isArray(value)) {
-        target[key] = safeMerge(target[key] || {}, value);
+        target[key] = safeMerge(
+          /** @type {Record<string, unknown>} */ (target[key] || {}),
+          /** @type {Record<string, unknown>} */ (value)
+        );
       } else {
         target[key] = value;
       }
@@ -950,61 +1042,6 @@
   };
 
   /**
-   * Optimized DOM query cache with size limits
-   */
-  const DOMCache = (() => {
-    const cache = new Map();
-    const MAX_CACHE_SIZE = 200; // Increased for better performance
-    const CACHE_TTL = 5000; // 5 seconds - longer cache
-
-    return {
-      /**
-       * Get cached element or query and cache it
-       * @param {string} selector - CSS selector
-       * @param {Element} [parent=document] - Parent element
-       * @returns {Element|null} Found element
-       */
-      get(/** @type {string} */ selector, /** @type {Element|Document} */ parent = document) {
-        const key = `${selector}_${parent === document ? 'doc' : ''}`;
-        const cached = cache.get(key);
-
-        if (cached && Date.now() - cached.timestamp < CACHE_TTL) {
-          return cached.element;
-        }
-
-        const element = parent.querySelector(selector);
-        if (element) {
-          cache.set(key, { element, timestamp: Date.now() });
-
-          // Manage cache size
-          if (cache.size > MAX_CACHE_SIZE) {
-            const oldestKey = /** @type {string} */ (cache.keys().next().value);
-            cache.delete(oldestKey);
-          }
-        }
-
-        return element;
-      },
-
-      /**
-       * Clear specific cache entry
-       * @param {string} selector - CSS selector
-       */
-      clear(/** @type {string} */ selector) {
-        const keys = Array.from(cache.keys()).filter(k => k.startsWith(selector));
-        keys.forEach(k => cache.delete(k));
-      },
-
-      /**
-       * Clear all cache
-       */
-      clearAll() {
-        cache.clear();
-      },
-    };
-  })();
-
-  /**
    * Advanced ScrollManager for efficient scroll event handling
    * Uses IntersectionObserver when possible for better performance
    */
@@ -1165,7 +1202,7 @@
           new CustomEvent('ytp-history-navigate', { detail: { type: 'pushState' } })
         );
       } catch (e) {
-        console.warn('[YouTube+] pushState event error:', e);
+        window.console.warn('[YouTube+] pushState event error:', e);
       }
       return result;
     };
@@ -1176,7 +1213,7 @@
           new CustomEvent('ytp-history-navigate', { detail: { type: 'replaceState' } })
         );
       } catch (e) {
-        console.warn('[YouTube+] replaceState event error:', e);
+        window.console.warn('[YouTube+] replaceState event error:', e);
       }
       return result;
     };
@@ -1262,6 +1299,74 @@
     };
   };
 
+  /**
+   * Creates a visibility-aware interval that pauses while the tab is hidden.
+   * @param {() => void} callback
+   * @param {number} delay
+   * @param {{ label?: string }} [options]
+   * @returns {{ stop: () => void, pause: () => void, resume: () => void, active: boolean }}
+   */
+  const createVisibilityAwareInterval = (callback, delay, options = {}) => {
+    const label = options.label || 'visibility-interval';
+    /** @type {ReturnType<typeof setInterval>|null} */
+    let intervalId = null;
+    let stopped = false;
+
+    const tick = () => {
+      if (stopped || (typeof document !== 'undefined' && document.hidden)) return;
+      try {
+        callback();
+      } catch (e) {
+        logError('VisibilityInterval', `${label} tick failed`, e);
+      }
+    };
+
+    const pause = () => {
+      if (intervalId !== null) {
+        clearInterval(intervalId);
+        intervalId = null;
+      }
+    };
+
+    const resume = () => {
+      if (stopped || intervalId !== null) return;
+      if (typeof document !== 'undefined' && document.hidden) return;
+      // setInterval is intentional here: we need pause/resume semantics across visibility changes.
+      intervalId = setInterval(tick, delay);
+      if (typeof cleanupManager?.registerInterval === 'function') {
+        cleanupManager.registerInterval(intervalId);
+      }
+    };
+
+    const visibilityHandler = () => {
+      if (typeof document === 'undefined') return;
+      if (document.hidden) pause();
+      else resume();
+    };
+
+    if (typeof cleanupManager?.registerListener === 'function' && typeof document !== 'undefined') {
+      cleanupManager.registerListener(document, 'visibilitychange', visibilityHandler, {
+        passive: true,
+      });
+    } else if (typeof document !== 'undefined') {
+      document.addEventListener('visibilitychange', visibilityHandler, { passive: true });
+    }
+
+    resume();
+
+    return {
+      stop() {
+        stopped = true;
+        pause();
+      },
+      pause,
+      resume,
+      get active() {
+        return intervalId !== null;
+      },
+    };
+  };
+
   // --- Observer Registry (dev-only diagnostics) ---
   // Tracks active observers/listeners to detect monotonic growth.
   const ObserverRegistry = (() => {
@@ -1313,8 +1418,8 @@
                   : 'n/a',
             }
           : null;
-        console.warn('[YouTube+ Diagnostics] ObserverRegistry:', stats);
-        if (cmStats) console.warn('[YouTube+ Diagnostics] CleanupManager:', cmStats);
+        window.console.warn('[YouTube+ Diagnostics] ObserverRegistry:', stats);
+        if (cmStats) window.console.warn('[YouTube+ Diagnostics] CleanupManager:', cmStats);
         return { observers: stats, cleanup: cmStats };
       },
     };
@@ -1375,16 +1480,14 @@
 
   // Expose a global YouTubeUtils if not present (non-destructive)
   if (typeof window !== 'undefined') {
-    const wAny = /** @type {any} */ (window);
-    if (!wAny.YouTubeUtils) wAny.YouTubeUtils = {};
-    const U = /** @type {any} */ (wAny.YouTubeUtils);
+    const winGlobal = /** @type {any} */ (window);
+    if (!winGlobal.YouTubeUtils) winGlobal.YouTubeUtils = {};
+    const U = /** @type {any} */ (winGlobal.YouTubeUtils);
     U.logError = U.logError || logError;
     U.debounce = U.debounce || debounce;
     U.throttle = U.throttle || throttle;
     U.StyleManager = U.StyleManager || StyleManager;
     U.cleanupManager = U.cleanupManager || cleanupManager;
-    U.EventDelegator = U.EventDelegator || EventDelegator;
-    U.DOMCache = U.DOMCache || DOMCache;
     U.ScrollManager = U.ScrollManager || ScrollManager;
     U.createElement = U.createElement || createElement;
     U.waitForElement = U.waitForElement || waitForElement;
@@ -1402,13 +1505,23 @@
     if (typeof U.createRetryScheduler !== 'function') {
       U.createRetryScheduler = createRetryScheduler;
     }
+    if (typeof U.createVisibilityAwareInterval !== 'function') {
+      U.createVisibilityAwareInterval = createVisibilityAwareInterval;
+    }
     U.ObserverRegistry = U.ObserverRegistry || ObserverRegistry;
     // Shared DOM helpers — modules can use YouTubeUtils.$ instead of local copies
     U.$ = U.$ || $;
     U.$$ = U.$$ || $$;
     U.byId = U.byId || byId;
     U.t = U.t || t;
+    U.getLanguage = U.getLanguage || getLanguage;
+    U.setSafeHTML = U.setSafeHTML || setSafeHTML;
+    U.onDomReady = U.onDomReady || onDomReady;
     U.loadFeatureEnabled = U.loadFeatureEnabled || loadFeatureEnabled;
+    U.isWatchPage = U.isWatchPage || isWatchPage;
+    U.isShortsPage = U.isShortsPage || isShortsPage;
+    U.isChannelPage = U.isChannelPage || isChannelPage;
+    U.formatTime = U.formatTime || formatTime;
     U.createFeatureToggle = U.createFeatureToggle || createFeatureToggle;
     U.SETTINGS_KEY = U.SETTINGS_KEY || SETTINGS_KEY;
     U.isStudioPage = U.isStudioPage || isStudioPage;
@@ -1463,10 +1576,12 @@
           retrySchedulers: retryMetrics,
           timestamp: new Date().toISOString(),
         };
-        console.warn('[YouTube+ Diagnostics] Observers:', obs);
-        console.warn('[YouTube+ Diagnostics] CleanupManager:', cm);
-        if (retryMetrics) console.warn('[YouTube+ Diagnostics] RetrySchedulers:', retryMetrics);
-        if (verbose) console.warn('[YouTube+ Diagnostics]', JSON.stringify(report, null, 2));
+        window.console.warn('[YouTube+ Diagnostics] Observers:', obs);
+        window.console.warn('[YouTube+ Diagnostics] CleanupManager:', cm);
+        if (retryMetrics) {
+          window.console.warn('[YouTube+ Diagnostics] RetrySchedulers:', retryMetrics);
+        }
+        if (verbose) window.console.warn('[YouTube+ Diagnostics]', JSON.stringify(report, null, 2));
         return report;
       };
     }
@@ -1495,6 +1610,7 @@
           return id;
         };
 
+        // Keep a global setInterval wrapper so every timer is auto-registered for SPA cleanup.
         w.setInterval = function (
           /** @type {any} */ fn,
           /** @type {any} */ ms,
@@ -1529,9 +1645,9 @@
 
     // Auto-cleanup on SPA navigation — prevents listener and timer leaks between pages
     try {
-      const wAny2 = /** @type {any} */ (window);
-      if (!wAny2.__ytp_nav_cleanup_registered) {
-        wAny2.__ytp_nav_cleanup_registered = true;
+      const navCleanupHost = /** @type {any} */ (window);
+      if (!navCleanupHost.__ytp_nav_cleanup_registered) {
+        navCleanupHost.__ytp_nav_cleanup_registered = true;
         document.addEventListener('yt-navigate-start', () => {
           try {
             U.cleanupManager.cleanup();
@@ -1600,7 +1716,7 @@
         },
         extractSubscriberCountFromPage() {
           try {
-            const el = qs('yt-formatted-string#subscriber-count') || qs('[id*="subscriber-count"]');
+            const el = $('yt-formatted-string#subscriber-count') || $('[id*="subscriber-count"]');
             if (!el) return 0;
             const txt = el.textContent || '';
             const digits = txt.replace(/[^0-9]/g, '');

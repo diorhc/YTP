@@ -8,6 +8,7 @@ const path = require('path');
 describe('Build System', () => {
   const ROOT = path.resolve(__dirname, '..');
   const BUILD_ORDER_PATH = path.join(ROOT, 'build.order.json');
+  const BUILD_SCRIPT_PATH = path.join(ROOT, 'build.js');
   const SRC_DIR = path.join(ROOT, 'src');
 
   test('build.order.json should exist', () => {
@@ -76,5 +77,12 @@ describe('Build System', () => {
         }).not.toThrow();
       }
     );
+  });
+
+  test('build script supports __YTPLUS_INLINE_CSS__ replacement marker', () => {
+    const buildScript = fs.readFileSync(BUILD_SCRIPT_PATH, 'utf8');
+
+    expect(buildScript).toContain("content.includes('__YTPLUS_INLINE_CSS__')");
+    expect(buildScript).toContain('/__YTPLUS_INLINE_CSS__\\(\\s*[\'\"]([^\'\"]+?)[\'\"]\\s*\\)/g');
   });
 });

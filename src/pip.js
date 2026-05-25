@@ -1,11 +1,34 @@
 // YouTube Picture-in-Picture settings
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const setTimeout_ = setTimeout.bind(window);
+  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
+  /**
+   * @param {Element} container
+   * @param {string} html
+   */
+  const renderTemplateClone = (container, html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
 
   // Translation helper from centralized i18n
-  const t = window.YouTubeUtils?.t || ((/** @type {string} */ key) => key || '');
+  const t = window.YouTubeUtils.t;
   const logger = window.YouTubeUtils?.logger || console;
+  const qs =
+    window.YouTubeUtils?.$ ||
+    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
+      (root || document).querySelector(selector));
+  const byId =
+    window.YouTubeUtils?.byId ||
+    ((/** @type {string} */ id) =>
+      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
 
   /**
    * @typedef {{
@@ -55,6 +78,26 @@
     return /** @type {any} */ (window);
   };
 
+  const createTrustedInlineScript =
+    window.YouTubeSafeDOM?.createTrustedScript ||
+    ((/** @type {unknown} */ value) => {
+      const normalized = typeof value === 'string' ? value : String(value ?? '');
+      try {
+        const sharedPolicy =
+          (window.YouTubeTrustedTypes &&
+            typeof window.YouTubeTrustedTypes.getPolicy === 'function' &&
+            window.YouTubeTrustedTypes.getPolicy()) ||
+          window.YouTubeTrustedTypes?.policy ||
+          null;
+        if (sharedPolicy && typeof sharedPolicy.createScript === 'function') {
+          return sharedPolicy.createScript(normalized);
+        }
+      } catch (e) {
+        // Non-critical, suppressed
+      }
+      return normalized;
+    });
+
   /**
    * Get video element with validation.
    * P9: Uses a WeakRef cache to avoid repeated DOM queries for the same element.
@@ -85,7 +128,7 @@
         ) ||
         (typeof YouTubeUtils?.querySelector === 'function' &&
           YouTubeUtils.querySelector('video')) ||
-        document.querySelector('video');
+        qs('video');
 
       if (candidate && candidate.tagName && candidate.tagName.toLowerCase() === 'video') {
         const video = /** @type {HTMLVideoElement} */ (candidate);
@@ -101,7 +144,7 @@
 
       return null;
     } catch (error) {
-      console.error('[PiP] Error getting video element:', error);
+      window.console.error('[PiP] Error getting video element:', error);
       return null;
     }
   };
@@ -177,7 +220,7 @@
   window['${FIREFOX_PIP_BRIDGE_FLAG}'] = true;
 
   const selectVideo = () =>
-    document.querySelector('video.html5-main-video, #movie_player video, video');
+    document['querySelector']('video.html5-main-video, #movie_player video, video');
 
   const clickNativePipButton = () => {
     const selectors = [
@@ -186,7 +229,7 @@
       '.ytp-right-controls button[aria-keyshortcuts="i"]'
     ];
     for (const selector of selectors) {
-      const button = document.querySelector(selector);
+      const button = document['querySelector'](selector);
       if (!(button instanceof HTMLElement)) continue;
       const disabled =
         button.getAttribute('aria-disabled') === 'true' ||
@@ -199,16 +242,22 @@
     return false;
   };
 
+  const safeTargetOrigin =
+    typeof location !== 'undefined' && typeof location.origin === 'string' && location.origin
+      ? location.origin
+      : '*';
+
   window.addEventListener('message', event => {
     if (event.source !== window) return;
     // Allow same-origin page messages and Firefox/userscript sandbox-origin messages.
     // In some Firefox userscript contexts event.origin may be "null".
     const msgOrigin = String(event.origin || '');
     if (msgOrigin && msgOrigin !== 'null' && msgOrigin !== location.origin) return;
-    if (event.data?.type !== 'ytp-pip-request' || !event.data?.id) return;
+    if (event.data?.type !== 'ytp-pip-request' || typeof event.data?.id !== 'string') return;
+    if (event.data.id.length > 80) return;
 
     const respond = success => {
-      window.postMessage({ type: 'ytp-pip-response', id: event.data.id, success }, '*');
+      window.postMessage({ type: 'ytp-pip-response', id: event.data.id, success }, safeTargetOrigin);
     };
 
     Promise.resolve()
@@ -235,7 +284,9 @@
       // This is the most reliable approach in Firefox userscript contexts.
       const gmAddElement = /** @type {any} */ (globalThis).GM_addElement;
       if (typeof gmAddElement === 'function') {
-        gmAddElement('script', { textContent: bridgeScript });
+        gmAddElement('script', {
+          textContent: /** @type {any} */ (createTrustedInlineScript(bridgeScript)),
+        });
         return true;
       }
     } catch (e) {
@@ -246,10 +297,7 @@
       // Strategy 2: Nonce-based inline script injection.
       // Firefox hides nonce values from content via getAttribute() for security,
       // so this may still fail; it is kept as a secondary attempt.
-      const nonceSource =
-        document.querySelector('script[nonce]') ||
-        document.querySelector('[nonce]') ||
-        document.documentElement;
+      const nonceSource = qs('script[nonce]') || qs('[nonce]') || document.documentElement;
       const nonce =
         /** @type {any} */ (nonceSource)?.nonce ||
         nonceSource?.getAttribute?.('nonce') ||
@@ -258,7 +306,7 @@
       if (nonce) {
         const script = document.createElement('script');
         script.setAttribute('nonce', nonce);
-        script.textContent = bridgeScript;
+        script.textContent = /** @type {any} */ (createTrustedInlineScript(bridgeScript));
         (document.head || document.documentElement).appendChild(script);
         script.remove();
         if (pageGlobal[FIREFOX_PIP_BRIDGE_FLAG]) return true;
@@ -269,7 +317,9 @@
 
     // Bridge installation failed — the postMessage path won't work,
     // but clickNativeYouTubePipButton() and unsafeWindow paths are still tried.
-    console.warn('[PiP] Firefox PiP bridge could not be installed (CSP). Using button fallback.');
+    window.console.warn(
+      '[PiP] Firefox PiP bridge could not be installed (CSP). Using button fallback.'
+    );
     return false;
   };
 
@@ -315,13 +365,13 @@
   window['${bridgeFlag}'] = true;
 
   const selectVideo = () =>
-    document.querySelector('video.html5-main-video, #movie_player video, video');
+      document['querySelector']('video.html5-main-video, #movie_player video, video');
 
   const clickPipBtn = () => {
     const sels = ['button.ytp-pip-button', '.ytp-right-controls .ytp-pip-button',
                   '.ytp-right-controls button[aria-keyshortcuts="i"]'];
     for (const sel of sels) {
-      const btn = document.querySelector(sel);
+      const btn = document['querySelector'](sel);
       if (!(btn instanceof HTMLElement)) continue;
       if (btn.getAttribute('aria-disabled') === 'true' || btn.hasAttribute('disabled') ||
           btn.classList.contains('ytp-button-disabled')) continue;
@@ -332,12 +382,46 @@
   };
 
   const getShortcut = () => window['${shortcutKey}'] || { key: 'P', shiftKey: true, altKey: false, ctrlKey: false, enabled: true };
+  const keyToCode = key => {
+    const normalized = String(key || '').trim().toUpperCase();
+    if (!normalized) return '';
+    const symbolCodeMap = {
+      '-': 'Minus',
+      _: 'Minus',
+      '=': 'Equal',
+      '+': 'Equal',
+      '[': 'BracketLeft',
+      '{': 'BracketLeft',
+      ']': 'BracketRight',
+      '}': 'BracketRight',
+      ';': 'Semicolon',
+      ':': 'Semicolon',
+      "'": 'Quote',
+      '"': 'Quote',
+      ',': 'Comma',
+      '<': 'Comma',
+      '.': 'Period',
+      '>': 'Period',
+      '/': 'Slash',
+      '?': 'Slash'
+    };
+    if (Object.prototype.hasOwnProperty.call(symbolCodeMap, normalized)) {
+      return symbolCodeMap[normalized];
+    }
+    if (normalized.length === 1 && /[A-Z]/.test(normalized)) return 'Key' + normalized;
+    if (normalized.length === 1 && /[0-9]/.test(normalized)) return 'Digit' + normalized;
+    return normalized;
+  };
 
-  document.addEventListener('keydown', function ytplusPipKeydown(e) {
+  const handlePiPHotkey = function ytplusPipKeydown(e) {
     const s = getShortcut();
     if (!s || !s.enabled) return;
     if (e.repeat || e.isComposing || e.metaKey) return;
-    const keyMatches = e.key.toUpperCase() === String(s.key || '').toUpperCase();
+    const expectedCode = keyToCode(String(s.key || ''));
+    const eventCode = String(e.code || '');
+    const eventKey = String(e.key || '').toUpperCase();
+    const keyMatches =
+      eventKey === String(s.key || '').toUpperCase() || (expectedCode && eventCode === expectedCode);
     const modsMatch = !!e.shiftKey === !!s.shiftKey && !!e.altKey === !!s.altKey && !!e.ctrlKey === !!s.ctrlKey;
     if (!keyMatches || !modsMatch) return;
 
@@ -364,13 +448,18 @@
       return;
     }
     clickPipBtn();
-  }, true);
+  };
+
+  document.addEventListener('keydown', handlePiPHotkey, true);
+  window.addEventListener('keydown', handlePiPHotkey, true);
 })();`;
 
     const gmAddEl = /** @type {any} */ (globalThis).GM_addElement;
     if (typeof gmAddEl === 'function') {
       try {
-        gmAddEl('script', { textContent: bridgeScript });
+        gmAddEl('script', {
+          textContent: /** @type {any} */ (createTrustedInlineScript(bridgeScript)),
+        });
         if (pageGlobal[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]) return true;
       } catch (e) {
         // Fall through to script tag injection
@@ -378,8 +467,15 @@
     }
 
     try {
+      const nonceSource = qs('script[nonce]') || qs('[nonce]') || document.documentElement;
+      const nonce =
+        /** @type {any} */ (nonceSource)?.nonce ||
+        nonceSource?.getAttribute?.('nonce') ||
+        document.documentElement?.getAttribute?.('nonce') ||
+        '';
       const script = document.createElement('script');
-      script.textContent = bridgeScript;
+      if (nonce) script.setAttribute('nonce', nonce);
+      script.textContent = /** @type {any} */ (createTrustedInlineScript(bridgeScript));
       (document.head || document.documentElement).appendChild(script);
       script.remove();
       if (pageGlobal[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]) return true;
@@ -413,14 +509,23 @@
         };
 
         const onResponse = (/** @type {MessageEvent} */ evt) => {
+          if (evt.source !== window) return;
+          const msgOrigin = String(evt.origin || '');
+          if (msgOrigin && msgOrigin !== 'null' && msgOrigin !== location.origin) return;
           if (evt.data?.type !== 'ytp-pip-response' || evt.data?.id !== requestId) return;
           finish(Boolean(evt.data?.success));
         };
 
         window.addEventListener('message', onResponse, true);
-        window.postMessage({ type: 'ytp-pip-request', id: requestId }, '*');
+        const targetOrigin =
+          typeof location !== 'undefined' && typeof location.origin === 'string' && location.origin
+            ? location.origin
+            : '*';
+        window.postMessage({ type: 'ytp-pip-request', id: requestId }, targetOrigin);
 
-        setTimeout(() => finish(false), 1200);
+        setTimeout_(function () {
+          finish(false);
+        }, 1200);
       } catch (e) {
         resolve(false);
       }
@@ -432,7 +537,7 @@
    */
   const clickNativeYouTubePipButton = () => {
     const revealPlayerControls = () => {
-      const player = document.getElementById('movie_player');
+      const player = byId('movie_player');
       if (!(player instanceof HTMLElement)) return;
 
       const rect = player.getBoundingClientRect();
@@ -522,7 +627,7 @@
 
       const parsed = JSON.parse(saved);
       if (typeof parsed !== 'object' || parsed === null) {
-        console.warn('[PiP] Invalid settings format');
+        window.console.warn('[PiP] Invalid settings format');
         return;
       }
 
@@ -547,7 +652,7 @@
         }
       }
     } catch (e) {
-      console.error('[PiP] Error loading settings:', e);
+      window.console.error('[PiP] Error loading settings:', e);
     }
   };
 
@@ -563,7 +668,7 @@
       };
       localStorage.setItem(pipSettings.storageKey, JSON.stringify(settingsToSave));
     } catch (e) {
-      console.error('[PiP] Error saving settings:', e);
+      window.console.error('[PiP] Error saving settings:', e);
     }
     // Keep page-context keydown bridge in sync with updated shortcut/enabled state.
     syncPipShortcutToPageGlobal();
@@ -744,7 +849,7 @@
 
       setSessionActive(true);
     } catch (error) {
-      console.error('[YouTube+][PiP] Failed to toggle Picture-in-Picture:', error);
+      window.console.error('[YouTube+][PiP] Failed to toggle Picture-in-Picture:', error);
     }
   };
 
@@ -862,9 +967,7 @@
    * @returns {boolean}
    */
   const addPipSettingsToModal = () => {
-    const advancedSection = document.querySelector(
-      '.ytp-plus-settings-section[data-section="advanced"]'
-    );
+    const advancedSection = qs('.ytp-plus-settings-section[data-section="advanced"]');
     if (!advancedSection || advancedSection.querySelector('.pip-settings-item')) return false;
 
     const getSubmenuExpanded = () => {
@@ -882,7 +985,7 @@
     const initialExpanded = typeof storedExpanded === 'boolean' ? storedExpanded : true;
 
     // Add styles if they don't exist
-    if (!document.getElementById('pip-styles')) {
+    if (!byId('pip-styles')) {
       const styles = `
           .pip-shortcut-editor { display: flex; align-items: center; gap: 8px; }
           .pip-shortcut-editor select, #pip-key {background: rgba(34, 34, 34, var(--yt-header-bg-opacity)); color: var(--yt-spec-text-primary); border: 1px solid var(--yt-spec-10-percent-layer); border-radius: var(--yt-radius-sm); padding: 4px;}
@@ -894,7 +997,9 @@
     const enableItem = document.createElement('div');
     enableItem.className =
       'ytp-plus-settings-item pip-settings-item ytp-plus-settings-item--with-submenu';
-    enableItem.innerHTML = _createHTML(`
+    renderTemplateClone(
+      enableItem,
+      `
         <div>
           <label class="ytp-plus-settings-item-label" for="pip-enable-checkbox">${t(
             'pipTitle'
@@ -917,7 +1022,8 @@
           </button>
           <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enablePiP" id="pip-enable-checkbox" ${pipSettings.enabled ? 'checked' : ''}>
         </div>
-      `);
+      `
+    );
     advancedSection.appendChild(enableItem);
 
     // Shortcut settings
@@ -957,7 +1063,9 @@
                     ? 'shift'
                     : 'none';
 
-    shortcutItem.innerHTML = _createHTML(`
+    renderTemplateClone(
+      shortcutItem,
+      `
         <div>
           <label class="ytp-plus-settings-item-label">${t('pipShortcutTitle')}</label>
           <div class="ytp-plus-settings-item-description">${t('pipShortcutDescription')}</div>
@@ -1038,15 +1146,16 @@
           <span>+</span>
           <input type="text" id="pip-key" value="${pipSettings.shortcut.key}" maxlength="1" style="width: 30px; text-align: center;">
         </div>
-      `);
+      `
+    );
     submenuCard.appendChild(shortcutItem);
     submenuWrap.appendChild(submenuCard);
     advancedSection.appendChild(submenuWrap);
 
     // Initialize glass dropdown interactions for PiP selector
     const initPipDropdown = () => {
-      const hidden = document.getElementById('pip-modifier-combo');
-      const dropdown = document.getElementById('pip-modifier-dropdown');
+      const hidden = byId('pip-modifier-combo');
+      const dropdown = byId('pip-modifier-dropdown');
       if (!(hidden instanceof HTMLSelectElement) || !(dropdown instanceof HTMLElement)) return;
 
       const toggle = dropdown.querySelector('.glass-dropdown__toggle');
@@ -1143,7 +1252,7 @@
     setTimeout(initPipDropdown, 0);
 
     // Event listeners
-    const enableCheckbox = document.getElementById('pip-enable-checkbox');
+    const enableCheckbox = byId('pip-enable-checkbox');
     if (!(enableCheckbox instanceof HTMLInputElement)) return true;
     enableCheckbox.addEventListener('change', (/** @type {Event} */ e) => {
       const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
@@ -1168,7 +1277,7 @@
       saveSettings();
     });
 
-    const modifierCombo = document.getElementById('pip-modifier-combo');
+    const modifierCombo = byId('pip-modifier-combo');
     if (!(modifierCombo instanceof HTMLSelectElement)) return true;
     modifierCombo.addEventListener('change', (/** @type {Event} */ e) => {
       const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
@@ -1179,7 +1288,7 @@
       saveSettings();
     });
 
-    const pipKeyInput = document.getElementById('pip-key');
+    const pipKeyInput = byId('pip-key');
     if (!(pipKeyInput instanceof HTMLInputElement)) return true;
     pipKeyInput.addEventListener('input', (/** @type {Event} */ e) => {
       const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
@@ -1195,262 +1304,305 @@
     return true;
   };
 
-  // Initialize
-  loadSettings();
-
-  // Event listeners — register with cleanupManager for SPA cleanup
-  const isEditableTarget = (/** @type {EventTarget | null} */ target) => {
-    const node = /** @type {any} */ (target);
-    if (!node || typeof node !== 'object') return false;
-    const tag = String(node.tagName || '').toUpperCase();
-    if (node.isContentEditable === true) return true;
-    if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-    if (typeof node.closest === 'function') {
-      return !!node.closest('input, textarea, select, [contenteditable="true"]');
-    }
-    return false;
+  const isWatchOrShortsRoute = () => {
+    const path = location.pathname || '';
+    return path === '/watch' || path.startsWith('/shorts');
   };
 
-  const keyToCode = (/** @type {string} */ key) => {
-    const normalized = String(key || '')
-      .trim()
-      .toUpperCase();
-    if (!normalized) return '';
+  const isSettingsModalOpen = () => {
+    try {
+      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
+    } catch (e) {
+      return false;
+    }
+  };
 
-    const symbolCodeMap = {
-      '`': 'Backquote',
-      '~': 'Backquote',
-      '-': 'Minus',
-      _: 'Minus',
-      '=': 'Equal',
-      '+': 'Equal',
-      '[': 'BracketLeft',
-      '{': 'BracketLeft',
-      ']': 'BracketRight',
-      '}': 'BracketRight',
-      '\\': 'Backslash',
-      '|': 'Backslash',
-      ';': 'Semicolon',
-      ':': 'Semicolon',
-      "'": 'Quote',
-      '"': 'Quote',
-      ',': 'Comma',
-      '<': 'Comma',
-      '.': 'Period',
-      '>': 'Period',
-      '/': 'Slash',
-      '?': 'Slash',
+  let pipRuntimeStarted = false;
+  const startPipRuntime = () => {
+    if (pipRuntimeStarted) return;
+    pipRuntimeStarted = true;
+
+    // Initialize
+    loadSettings();
+
+    // Event listeners — register with cleanupManager for SPA cleanup
+    const isEditableTarget = (/** @type {EventTarget | null} */ target) => {
+      const node = /** @type {any} */ (target);
+      if (!node || typeof node !== 'object') return false;
+      const tag = String(node.tagName || '').toUpperCase();
+      if (node.isContentEditable === true) return true;
+      if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
+      if (typeof node.closest === 'function') {
+        return !!node.closest('input, textarea, select, [contenteditable="true"]');
+      }
+      return false;
     };
-    if (Object.prototype.hasOwnProperty.call(symbolCodeMap, normalized)) {
-      return /** @type {Record<string, string>} */ (symbolCodeMap)[normalized];
+
+    const keyToCode = (/** @type {string} */ key) => {
+      const normalized = String(key || '')
+        .trim()
+        .toUpperCase();
+      if (!normalized) return '';
+
+      const symbolCodeMap = {
+        '`': 'Backquote',
+        '~': 'Backquote',
+        '-': 'Minus',
+        _: 'Minus',
+        '=': 'Equal',
+        '+': 'Equal',
+        '[': 'BracketLeft',
+        '{': 'BracketLeft',
+        ']': 'BracketRight',
+        '}': 'BracketRight',
+        '\\': 'Backslash',
+        '|': 'Backslash',
+        ';': 'Semicolon',
+        ':': 'Semicolon',
+        "'": 'Quote',
+        '"': 'Quote',
+        ',': 'Comma',
+        '<': 'Comma',
+        '.': 'Period',
+        '>': 'Period',
+        '/': 'Slash',
+        '?': 'Slash',
+      };
+      if (Object.prototype.hasOwnProperty.call(symbolCodeMap, normalized)) {
+        return /** @type {Record<string, string>} */ (symbolCodeMap)[normalized];
+      }
+
+      if (normalized.length === 1 && /[A-Z]/.test(normalized)) return `Key${normalized}`;
+      if (normalized.length === 1 && /[0-9]/.test(normalized)) return `Digit${normalized}`;
+      return normalized;
+    };
+
+    const isFirefoxNativePipShortcutSetting = () => {
+      const s = pipSettings.shortcut;
+      const normalizedKey = String(s.key || '').trim();
+      return (
+        s.ctrlKey === true && s.shiftKey === true && s.altKey === false && normalizedKey === ']'
+      );
+    };
+
+    let lastHotkeyTriggerTs = 0;
+
+    const pipKeydownHandler = (/** @type {Event} */ e) => {
+      const evt = /** @type {any} */ (e);
+      const isKeyboardLike =
+        evt &&
+        typeof evt === 'object' &&
+        typeof evt.key === 'string' &&
+        typeof evt.code === 'string';
+      if (!isKeyboardLike) return;
+      if (!pipSettings.enabled) return;
+      if (evt.repeat || evt.isComposing) return;
+      if (evt.metaKey) return;
+      if (isEditableTarget(evt.target)) return;
+      const { shiftKey, altKey, ctrlKey, key } = pipSettings.shortcut;
+      const expectedCode = keyToCode(key);
+      const eventCode = String(evt.code || '');
+      const eventKey = String(evt.key || '').toUpperCase();
+      const keyMatches =
+        eventKey === key.toUpperCase() || (expectedCode && eventCode === expectedCode);
+      // Strict modifier matching: all modifiers must match exactly.
+      // Previous "at least" logic allowed false positives (e.g. Ctrl+Shift+P matching Shift+P).
+      const modifiersMatch =
+        evt.shiftKey === shiftKey && evt.altKey === altKey && evt.ctrlKey === ctrlKey;
+      if (modifiersMatch && keyMatches) {
+        const now = Date.now();
+        if (now - lastHotkeyTriggerTs < 250) {
+          e.preventDefault();
+          return;
+        }
+        lastHotkeyTriggerTs = now;
+
+        const isFirefox = /firefox/i.test(navigator.userAgent || '');
+        if (isFirefox) {
+          // If the page-context keydown bridge is installed, defer entirely to it.
+          // The bridge runs in page context (trusted user gesture for PiP) and is
+          // registered with capture:true. Our userscript handler may run BEFORE the
+          // bridge handler depending on listener registration order, so if we call
+          // stopImmediatePropagation here we'd starve the bridge. Instead, when the
+          // bridge is present, do nothing and let it handle the shortcut natively.
+          const pageGlobal = getPageGlobal();
+          const bridgeInstalled = Boolean(pageGlobal?.[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]);
+          const pageHandledTs = Number(pageGlobal?.['__ytplusPipPageHandled'] || 0);
+          if (now - pageHandledTs < 300) {
+            // Bridge already handled this key event.
+            return;
+          }
+          // Fall back even when bridge is installed; this covers layout/code mismatches
+          // where page bridge may miss shortcut matching in Firefox.
+          const handled = toggleFirefoxPiPFromHotkey(
+            /** @type {KeyboardEvent} */ (/** @type {unknown} */ (evt)),
+            bridgeInstalled ? false : isFirefoxNativePipShortcutSetting()
+          );
+          if (!handled) {
+            return;
+          }
+        } else {
+          const video = getVideoElement();
+          if (video) {
+            void togglePictureInPicture(video);
+          } else if (!clickNativeYouTubePipButton()) {
+            window.console.warn(
+              '[PiP] Picture-in-Picture API is unavailable in this browser/context'
+            );
+          }
+        }
+
+        if (!isFirefox && !document.pictureInPictureElement && !getVideoElement()) {
+          window.console.warn(
+            '[PiP] Picture-in-Picture API is unavailable in this browser/context'
+          );
+        }
+        e.stopPropagation();
+        if (typeof e.stopImmediatePropagation === 'function') {
+          e.stopImmediatePropagation();
+        }
+        e.preventDefault();
+      }
+    };
+    // Register keydown handlers only — keyup was causing double-fire on every shortcut press.
+    YouTubeUtils.cleanupManager.registerListener(document, 'keydown', pipKeydownHandler, {
+      capture: true,
+    });
+    YouTubeUtils.cleanupManager.registerListener(window, 'keydown', pipKeydownHandler, {
+      capture: true,
+    });
+
+    // For Firefox: install a page-context keydown bridge that calls requestPictureInPicture()
+    // synchronously inside the keyboard event (trusted user gesture). This is more reliable
+    // than clicking the PiP button via JS or using postMessage, because both lose gesture context.
+    if (/firefox/i.test(navigator.userAgent || '')) {
+      installFirefoxPipKeydownBridge();
     }
 
-    if (normalized.length === 1 && /[A-Z]/.test(normalized)) return `Key${normalized}`;
-    if (normalized.length === 1 && /[0-9]/.test(normalized)) return `Digit${normalized}`;
-    return normalized;
-  };
+    // Firefox userscript sandboxes can miss some browser-reserved key combos (e.g. Ctrl+P)
+    // on the content window. Mirror listeners onto page globals when available.
+    try {
+      const pageGlobal = getPageGlobal();
+      const pageDocument = pageGlobal?.document;
+      const pageWindow = pageGlobal;
+      if (pageDocument && pageDocument !== document && pageDocument.addEventListener) {
+        pageDocument.addEventListener('keydown', pipKeydownHandler, { capture: true });
+      }
+      if (pageWindow && pageWindow !== window && pageWindow.addEventListener) {
+        pageWindow.addEventListener('keydown', pipKeydownHandler, { capture: true });
+      }
+    } catch (e) {
+      // Firefox sandbox may throw Security Exceptions here — continue without page-level listener
+      logger.warn('[PiP] Could not register page-context keydown listener (Firefox sandbox)');
+    }
 
-  const isFirefoxNativePipShortcutSetting = () => {
-    const s = pipSettings.shortcut;
-    const normalizedKey = String(s.key || '').trim();
-    return s.ctrlKey === true && s.shiftKey === true && s.altKey === false && normalizedKey === ']';
-  };
+    const storageHandler = (/** @type {Event} */ e) => {
+      if (!(e instanceof StorageEvent)) return;
+      if (e.key === pipSettings.storageKey) {
+        loadSettings();
+      }
+    };
+    YouTubeUtils.cleanupManager.registerListener(window, 'storage', storageHandler);
 
-  let lastHotkeyTriggerTs = 0;
-
-  const pipKeydownHandler = (/** @type {Event} */ e) => {
-    const evt = /** @type {any} */ (e);
-    const isKeyboardLike =
-      evt && typeof evt === 'object' && typeof evt.key === 'string' && typeof evt.code === 'string';
-    if (!isKeyboardLike) return;
-    if (!pipSettings.enabled) return;
-    if (evt.repeat || evt.isComposing) return;
-    if (evt.metaKey) return;
-    if (isEditableTarget(evt.target)) return;
-    const { shiftKey, altKey, ctrlKey, key } = pipSettings.shortcut;
-    const expectedCode = keyToCode(key);
-    const eventCode = String(evt.code || '');
-    const eventKey = String(evt.key || '').toUpperCase();
-    const keyMatches =
-      eventKey === key.toUpperCase() || (expectedCode && eventCode === expectedCode);
-    // Strict modifier matching: all modifiers must match exactly.
-    // Previous "at least" logic allowed false positives (e.g. Ctrl+Shift+P matching Shift+P).
-    const modifiersMatch =
-      evt.shiftKey === shiftKey && evt.altKey === altKey && evt.ctrlKey === ctrlKey;
-    if (modifiersMatch && keyMatches) {
-      const now = Date.now();
-      if (now - lastHotkeyTriggerTs < 250) {
-        e.preventDefault();
+    window.addEventListener('load', () => {
+      if (!pipSettings.enabled || !wasSessionActive() || document.pictureInPictureElement) {
         return;
       }
-      lastHotkeyTriggerTs = now;
 
-      const isFirefox = /firefox/i.test(navigator.userAgent || '');
-      if (isFirefox) {
-        // Check if the page-context keydown bridge already handled this event.
-        // The bridge runs with capture=true in page context and sets a timestamp flag.
-        // If it was set within the last 300ms, don't double-toggle.
-        const pageGlobal = getPageGlobal();
-        const pageHandledTs = Number(pageGlobal?.['__ytplusPipPageHandled'] || 0);
-        if (now - pageHandledTs < 300) {
-          // Bridge handled it — just cancel the event here so YouTube's own
-          // keyboard handler doesn't also fire (e.g. YouTube's 'i' shortcut for PiP).
-          e.preventDefault();
-          e.stopPropagation();
-          if (typeof e.stopImmediatePropagation === 'function') e.stopImmediatePropagation();
-          return;
-        }
-        // Page-context bridge didn't handle it (may not be installed yet). Fall back.
-        const handled = toggleFirefoxPiPFromHotkey(
-          /** @type {KeyboardEvent} */ (/** @type {unknown} */ (evt)),
-          isFirefoxNativePipShortcutSetting()
-        );
-        if (!handled) {
-          return;
-        }
-      } else {
+      const resumePiP = () => {
         const video = getVideoElement();
-        if (video) {
-          void togglePictureInPicture(video);
-        } else if (!clickNativeYouTubePipButton()) {
-          console.warn('[PiP] Picture-in-Picture API is unavailable in this browser/context');
+        if (!video) return;
+
+        togglePictureInPicture(video).catch(() => {
+          // If resume fails we reset the session flag to avoid loops
+          setSessionActive(false);
+        });
+      };
+
+      const ensureCleanup = (/** @type {EventListenerOrEventListenerObject | null} */ handler) => {
+        if (!handler) return;
+        try {
+          document.removeEventListener('pointerdown', handler, true);
+        } catch (e) {
+          // Non-critical, suppressed
+        }
+      };
+
+      const cleanupListeners = () => {
+        ensureCleanup(pointerListener);
+        ensureCleanup(keyListener);
+      };
+
+      const pointerListener = () => {
+        cleanupListeners();
+        resumePiP();
+      };
+
+      const keyListener = () => {
+        cleanupListeners();
+        resumePiP();
+      };
+
+      document.addEventListener('pointerdown', pointerListener, { once: true, capture: true });
+      document.addEventListener('keydown', keyListener, { once: true, capture: true });
+    });
+
+    // Settings modal integration — use event instead of MutationObserver
+    const ensurePipSettings = () => {
+      if (window.YouTubeUtils?.createRetryScheduler) {
+        window.YouTubeUtils.createRetryScheduler({
+          check: () => addPipSettingsToModal() === true,
+          maxAttempts: 20,
+          interval: 120,
+        });
+        return;
+      }
+      let attempts = 0;
+      const retry = () => {
+        attempts += 1;
+        if (addPipSettingsToModal() || attempts >= 20) return;
+        setTimeout(retry, 120);
+      };
+      retry();
+    };
+
+    const settingsModalHandler = () => {
+      setTimeout(ensurePipSettings, 50);
+    };
+    YouTubeUtils.cleanupManager.registerListener(
+      document,
+      'youtube-plus-settings-modal-opened',
+      settingsModalHandler
+    );
+
+    const leavePipHandler = () => {
+      setSessionActive(false);
+    };
+    YouTubeUtils.cleanupManager.registerListener(
+      document,
+      'leavepictureinpicture',
+      leavePipHandler
+    );
+
+    const clickHandler = (/** @type {Event} */ e) => {
+      if (!(e instanceof MouseEvent)) return;
+      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
+      if (target.classList && target.classList.contains('ytp-plus-settings-nav-item')) {
+        if (target.dataset?.section === 'advanced') {
+          setTimeout(ensurePipSettings, 25);
         }
       }
-
-      if (!isFirefox && !document.pictureInPictureElement && !getVideoElement()) {
-        console.warn('[PiP] Picture-in-Picture API is unavailable in this browser/context');
-      }
-      e.stopPropagation();
-      if (typeof e.stopImmediatePropagation === 'function') {
-        e.stopImmediatePropagation();
-      }
-      e.preventDefault();
-    }
+    };
+    YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
   };
-  // Register keydown handlers only — keyup was causing double-fire on every shortcut press.
-  YouTubeUtils.cleanupManager.registerListener(document, 'keydown', pipKeydownHandler, {
-    capture: true,
-  });
-  YouTubeUtils.cleanupManager.registerListener(window, 'keydown', pipKeydownHandler, {
-    capture: true,
-  });
 
-  // For Firefox: install a page-context keydown bridge that calls requestPictureInPicture()
-  // synchronously inside the keyboard event (trusted user gesture). This is more reliable
-  // than clicking the PiP button via JS or using postMessage, because both lose gesture context.
-  if (/firefox/i.test(navigator.userAgent || '')) {
-    installFirefoxPipKeydownBridge();
+  if (window.YouTubePlusLazyLoader?.register) {
+    window.YouTubePlusLazyLoader.register('pip', startPipRuntime, {
+      priority: 60,
+      delay: 0,
+      shouldLoad: () => isWatchOrShortsRoute() || isSettingsModalOpen(),
+    });
+  } else {
+    startPipRuntime();
   }
-
-  // Firefox userscript sandboxes can miss some browser-reserved key combos (e.g. Ctrl+P)
-  // on the content window. Mirror listeners onto page globals when available.
-  try {
-    const pageGlobal = getPageGlobal();
-    const pageDocument = pageGlobal?.document;
-    const pageWindow = pageGlobal;
-    if (pageDocument && pageDocument !== document && pageDocument.addEventListener) {
-      pageDocument.addEventListener('keydown', pipKeydownHandler, { capture: true });
-    }
-    if (pageWindow && pageWindow !== window && pageWindow.addEventListener) {
-      pageWindow.addEventListener('keydown', pipKeydownHandler, { capture: true });
-    }
-  } catch (e) {
-    // Firefox sandbox may throw Security Exceptions here — continue without page-level listener
-    logger.warn('[PiP] Could not register page-context keydown listener (Firefox sandbox)');
-  }
-
-  const storageHandler = (/** @type {Event} */ e) => {
-    if (!(e instanceof StorageEvent)) return;
-    if (e.key === pipSettings.storageKey) {
-      loadSettings();
-    }
-  };
-  YouTubeUtils.cleanupManager.registerListener(window, 'storage', storageHandler);
-
-  window.addEventListener('load', () => {
-    if (!pipSettings.enabled || !wasSessionActive() || document.pictureInPictureElement) {
-      return;
-    }
-
-    const resumePiP = () => {
-      const video = getVideoElement();
-      if (!video) return;
-
-      togglePictureInPicture(video).catch(() => {
-        // If resume fails we reset the session flag to avoid loops
-        setSessionActive(false);
-      });
-    };
-
-    const ensureCleanup = (/** @type {EventListenerOrEventListenerObject | null} */ handler) => {
-      if (!handler) return;
-      try {
-        document.removeEventListener('pointerdown', handler, true);
-      } catch (e) {
-        // Non-critical, suppressed
-      }
-    };
-
-    const cleanupListeners = () => {
-      ensureCleanup(pointerListener);
-      ensureCleanup(keyListener);
-    };
-
-    const pointerListener = () => {
-      cleanupListeners();
-      resumePiP();
-    };
-
-    const keyListener = () => {
-      cleanupListeners();
-      resumePiP();
-    };
-
-    document.addEventListener('pointerdown', pointerListener, { once: true, capture: true });
-    document.addEventListener('keydown', keyListener, { once: true, capture: true });
-  });
-
-  // Settings modal integration — use event instead of MutationObserver
-  const ensurePipSettings = () => {
-    if (window.YouTubeUtils?.createRetryScheduler) {
-      window.YouTubeUtils.createRetryScheduler({
-        check: () => addPipSettingsToModal() === true,
-        maxAttempts: 20,
-        interval: 120,
-      });
-      return;
-    }
-    let attempts = 0;
-    const retry = () => {
-      attempts += 1;
-      if (addPipSettingsToModal() || attempts >= 20) return;
-      setTimeout(retry, 120);
-    };
-    retry();
-  };
-
-  const settingsModalHandler = () => {
-    setTimeout(ensurePipSettings, 50);
-  };
-  YouTubeUtils.cleanupManager.registerListener(
-    document,
-    'youtube-plus-settings-modal-opened',
-    settingsModalHandler
-  );
-
-  const leavePipHandler = () => {
-    setSessionActive(false);
-  };
-  YouTubeUtils.cleanupManager.registerListener(document, 'leavepictureinpicture', leavePipHandler);
-
-  const clickHandler = (/** @type {Event} */ e) => {
-    if (!(e instanceof MouseEvent)) return;
-    const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-    if (target.classList && target.classList.contains('ytp-plus-settings-nav-item')) {
-      if (target.dataset?.section === 'advanced') {
-        setTimeout(ensurePipSettings, 25);
-      }
-    }
-  };
-  YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
 })();

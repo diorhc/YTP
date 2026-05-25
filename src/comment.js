@@ -5,7 +5,21 @@
  */
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
+  /**
+   * @param {Element} container
+   * @param {string} html
+   */
+  const renderTemplateClone = (container, html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
 
   /**
    * Translation helper - uses centralized i18n system
@@ -13,7 +27,7 @@
    * @param {Object} params - Interpolation parameters
    * @returns {string} Translated string
    */
-  const t = window.YouTubeUtils?.t || (key => key || '');
+  const t = window.YouTubeUtils.t;
 
   /**
    * Configuration object for comment manager
@@ -48,7 +62,7 @@
   };
 
   // State management
-  /** @type {{ observer: MutationObserver | null, isProcessing: boolean, settingsNavListenerKey: symbol | null, panelCollapsed: boolean, initialized: boolean, settingsIntegrationInitialized: boolean }} */
+  /** @type {{ observer: MutationObserver | null, isProcessing: boolean, settingsNavListenerKey: symbol | null, panelCollapsed: boolean, initialized: boolean, settingsIntegrationInitialized: boolean, rootSubId: string | null, navSubId: string | null }} */
   const state = {
     observer: null,
     isProcessing: false,
@@ -56,23 +70,28 @@
     panelCollapsed: false,
     initialized: false,
     settingsIntegrationInitialized: false,
+    rootSubId: null,
+    navSubId: null,
   };
 
   const COMMENT_HISTORY_URL = (() => {
     let lang = 'en';
     try {
-      if (window.YouTubePlusI18n?.getLanguage) lang = window.YouTubePlusI18n.getLanguage();
-      else if (document.documentElement.lang) lang = document.documentElement.lang.split('-')[0];
+      lang = window.YouTubeUtils.getLanguage();
     } catch (e) {
       // Non-critical, suppressed
     }
     return `https://myactivity.google.com/page?hl=${encodeURIComponent(lang)}&utm_medium=web&utm_source=youtube&page=youtube_comments`;
   })();
 
+  const isTrustedMyActivityHost = () => {
+    const host = String(location.hostname || '').toLowerCase();
+    return host === 'myactivity.google.com' || host.endsWith('.myactivity.google.com');
+  };
+
   const isMyActivityCommentsPage = () => {
     try {
-      const host = location.hostname || '';
-      if (!host.includes('myactivity.google.com')) return false;
+      if (!isTrustedMyActivityHost()) return false;
       const params = new URLSearchParams(location.search || '');
       return params.get('page') === 'youtube_comments';
     } catch (e) {
@@ -82,24 +101,13 @@
 
   const isMyActivityHost = () => {
     try {
-      return (location.hostname || '').includes('myactivity.google.com');
+      return isTrustedMyActivityHost();
     } catch (e) {
       return false;
     }
   };
 
   const canRunCommentManagerRuntime = isMyActivityHost();
-
-  /** @param {MutationObserver} observer */
-  const registerObserverSafe = observer => {
-    try {
-      if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-        YouTubeUtils.cleanupManager.registerObserver(observer);
-      }
-    } catch (e) {
-      // Non-critical, suppressed
-    }
-  };
 
   /**
    * @param {EventTarget} target
@@ -135,7 +143,7 @@
       // Non-critical, suppressed
     }
     try {
-      if (document.getElementById('comment-delete-styles')) return;
+      if (document['getElementById']('comment-delete-styles')) return;
       const style = document.createElement('style');
       style.id = 'comment-delete-styles';
       style.textContent = cssText;
@@ -165,22 +173,13 @@
   };
 
   // Shared debounce from YouTubeUtils
-  const debounce =
-    window.YouTubeUtils?.debounce ||
-    ((fn, ms) => {
-      /** @type {ReturnType<typeof setTimeout> | undefined} */
-      let t;
-      return (...a) => {
-        clearTimeout(t);
-        t = setTimeout(() => fn(...a), ms);
-      };
-    });
+  const debounce = window.YouTubeUtils.debounce;
 
   // Shared DOM helpers from YouTubeUtils
   /** @param {string} sel */
-  const $ = sel => window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+  const $ = sel => window.YouTubeUtils?.$(sel) || document['querySelector'](sel);
   /** @param {string} sel */
-  const $$ = sel => window.YouTubeUtils?.$$(sel) || Array.from(document.querySelectorAll(sel));
+  const $$ = sel => window.YouTubeUtils?.$$(sel) || Array.from(document['querySelectorAll'](sel));
 
   /**
    * Log error with error boundary integration
@@ -192,7 +191,7 @@
     if (window.YouTubeErrorBoundary) {
       window.YouTubeErrorBoundary.logError(errorObj, { context });
     } else {
-      console.error(`[YouTube+][CommentManager] ${context}:`, error);
+      window.console.error(`[YouTube+][CommentManager] ${context}:`, error);
     }
   };
 
@@ -311,11 +310,14 @@
     collapseButton.setAttribute('type', 'button');
     collapseButton.setAttribute('aria-expanded', String(!state.panelCollapsed));
     collapseButton.setAttribute('aria-label', t('togglePanel'));
-    collapseButton.innerHTML = _createHTML(`
+    renderTemplateClone(
+      collapseButton,
+      `
         <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
         </svg>
-      `);
+      `
+    );
 
     /** @param {boolean} collapsed */
     const togglePanelState = collapsed => {
@@ -392,7 +394,7 @@
 
     const hasChecked = Array.from($$(`.${CONFIG.classes.checkbox}`)).some(cb => cb.checked);
     deleteAllButton.disabled = !hasChecked;
-    deleteAllButton.setAttribute('style', `opacity:${hasChecked ? '1' : '0.6'}`);
+    deleteAllButton.style.opacity = hasChecked ? '1' : '0.6';
   }, 'updateDeleteButtonState');
 
   /**
@@ -448,7 +450,7 @@
   .${CONFIG.classes.checkboxAnchor}{position:relative;display:inline-flex;align-items:center;gap:8px;width:auto;}
         .${CONFIG.classes.checkboxFloating}{position:absolute;top:-4px;right:-32px;margin:0;}
         /* Panel styled to match shorts feedback: glassmorphism, rounded corners, soft shadow */
-        .${CONFIG.classes.panel}{position:fixed;top:50%;right:24px;transform:translateY(-50%);display:flex;flex-direction:column;gap:14px;z-index:10000;padding:16px 18px;background:var(--yt-glass-bg);border:1.5px solid var(--yt-glass-border);border-radius:20px;box-shadow:0 12px 40px rgba(0,0,0,0.45);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);min-width:220px;max-width:300px;color:var(--yt-text-primary);transition:transform .22s cubic-bezier(.4,0,.2,1),opacity .22s,box-shadow .2s}
+        .${CONFIG.classes.panel}{position:fixed;top:50%;right:24px;transform:translateY(-50%);display:flex;flex-direction:column;gap:14px;z-index:10000;padding:16px 18px;background:var(--yt-glass-bg);border:1.5px solid var(--yt-glass-border);border-radius:20px;box-shadow:var(--yt-glass-shadow);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);min-width:220px;max-width:300px;color:var(--yt-text-primary);transition:transform .22s cubic-bezier(.4,0,.2,1),opacity .22s,box-shadow .2s}
         html:not([dark]) .${CONFIG.classes.panel}{background:var(--yt-glass-bg);}
         .${CONFIG.classes.header}{display:flex;align-items:center;justify-content:space-between;gap:12px;}
         .${CONFIG.classes.panel}.is-collapsed{padding:14px 18px;}
@@ -463,12 +465,12 @@
         .${CONFIG.classes.button}{padding:12px 16px;border-radius:var(--yt-radius-md);border:1px solid var(--yt-glass-border);cursor:pointer;font-size:13px;font-weight:500;background:var(--yt-button-bg);color:var(--yt-text-primary);transition:all .2s ease;text-align:center;}
         .${CONFIG.classes.button}:disabled{opacity:.5;cursor:not-allowed;}
         .${CONFIG.classes.button}:not(:disabled):hover{transform:translateY(-1px);box-shadow:var(--yt-shadow);}
-        .${CONFIG.classes.buttonDanger}{background:rgba(255,99,71,.12);border-color:rgba(255,99,71,.25);color:#ff5c5c;}
-        .${CONFIG.classes.buttonPrimary}{background:rgba(33,150,243,.12);border-color:rgba(33,150,243,.25);color:#2196f3;}
-        .${CONFIG.classes.buttonSuccess}{background:rgba(76,175,80,.12);border-color:rgba(76,175,80,.25);color:#4caf50;}
-        .${CONFIG.classes.buttonDanger}:not(:disabled):hover{background:rgba(255,99,71,.22);}
-        .${CONFIG.classes.buttonPrimary}:not(:disabled):hover{background:rgba(33,150,243,.22);}
-        .${CONFIG.classes.buttonSuccess}:not(:disabled):hover{background:rgba(76,175,80,.22);}
+        .${CONFIG.classes.buttonDanger}{background:var(--yt-danger-soft);border-color:var(--yt-danger-border);color:var(--yt-danger-text);}
+        .${CONFIG.classes.buttonPrimary}{background:var(--yt-primary-soft);border-color:var(--yt-primary-border);color:var(--yt-primary-text);}
+        .${CONFIG.classes.buttonSuccess}{background:var(--yt-success-soft);border-color:var(--yt-success);color:var(--yt-success);}
+        .${CONFIG.classes.buttonDanger}:not(:disabled):hover{background:var(--yt-danger-soft-hover);}
+        .${CONFIG.classes.buttonPrimary}:not(:disabled):hover{background:var(--yt-primary-soft-hover);}
+        .${CONFIG.classes.buttonSuccess}:not(:disabled):hover{background:var(--yt-success-soft-hover);}
         @media(max-width:1280px){
           .${CONFIG.classes.panel}{top:auto;bottom:24px;transform:none;right:16px;}
         }
@@ -501,19 +503,22 @@
 
     const settingsItem = document.createElement('div');
     settingsItem.className = 'ytp-plus-settings-item comment-manager-settings-item';
-    settingsItem.innerHTML = _createHTML(`
+    renderTemplateClone(
+      settingsItem,
+      `
         <div>
           <label class="ytp-plus-settings-item-label">${t('commentManagement')}</label>
           <div class="ytp-plus-settings-item-description">${t('bulkDeleteDescription')}</div>
         </div>
-        <button class="ytp-plus-button" id="open-comment-history-page" style="margin:0 0 0 30px;padding:12px 16px;font-size:13px;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2)">
+        <button class="ytp-plus-button" id="open-comment-history-page" style="margin:0 0 0 30px;padding:12px 16px;font-size:13px;background:var(--yt-button-bg);border:1px solid var(--yt-glass-border)">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="gray" stroke-width="2">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
               <polyline points="15,3 21,3 21,9"/>
               <line x1="10" y1="14" x2="21" y2="3"/>
             </svg>
         </button>
-      `);
+      `
+    );
 
     // Append to end (ensure it's the bottom-most item)
     experimentalSection.appendChild(settingsItem);
@@ -524,10 +529,8 @@
   }, 'addCommentManagerSettings');
 
   const ensureCommentManagerSettings = (attempt = 0) => {
-    const experimentalVisible = $(
-      '.ytp-plus-settings-section[data-section="experimental"]:not(.hidden)'
-    );
-    if (!experimentalVisible) {
+    const experimentalSection = $('.ytp-plus-settings-section[data-section="experimental"]');
+    if (!experimentalSection) {
       if (attempt < 20) setTimeout(() => ensureCommentManagerSettings(attempt + 1), 80);
       return;
     }
@@ -571,38 +574,23 @@
    */
   const init = withErrorBoundary(() => {
     // Early exit if already initialized to prevent duplicate work
-    if (state.initialized && state.observer) return;
+    if (state.initialized) return;
 
     settings.load();
     addStyles();
 
-    // Setup observer with throttling — scope to #comments or #content for performance
-    state.observer?.disconnect();
-    state.observer = new MutationObserver(debounce(initializeScript, CONFIG.debounceDelay));
-
-    registerObserverSafe(state.observer);
-
-    const observeTarget = () => {
-      const target =
-        document.querySelector('#comments') || document.querySelector('#content') || document.body;
-      state.observer?.observe(target, { childList: true, subtree: true });
-    };
-
-    if (document.body) {
-      observeTarget();
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (coordinator?.subscribeRoot) {
+      if (!state.rootSubId) {
+        state.rootSubId = coordinator.subscribeRoot(
+          'comment-manager-runtime',
+          debounce(initializeScript, CONFIG.debounceDelay),
+          { selector: '#comments, #content' }
+        );
+      }
     } else {
-      document.addEventListener('DOMContentLoaded', observeTarget);
+      window.console.warn('[YouTube+][CommentManager] MutationCoordinator unavailable');
     }
-
-    // Re-scope observer after navigation (comments container may change)
-    window.addEventListener(
-      'yt-navigate-finish',
-      () => {
-        state.observer?.disconnect();
-        setTimeout(observeTarget, 200);
-      },
-      { passive: true }
-    );
 
     // Initial setup
     if (document.readyState === 'loading') {
@@ -643,37 +631,38 @@
 
   if (canRunCommentManagerRuntime) {
     // Navigation observer to trigger lazy init
-    const navigationObserver = new MutationObserver(
-      debounce(() => {
-        if (!state.initialized && isRelevantRoute()) {
-          scheduleInit();
-        }
-        // Disconnect once initialized — no longer needed
-        if (state.initialized) {
-          navigationObserver.disconnect();
-          if (window.YouTubeUtils?.ObserverRegistry?.untrack) {
-            window.YouTubeUtils.ObserverRegistry.untrack();
-          }
-        }
-      }, 300)
-    );
-
-    // Watch for navigation changes — register with cleanupManager for SPA lifecycle
-    if (document.body) {
-      navigationObserver.observe(document.body, {
-        childList: true,
-        subtree: false,
-        attributes: false,
-      });
-      if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
-        window.YouTubeUtils.cleanupManager.registerObserver(navigationObserver);
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (coordinator?.subscribeRoot) {
+      if (!state.navSubId) {
+        state.navSubId = coordinator.subscribeRoot(
+          'comment-manager-navigation',
+          debounce(() => {
+            if (!state.initialized && isRelevantRoute()) {
+              scheduleInit();
+            }
+            if (state.initialized && state.navSubId) {
+              coordinator.unsubscribe(state.navSubId);
+              state.navSubId = null;
+            }
+          }, 300),
+          { selector: 'body' }
+        );
       }
-      if (window.YouTubeUtils?.ObserverRegistry?.track) {
-        window.YouTubeUtils.ObserverRegistry.track();
-      }
+    } else {
+      window.console.warn('[YouTube+][CommentManager] MutationCoordinator unavailable');
     }
 
-    // Start the module (lazy)
-    scheduleInit();
+    if (window.YouTubePlusLazyLoader) {
+      window.YouTubePlusLazyLoader.register(
+        'comment',
+        scheduleInit,
+        /** @type {any} */ ({
+          priority: 1,
+          shouldLoad: isRelevantRoute,
+        })
+      );
+    } else {
+      scheduleInit();
+    }
   }
 })();

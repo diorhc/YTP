@@ -1,6 +1,5 @@
 # Dependencies
 node_modules/
-package-lock.json
 yarn.lock
 pnpm-lock.yaml
 
@@ -38,6 +37,8 @@ coverage/
 *.lcov
 .jest-cache/
 test-results/
+e2e/
+e2e-report/
 
 # Environment
 .env
@@ -49,6 +50,7 @@ test-results/
 *.temp
 .cache/
 .build-cache.json
+docs/
 
 # OS files
 .DS_Store
@@ -59,8 +61,7 @@ test-results/
 ehthumbs.db
 Thumbs.db
 
-#Optional: Documentation build artifacts (uncomment if needed)
-docs/
+# Optional documentation build artifacts
 GREASYFORK_PUBLISH.md
 GREASYFORK_PUBLISH en.md
 youtube.user.js
@@ -68,12 +69,18 @@ youtube.user.js
 # Linting/analysis outputs
 eslint-output.json
 *.sarif
+audit*.json
+audit*.txt
+*-out.txt
+*_out.txt
+final_summary.txt
+tests_output.txt
+innerHTML-usage.txt
+AUDIT_REPORT.md
 
 # Backup files
 *.bak
 *.backup
 
 # End-to-end testing
-e2e
-e2e-report
-playwright.config.js
+# Keep source tests and config tracked

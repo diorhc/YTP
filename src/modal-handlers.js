@@ -6,8 +6,7 @@
 /* global GM_setValue, GM_getValue */
 
 // DOM cache helper from YouTubeUtils
-const qs = (/** @type {string} */ sel) =>
-  window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+const qs = window.YouTubeUtils?.$ || document.querySelector.bind(document);
 
 /**
  * Safely set a setting by path (supports dot notation)
@@ -74,7 +73,7 @@ const toggleDownloadSiteControls = checkbox => {
       }
     }
   } catch (err) {
-    console.warn('[YouTube+] toggle download-site-controls failed:', err);
+    window.console.warn('[YouTube+] toggle download-site-controls failed:', err);
   }
 };
 
@@ -86,7 +85,7 @@ const safelySaveSettings = (/** @type {Function} */ saveSettings) => {
   try {
     saveSettings();
   } catch (err) {
-    console.warn('[YouTube+] autosave downloadSite toggle failed:', err);
+    window.console.warn('[YouTube+] autosave downloadSite toggle failed:', err);
   }
 };
 
@@ -195,7 +194,7 @@ const applySettingLive = (/** @type {string} */ setting, /** @type {any} */ cont
       refreshDownloadButton();
     }
   } catch (innerErr) {
-    console.warn('[YouTube+] live apply specific toggle failed:', innerErr);
+    window.console.warn('[YouTube+] live apply specific toggle failed:', innerErr);
   }
 
   // Expose updated settings globally for other modules
@@ -224,6 +223,19 @@ const handleSimpleSettingToggle = (
   const checked = /** @type {HTMLInputElement} */ (target).checked;
   setSettingByPath(settings, setting, checked);
 
+  if (setting === 'zenStyles.sideVideosColumnsEnabled' && checked) {
+    const currentValue = Number(/** @type {any} */ (settings).zenStyles?.sideVideosColumns);
+    if (!Number.isFinite(currentValue) || currentValue <= 0) {
+      setSettingByPath(settings, 'zenStyles.sideVideosColumns', 1);
+      const select = modal.querySelector(
+        '.style-side-videos-submenu select[data-setting="zenStyles.sideVideosColumns"]'
+      );
+      if (select instanceof HTMLSelectElement) {
+        select.value = '1';
+      }
+    }
+  }
+
   // Mark modal as dirty
   try {
     markDirty();
@@ -235,14 +247,14 @@ const handleSimpleSettingToggle = (
   try {
     applySettingLive(setting, context);
   } catch (err) {
-    console.warn('[YouTube+] apply settings live failed:', err);
+    window.console.warn('[YouTube+] apply settings live failed:', err);
   }
 
   // Persist immediately
   try {
     saveSettings();
   } catch (err) {
-    console.warn('[YouTube+] autosave simple setting failed:', err);
+    window.console.warn('[YouTube+] autosave simple setting failed:', err);
   }
 
   // Show/hide submenu for Download
@@ -281,6 +293,29 @@ const handleSimpleSettingToggle = (
         toggleBtn.setAttribute('disabled', '');
         toggleBtn.setAttribute('aria-expanded', 'false');
         /** @type {any} */ (toggleBtn).style.display = 'none';
+      }
+    }
+  }
+
+  if (setting === 'zenStyles.sideVideosColumnsEnabled') {
+    const submenu = modal.querySelector(
+      '.style-side-videos-submenu[data-submenu="style-side-videos"]'
+    );
+    if (submenu instanceof HTMLElement) {
+      submenu.style.display = checked ? 'block' : 'none';
+    }
+    const toggleBtn = modal.querySelector(
+      '.ytp-plus-submenu-toggle[data-submenu="style-side-videos"]'
+    );
+    if (toggleBtn instanceof HTMLElement) {
+      if (checked) {
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+        toggleBtn.style.display = 'inline-flex';
+      } else {
+        toggleBtn.setAttribute('disabled', '');
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.style.display = 'none';
       }
     }
   }
@@ -441,7 +476,7 @@ const rebuildDownloadDropdown = (/** @type {any} */ settings) => {
       window.youtubePlus.rebuildDownloadDropdown();
     }
   } catch (err) {
-    console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
+    window.console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
   }
 };
 
@@ -535,7 +570,7 @@ const triggerRebuildDropdown = () => {
       window.youtubePlus.rebuildDownloadDropdown();
     }
   } catch (err) {
-    console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
+    window.console.warn('[YouTube+] rebuildDownloadDropdown call failed:', err);
   }
 };
 
@@ -791,7 +826,7 @@ const handleMusicSettingToggle = (target, setting, showNotification, t) => {
       showNotification(t('musicSettingsSaved'));
     }
   } catch (e) {
-    console.warn('[YouTube+] handleMusicSettingToggle failed');
+    window.console.warn('[YouTube+] handleMusicSettingToggle failed');
   }
 };
 

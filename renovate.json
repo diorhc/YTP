@@ -1,0 +1,20 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["config:recommended"],
+  "labels": ["dependencies", "automated"],
+  "timezone": "UTC",
+  "schedule": ["before 9am on monday"],
+  "packageRules": [
+    {
+      "description": "Prioritize security fixes",
+      "matchUpdateTypes": ["pin", "patch", "minor"],
+      "matchCurrentVersion": "!/^0\\./",
+      "automerge": false
+    },
+    {
+      "description": "Keep GitHub Actions fresh",
+      "matchManagers": ["github-actions"],
+      "groupName": "github-actions"
+    }
+  ]
+}

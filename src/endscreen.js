@@ -1,31 +1,23 @@
 // YouTube End Screen Remover
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const renderTemplateClone = (/** @type {Element} */ container, /** @type {string} */ html) => {
+    if (window.YouTubeSafeDOM?.renderTemplateClone) {
+      window.YouTubeSafeDOM.renderTemplateClone(container, html);
+      return;
+    }
+    if (!(container instanceof Element)) return;
+    container.replaceChildren(document.createTextNode(String(html ?? '')));
+  };
 
   // Shared DOM helpers from YouTubeUtils
   const { $, $$ } = window.YouTubeUtils || {};
-  const onDomReady = (() => {
-    let ready = document.readyState !== 'loading';
-    /** @type {Array<() => void>} */
-    const queue = [];
-    const run = () => {
-      ready = true;
-      while (queue.length) {
-        const cb = queue.shift();
-        try {
-          cb?.();
-        } catch (e) {
-          // Non-critical, suppressed
-        }
-      }
-    };
-    if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
-    return /** @param {() => void} cb */ cb => {
-      if (ready) cb();
-      else queue.push(cb);
-    };
-  })();
+  const onDomReady =
+    window.YouTubeUtils?.onDomReady ||
+    ((/** @type {() => void} */ cb) => {
+      if (document.readyState !== 'loading') cb();
+      else document.addEventListener('DOMContentLoaded', cb, { once: true });
+    });
 
   // Optimized configuration
   const CONFIG = {
@@ -39,9 +31,9 @@
   };
 
   // Minimal state with better tracking
-  /** @type {{ observer: MutationObserver | null, styleEl: string | null, isActive: boolean, removeCount: number, lastCheck: number, ytNavigateListenerKey: symbol | null, settingsNavListenerKey: symbol | null }} */
+  /** @type {{ observerSubId: string | null, styleEl: string | null, isActive: boolean, removeCount: number, lastCheck: number, ytNavigateListenerKey: symbol | null, settingsNavListenerKey: symbol | null }} */
   const state = {
-    observer: null,
+    observerSubId: null,
     styleEl: null,
     isActive: false,
     removeCount: 0,
@@ -51,16 +43,7 @@
   };
 
   // Shared debounce from YouTubeUtils
-  const debounce =
-    window.YouTubeUtils?.debounce ||
-    ((fn, ms) => {
-      /** @type {ReturnType<typeof setTimeout> | undefined} */
-      let t;
-      return (...a) => {
-        clearTimeout(t);
-        t = setTimeout(() => fn(...a), ms);
-      };
-    });
+  const debounce = window.YouTubeUtils.debounce;
 
   /**
    * @param {HTMLElement[]} elements
@@ -70,7 +53,8 @@
     for (let i = 0; i < len; i++) {
       const el = elements[i];
       if (el?.isConnected) {
-        el.setAttribute('style', 'display:none!important;visibility:hidden!important');
+        el.style.display = 'none';
+        el.style.visibility = 'hidden';
         try {
           el.remove();
           state.removeCount++;
@@ -164,56 +148,50 @@
   };
 
   /**
-   * Create mutation observer for end screens
-   * @param {Function} throttledRemove - Throttled remove function
-   * @returns {MutationObserver} Observer instance
-   */
-  const createEndScreenObserver = throttledRemove => {
-    return new MutationObserver(mutations => {
-      if (hasRelevantChanges(mutations)) {
-        throttledRemove();
-      }
-    });
-  };
-
-  /**
    * Setup watcher for end screens
    * @returns {void}
    */
   const setupWatcher = () => {
-    if (state.observer || !CONFIG.enabled) return;
+    if (state.observerSubId || !CONFIG.enabled) return;
 
     const throttledRemove = debounce(removeEndScreens, CONFIG.debounceMs);
-    state.observer = createEndScreenObserver(throttledRemove);
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (!coordinator?.subscribeRoot) return;
 
-    YouTubeUtils.cleanupManager.registerObserver(state.observer);
-
-    // Prefer #movie_player for a narrower observation scope
-    const observeTarget = (attempt = 0) => {
-      const target = $('#movie_player');
-      if (target) {
-        state.observer?.observe(target, {
-          childList: true,
-          subtree: true,
-          attributeFilter: ['class', 'style'],
-        });
-      } else if (attempt < 3) {
-        setTimeout(() => observeTarget(attempt + 1), 500);
-      } else {
-        // Final fallback: observe body
-        state.observer?.observe(document.body, {
-          childList: true,
-          subtree: true,
-          attributeFilter: ['class', 'style'],
-        });
+    state.observerSubId = 'endscreen::observer';
+    coordinator.subscribeRoot(
+      state.observerSubId,
+      /** @param {MutationRecord[]} mutations */ mutations => {
+        if (hasRelevantChanges(mutations)) {
+          throttledRemove();
+        }
+      },
+      {
+        selector:
+          '#movie_player, .ytp-ce-element, .ytp-endscreen-element, .ytp-cards-teaser, .ytp-cards-button, .iv-drawer, .iv-branding, .video-annotations',
+        childList: true,
+        attributes: true,
+        subtree: true,
+        attributeFilter: ['class', 'style'],
       }
-    };
-    observeTarget();
+    );
+
+    YouTubeUtils.cleanupManager.register(() => {
+      if (state.observerSubId) {
+        coordinator.unsubscribe(state.observerSubId);
+        state.observerSubId = null;
+      }
+    });
+
+    // Initial check after the coordinator subscribes.
+    throttledRemove();
   };
 
   const cleanup = () => {
-    state.observer?.disconnect();
-    state.observer = null;
+    if (state.observerSubId && window.YouTubeMutationCoordinator?.unsubscribe) {
+      window.YouTubeMutationCoordinator.unsubscribe(state.observerSubId);
+    }
+    state.observerSubId = null;
     if (state.styleEl) {
       try {
         YouTubeUtils.StyleManager.remove(state.styleEl);
@@ -285,13 +263,16 @@
 
     const container = document.createElement('div');
     container.className = 'ytp-plus-settings-item endscreen-settings';
-    container.innerHTML = _createHTML(`
+    renderTemplateClone(
+      container,
+      `
         <div>
           <label class="ytp-plus-settings-item-label">${YouTubeUtils.t('endscreenHideLabel')}</label>
           <div class="ytp-plus-settings-item-description">${YouTubeUtils.t('endscreenHideDesc')}${state.removeCount ? ` (${state.removeCount} ${YouTubeUtils.t('removedSuffix').replace('{n}', '')?.trim() || 'removed'})` : ''}</div>
         </div>
         <input type="checkbox" class="ytp-plus-settings-checkbox" ${CONFIG.enabled ? 'checked' : ''}>
-      `);
+      `
+    );
 
     if (enhancedSlot) {
       enhancedSlot.replaceWith(container);
@@ -309,42 +290,70 @@
     }
   }, 50);
 
-  // Initialize
-  settings.load();
+  const isWatchOrShortsRoute = () => {
+    const path = location.pathname || '';
+    return path === '/watch' || path.startsWith('/shorts');
+  };
 
-  onDomReady(init);
-
-  /** @param {Event} e */
-  const handleSettingsNavClick = e => {
-    const { target } = /** @type {{ target: HTMLElement }} */ (/** @type {unknown} */ (e));
-    if (target?.dataset?.section === 'advanced') {
-      setTimeout(addSettingsUI, 10);
+  const isSettingsModalOpen = () => {
+    try {
+      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
+    } catch (e) {
+      return false;
     }
   };
 
-  if (!state.ytNavigateListenerKey) {
-    state.ytNavigateListenerKey = YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'yt-navigate-finish',
-      /** @type {EventListener} */ (handlePageChange),
-      { passive: true }
-    );
-  }
+  let endscreenRuntimeStarted = false;
+  const startEndscreenRuntime = () => {
+    if (endscreenRuntimeStarted) return;
+    endscreenRuntimeStarted = true;
 
-  // Settings modal integration — use event instead of MutationObserver
-  const settingsModalHandler = () => setTimeout(addSettingsUI, 25);
-  YouTubeUtils.cleanupManager.registerListener(
-    document,
-    'youtube-plus-settings-modal-opened',
-    settingsModalHandler
-  );
+    // Initialize
+    settings.load();
+    onDomReady(init);
 
-  if (!state.settingsNavListenerKey) {
-    state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
+    /** @param {Event} e */
+    const handleSettingsNavClick = e => {
+      const { target } = /** @type {{ target: HTMLElement }} */ (/** @type {unknown} */ (e));
+      if (target?.dataset?.section === 'advanced') {
+        setTimeout(addSettingsUI, 10);
+      }
+    };
+
+    if (!state.ytNavigateListenerKey) {
+      state.ytNavigateListenerKey = YouTubeUtils.cleanupManager.registerListener(
+        document,
+        'yt-navigate-finish',
+        /** @type {EventListener} */ (handlePageChange),
+        { passive: true }
+      );
+    }
+
+    // Settings modal integration — use event instead of MutationObserver
+    const settingsModalHandler = () => setTimeout(addSettingsUI, 25);
+    YouTubeUtils.cleanupManager.registerListener(
       document,
-      'click',
-      handleSettingsNavClick,
-      { passive: true, capture: true }
+      'youtube-plus-settings-modal-opened',
+      settingsModalHandler
     );
+
+    if (!state.settingsNavListenerKey) {
+      state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
+        document,
+        'click',
+        handleSettingsNavClick,
+        { passive: true, capture: true }
+      );
+    }
+  };
+
+  if (window.YouTubePlusLazyLoader?.register) {
+    window.YouTubePlusLazyLoader.register('end', startEndscreenRuntime, {
+      priority: 35,
+      delay: 0,
+      shouldLoad: () => isWatchOrShortsRoute() || isSettingsModalOpen(),
+    });
+  } else {
+    startEndscreenRuntime();
   }
 })();

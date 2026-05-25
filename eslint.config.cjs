@@ -1,7 +1,41 @@
 // ESLint flat config for ESLint v9+
+const security = require('eslint-plugin-security');
+const noUnsanitized = require('eslint-plugin-no-unsanitized');
+
 module.exports = [
   {
-    ignores: ['node_modules/**', 'youtube.user.js', 'dist/**', 'coverage/**', 'test/**'],
+    ignores: [
+      'node_modules/**',
+      'youtube.user.js',
+      'youtube.user.unoptimized.js',
+      'dist/**',
+      'coverage/**',
+      'test/**',
+      'e2e-report/**',
+      'test-results/**',
+    ],
+  },
+  // Security plugin (recommended), with the noisy false-positive disabled.
+  {
+    ...security.configs.recommended,
+    rules: {
+      ...(security.configs.recommended.rules || {}),
+      // Dynamic property access is pervasive in this codebase (settings keys,
+      // i18n maps, etc.) — keep as warning instead of erroring/noisy.
+      'security/detect-object-injection': 'off',
+      // Keep ReDoS-related rules visible as warnings.
+      'security/detect-unsafe-regex': 'warn',
+      'security/detect-non-literal-regexp': 'warn',
+      'security/detect-non-literal-fs-filename': 'off',
+    },
+  },
+  // No-unsanitized (XSS via innerHTML / createContextualFragment).
+  {
+    plugins: { 'no-unsanitized': noUnsanitized },
+    rules: {
+      'no-unsanitized/method': 'error',
+      'no-unsanitized/property': 'error',
+    },
   },
   {
     files: ['**/*.js'],
@@ -26,6 +60,7 @@ module.exports = [
         fetch: 'readonly',
         URL: 'readonly',
         URLSearchParams: 'readonly',
+        DOMParser: 'readonly',
         CustomEvent: 'readonly',
         Event: 'readonly',
         KeyboardEvent: 'readonly',
@@ -82,29 +117,29 @@ module.exports = [
     },
     rules: {
       'no-unused-vars': [
-        'warn',
+        'error',
         {
           argsIgnorePattern: '^_',
           varsIgnorePattern: '^(_|\\$|byId)',
           caughtErrorsIgnorePattern: '^(_|e)$',
         },
       ],
-      'no-console': ['warn', { allow: ['warn', 'error'] }],
-      'prefer-const': 'warn',
-      'no-var': 'warn',
+      'no-console': 'error',
+      'prefer-const': 'error',
+      'no-var': 'error',
       eqeqeq: ['warn', 'smart'],
       curly: ['warn', 'multi-line'],
       'no-undef': ['error', { typeof: false }],
       'no-prototype-builtins': 'warn',
       // Allow debug flag patterns like: DEBUG && console.log()
-      'no-unused-expressions': ['warn', { allowShortCircuit: true, allowTernary: true }],
+      'no-unused-expressions': ['error', { allowShortCircuit: true, allowTernary: true }],
       // Security rules
       'no-eval': 'error',
       'no-implied-eval': 'error',
       'no-new-func': 'error',
       'no-script-url': 'error',
       'no-self-compare': 'error',
-      'no-sequences': 'warn',
+      'no-sequences': 'error',
       'no-throw-literal': 'warn',
       'no-with': 'error',
       radix: 'warn',
@@ -123,26 +158,35 @@ module.exports = [
           message: 'eval() is unsafe and should not be used.',
         },
       ],
-    },
-  },
-  {
-    // Allow console.log in scripts directories (GitHub Actions and utility scripts)
-    files: [
-      '.github/scripts/**/*.js',
-      'scripts/**/*.js',
-      '**/scripts/**/*.js',
-      'analyze-*.js',
-      'benchmark.js',
-      'build.js',
-      'check-*.js',
-      'validate-*.js',
-      'fix-*.js',
-      'generate-*.js',
-      'embed-*.js',
-      'test-*.js',
-    ],
-    rules: {
-      'no-console': 'off',
+      'no-restricted-syntax': [
+        'warn',
+        {
+          selector:
+            "CallExpression[callee.name='setTimeout'][arguments.1.type='Literal'][arguments.1.value>=1000]",
+          message:
+            'Use setTimeout_ wrapper for long delays (>= 1000ms) to keep timer lifecycle centralized.',
+        },
+        {
+          selector:
+            "CallExpression[callee.property.name='setTimeout'][arguments.1.type='Literal'][arguments.1.value>=1000]",
+          message:
+            'Use setTimeout_ wrapper for long delays (>= 1000ms) to keep timer lifecycle centralized.',
+        },
+        {
+          selector: "AssignmentExpression[left.property.name='innerHTML']",
+          message:
+            'Direct innerHTML assignment is restricted. Use YouTubeSafeDOM.setHTML or a template/fragment renderer.',
+        },
+        {
+          selector: 'VariableDeclarator[id.name=/[A-Za-z0-9_]*Any[A-Za-z0-9_]*/]',
+          message:
+            'Avoid *Any aliases. Prefer typed interfaces from types/index.d.ts or src/types.d.ts.',
+        },
+        {
+          selector: 'VariableDeclarator[id.name=/^wAny\d*$/]',
+          message: 'Avoid window any aliases (wAny). Use typed window interfaces instead.',
+        },
+      ],
     },
   },
 ];

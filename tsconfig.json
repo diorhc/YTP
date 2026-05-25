@@ -30,6 +30,14 @@
     "declaration": false,
     "sourceMap": false
   },
-  "include": ["src/**/*.js", "src/**/*.d.ts", "build.js", "test/**/*.js", "types/**/*.d.ts"],
-  "exclude": ["node_modules", "youtube.user.js", "dist", "coverage"]
+  "include": ["src/**/*.js", "src/**/*.d.ts", "build.js", "types/**/*.d.ts"],
+  "exclude": [
+    "node_modules",
+    "youtube.user.js",
+    "youtube.user.unoptimized.js",
+    "dist",
+    "coverage",
+    "test",
+    "e2e"
+  ]
 }

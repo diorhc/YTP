@@ -1,16 +1,37 @@
 (function () {
   'use strict';
+
+  const setTimeout_ = setTimeout.bind(window);
   const _createHTML =
     window._ytplusCreateHTML || /** @type {any} */ ((/** @type {string} */ s) => s);
+  const renderTemplateClone = (/** @type {Element} */ container, /** @type {string} */ html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
 
   // Shared DOM helpers from YouTubeUtils
-  const qs = (/** @type {string} */ sel) =>
-    window.YouTubeUtils?.$(sel) || document.querySelector(sel);
-  const qsAll = (/** @type {string} */ sel) =>
-    window.YouTubeUtils?.$$(sel) || Array.from(document.querySelectorAll(sel));
+  const qs = window.YouTubeUtils?.$ || document.querySelector.bind(document);
+  const qsAll =
+    window.YouTubeUtils?.$$ || (sel => Array.from(document['querySelectorAll'](String(sel || ''))));
+  const byId =
+    window.YouTubeUtils?.byId ||
+    ((/** @type {string} */ id) =>
+      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils?.t || /** @type {any} */ ((/** @type {string} */ key) => key || '');
+  const t = window.YouTubeUtils.t;
+
+  const isAllowedHost = (/** @type {string} */ host, /** @type {string} */ domain) => {
+    const normalizedHost = String(host || '').toLowerCase();
+    const normalizedDomain = String(domain || '').toLowerCase();
+    return normalizedHost === normalizedDomain || normalizedHost.endsWith(`.${normalizedDomain}`);
+  };
 
   function loadEnableThumbnail() {
     return window.YouTubeUtils?.loadFeatureEnabled?.('enableThumbnail') ?? true;
@@ -18,11 +39,28 @@
 
   let thumbnailFeatureEnabled = loadEnableThumbnail();
   const isEnabled = () => thumbnailFeatureEnabled;
+  const isRelevantRoute = () => {
+    try {
+      const host = window.location.hostname || '';
+      if (!isAllowedHost(host, 'youtube.com') || host === 'music.youtube.com') return false;
+      const path = window.location.pathname || '';
+      return (
+        path === '/watch' ||
+        path.startsWith('/shorts') ||
+        path.startsWith('/channel/') ||
+        path.startsWith('/@')
+      );
+    } catch (e) {
+      return false;
+    }
+  };
 
   let started = false;
   let startScheduled = false;
-  /** @type {MutationObserver|null} */
-  let mutationObserver = null;
+  /** @type {string|null} */
+  let mutationObserverSubId = null;
+  /** @type {string|null} */
+  let modalCleanupSubId = null;
   /** @type {null | (() => void)} */
   let urlChangeCleanup = null;
   let thumbnailStylesInjected = false;
@@ -39,12 +77,12 @@
       const videoId = match ? match[1] : null;
       // Validate video ID format (11 characters, alphanumeric + - and _)
       if (videoId && !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-        console.warn('[YouTube+][Thumbnail]', 'Invalid video ID format:', videoId);
+        window.console.warn('[YouTube+][Thumbnail]', 'Invalid video ID format:', videoId);
         return null;
       }
       return videoId;
     } catch (error) {
-      console.error('[YouTube+][Thumbnail]', 'Error extracting video ID:', error);
+      window.console.error('[YouTube+][Thumbnail]', 'Error extracting video ID:', error);
       return null;
     }
   }
@@ -61,12 +99,12 @@
       const shortsId = match ? match[1] : null;
       // Validate shorts ID format (11 characters, alphanumeric + - and _)
       if (shortsId && !/^[a-zA-Z0-9_-]{11}$/.test(shortsId)) {
-        console.warn('[YouTube+][Thumbnail]', 'Invalid shorts ID format:', shortsId);
+        window.console.warn('[YouTube+][Thumbnail]', 'Invalid shorts ID format:', shortsId);
         return null;
       }
       return shortsId;
     } catch (error) {
-      console.error('[YouTube+][Thumbnail]', 'Error extracting shorts ID:', error);
+      window.console.error('[YouTube+][Thumbnail]', 'Error extracting shorts ID:', error);
       return null;
     }
   }
@@ -83,7 +121,7 @@
    */
   function isValidUrlString(url) {
     if (!url || typeof url !== 'string') {
-      console.warn('[YouTube+][Thumbnail]', 'Invalid URL provided');
+      window.console.warn('[YouTube+][Thumbnail]', 'Invalid URL provided');
       return false;
     }
     return true;
@@ -96,7 +134,7 @@
    */
   function hasValidProtocol(parsedUrl) {
     if (parsedUrl.protocol !== 'https:') {
-      console.warn('[YouTube+][Thumbnail]', 'Only HTTPS URLs are allowed');
+      window.console.warn('[YouTube+][Thumbnail]', 'Only HTTPS URLs are allowed');
       return false;
     }
     return true;
@@ -109,8 +147,8 @@
    */
   function hasValidDomain(parsedUrl) {
     const { hostname } = parsedUrl;
-    if (!hostname.endsWith('ytimg.com') && !hostname.endsWith('youtube.com')) {
-      console.warn('[YouTube+][Thumbnail]', 'Only YouTube image domains are allowed');
+    if (!isAllowedHost(hostname, 'ytimg.com') && !isAllowedHost(hostname, 'youtube.com')) {
+      window.console.warn('[YouTube+][Thumbnail]', 'Only YouTube image domains are allowed');
       return false;
     }
     return true;
@@ -128,7 +166,7 @@
       if (!hasValidDomain(parsedUrl)) return null;
       return parsedUrl;
     } catch (error) {
-      console.error('[YouTube+][Thumbnail]', 'Invalid URL:', error);
+      window.console.error('[YouTube+][Thumbnail]', 'Invalid URL:', error);
       return null;
     }
   }
@@ -140,7 +178,7 @@
    */
   async function checkViaHeadRequest(url) {
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    const timeoutId = setTimeout_(() => controller.abort(), 5000);
 
     try {
       const response = await fetch(url, {
@@ -183,7 +221,7 @@
       const img = document.createElement('img');
       /** @type {any} */ (img).style.display = 'none';
 
-      const timeout = setTimeout(() => {
+      const timeout = setTimeout_(() => {
         cleanupImageElement(img);
         resolve(false);
       }, 3000);
@@ -228,7 +266,7 @@
       // Fallback to image load test
       return await checkViaImageLoad(url);
     } catch (error) {
-      console.error('[YouTube+][Thumbnail]', 'Error checking image:', error);
+      window.console.error('[YouTube+][Thumbnail]', 'Error checking image:', error);
       return false;
     }
   }
@@ -340,7 +378,7 @@
         overlayElement.replaceChild(originalSvg, spinner);
       }
     } catch (restoreError) {
-      console.error('[YouTube+][Thumbnail]', 'Error restoring original SVG:', restoreError);
+      window.console.error('[YouTube+][Thumbnail]', 'Error restoring original SVG:', restoreError);
       if (spinner && spinner.parentNode) {
         spinner.parentNode.removeChild(spinner);
       }
@@ -356,18 +394,18 @@
   async function openThumbnail(videoId, isShorts, overlayElement) {
     try {
       if (!isValidVideoId(videoId)) {
-        console.error('[YouTube+][Thumbnail]', 'Invalid video ID:', videoId);
+        window.console.error('[YouTube+][Thumbnail]', 'Invalid video ID:', videoId);
         return;
       }
 
       if (!isValidOverlayElement(overlayElement)) {
-        console.error('[YouTube+][Thumbnail]', 'Invalid overlay element');
+        window.console.error('[YouTube+][Thumbnail]', 'Invalid overlay element');
         return;
       }
 
       const originalSvg = overlayElement.querySelector('svg');
       if (!originalSvg) {
-        console.warn('[YouTube+][Thumbnail]', 'No SVG found in overlay element');
+        window.console.warn('[YouTube+][Thumbnail]', 'No SVG found in overlay element');
         return;
       }
 
@@ -379,7 +417,7 @@
         restoreOriginalSvg(overlayElement, spinner, originalSvg);
       }
     } catch (error) {
-      console.error('[YouTube+][Thumbnail]', 'Error opening thumbnail:', error);
+      window.console.error('[YouTube+][Thumbnail]', 'Error opening thumbnail:', error);
     }
   }
 
@@ -387,34 +425,34 @@
     if (thumbnailStylesInjected) return;
     try {
       const css = `
-        :root { --thumbnail-btn-bg-light: rgba(255, 255, 255, 0.85); --thumbnail-btn-bg-dark: rgba(0, 0, 0, 0.7); --thumbnail-btn-hover-bg-light: rgba(255, 255, 255, 1); --thumbnail-btn-hover-bg-dark: rgba(0, 0, 0, 0.9); --thumbnail-btn-color-light: #222; --thumbnail-btn-color-dark: #fff; --thumbnail-modal-bg-light: rgba(255, 255, 255, 0.95); --thumbnail-modal-bg-dark: rgba(34, 34, 34, 0.85); --thumbnail-modal-title-light: #222; --thumbnail-modal-title-dark: #fff; --thumbnail-modal-btn-bg-light: rgba(0, 0, 0, 0.08); --thumbnail-modal-btn-bg-dark: rgba(255, 255, 255, 0.08); --thumbnail-modal-btn-hover-bg-light: rgba(0, 0, 0, 0.18); --thumbnail-modal-btn-hover-bg-dark: rgba(255, 255, 255, 0.18); --thumbnail-modal-btn-color-light: #222; --thumbnail-modal-btn-color-dark: #fff; --thumbnail-modal-btn-hover-color-light: #ff4444; --thumbnail-modal-btn-hover-color-dark: #ff4444; --thumbnail-glass-blur: blur(18px) saturate(180%); --thumbnail-glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.2); --thumbnail-glass-border: rgba(255, 255, 255, 0.2); }
-        html[dark], body[dark] { --thumbnail-btn-bg: var(--thumbnail-btn-bg-dark); --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-dark); --thumbnail-btn-color: var(--thumbnail-btn-color-dark); --thumbnail-modal-bg: var(--thumbnail-modal-bg-dark); --thumbnail-modal-title: var(--thumbnail-modal-title-dark); --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-dark); --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-dark); --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-dark); --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-dark); }
-        html:not([dark]) { --thumbnail-btn-bg: var(--thumbnail-btn-bg-light); --thumbnail-btn-bg: var(--thumbnail-btn-bg-light); --thumbnail-btn-hover-bg: var(--thumbnail-btn-hover-bg-light); --thumbnail-btn-color: var(--thumbnail-btn-color-light); --thumbnail-modal-bg: var(--thumbnail-modal-bg-light); --thumbnail-modal-title: var(--thumbnail-modal-title-light); --thumbnail-modal-btn-bg: var(--thumbnail-modal-btn-bg-light); --thumbnail-modal-btn-hover-bg: var(--thumbnail-modal-btn-hover-bg-light); --thumbnail-modal-btn-color: var(--thumbnail-modal-btn-color-light); --thumbnail-modal-btn-hover-color: var(--thumbnail-modal-btn-hover-color-light); }
-        .thumbnail-overlay-container { position: absolute; bottom: 8px; left: 8px; z-index: 9999; opacity: 0; transition: opacity 0.2s ease; }
-        .thumbnail-overlay-button { width: 28px; height: 28px; background: var(--thumbnail-btn-bg); border: none; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--thumbnail-btn-color); position: relative; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
-        .thumbnail-overlay-button:hover { background: var(--thumbnail-btn-hover-bg); }
-        .thumbnail-dropdown { position: absolute; bottom: 100%; left: 0; background: var(--thumbnail-btn-hover-bg); border-radius: 8px; padding: 4px; margin-bottom: 4px; display: none; flex-direction: column; min-width: 140px; box-shadow: var(--thumbnail-glass-shadow); z-index: 10000; backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+        .thumbnail-overlay-container { position: absolute; bottom: 8px; left: 8px; z-index: var(--yt-z-overlay); opacity: 0; transition: opacity 0.2s ease; }
+        .thumbnail-overlay-button { width: 28px; height: 28px; background: var(--yt-glass-bg); border: none; border-radius: var(--yt-radius-xs); cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--yt-text-primary); position: relative; box-shadow: var(--yt-glass-shadow); backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur); border: 1px solid var(--yt-glass-border); }
+        .thumbnail-overlay-button svg{width:16px;height:16px;display:block;flex:none;}
+        .thumbnail-overlay-button:hover { background: var(--yt-hover-bg); }
+        .thumbnail-dropdown { position: absolute; bottom: 100%; left: 0; background: var(--yt-glass-bg); border-radius: var(--yt-radius-xs); padding: 4px; margin-bottom: 4px; display: none; flex-direction: column; min-width: 140px; box-shadow: var(--yt-glass-shadow); z-index: var(--yt-z-flyout); backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur); border: 1px solid var(--yt-glass-border); }
         .thumbnail-dropdown.show { display: flex !important; }
-        .thumbnail-dropdown-item { background: none; border: none; color: var(--thumbnail-btn-color); padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 12px; text-align: left; white-space: nowrap; transition: background-color 0.2s ease; }
-        .thumbnail-dropdown-item:hover { background: rgba(255,255,255,0.06); }
-        .thumbnailPreview-button { position: absolute; bottom: 10px; left: 5px; background-color: var(--thumbnail-btn-bg); color: var(--thumbnail-btn-color); border: none; border-radius: 6px; padding: 3px; font-size: 18px; cursor: pointer; z-index: 2000; opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
+        .thumbnail-dropdown-item { background: none; border: none; color: var(--yt-text-primary); padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 12px; text-align: left; white-space: nowrap; transition: background-color 0.2s ease; }
+        .thumbnail-dropdown-item:hover { background: var(--yt-hover-bg); }
+        .thumbnailPreview-button { position: absolute; bottom: 10px; left: 5px; background-color: var(--yt-glass-bg); color: var(--yt-text-primary); border: none; border-radius: var(--yt-radius-xs); padding: 3px; font-size: 18px; cursor: pointer; z-index: var(--yt-z-overlay); opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: var(--yt-glass-shadow); backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur); border: 1px solid var(--yt-glass-border); }
+        .thumbnailPreview-button svg{width:16px;height:16px;display:block;flex:none;}
         .thumbnailPreview-container { position: relative; }
         .thumbnailPreview-container:hover .thumbnailPreview-button { opacity: 1; }
-        .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.55); z-index: 100000; display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.22s cubic-bezier(.4,0,.2,1); backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%); }
-        .thumbnail-modal-content { background: var(--thumbnail-modal-bg); border-radius: 20px; box-shadow: 0 12px 40px rgba(0,0,0,0.45); max-width: 78vw; max-height: 90vh; overflow: auto; position: relative; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.22s cubic-bezier(.4,0,.2,1); border: 1.5px solid var(--thumbnail-glass-border); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%);}
+        .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--yt-modal-bg); z-index: var(--yt-z-modal); display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.22s cubic-bezier(.4,0,.2,1); backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%); }
+        .thumbnail-modal-content { background: var(--yt-glass-bg); border-radius: var(--yt-radius-lg); box-shadow: 0 12px 40px var(--yt-timecode-panel-shadow); max-width: 78vw; max-height: 90vh; overflow: auto; position: relative; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.22s cubic-bezier(.4,0,.2,1); border: 1.5px solid var(--yt-glass-border); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%);}
         /* Wrapper to place content and action buttons side-by-side */
         .thumbnail-modal-wrapper { display: flex; align-items: flex-start; gap: 12px; }
         .thumbnail-modal-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
-        .thumbnail-modal-action-btn { width: 40px; height: 40px; border-radius: 50%; background: var(--thumbnail-modal-btn-bg); border: 1px solid rgba(0,0,0,0.08); display: flex; align-items: center; justify-content: center; cursor: pointer; box-shadow: 0 4px 14px rgba(0,0,0,0.2); transition: transform 0.12s ease, background 0.12s ease; color: var(--thumbnail-modal-btn-color); }
-        .thumbnail-modal-action-btn:hover { transform: translateY(-2px); }
+        .thumbnail-modal-action-btn { padding: 0; line-height: 0; }
+        .thumbnail-modal-action-btn svg{width:18px;height:18px;display:block;flex:none;}
+        .thumbnail-modal-close svg{width:36px;height:36px;}
         .thumbnail-modal-close { }
         .thumbnail-modal-open { }
-        .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; box-shadow: var(--thumbnail-glass-shadow); background: #222; border: 1px solid var(--thumbnail-glass-border); }
+        .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; box-shadow: var(--yt-glass-shadow); background: #222; border: 1px solid var(--yt-glass-border); }
         .thumbnail-modal-options { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
-        .thumbnail-modal-option-btn { background: var(--thumbnail-modal-btn-bg); color: var(--thumbnail-modal-btn-color); border: none; border-radius: 8px; padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s; margin-bottom: 6px; box-shadow: var(--thumbnail-glass-shadow); backdrop-filter: var(--thumbnail-glass-blur); -webkit-backdrop-filter: var(--thumbnail-glass-blur); border: 1px solid var(--thumbnail-glass-border); }
-        .thumbnail-modal-option-btn:hover { background: var(--thumbnail-modal-btn-hover-bg); color: var(--thumbnail-modal-btn-hover-color); }
-        .thumbnail-modal-title { font-size: 18px; font-weight: 600; color: var(--thumbnail-modal-title); margin-bottom: 10px; text-align: center; text-shadow: 0 2px 8px rgba(0,0,0,0.15); }
-        /* fadeInModal, scaleInModal defined in shared-keyframes (basic.js) */
+        .thumbnail-modal-option-btn { background: var(--yt-button-bg); color: var(--yt-text-primary); border: none; border-radius: var(--yt-radius-xs); padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s,color .2s; margin-bottom: 6px; box-shadow: var(--yt-glass-shadow); backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur); border: 1px solid var(--yt-glass-border); }
+        .thumbnail-modal-option-btn:hover { background: var(--yt-hover-bg); color: var(--yt-accent); }
+        .thumbnail-modal-title { font-size: 18px; font-weight: 600; color: var(--yt-text-primary); margin-bottom: 10px; text-align: center; text-shadow: 0 2px 8px var(--yt-shadow-deep-1); }
+        /* fadeInModal, scaleInModal are provided by design-system */
       `;
 
       if (
@@ -432,7 +470,7 @@
       thumbnailStylesInjected = true;
     } catch (e) {
       // fallback: inject minimal styles
-      if (!document.getElementById('ytplus-thumbnail-styles')) {
+      if (!byId('ytplus-thumbnail-styles')) {
         const s = document.createElement('style');
         s.id = 'ytplus-thumbnail-styles';
         s.textContent = '.thumbnail-modal-img{max-width:72vw;max-height:70vh;}';
@@ -451,7 +489,7 @@
       // Non-critical, suppressed
     }
 
-    const el = document.getElementById('ytplus-thumbnail-styles');
+    const el = byId('ytplus-thumbnail-styles');
     if (el) {
       try {
         el.remove();
@@ -470,24 +508,28 @@
    */
   function validateModalUrl(url) {
     if (!url || typeof url !== 'string') {
-      console.error('[YouTube+][Thumbnail]', 'Invalid URL provided to modal');
+      window.console.error('[YouTube+][Thumbnail]', 'Invalid URL provided to modal');
       return false;
     }
 
     try {
       const parsedUrl = new URL(url);
       if (parsedUrl.protocol !== 'https:') {
-        console.error('[YouTube+][Thumbnail]', 'Only HTTPS URLs are allowed');
+        window.console.error('[YouTube+][Thumbnail]', 'Only HTTPS URLs are allowed');
         return false;
       }
       const allowedDomains = ['ytimg.com', 'youtube.com', 'ggpht.com', 'googleusercontent.com'];
-      if (!allowedDomains.some(d => parsedUrl.hostname.endsWith(d))) {
-        console.error('[YouTube+][Thumbnail]', 'Image domain not allowed:', parsedUrl.hostname);
+      if (!allowedDomains.some(d => isAllowedHost(parsedUrl.hostname, d))) {
+        window.console.error(
+          '[YouTube+][Thumbnail]',
+          'Image domain not allowed:',
+          parsedUrl.hostname
+        );
         return false;
       }
       return true;
     } catch (urlError) {
-      console.error('[YouTube+][Thumbnail]', 'Invalid URL format:', urlError);
+      window.console.error('[YouTube+][Thumbnail]', 'Invalid URL format:', urlError);
       return false;
     }
   }
@@ -515,12 +557,14 @@
    */
   function createCloseButton(overlay) {
     const closeBtn = document.createElement('button');
-    closeBtn.className = 'thumbnail-modal-close thumbnail-modal-action-btn';
-    closeBtn.innerHTML = _createHTML(
-      `\n            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>\n            </svg>\n            `
+    closeBtn.className = 'thumbnail-modal-close thumbnail-modal-action-btn ytp-plus-settings-close';
+    closeBtn.setAttribute('data-shared-close-button', 'ytp-plus-close-settings');
+    renderTemplateClone(
+      closeBtn,
+      `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 9.50002L9.5 14.5M9.49998 9.5L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg>`
     );
-    closeBtn.title = t('close');
-    closeBtn.setAttribute('aria-label', t('close'));
+    closeBtn.title = t('closeButton') || t('close');
+    closeBtn.setAttribute('aria-label', t('closeButton') || t('close'));
     closeBtn.addEventListener('click', e => {
       e.preventDefault();
       e.stopPropagation();
@@ -536,8 +580,9 @@
    */
   function createNewTabButton(img) {
     const newTabBtn = document.createElement('button');
-    newTabBtn.className = 'thumbnail-modal-open thumbnail-modal-action-btn';
-    newTabBtn.innerHTML = _createHTML(
+    newTabBtn.className = 'thumbnail-modal-open thumbnail-modal-action-btn ytp-plus-settings-close';
+    renderTemplateClone(
+      newTabBtn,
       `\n            <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">\n        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>\n        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>\n        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>\n      </svg>\n        `
     );
     newTabBtn.title = t('clickToOpen');
@@ -557,7 +602,7 @@
    */
   async function downloadImageAsBlob(imgSrc) {
     const controller = new AbortController();
-    const timerId = setTimeout(() => controller.abort(), 15000); // 15 s timeout for image download
+    const timerId = setTimeout_(() => controller.abort(), 15000); // 15 s timeout for image download
     let response;
     try {
       response = await fetch(imgSrc, { signal: controller.signal });
@@ -581,7 +626,7 @@
     document.body.appendChild(a);
     a.click();
     a.remove();
-    setTimeout(() => URL.revokeObjectURL(blobUrl), 1500);
+    setTimeout_(() => URL.revokeObjectURL(blobUrl), 1500);
   }
 
   /**
@@ -591,9 +636,11 @@
    */
   function createDownloadButton(img) {
     const downloadBtn = document.createElement('button');
-    downloadBtn.className = 'thumbnail-modal-download thumbnail-modal-action-btn';
-    downloadBtn.innerHTML = _createHTML(
-      `\n            <svg viewBox="0 0 24 24" width="18" height="18" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">\n                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>\n                <polyline points="7 10 12 15 17 10"/>\n                <line x1="12" y1="15" x2="12" y2="3"/>\n            </svg>\n        `
+    downloadBtn.className =
+      'thumbnail-modal-download thumbnail-modal-action-btn ytp-plus-settings-close';
+    renderTemplateClone(
+      downloadBtn,
+      `\n            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="--darkreader-inline-stroke: var(--darkreader-text-ffffff, #cad3f5);" data-darkreader-inline-stroke=""></path> <path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="--darkreader-inline-stroke: var(--darkreader-text-ffffff, #cad3f5);" data-darkreader-inline-stroke=""></path></svg>\n        `
     );
     downloadBtn.title = t('download');
     downloadBtn.setAttribute('aria-label', t('download'));
@@ -651,13 +698,13 @@
       qsAll('.thumbnail-modal-overlay').forEach(m => m.remove());
 
       const overlay = document.createElement('div');
-      overlay.className = 'thumbnail-modal-overlay';
+      overlay.className = 'thumbnail-modal-overlay ytp-plus-modal-overlay';
       overlay.setAttribute('role', 'dialog');
       overlay.setAttribute('aria-modal', 'true');
       overlay.setAttribute('aria-label', 'Thumbnail preview');
 
       const content = document.createElement('div');
-      content.className = 'thumbnail-modal-content';
+      content.className = 'thumbnail-modal-content ytp-plus-modal-content';
 
       const img = createModalImage(url);
 
@@ -701,16 +748,24 @@
       });
       if (window.YouTubePlusModalHandlers && window.YouTubePlusModalHandlers.createFocusTrap) {
         const removeTrap = window.YouTubePlusModalHandlers.createFocusTrap(overlay);
-        const obs = new MutationObserver(() => {
-          if (!overlay.isConnected) {
-            removeTrap();
-            obs.disconnect();
-          }
-        });
-        obs.observe(document.body, { childList: true });
+        const coordinator = window.YouTubeMutationCoordinator;
+        if (coordinator?.subscribeRoot) {
+          modalCleanupSubId = 'thumbnail::modalCleanup';
+          coordinator.subscribeRoot(
+            modalCleanupSubId,
+            () => {
+              if (!overlay.isConnected) {
+                removeTrap();
+                coordinator.unsubscribe(modalCleanupSubId);
+                modalCleanupSubId = null;
+              }
+            },
+            { childList: true, attributes: false, subtree: true }
+          );
+        }
       }
     } catch (error) {
-      console.error('[YouTube+][Thumbnail]', 'Error showing modal:', error);
+      window.console.error('[YouTube+][Thumbnail]', 'Error showing modal:', error);
     }
   }
 
@@ -719,11 +774,6 @@
   let thumbnailInsertionAttempts = 0;
   const MAX_ATTEMPTS = 10;
   const RETRY_DELAY = 500;
-
-  function isWatchPage() {
-    const url = new URL(window.location.href);
-    return url.pathname === '/watch' && url.searchParams.has('v');
-  }
 
   /**
    * Get current video ID from URL
@@ -797,7 +847,7 @@
     if (!player) {
       thumbnailInsertionAttempts++;
       if (thumbnailInsertionAttempts < MAX_ATTEMPTS) {
-        setTimeout(attemptInsertion, RETRY_DELAY);
+        setTimeout_(attemptInsertion, RETRY_DELAY);
       } else {
         thumbnailInsertionAttempts = 0;
       }
@@ -855,11 +905,11 @@
       });
 
       // ensure the player is positioned to allow absolute child
-      const playerAny = /** @type {any} */ (player);
-      if (/** @type {any} */ (getComputedStyle(playerAny)).position === 'static') {
-        playerAny.style.position = 'relative';
+      const playerElement = /** @type {HTMLElement} */ (player);
+      if (getComputedStyle(playerElement).position === 'static') {
+        playerElement.style.position = 'relative';
       }
-      playerAny.appendChild(overlay);
+      playerElement.appendChild(overlay);
       return;
     }
 
@@ -878,7 +928,7 @@
    */
   function addOrUpdateThumbnailImage() {
     if (!isEnabled()) return;
-    if (!isWatchPage()) return;
+    if (!(window.YouTubeUtils?.isWatchPage?.(window.location.href) ?? false)) return;
 
     const newVideoId = getCurrentVideoId();
 
@@ -933,7 +983,7 @@
         position: absolute;
         bottom: 8px;
         left: 8px;
-        background: rgba(0, 0, 0, 0.3);
+        background: var(--yt-thumbnail-overlay-idle);
         width: 28px;
         height: 28px;
         display: flex;
@@ -947,10 +997,10 @@
       `;
 
     overlay.onmouseenter = () => {
-      /** @type {any} */ (overlay).style.background = 'rgba(0, 0, 0, 0.7)';
+      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-hover)';
     };
     overlay.onmouseleave = () => {
-      /** @type {any} */ (overlay).style.background = 'rgba(0, 0, 0, 0.3)';
+      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-idle)';
     };
 
     overlay.onclick = async (/** @type {any} */ e) => {
@@ -1114,7 +1164,7 @@
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        background: rgba(0, 0, 0, 0.7);
+        background: var(--yt-thumbnail-overlay-hover);
         width: 28px;
         height: 28px;
         display: flex;
@@ -1128,10 +1178,10 @@
       `;
 
     overlay.onmouseenter = () => {
-      /** @type {any} */ (overlay).style.background = 'rgba(0, 0, 0, 0.9)';
+      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-active)';
     };
     overlay.onmouseleave = () => {
-      /** @type {any} */ (overlay).style.background = 'rgba(0, 0, 0, 0.7)';
+      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-hover)';
     };
 
     return overlay;
@@ -1237,7 +1287,7 @@
         position: absolute;
         bottom: 8px;
         left: 8px;
-        background: rgba(0, 0, 0, 0.7);
+        background: var(--yt-thumbnail-overlay-hover);
         width: 28px;
         height: 28px;
         display: flex;
@@ -1251,10 +1301,10 @@
       `;
 
     overlay.onmouseenter = () => {
-      /** @type {any} */ (overlay).style.background = 'rgba(0, 0, 0, 0.9)';
+      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-active)';
     };
     overlay.onmouseleave = () => {
-      /** @type {any} */ (overlay).style.background = 'rgba(0, 0, 0, 0.7)';
+      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-hover)';
     };
 
     return overlay;
@@ -1379,40 +1429,39 @@
       Math.max(0, MIN_PROCESS_ALL_INTERVAL - (now - lastProcessAllTime))
     );
 
-    processAllTimerId = setTimeout(() => {
+    processAllTimerId = setTimeout_(() => {
       processAllTimerId = null;
       lastProcessAllTime = Date.now();
       try {
         if (!isEnabled()) return;
         processAll();
       } catch (e) {
-        console.error('[YouTube+][Thumbnail]', 'processAll failed:', e);
+        window.console.error('[YouTube+][Thumbnail]', 'processAll failed:', e);
       }
     }, dueIn);
   }
 
   function setupMutationObserver() {
-    if (mutationObserver) return;
-    mutationObserver = new MutationObserver(() => {
-      scheduleProcessAll(120);
-    });
+    if (mutationObserverSubId) return;
 
     // Scope to #content or #page-manager instead of full body for performance
     const startObserving = () => {
-      if (!mutationObserver) return;
-      const target =
-        document.querySelector('#content') ||
-        document.querySelector('#page-manager') ||
-        document.body;
-      // Optimize observer: avoid subtree on body, only childList needed for route changes
-      mutationObserver.observe(target, {
-        childList: true,
-        subtree: target !== document.body,
-      });
-      // Register with cleanupManager for SPA lifecycle
-      if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
-        window.YouTubeUtils.cleanupManager.registerObserver(mutationObserver);
-      }
+      const coordinator = window.YouTubeMutationCoordinator;
+      if (!coordinator?.subscribeRoot) return;
+      const target = qs('#content') || qs('#page-manager') || document.body;
+      mutationObserverSubId = 'thumbnail::routeObserver';
+      coordinator.subscribeRoot(
+        mutationObserverSubId,
+        () => {
+          scheduleProcessAll(120);
+        },
+        {
+          selector: target instanceof Element ? undefined : '#content, #page-manager',
+          childList: true,
+          attributes: false,
+          subtree: target !== document.body,
+        }
+      );
     };
 
     if (document.body) {
@@ -1423,20 +1472,19 @@
   }
 
   function teardownMutationObserver() {
-    if (!mutationObserver) return;
-    try {
-      mutationObserver.disconnect();
-    } catch (e) {
-      // Non-critical, suppressed
+    if (!mutationObserverSubId) return;
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (coordinator?.unsubscribe) {
+      coordinator.unsubscribe(mutationObserverSubId);
     }
-    mutationObserver = null;
+    mutationObserverSubId = null;
   }
 
   function setupUrlChangeDetection() {
     let currentUrl = location.href;
 
     const onNavChange = () => {
-      setTimeout(() => {
+      setTimeout_(() => {
         if (!isEnabled()) return;
         if (location.href !== currentUrl) {
           currentUrl = location.href;
@@ -1536,13 +1584,29 @@
     }
 
     // A couple of spaced retries for late-loaded nodes.
-    setTimeout(() => scheduleProcessAll(0), 900);
-    setTimeout(() => scheduleProcessAll(0), 1800);
+    setTimeout_(() => scheduleProcessAll(0), 900);
+    setTimeout_(() => scheduleProcessAll(0), 1800);
+
+    // Safety net: LazyLoader dispatches ytp:nav-refresh after every SPA nav.
+    // Re-process thumbnails so previews/avatars get applied to freshly
+    // rendered YouTube DOM after in-page navigation.
+    try {
+      window.addEventListener('ytp:nav-refresh', () => {
+        try {
+          if (thumbnailFeatureEnabled) scheduleProcessAll(0);
+        } catch (e) {
+          void e;
+        }
+      });
+    } catch (e) {
+      void e;
+    }
   }
 
   function startMaybe() {
     if (started || startScheduled) return;
     if (!isEnabled()) return;
+    if (!isRelevantRoute()) return;
 
     startScheduled = true;
     const run = () => {
@@ -1551,11 +1615,11 @@
     };
 
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', () => setTimeout(run, 100), {
+      document.addEventListener('DOMContentLoaded', () => setTimeout_(run, 100), {
         once: true,
       });
     } else {
-      setTimeout(run, 100);
+      setTimeout_(run, 100);
     }
   }
 
@@ -1566,7 +1630,18 @@
   }
 
   // Initial state
-  startMaybe();
+  if (window.YouTubePlusLazyLoader) {
+    window.YouTubePlusLazyLoader.register(
+      'thumbnail',
+      startMaybe,
+      /** @type {any} */ ({
+        priority: 1,
+        shouldLoad: isRelevantRoute,
+      })
+    );
+  } else {
+    startMaybe();
+  }
 
   // Live updates
   window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {

@@ -1,51 +1,22 @@
 // Shared DOM helpers from YouTubeUtils — defined at file scope for use across all IIFEs
+const enhancedSetTimeout_ = setTimeout;
 const { $, $$, byId } = window.YouTubeUtils || {};
-
-const onDomReady = (() => {
-  let ready = document.readyState !== 'loading';
-  /** @type {Array<() => void>} */
-  const queue = [];
-
-  const run = () => {
-    ready = true;
-    while (queue.length) {
-      const cb = queue.shift();
-      try {
-        if (cb) cb();
-      } catch (e) {
-        console.warn('[YouTube+] DOMReady callback error:', e);
-      }
-    }
-  };
-
-  if (!ready) {
-    document.addEventListener('DOMContentLoaded', run, { once: true });
-  }
-
-  return (/** @type {any} */ cb) => {
-    if (ready) {
-      cb();
-    } else {
-      queue.push(cb);
-    }
-  };
-})();
+const onDomReady =
+  window.YouTubeUtils?.onDomReady ||
+  ((/** @type {() => void} */ cb) => {
+    if (document.readyState !== 'loading') cb();
+    else document.addEventListener('DOMContentLoaded', cb, { once: true });
+  });
 
 // Enhanced Tabviews
 (function () {
   'use strict';
-  const _createHTML =
-    window._ytplusCreateHTML || /** @type {any} */ ((/** @type {string} */ s) => s);
-  // Use centralized i18n from YouTubePlusI18n or YouTubeUtils
-  const _getLanguage = () => {
-    if (window.YouTubePlusI18n?.getLanguage) return window.YouTubePlusI18n.getLanguage();
-    if (window.YouTubeUtils?.getLanguage) return window.YouTubeUtils.getLanguage();
-    const htmlLang = document.documentElement.lang || 'en';
-    return htmlLang.startsWith('ru') ? 'ru' : 'en';
-  };
+
+  const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
+  const _getLanguage = window.YouTubeUtils.getLanguage;
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils?.t || /** @type {any} */ ((/** @type {string} */ key) => key || '');
+  const t = window.YouTubeUtils.t;
 
   /**
    * Configuration object for scroll-to-top button
@@ -60,17 +31,7 @@ const onDomReady = (() => {
   };
 
   // Shared debounce helper — prefers YouTubeUtils, falls back to shared defaults
-  const _debounce =
-    window.YouTubeUtils?.debounce ??
-    window._ytpDefaults?.debounce ??
-    ((/** @type {any} */ fn, /** @type {number} */ delay) => {
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let timeoutId = null;
-      return (/** @type {any[]} */ ...args) => {
-        if (timeoutId) clearTimeout(timeoutId);
-        timeoutId = setTimeout(() => fn(...args), delay);
-      };
-    });
+  const _debounce = window.YouTubeUtils.debounce;
 
   const isTabviewEnabled = () => window.YouTubeUtils?.loadFeatureEnabled?.('enableTabview') ?? true;
 
@@ -101,10 +62,10 @@ const onDomReady = (() => {
     }
     _musicContainersCache = /** @type {Element[]} */ (
       [
-        document.querySelector('ytmusic-app-layout #layout'),
-        document.querySelector('ytmusic-app-layout'),
-        document.querySelector('ytmusic-browse-response #contents'),
-        document.querySelector('ytmusic-section-list-renderer'),
+        $('ytmusic-app-layout #layout'),
+        $('ytmusic-app-layout'),
+        $('ytmusic-browse-response #contents'),
+        $('ytmusic-section-list-renderer'),
       ].filter(Boolean)
     );
     _musicContainersCacheTime = now;
@@ -126,10 +87,10 @@ const onDomReady = (() => {
         const musicContainers = resolveMusicContainers();
         candidates.push(...musicContainers);
         candidates.push(
-          document.querySelector('ytmusic-tabbed-page #content'),
-          document.querySelector('ytmusic-app-layout #content'),
-          document.querySelector('#content'),
-          document.querySelector('ytmusic-app')
+          $('ytmusic-tabbed-page #content'),
+          $('ytmusic-app-layout #content'),
+          $('#content'),
+          $('ytmusic-app')
         );
       } else if (host === 'studio.youtube.com') {
         // YouTube Studio uses different layout containers
@@ -154,7 +115,7 @@ const onDomReady = (() => {
         return document.scrollingElement || document.documentElement;
       }
     } catch (e) {
-      console.warn('[YouTube+] Error detecting scroll container:', e);
+      window.console.warn('[YouTube+] Error detecting scroll container:', e);
     }
     return document.scrollingElement || document.documentElement;
   };
@@ -234,7 +195,7 @@ const onDomReady = (() => {
 
     for (const sel of directSelectors) {
       try {
-        const el = document.querySelector(sel);
+        const el = $(sel);
         if (el && el.scrollHeight > el.clientHeight + 30) return el;
       } catch (e) {
         // Non-critical, suppressed
@@ -242,11 +203,7 @@ const onDomReady = (() => {
     }
 
     // Try within specific roots
-    const roots = [
-      document.querySelector('ytmusic-player-page'),
-      document.querySelector('ytmusic-app-layout'),
-      document.querySelector('ytmusic-app'),
-    ];
+    const roots = [$('ytmusic-player-page'), $('ytmusic-app-layout'), $('ytmusic-app')];
     const selectors = [
       '#side-panel',
       '#right-content',
@@ -314,12 +271,12 @@ const onDomReady = (() => {
         }
       });
     } catch (e) {
-      console.warn('[YouTube+] Error cleaning up tab scroll handlers:', e);
+      window.console.warn('[YouTube+] Error cleaning up tab scroll handlers:', e);
     }
 
     try {
       // #right-tabs itself may be the scroll host on single-column layout
-      const rightTabsEl = document.getElementById('right-tabs');
+      const rightTabsEl = byId('right-tabs');
       if (rightTabsEl) {
         if (rightTabsEl._topButtonScrollHandler) {
           rightTabsEl.removeEventListener('scroll', rightTabsEl._topButtonScrollHandler);
@@ -345,7 +302,7 @@ const onDomReady = (() => {
     }
   };
 
-  /** @type {MutationObserver | null} */
+  /** @type {string | null} */
   let tabChangesObserver = null;
   let watchInitToken = 0;
   let isTabClickListenerAttached = false;
@@ -356,10 +313,12 @@ const onDomReady = (() => {
   let tabCheckTimeoutId = null;
   /** @type {any} */
   let playlistPanelCheckTimeoutId = null;
+  /** @type {string | null} */
+  let musicSidePanelSubId = null;
 
-  const isWatchPage = () => window.location.pathname === '/watch';
-  const isShortsPage = () => window.location.pathname.startsWith('/shorts');
-  const shouldInitReturnDislike = () => isWatchPage() || isShortsPage();
+  const shouldInitReturnDislike = () =>
+    (window.YouTubeUtils?.isWatchPage?.() ?? false) ||
+    (window.YouTubeUtils?.isShortsPage?.() ?? false);
 
   const isTopButton = (/** @type {any} */ el) =>
     el &&
@@ -374,10 +333,8 @@ const onDomReady = (() => {
 
       if (button.id === 'right-tabs-top-button') {
         // Always use direct DOM query here — class-based selectors may be stale in cache
-        const activeTab = document.querySelector(
-          '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
-        );
-        const rightTabsEl = document.getElementById('right-tabs');
+        const activeTab = $('#right-tabs .tab-content-cld:not(.tab-content-hidden)');
+        const rightTabsEl = byId('right-tabs');
         // On single-column layout #right-tabs is the actual scroll host (overflow:auto),
         // so prefer scrolling it when it already has a positive scrollTop.
         const scrollTarget =
@@ -393,7 +350,7 @@ const onDomReady = (() => {
             scrollTarget.scrollTop = 0;
           }
           button.setAttribute('aria-label', 'Scrolled to top');
-          setTimeout(() => {
+          enhancedSetTimeout_(() => {
             button.setAttribute('aria-label', t('scrollToTop'));
           }, 1000);
         }
@@ -469,7 +426,7 @@ const onDomReady = (() => {
         }
       }
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error scrolling to top:', error);
+      window.console.error('[YouTube+][Enhanced] Error scrolling to top:', error);
     }
   };
 
@@ -541,24 +498,24 @@ const onDomReady = (() => {
     const style = document.createElement('style');
     style.id = 'custom-styles';
     style.textContent = `
-      :root{--scrollbar-width:8px;--scrollbar-track:transparent;--scrollbar-thumb:rgba(144,144,144,.5);--scrollbar-thumb-hover:rgba(170,170,170,.7);--scrollbar-thumb-active:rgba(190,190,190,.9);}
-      ::-webkit-scrollbar{width:var(--scrollbar-width)!important;height:var(--scrollbar-width)!important;}
-      ::-webkit-scrollbar-track{background:var(--scrollbar-track)!important;border-radius:4px!important;}
-      ::-webkit-scrollbar-thumb{background:var(--scrollbar-thumb)!important;border-radius:4px!important;transition:background .2s!important;}
-      ::-webkit-scrollbar-thumb:hover{background:var(--scrollbar-thumb-hover)!important;}
-      ::-webkit-scrollbar-thumb:active{background:var(--scrollbar-thumb-active)!important;}
+      :root{--yt-scrollbar-width:8px;--yt-scrollbar-track:transparent;--yt-scrollbar-thumb:rgba(144,144,144,.5);--yt-scrollbar-thumb-hover:rgba(170,170,170,.7);--yt-scrollbar-thumb-active:rgba(190,190,190,.9);}
+      ::-webkit-scrollbar{width:var(--yt-scrollbar-width)!important;height:var(--yt-scrollbar-width)!important;}
+      ::-webkit-scrollbar-track{background:var(--yt-scrollbar-track)!important;border-radius:4px!important;}
+      ::-webkit-scrollbar-thumb{background:var(--yt-scrollbar-thumb)!important;border-radius:4px!important;transition:background .2s!important;}
+      ::-webkit-scrollbar-thumb:hover{background:var(--yt-scrollbar-thumb-hover)!important;}
+      ::-webkit-scrollbar-thumb:active{background:var(--yt-scrollbar-thumb-active)!important;}
       ::-webkit-scrollbar-corner{background:transparent!important;}
-      html,body,#content,#guide-content,#secondary,#comments,#chat,ytd-comments,ytd-watch-flexy,ytd-browse,ytd-search,ytd-playlist-panel-renderer,#right-tabs,.tab-content-cld,ytmusic-app-layout{scrollbar-width:thin;scrollbar-color:var(--scrollbar-thumb) var(--scrollbar-track);}
-      html[dark]{--scrollbar-thumb:rgba(144,144,144,.4);--scrollbar-thumb-hover:rgba(170,170,170,.6);--scrollbar-thumb-active:rgba(190,190,190,.8);}
-      .top-button{position:fixed;bottom:16px;right:16px;width:40px;height:40px;background:var(--yt-top-btn-bg,rgba(0,0,0,.7));color:var(--yt-top-btn-color,#fff);border:none;border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2100;opacity:0;visibility:hidden;transition:all .3s cubic-bezier(0.4, 0, 0.2, 1);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);border:1px solid var(--yt-top-btn-border,rgba(255,255,255,.1));background:rgba(255,255,255,.12);box-shadow:0 8px 32px 0 rgba(31,38,135,.18);}
-      .top-button:hover{background:var(--yt-top-btn-hover,rgba(0,0,0,.15));transform:translateY(-2px) scale(1.07);box-shadow:0 8px 32px rgba(0,0,0,.25);}
+      html,body,#content,#guide-content,#secondary,#comments,#chat,ytd-comments,ytd-watch-flexy,ytd-browse,ytd-search,ytd-playlist-panel-renderer,#right-tabs,.tab-content-cld,ytmusic-app-layout{scrollbar-width:thin;scrollbar-color:var(--yt-scrollbar-thumb) var(--yt-scrollbar-track);}
+      html[dark]{--yt-scrollbar-thumb:rgba(144,144,144,.4);--yt-scrollbar-thumb-hover:rgba(170,170,170,.6);--yt-scrollbar-thumb-active:rgba(190,190,190,.8);}
+      .top-button{position:fixed;bottom:16px;right:16px;width:40px;height:40px;background:var(--yt-button-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2100;opacity:0;visibility:hidden;transition:all .3s cubic-bezier(0.4, 0, 0.2, 1);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);box-shadow:var(--yt-shadow);}
+      .top-button:hover{background:var(--yt-hover-bg);transform:translateY(-2px) scale(1.07);box-shadow:var(--yt-shadow);}
       .top-button:active{transform:translateY(-1px) scale(1.03);}
-      .top-button:focus{outline:2px solid rgba(255,255,255,0.5);outline-offset:2px;}
+      .top-button:focus{outline:2px solid var(--yt-accent);outline-offset:2px;}
       .top-button.visible{opacity:1;visibility:visible;}
       .top-button svg{transition:transform .2s ease;}
       .top-button:hover svg{transform:translateY(-1px) scale(1.1);}
-      html[dark]{--yt-top-btn-bg:rgba(255,255,255,.10);--yt-top-btn-color:#fff;--yt-top-btn-border:rgba(255,255,255,.18);--yt-top-btn-hover:rgba(255,255,255,.18);}
-      html:not([dark]){--yt-top-btn-bg:rgba(255,255,255,.12);--yt-top-btn-color:#222;--yt-top-btn-border:rgba(0,0,0,.08);--yt-top-btn-hover:rgba(255,255,255,.18);}
+      html[dark]{--yt-top-btn-bg:var(--yt-button-bg);--yt-top-btn-color:var(--yt-text-primary);--yt-top-btn-border:var(--yt-glass-border);--yt-top-btn-hover:var(--yt-hover-bg);}
+      html:not([dark]){--yt-top-btn-bg:var(--yt-button-bg);--yt-top-btn-color:var(--yt-text-primary);--yt-top-btn-border:var(--yt-glass-border);--yt-top-btn-hover:var(--yt-hover-bg);}
       #right-tabs .top-button{position:absolute;z-index:1000;}
       ytd-watch-flexy:not([tyt-tab^="#"]) #right-tabs .top-button{display:none;}
       ytd-playlist-panel-renderer .top-button{position:absolute;z-index:1000;}
@@ -590,7 +547,7 @@ const onDomReady = (() => {
       if (!button || !scrollContainer) return;
       button.classList.toggle('visible', scrollContainer.scrollTop > 100);
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error in handleScroll:', error);
+      window.console.error('[YouTube+][Enhanced] Error in handleScroll:', error);
     }
   };
 
@@ -604,7 +561,7 @@ const onDomReady = (() => {
     let timeout = null;
     return () => {
       if (timeout) clearTimeout(timeout);
-      timeout = setTimeout(() => {
+      timeout = enhancedSetTimeout_(() => {
         try {
           // Clean up old listeners first
           $$('.tab-content-cld').forEach(tab => {
@@ -625,7 +582,7 @@ const onDomReady = (() => {
 
           // Also remove any direct #right-tabs scroll handler from a previous run
           try {
-            const prevRtEl = document.getElementById('right-tabs');
+            const prevRtEl = byId('right-tabs');
             if (prevRtEl) {
               if (prevRtEl._topButtonScrollHandler) {
                 prevRtEl.removeEventListener('scroll', prevRtEl._topButtonScrollHandler);
@@ -637,22 +594,20 @@ const onDomReady = (() => {
               }
             }
           } catch (e) {
-            console.warn('[YouTube+] Error cleaning up right-tabs scroll handler:', e);
+            window.console.warn('[YouTube+] Error cleaning up right-tabs scroll handler:', e);
           }
 
           // Always use direct DOM query — class-based ':not(.tab-content-hidden)' selectors
           // can return a stale cached element (the previously-active tab, which is still in
           // the DOM but now hidden). A direct query guarantees the correct live result.
-          const activeTab = document.querySelector(
-            '#right-tabs .tab-content-cld:not(.tab-content-hidden)'
-          );
+          const activeTab = $('#right-tabs .tab-content-cld:not(.tab-content-hidden)');
           const button = byId('right-tabs-top-button');
 
           if (activeTab && button) {
             // On single-column layouts, #right-tabs itself has overflow:auto and acts as
             // the scroll host. In that case the individual tab <div> never gets scrollTop>0.
             // Detect which element is actually scrollable and attach the listener there.
-            const rightTabsEl = document.getElementById('right-tabs');
+            const rightTabsEl = byId('right-tabs');
             const rtIsScrollHost =
               rightTabsEl &&
               rightTabsEl !== activeTab &&
@@ -690,7 +645,7 @@ const onDomReady = (() => {
             }
           }
         } catch (error) {
-          console.error('[YouTube+][Enhanced] Error in setupScrollListener:', error);
+          window.console.error('[YouTube+][Enhanced] Error in setupScrollListener:', error);
         }
       }, 100);
     };
@@ -712,7 +667,8 @@ const onDomReady = (() => {
       button.className = 'top-button';
       button.title = t('scrollToTop');
       button.setAttribute('aria-label', t('scrollToTop'));
-      button.innerHTML = _createHTML(
+      _setSafeHTML(
+        button,
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
       );
 
@@ -720,7 +676,7 @@ const onDomReady = (() => {
       rightTabs.appendChild(button);
       setupScrollListener();
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error creating button:', error);
+      window.console.error('[YouTube+][Enhanced] Error creating button:', error);
     }
   };
 
@@ -748,7 +704,8 @@ const onDomReady = (() => {
       button.className = 'top-button';
       button.title = t('scrollToTop');
       button.setAttribute('aria-label', t('scrollToTop'));
-      button.innerHTML = _createHTML(
+      _setSafeHTML(
+        button,
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
       );
 
@@ -806,10 +763,7 @@ const onDomReady = (() => {
 
         // Also attach to known music containers as they become available
         const attachMusicScrollListeners = () => {
-          const targets = [
-            document.querySelector('ytmusic-app-layout #layout'),
-            document.querySelector('ytmusic-app-layout'),
-          ];
+          const targets = [$('ytmusic-app-layout #layout'), $('ytmusic-app-layout')];
           for (const target of targets) {
             if (target && !(/** @type {any} */ (target)._ytpScrollAttached)) {
               /** @type {any} */ (target)._ytpScrollAttached = true;
@@ -820,11 +774,11 @@ const onDomReady = (() => {
         };
         attachMusicScrollListeners();
         // Re-attach after navigation
-        universalAttachTimeoutIds.push(setTimeout(attachMusicScrollListeners, 1000));
-        universalAttachTimeoutIds.push(setTimeout(attachMusicScrollListeners, 3000));
+        universalAttachTimeoutIds.push(enhancedSetTimeout_(attachMusicScrollListeners, 1000));
+        universalAttachTimeoutIds.push(enhancedSetTimeout_(attachMusicScrollListeners, 3000));
       }
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error creating universal button:', error);
+      window.console.error('[YouTube+][Enhanced] Error creating universal button:', error);
     }
   };
 
@@ -844,7 +798,8 @@ const onDomReady = (() => {
       button.className = 'top-button';
       button.title = t('scrollToTop');
       button.setAttribute('aria-label', t('scrollToTop'));
-      button.innerHTML = _createHTML(
+      _setSafeHTML(
+        button,
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
       );
 
@@ -939,24 +894,28 @@ const onDomReady = (() => {
         ro = null;
       }
 
-      // Observe attribute/class changes
-      const mo = new MutationObserver(updateVisibility);
-      try {
-        mo.observe(playlistPanel, {
-          attributes: true,
-          attributeFilter: ['class', 'style', 'hidden'],
-        });
-      } catch (e) {
-        // Non-critical, suppressed
+      // Observe attribute/class changes via centralized coordinator.
+      const coordinator = window.YouTubeMutationCoordinator;
+      if (coordinator?.watchTarget) {
+        coordinator.watchTarget(
+          'enhanced::playlistPanelVisibility',
+          playlistPanel,
+          updateVisibility,
+          {
+            attributes: true,
+            childList: false,
+            subtree: false,
+            attributeFilter: ['class', 'style', 'hidden'],
+          }
+        );
       }
 
       // Initial visibility pass
       updateVisibility();
 
-      // Register cleanup with YouTubeUtils.cleanupManager when available
+      // Register cleanup for ResizeObserver when available
       try {
         if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-          /** @type {any} */ (YouTubeUtils.cleanupManager).registerObserver(mo, playlistPanel);
           if (ro) {
             YouTubeUtils.cleanupManager.register(() => {
               try {
@@ -971,7 +930,7 @@ const onDomReady = (() => {
         // Non-critical, suppressed
       }
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error creating playlist panel button:', error);
+      window.console.error('[YouTube+][Enhanced] Error creating playlist panel button:', error);
     }
   };
 
@@ -1005,7 +964,8 @@ const onDomReady = (() => {
       button.className = 'top-button';
       button.title = t('scrollToTop');
       button.setAttribute('aria-label', t('scrollToTop'));
-      button.innerHTML = _createHTML(
+      _setSafeHTML(
+        button,
         '<svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m18 15-6-6-6 6"/></svg>'
       );
 
@@ -1027,7 +987,7 @@ const onDomReady = (() => {
       panel.addEventListener('scroll', scrollHandler, { passive: true });
       button.classList.toggle('visible', panel.scrollTop > 100);
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error creating music side button:', error);
+      window.console.error('[YouTube+][Enhanced] Error creating music side button:', error);
     }
   };
 
@@ -1035,9 +995,9 @@ const onDomReady = (() => {
   const RETURN_DISLIKE_API = 'https://returnyoutubedislikeapi.com/votes';
   const DISLIKE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
   const dislikeCache = new Map(); // videoId -> { value, expiresAt }
-  /** @type {MutationObserver | null} */
+  /** @type {string | null} */
   let dislikeObserver = null;
-  /** @type {MutationObserver | null} */
+  /** @type {string | null} */
   let dislikePollTimer = null;
 
   const formatCompactNumber = (/** @type {any} */ number) => {
@@ -1079,7 +1039,7 @@ const onDomReady = (() => {
     try {
       if (typeof GM_xmlhttpRequest !== 'undefined') {
         const text = await new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(() => reject(new Error('timeout')), 8000);
+          const timeoutId = enhancedSetTimeout_(() => reject(new Error('timeout')), 8000);
           GM_xmlhttpRequest({
             method: 'GET',
             url: `${RETURN_DISLIKE_API}?videoId=${encodeURIComponent(videoId)}`,
@@ -1111,7 +1071,7 @@ const onDomReady = (() => {
 
       // fallback to fetch
       const controller = new AbortController();
-      const id = setTimeout(() => controller.abort(), 8000);
+      const id = enhancedSetTimeout_(() => controller.abort(), 8000);
       try {
         const resp = await fetch(`${RETURN_DISLIKE_API}?videoId=${encodeURIComponent(videoId)}`, {
           method: 'GET',
@@ -1302,7 +1262,7 @@ const onDomReady = (() => {
         /** @type {any} */ (viewModelHost).style.minWidth = 'auto';
       }
     } catch (e) {
-      console.warn('YTP: Failed to create dislike text:', e);
+      window.console.warn('YTP: Failed to create dislike text:', e);
     }
     return created;
   };
@@ -1329,14 +1289,14 @@ const onDomReady = (() => {
         }
       }
     } catch (e) {
-      console.warn('YTP: Failed to set dislike display:', e);
+      window.console.warn('YTP: Failed to set dislike display:', e);
     }
   };
 
   const setupDislikeObserver = (/** @type {any} */ dislikeButton) => {
     if (!dislikeButton) return;
     if (dislikeObserver) {
-      dislikeObserver.disconnect();
+      window.YouTubeMutationCoordinator?.unwatch?.(dislikeObserver);
       dislikeObserver = null;
     }
 
@@ -1346,23 +1306,23 @@ const onDomReady = (() => {
       return;
     }
 
-    dislikeObserver = new MutationObserver(() => {
-      // on any mutation, update displayed cached value
-      const vid = getVideoIdForDislike();
-      const cached = dislikeCache.get(vid);
-      if (cached) {
-        const btn = getDislikeButton();
-        if (btn) setDislikeDisplay(btn, cached.value);
-      }
-    });
-    try {
-      dislikeObserver.observe(dislikeButton, { childList: true, subtree: true, attributes: true });
-      /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (coordinator?.watchTarget) {
+      dislikeObserver = 'enhanced::dislikeObserver';
+      coordinator.watchTarget(
         dislikeObserver,
-        dislikeButton
+        dislikeButton,
+        () => {
+          // on any mutation, update displayed cached value
+          const vid = getVideoIdForDislike();
+          const cached = dislikeCache.get(vid);
+          if (cached) {
+            const btn = getDislikeButton();
+            if (btn) setDislikeDisplay(btn, cached.value);
+          }
+        },
+        { childList: true, subtree: true, attributes: true }
       );
-    } catch (e) {
-      // Non-critical, suppressed
     }
   };
 
@@ -1376,7 +1336,7 @@ const onDomReady = (() => {
         const btn = getDislikeButton();
         if (btn) {
           if (dislikePollTimer) {
-            dislikePollTimer.disconnect();
+            window.YouTubeMutationCoordinator?.unsubscribe?.(dislikePollTimer);
             dislikePollTimer = null;
           }
           const vid = getVideoIdForDislike();
@@ -1391,76 +1351,45 @@ const onDomReady = (() => {
       // Check immediately
       if (await checkButton()) return;
 
-      // Set up observer for button appearance - use targeted childList only (no subtree)
+      // Set up coordinator subscription for button appearance
       const isShorts = window.location.pathname.startsWith('/shorts');
       const maxTime = 10000; // 10 seconds timeout
       const startTime = Date.now();
 
-      dislikePollTimer = new MutationObserver(async () => {
-        if (Date.now() - startTime > maxTime) {
-          if (dislikePollTimer) dislikePollTimer.disconnect();
-          dislikePollTimer = null;
-          return;
-        }
-        await checkButton();
-      });
-
-      // Observe more targeted containers to reduce mutation callbacks
-      const targetEl = isShorts ? $('#shorts-container') : $('ytd-watch-flexy #below');
-      if (targetEl) {
-        if (dislikePollTimer) {
-          dislikePollTimer.observe(targetEl, { childList: true, subtree: true });
-        }
-        /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
+      const coordinator = window.YouTubeMutationCoordinator;
+      if (coordinator?.subscribeRoot) {
+        const pollSelector = isShorts
+          ? '#shorts-container'
+          : 'ytd-watch-flexy #below, #page-manager';
+        dislikePollTimer = 'enhanced::dislikePoll';
+        coordinator.subscribeRoot(
           dislikePollTimer,
-          targetEl
-        );
-      } else {
-        // Fallback: observe document.body briefly for the container to appear,
-        // then switch to the targeted observer once found.
-        const fallbackObs = new MutationObserver(async () => {
-          if (Date.now() - startTime > maxTime) {
-            fallbackObs.disconnect();
-            return;
-          }
-          const el = isShorts ? $('#shorts-container') : $('ytd-watch-flexy #below');
-          if (el) {
-            fallbackObs.disconnect();
-            if (await checkButton()) return;
-            // Container appeared but button not ready — observe it now
-            if (dislikePollTimer) {
-              dislikePollTimer.observe(el, { childList: true, subtree: true });
+          async () => {
+            if (Date.now() - startTime > maxTime) {
+              if (dislikePollTimer) {
+                coordinator.unsubscribe(dislikePollTimer);
+              }
+              dislikePollTimer = null;
+              return;
             }
-            /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
-              dislikePollTimer,
-              el
-            );
-          }
-        });
-        if (document.body) {
-          // Prefer #page-manager over document.body for performance (narrower subtree)
-          const narrowTarget = document.querySelector('#page-manager') || document.body;
-          fallbackObs.observe(narrowTarget, { childList: true, subtree: true });
-          window.YouTubeUtils?.cleanupManager?.registerObserver?.(fallbackObs);
-        }
+            await checkButton();
+          },
+          { selector: pollSelector, childList: true, attributes: false, subtree: true }
+        );
       }
     } catch (e) {
-      console.warn('[YouTube+] Failed to initialize Return YouTube Dislike:', e);
+      window.console.warn('[YouTube+] Failed to initialize Return YouTube Dislike:', e);
     }
   };
 
   const cleanupReturnDislike = () => {
     try {
       if (dislikePollTimer) {
-        if (typeof dislikePollTimer.disconnect === 'function') {
-          dislikePollTimer.disconnect();
-        } else if (typeof dislikePollTimer === 'number') {
-          clearInterval(dislikePollTimer);
-        }
+        window.YouTubeMutationCoordinator?.unsubscribe?.(dislikePollTimer);
         dislikePollTimer = null;
       }
       if (dislikeObserver) {
-        dislikeObserver.disconnect();
+        window.YouTubeMutationCoordinator?.unwatch?.(dislikeObserver);
         dislikeObserver = null;
       }
       // Remove all created dislike text spans
@@ -1474,33 +1403,47 @@ const onDomReady = (() => {
       // Clear cache to free memory
       dislikeCache.clear();
     } catch (e) {
-      console.warn('YTP: Dislike cleanup error:', e);
+      window.console.warn('YTP: Dislike cleanup error:', e);
     }
   };
 
   /**
    * Observes DOM changes to detect tab switches
-   * @returns {MutationObserver|null} The created observer or null on error
+   * @returns {string|null} Subscription id or null on error
    */
   const observeTabChanges = () => {
     try {
-      const observer = new MutationObserver(mutations => {
-        try {
-          if (
-            mutations.some(
-              m =>
-                m.type === 'attributes' &&
-                m.attributeName === 'class' &&
-                m.target instanceof Element &&
-                m.target.classList.contains('tab-content-cld')
-            )
-          ) {
-            setTimeout(setupScrollListener, 100);
+      const coordinator = window.YouTubeMutationCoordinator;
+      if (!coordinator?.subscribeRoot) return null;
+
+      const observerId = 'enhanced::tabChanges';
+      coordinator.subscribeRoot(
+        observerId,
+        (/** @type {MutationRecord[]} */ mutations) => {
+          try {
+            if (
+              mutations.some(
+                (/** @type {MutationRecord} */ m) =>
+                  m.type === 'attributes' &&
+                  m.attributeName === 'class' &&
+                  m.target instanceof Element &&
+                  m.target.classList.contains('tab-content-cld')
+              )
+            ) {
+              enhancedSetTimeout_(setupScrollListener, 100);
+            }
+          } catch (error) {
+            window.console.error('[YouTube+][Enhanced] Error in mutation observer:', error);
           }
-        } catch (error) {
-          console.error('[YouTube+][Enhanced] Error in mutation observer:', error);
+        },
+        {
+          selector: '#right-tabs .tab-content-cld',
+          attributes: true,
+          childList: false,
+          subtree: true,
+          attributeFilter: ['class'],
         }
-      });
+      );
 
       // Track observer for diagnostics
       try {
@@ -1511,21 +1454,7 @@ const onDomReady = (() => {
 
       const rightTabs = $('#right-tabs');
       if (rightTabs) {
-        observer.observe(rightTabs, {
-          attributes: true,
-          subtree: true,
-          attributeFilter: ['class'],
-        });
-        // Register for cleanup
-        try {
-          /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
-            observer,
-            rightTabs
-          );
-        } catch (e) {
-          // Non-critical, suppressed
-        }
-        return observer;
+        return observerId;
       }
       // No target found — untrack
       try {
@@ -1533,9 +1462,10 @@ const onDomReady = (() => {
       } catch (e) {
         // Non-critical, suppressed
       }
+      coordinator.unsubscribe(observerId);
       return null;
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error in observeTabChanges:', error);
+      window.console.error('[YouTube+][Enhanced] Error in observeTabChanges:', error);
       return null;
     }
   };
@@ -1549,7 +1479,12 @@ const onDomReady = (() => {
     // Always show on Music and Studio
     if (host === 'music.youtube.com' || host === 'studio.youtube.com') return true;
 
-    if (isWatchPage() || isShortsPage()) return !isTabviewEnabled();
+    if (
+      (window.YouTubeUtils?.isWatchPage?.() ?? false) ||
+      (window.YouTubeUtils?.isShortsPage?.() ?? false)
+    ) {
+      return !isTabviewEnabled();
+    }
 
     const path = window.location.pathname;
     const { search } = window.location;
@@ -1576,10 +1511,10 @@ const onDomReady = (() => {
       const { target } = /** @type {{ target: HTMLElement }} */ (e);
       const tabButton = target?.closest?.('.tab-btn[tyt-tab-content]');
       if (tabButton) {
-        setTimeout(setupScrollListener, 100);
+        enhancedSetTimeout_(setupScrollListener, 100);
       }
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error in click handler:', error);
+      window.console.error('[YouTube+][Enhanced] Error in click handler:', error);
     }
   };
 
@@ -1595,7 +1530,7 @@ const onDomReady = (() => {
         tabDelegationHandler = (/** @type {any} */ ev, /** @type {any} */ target) => {
           void ev;
           if (!target) return;
-          setTimeout(setupScrollListener, 100);
+          enhancedSetTimeout_(setupScrollListener, 100);
         };
         delegator.on(document, 'click', '.tab-btn[tyt-tab-content]', tabDelegationHandler, {
           capture: true,
@@ -1606,7 +1541,7 @@ const onDomReady = (() => {
       }
       isTabClickListenerAttached = true;
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error in setupEvents:', error);
+      window.console.error('[YouTube+][Enhanced] Error in setupEvents:', error);
     }
   };
 
@@ -1623,7 +1558,7 @@ const onDomReady = (() => {
       tabDelegationRegistered = false;
       isTabClickListenerAttached = false;
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error cleaning up events:', error);
+      window.console.error('[YouTube+][Enhanced] Error cleaning up events:', error);
     }
   };
 
@@ -1656,7 +1591,9 @@ const onDomReady = (() => {
     playlistPanelCheckTimeoutId = null;
 
     try {
-      tabChangesObserver?.disconnect?.();
+      if (tabChangesObserver) {
+        window.YouTubeMutationCoordinator?.unsubscribe?.(tabChangesObserver);
+      }
       if (tabChangesObserver) {
         try {
           window.YouTubeUtils?.ObserverRegistry?.untrack?.();
@@ -1680,7 +1617,7 @@ const onDomReady = (() => {
 
   const startWatchEnhancements = () => {
     if (!config.enabled) return;
-    if (!isWatchPage()) return;
+    if (!(window.YouTubeUtils?.isWatchPage?.() ?? false)) return;
 
     const token = ++watchInitToken;
     setupEvents();
@@ -1688,11 +1625,15 @@ const onDomReady = (() => {
     // Use shared RetryScheduler for tab detection
     const tabScheduler = window.YouTubeUtils?.createRetryScheduler?.({
       check: () => {
-        if (token !== watchInitToken || !isWatchPage()) return true; // stop
+        if (token !== watchInitToken || !(window.YouTubeUtils?.isWatchPage?.() ?? false)) {
+          return true;
+        } // stop
         if ($('#right-tabs')) {
           createButton();
           try {
-            tabChangesObserver?.disconnect?.();
+            if (tabChangesObserver) {
+              window.YouTubeMutationCoordinator?.unsubscribe?.(tabChangesObserver);
+            }
           } catch (e) {
             // Non-critical, suppressed
           }
@@ -1708,7 +1649,9 @@ const onDomReady = (() => {
     // Use shared RetryScheduler for playlist panel detection
     const playlistScheduler = window.YouTubeUtils?.createRetryScheduler?.({
       check: () => {
-        if (token !== watchInitToken || !isWatchPage()) return true;
+        if (token !== watchInitToken || !(window.YouTubeUtils?.isWatchPage?.() ?? false)) {
+          return true;
+        }
         try {
           const playlistPanel = $('ytd-playlist-panel-renderer');
           if (playlistPanel && !byId('playlist-panel-top-button')) {
@@ -1716,7 +1659,7 @@ const onDomReady = (() => {
             return true;
           }
         } catch (error) {
-          console.error('[YouTube+][Enhanced] Error checking for playlist panel:', error);
+          window.console.error('[YouTube+][Enhanced] Error checking for playlist panel:', error);
         }
         return false;
       },
@@ -1746,7 +1689,7 @@ const onDomReady = (() => {
             createMusicSidePanelButton();
           }
         } catch (error) {
-          console.error('[YouTube+][Enhanced] Error checking page type:', error);
+          window.console.error('[YouTube+][Enhanced] Error checking page type:', error);
         }
       };
 
@@ -1760,13 +1703,13 @@ const onDomReady = (() => {
             try {
               initReturnDislike();
             } catch (e) {
-              console.warn('[YouTube+] initReturnDislike error:', e);
+              window.console.warn('[YouTube+] initReturnDislike error:', e);
             }
           };
           if (typeof requestIdleCallback === 'function') {
             requestIdleCallback(_doInitDislike, { timeout: 3000 });
           } else {
-            setTimeout(_doInitDislike, 0);
+            enhancedSetTimeout_(_doInitDislike, 0);
           }
         }
 
@@ -1782,43 +1725,40 @@ const onDomReady = (() => {
         YouTubeUtils.cleanupManager.registerListener(
           document,
           'yt-navigate-finish',
-          () => setTimeout(onNavigate, 200),
+          () => enhancedSetTimeout_(onNavigate, 200),
           { passive: true }
         );
       } else {
         window.addEventListener('yt-navigate-finish', () => {
-          setTimeout(onNavigate, 200);
+          enhancedSetTimeout_(onNavigate, 200);
         });
       }
 
       // For YouTube Music: also listen on popstate and observe #side-panel appearance
       if (window.location.hostname === 'music.youtube.com') {
-        window.addEventListener('popstate', () => setTimeout(onNavigate, 200));
-        // Observe DOM for side-panel becoming scrollable
-        const sidePanelObserver = new MutationObserver(() => {
-          if (!byId('music-side-top-button') && config.enabled) {
-            createMusicSidePanelButton();
-          }
-        });
-        const observeTarget =
-          $('ytmusic-player-page') || $('ytmusic-app-layout') || $('ytmusic-app') || $('#layout');
-        if (observeTarget) {
-          sidePanelObserver.observe(observeTarget, {
-            childList: true,
-            subtree: true,
-          });
-          try {
-            /** @type {any} */ (window.YouTubeUtils?.cleanupManager)?.registerObserver?.(
-              sidePanelObserver,
-              observeTarget
-            );
-          } catch (e) {
-            /* cleanup registration best-effort */
-          }
+        window.addEventListener('popstate', () => enhancedSetTimeout_(onNavigate, 200));
+        // Observe DOM for side-panel becoming scrollable via centralized coordinator.
+        const coordinator = window.YouTubeMutationCoordinator;
+        if (coordinator?.subscribeRoot) {
+          musicSidePanelSubId = 'enhanced::musicSidePanel';
+          coordinator.subscribeRoot(
+            musicSidePanelSubId,
+            () => {
+              if (!byId('music-side-top-button') && config.enabled) {
+                createMusicSidePanelButton();
+              }
+            },
+            {
+              selector: 'ytmusic-player-page, ytmusic-app-layout, ytmusic-app, #layout',
+              childList: true,
+              attributes: false,
+              subtree: true,
+            }
+          );
         }
       }
     } catch (error) {
-      console.error('[YouTube+][Enhanced] Error in initialization:', error);
+      window.console.error('[YouTube+][Enhanced] Error in initialization:', error);
     }
   };
 
@@ -1826,7 +1766,7 @@ const onDomReady = (() => {
     if (typeof requestIdleCallback === 'function') {
       requestIdleCallback(init, { timeout: 4000 });
     } else {
-      setTimeout(init, 0);
+      enhancedSetTimeout_(init, 0);
     }
   };
 
@@ -1834,7 +1774,10 @@ const onDomReady = (() => {
     try {
       const nextEnabled = e?.detail?.enableScrollToTopButton !== false;
       const tabviewEnabled = e?.detail?.enableTabview !== false;
-      const shouldUseUniversalOnWatch = (isWatchPage() || isShortsPage()) && !tabviewEnabled;
+      const shouldUseUniversalOnWatch =
+        ((window.YouTubeUtils?.isWatchPage?.() ?? false) ||
+          (window.YouTubeUtils?.isShortsPage?.() ?? false)) &&
+        !tabviewEnabled;
       config.enabled = nextEnabled;
       if (!config.enabled) {
         cleanupTopButtons();
@@ -1864,7 +1807,6 @@ const onDomReady = (() => {
 (function () {
   'use strict';
 
-  const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
   const QUALITY_STORAGE_KEY = 'youtube_plus_manual_playback_quality';
   const APPLY_ATTEMPTS = 16;
   const APPLY_INTERVAL_MS = 350;
@@ -1880,19 +1822,6 @@ const onDomReady = (() => {
     } catch (e) {
       return false;
     }
-  };
-
-  const loadFeatureEnabled = () => {
-    try {
-      const raw = localStorage.getItem(SETTINGS_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw);
-        return parsed.enableRememberManualQuality !== false;
-      }
-    } catch (e) {
-      // Non-critical, suppressed
-    }
-    return true;
   };
 
   const normalizeQuality = (/** @type {any} */ value) => {
@@ -1917,7 +1846,7 @@ const onDomReady = (() => {
     return '';
   };
 
-  const getPlayer = () => /** @type {any} */ (document.getElementById('movie_player'));
+  const getPlayer = () => /** @type {any} */ (byId('movie_player'));
 
   const clearPendingApplyTimeouts = () => {
     pendingApplyTimeouts.forEach(timeoutId => clearTimeout(timeoutId));
@@ -1946,7 +1875,10 @@ const onDomReady = (() => {
   };
 
   const applyStoredQualityOnce = () => {
-    if (!loadFeatureEnabled() || !isVideoPage()) return true;
+    if (!(window.YouTubeUtils?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
+      return true;
+    }
+    if (!isVideoPage()) return true;
 
     const preferredQuality = getStoredQuality();
     if (!preferredQuality) return true;
@@ -1984,10 +1916,13 @@ const onDomReady = (() => {
 
   const scheduleApplyStoredQuality = () => {
     clearPendingApplyTimeouts();
-    if (!loadFeatureEnabled() || !isVideoPage()) return;
+    if (!(window.YouTubeUtils?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
+      return;
+    }
+    if (!isVideoPage()) return;
 
     for (let attempt = 0; attempt < APPLY_ATTEMPTS; attempt += 1) {
-      const timeoutId = setTimeout(() => {
+      const timeoutId = enhancedSetTimeout_(() => {
         if (applyStoredQualityOnce()) {
           clearPendingApplyTimeouts();
         }
@@ -2012,8 +1947,10 @@ const onDomReady = (() => {
     if (!label) return;
     if (!/(\bauto\b|\d{3,4}p|\bhd\b|\b4k\b|\b8k\b)/.test(label)) return;
 
-    setTimeout(() => {
-      if (!loadFeatureEnabled()) return;
+    enhancedSetTimeout_(() => {
+      if (!(window.YouTubeUtils?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
+        return;
+      }
 
       if (label.includes('auto')) {
         storeQuality('auto');
@@ -2080,6 +2017,7 @@ const onDomReady = (() => {
         hideSideGuide: true,
         cleanSideGuide: false,
         fixFeedLayout: true,
+        sideVideosColumnsEnabled: false,
         sideVideosColumns: 0,
         compactFeed: true,
         betterCaptions: true,
@@ -2096,7 +2034,7 @@ const onDomReady = (() => {
         const raw = localStorage.getItem(SETTINGS_KEY);
         if (raw) parsed = JSON.parse(raw);
       } catch (e) {
-        console.warn('[YouTube+] Zen settings parse error:', e);
+        window.console.warn('[YouTube+] Zen settings parse error:', e);
       }
 
       const merged = {
@@ -2123,13 +2061,19 @@ const onDomReady = (() => {
       ) {
         merged.zenStyles.sideVideosColumns = 2;
       }
+      if (merged.zenStyles.sideVideosTwoColumns === true) {
+        merged.zenStyles.sideVideosColumnsEnabled = true;
+      }
       const parsedSideCols = Number(merged.zenStyles.sideVideosColumns);
       if (!Number.isFinite(parsedSideCols) || parsedSideCols < 0) {
-        merged.zenStyles.sideVideosColumns = 1;
+        merged.zenStyles.sideVideosColumns = 0;
       } else {
         merged.zenStyles.sideVideosColumns = parsedSideCols;
       }
       merged.zenStyles.sideVideosColumns = Math.min(2, merged.zenStyles.sideVideosColumns);
+      if (typeof merged.zenStyles.sideVideosColumnsEnabled !== 'boolean') {
+        merged.zenStyles.sideVideosColumnsEnabled = merged.zenStyles.sideVideosColumns > 0;
+      }
 
       return merged;
     };
@@ -2139,7 +2083,7 @@ const onDomReady = (() => {
         /* yt-thumbnail hover */
         #inline-preview-player {transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) 1s !important; transform: scale(1) !important;}
         #video-preview-container:has(#inline-preview-player) {transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) !important; border-radius: 1.2em !important; overflow: hidden !important; transform: scale(1) !important;}
-        #video-preview-container:has(#inline-preview-player):hover {transform: scale(1.25) !important; box-shadow: #0008 0px 0px 60px !important; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) 2s !important;}
+        #video-preview-container:has(#inline-preview-player):hover {transform: scale(1.25) !important; box-shadow: rgba(0,0,0,0.5) 0px 0px 60px !important; transition: transform 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275) 2s !important;}
         ytd-app #content {opacity: 1 !important; transition: opacity 0.3s ease-in-out !important;}
         ytd-app:has(#video-preview-container:hover) #content {opacity: 0.5 !important; transition: opacity 4s ease-in-out 1s !important;}
       `,
@@ -2151,10 +2095,10 @@ const onDomReady = (() => {
         yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) {position: relative !important; left: 0vw !important; top: -30vh !important; height: 40px !important; max-width: 600px !important; transform: scale(1) !important;}
         @media only screen and (min-width: 1400px) {yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) { height: 60px !important; max-width: 700px !important; transform: scale(1.1) !important;}}
         yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) .ytSearchboxComponentInputBox,
-        yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {background-color: #fffb !important; box-shadow: black 0 0 30px !important;}
+        yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {background-color: var(--yt-bg-primary) !important; box-shadow: black 0 0 30px !important;}
         @media (prefers-color-scheme: dark) {
           yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) .ytSearchboxComponentInputBox,
-          yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {background-color: #000b !important;}
+          yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {background-color: var(--yt-modal-bg) !important;}
         }
         yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {margin-top: 10px !important;}
         @media only screen and (min-width: 1400px) {yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {margin-top: 30px !important;}}
@@ -2167,7 +2111,38 @@ const onDomReady = (() => {
       `,
       transparentHeader: `
         /* Transparent header */
-        #masthead-container, #background.ytd-masthead { background-color: transparent !important; }
+        :root{
+          --yt-spec-base-background: transparent;
+          --ytd-masthead-background: transparent;
+          --yt-spec-brand-background-primary: transparent;
+          --yt-spec-brand-background-solid: transparent;
+          --yt-spec-general-background-a: transparent;
+          --yt-spec-raised-background: transparent;
+          --yt-spec-additive-background: transparent;
+        }
+        #masthead-container,
+        #masthead,
+        ytd-masthead,
+        #background.ytd-masthead,
+        ytd-masthead #background,
+        ytd-masthead #container,
+        ytd-masthead #contentContainer,
+        ytd-masthead #end,
+        ytd-masthead #start,
+        ytd-masthead #center,
+        ytd-masthead #frosted-glass,
+        ytd-masthead #background-content,
+        #frosted-glass,
+        ytd-masthead tp-yt-app-header-layout,
+        ytd-mini-guide-renderer,
+        ytd-topbar-logo-renderer,
+        ytd-app #masthead,
+        ytd-app #masthead-container,
+        tp-yt-app-header-layout #masthead-container {
+          background-color: transparent !important;
+          background: transparent !important;
+          box-shadow: none !important;
+        }
       `,
       hideSideGuide: `
         /* Hide side guide */
@@ -2188,12 +2163,22 @@ const onDomReady = (() => {
       `,
       fixFeedLayout: `
         /* Fix new feed layout */
-        ytd-rich-item-renderer[rendered-from-rich-grid] {  @media only screen and (min-width: 1400px) { --ytd-rich-grid-items-per-row: 4 !important; @media only screen and (min-width: 1700px) { --ytd-rich-grid-items-per-row: 5 !important; @media only screen and (min-width: 2180px) {--ytd-rich-grid-items-per-row: 6 !important;}}}} ytd-rich-item-renderer[is-in-first-column="\"] { margin-left: calc(var(--ytd-rich-grid-item-margin) / 2) !important;}#contents { padding-left: calc(var(--ytd-rich-grid-item-margin) / 2 + var(--ytd-rich-grid-gutter-margin)) !important;}
+        @media only screen and (min-width: 1400px) {
+          ytd-rich-item-renderer[rendered-from-rich-grid] { --ytd-rich-grid-items-per-row: 4 !important; }
+        }
+        @media only screen and (min-width: 1700px) {
+          ytd-rich-item-renderer[rendered-from-rich-grid] { --ytd-rich-grid-items-per-row: 5 !important; }
+        }
+        @media only screen and (min-width: 2180px) {
+          ytd-rich-item-renderer[rendered-from-rich-grid] { --ytd-rich-grid-items-per-row: 6 !important; }
+        }
+        ytd-rich-item-renderer[is-in-first-column] { margin-left: calc(var(--ytd-rich-grid-item-margin) / 2) !important; }
+        #contents { padding-left: calc(var(--ytd-rich-grid-item-margin) / 2 + var(--ytd-rich-grid-gutter-margin)) !important; }
       `,
       // sideVideosColumns CSS is generated dynamically in buildNonCriticalCss
       betterCaptions: `
         /* Better captions */
-        .caption-window { backdrop-filter: blur(10px) brightness(70%) !important; border-radius: 1em !important; padding: 1em !important; box-shadow: #0008 0 0 20px !important; width: fit-content !important; }
+        .caption-window { backdrop-filter: blur(10px) brightness(70%) !important; border-radius: 1em !important; padding: 1em !important; box-shadow: rgba(0,0,0,0.5) 0 0 20px !important; width: fit-content !important; }
         .ytp-caption-segment { background: none !important; }
       `,
       playerBlur: `
@@ -2208,8 +2193,8 @@ const onDomReady = (() => {
         .ytp-time-wrapper,
         .ytPlayerQuickActionButtonsHost,
         .ytPlayerQuickActionButtonsHostCompactControls,
-        .ytPlayerQuickActionButtonsHostDisableBackdropFilter { backdrop-filter: blur(5px) !important; background-color: #0004 !important; }
-        .ytp-popup { backdrop-filter: blur(10px) !important; background-color: #0007 !important; }
+        .ytPlayerQuickActionButtonsHostDisableBackdropFilter { backdrop-filter: blur(5px) !important; background-color: rgba(0,0,0,0.4) !important; }
+        .ytp-popup { backdrop-filter: blur(10px) !important; background-color: rgba(0,0,0,0.45) !important; }
       `,
       theaterEnhancements: `
         /* Zen view comments (from zeninternet) */
@@ -2259,7 +2244,6 @@ const onDomReady = (() => {
       misc: `        
         /* Show video meta on hover */
         #content #dismissible:hover ytd-video-meta-block { opacity: 1 !important;}
-        #frosted-glass { display: none !important;}
       `,
       compactFeed: `
       /* Compact feed – reduced spacing, hover menus, inline details */
@@ -2357,36 +2341,37 @@ const onDomReady = (() => {
       if (z.transparentHeader) css += CSS_BLOCKS.transparentHeader;
       if (z.cleanSideGuide) css += CSS_BLOCKS.cleanSideGuide;
       const sideColsRaw = Number(z.sideVideosColumns);
-      const sideCols = Number.isFinite(sideColsRaw) ? Math.max(0, Math.min(2, sideColsRaw)) : 1;
-      // Apply only when explicitly enabled (1 or 2). 0 = YouTube default layout.
-      if (sideCols > 0) {
+      const sideCols = Number.isFinite(sideColsRaw) ? Math.max(0, Math.min(2, sideColsRaw)) : 0;
+      const sideColsEnabled = z.sideVideosColumnsEnabled === true;
+      // Apply only when explicitly enabled. 0 = YouTube default layout.
+      if (sideColsEnabled && sideCols > 0) {
         css += `
         /* Side Videos: ${sideCols}-column card grid */
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-item-section-renderer #contents,
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-watch-next-secondary-results-renderer #items {
+        ytd-watch-flexy #secondary #related ytd-item-section-renderer #contents,
+        ytd-watch-flexy #secondary #related ytd-watch-next-secondary-results-renderer #items {
           display: grid !important;
           grid-template-columns: repeat(${sideCols}, minmax(0, 1fr)) !important;
           gap: 8px !important;
           padding: 0 !important;
           align-items: start !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer,
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-radio-renderer,
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-playlist-renderer,
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model {
+        ytd-watch-flexy #secondary #related ytd-compact-video-renderer,
+        ytd-watch-flexy #secondary #related ytd-compact-radio-renderer,
+        ytd-watch-flexy #secondary #related ytd-compact-playlist-renderer,
+        ytd-watch-flexy #secondary #related yt-lockup-view-model {
           width: 100% !important;
           min-width: 0 !important;
           max-width: 100% !important;
           margin: 0 !important;
           box-sizing: border-box !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .ytLockupViewModelHost {
+        ytd-watch-flexy #secondary #related yt-lockup-view-model .ytLockupViewModelHost {
           display: block !important;
           width: 100% !important;
           min-width: 0 !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .ytLockupViewModelHorizontal,
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .yt-lockup-view-model-wiz {
+        ytd-watch-flexy #secondary #related yt-lockup-view-model .ytLockupViewModelHorizontal,
+        ytd-watch-flexy #secondary #related yt-lockup-view-model .yt-lockup-view-model-wiz {
           display: flex !important;
           flex-direction: column !important;
           align-items: stretch !important;
@@ -2394,40 +2379,40 @@ const onDomReady = (() => {
           min-width: 0 !important;
           gap: 6px !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .yt-lockup-view-model-wiz__content-image,
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model [class*="LockupContentImage"],
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model yt-image {
+        ytd-watch-flexy #secondary #related yt-lockup-view-model .yt-lockup-view-model-wiz__content-image,
+        ytd-watch-flexy #secondary #related yt-lockup-view-model [class*="LockupContentImage"],
+        ytd-watch-flexy #secondary #related yt-lockup-view-model yt-image {
           width: 100% !important;
           max-width: 100% !important;
           min-width: 0 !important;
           height: auto !important;
           flex: 0 0 auto !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model yt-image img {
+        ytd-watch-flexy #secondary #related yt-lockup-view-model yt-image img {
           width: 100% !important;
           height: auto !important;
           object-fit: cover !important;
           display: block !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) yt-lockup-view-model .yt-lockup-view-model-wiz__text-container {
+        ytd-watch-flexy #secondary #related yt-lockup-view-model .yt-lockup-view-model-wiz__text-container {
           padding: 4px 0 0 0 !important;
           min-width: 0 !important;
           width: 100% !important;
           box-sizing: border-box !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer #dismissible {
+        ytd-watch-flexy #secondary #related ytd-compact-video-renderer #dismissible {
           display: flex !important;
           flex-direction: column !important;
           gap: 6px !important;
           width: 100% !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer ytd-thumbnail {
+        ytd-watch-flexy #secondary #related ytd-compact-video-renderer ytd-thumbnail {
           width: 100% !important;
           max-width: 100% !important;
           min-width: 0 !important;
         }
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer .details,
-        ytd-watch-flexy :is(#right-tabs #tab-videos, #secondary #related) ytd-compact-video-renderer #meta {
+        ytd-watch-flexy #secondary #related ytd-compact-video-renderer .details,
+        ytd-watch-flexy #secondary #related ytd-compact-video-renderer #meta {
           padding-left: 0 !important;
           min-width: 0 !important;
           width: 100% !important;
@@ -2437,6 +2422,7 @@ const onDomReady = (() => {
       }
       if (z.betterCaptions && themeVariant !== 'solid') css += CSS_BLOCKS.betterCaptions;
       if (z.playerBlur && themeVariant !== 'solid') css += CSS_BLOCKS.playerBlur;
+      if (z.compactFeed) css += CSS_BLOCKS.compactFeed;
       if (z.misc) css += CSS_BLOCKS.misc;
       return css.trim();
     };
@@ -2463,7 +2449,7 @@ const onDomReady = (() => {
         nonCriticalTimer = null;
       }
 
-      const el = document.getElementById(STYLE_ELEMENT_ID);
+      const el = byId(STYLE_ELEMENT_ID);
       if (el) {
         try {
           el.remove();
@@ -2472,7 +2458,7 @@ const onDomReady = (() => {
         }
       }
 
-      const ncEl = document.getElementById(NON_CRITICAL_STYLE_ID);
+      const ncEl = byId(NON_CRITICAL_STYLE_ID);
       if (ncEl) {
         try {
           ncEl.remove();
@@ -2484,12 +2470,12 @@ const onDomReady = (() => {
 
     const applyNonCriticalStyles = (/** @type {any} */ css) => {
       if (!css) {
-        const ncEl = document.getElementById(NON_CRITICAL_STYLE_ID);
+        const ncEl = byId(NON_CRITICAL_STYLE_ID);
         if (ncEl) ncEl.remove();
         return;
       }
 
-      let ncEl = document.getElementById(NON_CRITICAL_STYLE_ID);
+      let ncEl = byId(NON_CRITICAL_STYLE_ID);
       if (!ncEl) {
         ncEl = document.createElement('style');
         ncEl.id = NON_CRITICAL_STYLE_ID;
@@ -2516,7 +2502,7 @@ const onDomReady = (() => {
         if (window.YouTubeUtils?.StyleManager?.add) {
           window.YouTubeUtils.StyleManager.add(STYLE_MANAGER_KEY, criticalCss || '');
           // Ensure legacy <style> isn't left behind
-          const el = document.getElementById(STYLE_ELEMENT_ID);
+          const el = byId(STYLE_ELEMENT_ID);
           if (el) el.remove();
           if (nonCriticalTimer) {
             if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
@@ -2537,7 +2523,10 @@ const onDomReady = (() => {
               timeout: 5000,
             });
           } else {
-            nonCriticalTimer = setTimeout(() => applyNonCriticalStyles(nonCriticalCss), 200);
+            nonCriticalTimer = enhancedSetTimeout_(
+              () => applyNonCriticalStyles(nonCriticalCss),
+              200
+            );
           }
           return;
         }
@@ -2545,7 +2534,7 @@ const onDomReady = (() => {
         // Non-critical, suppressed
       }
 
-      let el = document.getElementById(STYLE_ELEMENT_ID);
+      let el = byId(STYLE_ELEMENT_ID);
       if (!el) {
         el = document.createElement('style');
         el.id = STYLE_ELEMENT_ID;
@@ -2572,24 +2561,25 @@ const onDomReady = (() => {
           timeout: 5000,
         });
       } else {
-        nonCriticalTimer = setTimeout(() => applyNonCriticalStyles(nonCriticalCss), 200);
+        nonCriticalTimer = enhancedSetTimeout_(() => applyNonCriticalStyles(nonCriticalCss), 200);
       }
     };
 
-    const applyFromStorage = () => applyStyles(loadSettings());
+    const applyFromStorage = (immediateNonCritical = false) =>
+      applyStyles(loadSettings(), immediateNonCritical);
 
     // Initial apply
-    applyFromStorage();
+    applyFromStorage(true);
 
     // Live updates
     // Dynamic will-change for yt-searchbox: only active during focus to avoid constant GPU layers
     try {
       const _applySearchboxWillChange = () => {
-        const sb = document.querySelector('yt-searchbox');
+        const sb = $('yt-searchbox');
         if (sb instanceof HTMLElement) sb.style.willChange = 'transform';
       };
       const _clearSearchboxWillChange = () => {
-        const sb = document.querySelector('yt-searchbox');
+        const sb = $('yt-searchbox');
         if (sb instanceof HTMLElement) sb.style.willChange = '';
       };
       document.addEventListener(
@@ -2618,11 +2608,22 @@ const onDomReady = (() => {
       try {
         applyStyles(e?.detail || loadSettings(), true);
       } catch (e) {
-        applyFromStorage();
+        applyFromStorage(true);
       }
     });
+
+    // YouTube SPA re-mounts layout containers on navigation; re-apply from
+    // storage to keep global zen styles (e.g. transparent header, hover preview)
+    // active on all pages, not only the initial route.
+    window.addEventListener(
+      'yt-navigate-finish',
+      () => {
+        applyFromStorage(true);
+      },
+      { passive: true }
+    );
   } catch (err) {
-    console.error('zen-youtube-features injection failed', err);
+    window.console.error('zen-youtube-features injection failed', err);
   }
 })();
 
@@ -2638,8 +2639,6 @@ const onDomReady = (() => {
 
   const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
   const PRELOADED_ATTR = 'data-ytp-zen-comments-preloaded';
-
-  const isWatchPage = () => location.pathname === '/watch';
 
   const readSettings = () => {
     try {
@@ -2676,8 +2675,8 @@ const onDomReady = (() => {
   };
 
   const preloadCommentsInBackground = (/** @type {any} */ flexy) => {
-    const commentsTab = document.querySelector('#tab-comments');
-    const commentsBtn = document.querySelector('#material-tabs a[tyt-tab-content="#tab-comments"]');
+    const commentsTab = $('#tab-comments');
+    const commentsBtn = $('#material-tabs a[tyt-tab-content="#tab-comments"]');
     if (!commentsTab || !commentsBtn || commentsTab.getAttribute(PRELOADED_ATTR) === '1') return;
 
     // Disable tiny pre-load mode CSS from main.js for theater overlay comments.
@@ -2685,7 +2684,7 @@ const onDomReady = (() => {
       flexy.setAttribute('keep-comments-scroller', '');
     }
 
-    const activeBtn = document.querySelector('#material-tabs a[tyt-tab-content].active');
+    const activeBtn = $('#material-tabs a[tyt-tab-content].active');
     clickElement(commentsBtn);
 
     requestAnimationFrame(() => {
@@ -2703,7 +2702,7 @@ const onDomReady = (() => {
   const MAX_EXPAND_ATTEMPTS = 3;
 
   const expandLiveChat = () => {
-    const chat = document.querySelector('ytd-live-chat-frame#chat');
+    const chat = $('ytd-live-chat-frame#chat');
     if (!chat) return;
 
     // Step 1: Uncollapse the chat element if it has [collapsed] attribute
@@ -2754,10 +2753,10 @@ const onDomReady = (() => {
   };
 
   const runOverlayFixes = () => {
-    if (!isWatchPage()) return;
+    if (!(window.YouTubeUtils?.isWatchPage?.() ?? false)) return;
     if (!isTheaterEnhancementEnabled()) return;
 
-    const flexy = document.querySelector('ytd-watch-flexy');
+    const flexy = $('ytd-watch-flexy');
     if (!flexy || flexy.hasAttribute('fullscreen')) return;
     const isTheaterLike =
       flexy.hasAttribute('theater') ||
@@ -2773,22 +2772,26 @@ const onDomReady = (() => {
   let debounceTimer = null;
   const scheduleRun = () => {
     if (debounceTimer) clearTimeout(debounceTimer);
-    debounceTimer = setTimeout(runOverlayFixes, 150);
+    debounceTimer = enhancedSetTimeout_(runOverlayFixes, 150);
   };
 
   // --- Targeted observers (NOT document.body subtree — that fires hundreds of times during page parse) ---
   const setupOverlayObservers = () => {
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (!coordinator?.watchTarget) return;
+
     // Observer 1: watch ytd-watch-flexy for theater / fullscreen attribute changes
-    const flexyObserver = new MutationObserver(scheduleRun);
+    const flexyObserverId = 'enhanced::overlayFlexy';
     /** @type {Element | null} */
     let observedFlexy = null;
 
     const attachFlexyObserver = () => {
-      const flexy = document.querySelector('ytd-watch-flexy');
+      const flexy = $('ytd-watch-flexy');
       if (flexy && flexy !== observedFlexy) {
-        if (observedFlexy) flexyObserver.disconnect();
-        flexyObserver.observe(flexy, {
+        coordinator.watchTarget(flexyObserverId, flexy, scheduleRun, {
           attributes: true,
+          childList: false,
+          subtree: false,
           attributeFilter: ['theater', 'full-bleed-player', 'theater-requested_', 'fullscreen'],
         });
         observedFlexy = flexy;
@@ -2797,16 +2800,17 @@ const onDomReady = (() => {
 
     // Observer 2: watch #chat for [collapsed] changes
     // (CSS handles display; observer just schedules overlay fixes like comment preloading)
-    const chatObserver = new MutationObserver(scheduleRun);
+    const chatObserverId = 'enhanced::overlayChat';
     /** @type {Element | null} */
     let observedChat = null;
 
     const attachChatObserver = () => {
-      const chat = document.querySelector('ytd-live-chat-frame#chat');
+      const chat = $('ytd-live-chat-frame#chat');
       if (chat && chat !== observedChat) {
-        if (observedChat) chatObserver.disconnect();
-        chatObserver.observe(chat, {
+        coordinator.watchTarget(chatObserverId, chat, scheduleRun, {
           attributes: true,
+          childList: false,
+          subtree: false,
           attributeFilter: ['collapsed'],
         });
         observedChat = chat;
@@ -2821,7 +2825,7 @@ const onDomReady = (() => {
       'yt-navigate-finish',
       () => {
         expandAttempts = 0; // reset on navigation so chat can expand on new page
-        setTimeout(() => {
+        enhancedSetTimeout_(() => {
           attachFlexyObserver();
           attachChatObserver();
           scheduleRun();
@@ -2831,9 +2835,11 @@ const onDomReady = (() => {
     );
 
     try {
-      if (window.YouTubeUtils?.cleanupManager?.registerObserver) {
-        window.YouTubeUtils.cleanupManager.registerObserver(flexyObserver);
-        window.YouTubeUtils.cleanupManager.registerObserver(chatObserver);
+      if (window.YouTubeUtils?.cleanupManager?.register) {
+        window.YouTubeUtils.cleanupManager.register(() => {
+          coordinator.unwatch(flexyObserverId);
+          coordinator.unwatch(chatObserverId);
+        });
       }
     } catch (e) {
       // Non-critical, suppressed
@@ -2862,14 +2868,13 @@ const onDomReady = (() => {
 (function () {
   'use strict';
 
-  const _createHTML = window._ytplusCreateHTML || (s => s);
-  const t = window.YouTubeUtils?.t || (key => key || '');
+  const t = window.YouTubeUtils.t;
 
   const TRANSLATE_BTN_CLASS = 'ytp-comment-translate-btn';
   const TRANSLATED_ATTR = 'data-ytp-translated';
   const ORIGINAL_ATTR = 'data-ytp-original-text';
   const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
-  /** @type {MutationObserver | null} */
+  /** @type {string | null} */
   let translateObserver = null;
 
   /**
@@ -2948,12 +2953,8 @@ const onDomReady = (() => {
   const getUserLanguage = () => {
     try {
       // 1. YouTube+ i18n internal code (e.g. 'cn', 'kr', 'jp')
-      if (window.YouTubePlusI18n?.getLanguage) {
-        return toGoogleLang(window.YouTubePlusI18n.getLanguage());
-      }
+      return toGoogleLang(window.YouTubeUtils.getLanguage());
       // 2. <html lang="..."> attribute set by YouTube
-      const htmlLang = document.documentElement.lang;
-      if (htmlLang) return toGoogleLang(htmlLang);
     } catch (e) {
       // Non-critical, suppressed
     }
@@ -2964,7 +2965,7 @@ const onDomReady = (() => {
   /** Translate text using Google Translate (free endpoint) */
   const translateText = async (/** @type {any} */ text, /** @type {any} */ targetLang) => {
     const controller = new AbortController();
-    const timerId = setTimeout(() => controller.abort(), 8000); // 8 s timeout
+    const timerId = enhancedSetTimeout_(() => controller.abort(), 8000); // 8 s timeout
     try {
       const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
       const resp = await fetch(url, { signal: controller.signal });
@@ -2975,7 +2976,7 @@ const onDomReady = (() => {
       }
     } catch (e) {
       if (/** @type {any} */ (e)?.name !== 'AbortError') {
-        console.warn('[YouTube+] Translation failed:', e);
+        window.console.warn('[YouTube+] Translation failed:', e);
       }
     } finally {
       clearTimeout(timerId);
@@ -3025,6 +3026,7 @@ const onDomReady = (() => {
   })();
 
   const translateIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>`;
+  const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
 
   const isCommentTranslateEnabled = (settings = null) => {
     try {
@@ -3042,8 +3044,8 @@ const onDomReady = (() => {
   };
 
   const removeTranslateButtons = () => {
-    document.querySelectorAll(`.${TRANSLATE_BTN_CLASS}`).forEach(btn => btn.remove());
-    document.querySelectorAll(`[${TRANSLATED_ATTR}][${ORIGINAL_ATTR}]`).forEach(
+    $$(`.${TRANSLATE_BTN_CLASS}`).forEach(btn => btn.remove());
+    $$(`[${TRANSLATED_ATTR}][${ORIGINAL_ATTR}]`).forEach(
       /** @param {Element} node */ node => {
         const original = node.getAttribute(ORIGINAL_ATTR);
         if (original) node.textContent = original;
@@ -3055,7 +3057,7 @@ const onDomReady = (() => {
 
   const stopTranslateObserver = () => {
     if (!translateObserver) return;
-    translateObserver.disconnect();
+    window.YouTubeMutationCoordinator?.unwatch?.(translateObserver);
     translateObserver = null;
   };
 
@@ -3082,7 +3084,7 @@ const onDomReady = (() => {
     const btn = document.createElement('button');
     btn.className = TRANSLATE_BTN_CLASS;
     btn.type = 'button';
-    btn.innerHTML = _createHTML(`${translateIcon} ${getTranslateLabel()}`);
+    _setSafeHTML(btn, `${translateIcon} ${getTranslateLabel()}`);
     btn.setAttribute('aria-label', getTranslateLabel());
 
     btn.addEventListener('click', async e => {
@@ -3095,14 +3097,14 @@ const onDomReady = (() => {
         if (original) {
           contentEl.textContent = original;
           contentEl.removeAttribute(TRANSLATED_ATTR);
-          btn.innerHTML = _createHTML(`${translateIcon} ${getTranslateLabel()}`);
+          _setSafeHTML(btn, `${translateIcon} ${getTranslateLabel()}`);
           btn.setAttribute('aria-label', getTranslateLabel());
         }
         return;
       }
 
       btn.disabled = true;
-      btn.innerHTML = _createHTML(`${translateIcon} ...`);
+      _setSafeHTML(btn, `${translateIcon} ...`);
 
       const originalText = contentEl.textContent || '';
       const translated = await translateText(originalText, userLang);
@@ -3111,10 +3113,10 @@ const onDomReady = (() => {
         contentEl.setAttribute(ORIGINAL_ATTR, originalText);
         contentEl.setAttribute(TRANSLATED_ATTR, 'true');
         contentEl.textContent = translated;
-        btn.innerHTML = _createHTML(`${translateIcon} ${getShowOriginalLabel()}`);
+        _setSafeHTML(btn, `${translateIcon} ${getShowOriginalLabel()}`);
         btn.setAttribute('aria-label', getShowOriginalLabel());
       } else {
-        btn.innerHTML = _createHTML(`${translateIcon} ${getTranslateLabel()}`);
+        _setSafeHTML(btn, `${translateIcon} ${getTranslateLabel()}`);
         btn.setAttribute('aria-label', getTranslateLabel());
       }
       btn.disabled = false;
@@ -3139,7 +3141,7 @@ const onDomReady = (() => {
       'ytd-comment-thread-renderer',
     ];
     for (const sel of commentSelectors) {
-      document.querySelectorAll(sel).forEach(addTranslateButton);
+      $$(sel).forEach(addTranslateButton);
     }
   };
 
@@ -3148,7 +3150,7 @@ const onDomReady = (() => {
   let processTimeout = null;
   const scheduleProcess = () => {
     if (processTimeout) clearTimeout(processTimeout);
-    processTimeout = setTimeout(processComments, 300);
+    processTimeout = enhancedSetTimeout_(processComments, 300);
   };
 
   const startTranslateFeature = () => {
@@ -3164,37 +3166,36 @@ const onDomReady = (() => {
     if (translateObserver) return;
 
     // Observe for new comments
-    const commentsContainer = document.querySelector('#comments, #tab-comments, #content');
+    const commentsContainer = $('#comments, #tab-comments, #content');
     const target = commentsContainer || document.body;
 
-    translateObserver = new MutationObserver(mutations => {
-      let hasNewComments = false;
-      for (const m of mutations) {
-        for (const node of m.addedNodes) {
-          if (!(node instanceof Element)) continue;
-          if (
-            node.matches?.(
-              'ytd-comment-view-model, ytd-comment-renderer, ytd-comment-thread-renderer'
-            ) ||
-            node.querySelector?.('ytd-comment-view-model, ytd-comment-renderer, #content-text')
-          ) {
-            hasNewComments = true;
-            break;
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (coordinator?.watchTarget) {
+      translateObserver = 'enhanced::translateComments';
+      coordinator.watchTarget(
+        translateObserver,
+        target,
+        (/** @type {MutationRecord[]} */ mutations) => {
+          let hasNewComments = false;
+          for (const m of mutations) {
+            for (const node of m.addedNodes) {
+              if (!(node instanceof Element)) continue;
+              if (
+                node.matches?.(
+                  'ytd-comment-view-model, ytd-comment-renderer, ytd-comment-thread-renderer'
+                ) ||
+                node.querySelector?.('ytd-comment-view-model, ytd-comment-renderer, #content-text')
+              ) {
+                hasNewComments = true;
+                break;
+              }
+            }
+            if (hasNewComments) break;
           }
-        }
-        if (hasNewComments) break;
-      }
-      if (hasNewComments) scheduleProcess();
-    });
-
-    translateObserver.observe(target, { childList: true, subtree: true });
-
-    try {
-      if (window.YouTubeUtils?.cleanupManager) {
-        window.YouTubeUtils.cleanupManager.registerObserver(translateObserver);
-      }
-    } catch (e) {
-      // Non-critical, suppressed
+          if (hasNewComments) scheduleProcess();
+        },
+        { childList: true, attributes: false, subtree: true }
+      );
     }
   };
 
@@ -3206,7 +3207,7 @@ const onDomReady = (() => {
     if (typeof requestIdleCallback === 'function') {
       requestIdleCallback(() => startTranslateFeature(), { timeout: 3000 });
     } else {
-      setTimeout(startTranslateFeature, 1500);
+      enhancedSetTimeout_(startTranslateFeature, 1500);
     }
   };
 

@@ -1,11 +1,28 @@
 // YouTube Timecode Panel
 (function () {
   'use strict';
-  const _createHTML =
-    window._ytplusCreateHTML || /** @type {any} */ ((/** @type {string} */ s) => s);
+  const setTimeout_ = setTimeout;
+  const renderTemplateClone = (/** @type {Element} */ container, /** @type {string} */ html) => {
+    if (window.YouTubeSafeDOM?.renderTemplateClone) {
+      window.YouTubeSafeDOM.renderTemplateClone(container, html);
+      return;
+    }
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    const htmlFactory =
+      window._ytplusCreateHTML || /** @type {(s: string) => string} */ (/** @type {any} */ s => s);
+    // eslint-disable-next-line no-unsanitized/method -- centralized trusted-types/safe-dom fallback
+    template.content.append(range.createContextualFragment(htmlFactory(String(html ?? ''))));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
 
   // Shared helpers from YouTubeUtils
-  const { $, $$, byId } = window.YouTubeUtils || {};
+  const $ = window.YouTubeUtils.$;
+  const $$ = window.YouTubeUtils.$$;
+  const byId = window.YouTubeUtils.byId;
 
   if (window.location.hostname !== 'www.youtube.com' || window.frameElement) {
     return;
@@ -16,7 +33,7 @@
   window._timecodeModuleInitialized = true;
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils?.t || /** @type {any} */ ((/** @type {string} */ key) => key || '');
+  const t = window.YouTubeUtils.t;
 
   // Configuration
   /** @type {any} */
@@ -42,6 +59,7 @@
     dragging: false,
     editingIndex: null,
     resizeListenerKey: null,
+    settingsIntegrationStarted: false,
   };
 
   let initStarted = false;
@@ -54,9 +72,79 @@
     }
   };
 
+  const isSettingsModalOpen = () => {
+    try {
+      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
+    } catch (e) {
+      return false;
+    }
+  };
+
   const scheduleInitRetry = () => {
-    const timeoutId = setTimeout(init, 250);
-    YouTubeUtils.cleanupManager?.registerTimeout?.(timeoutId);
+    const retryScheduler = /** @type {any} */ (YouTubeUtils).createRetryScheduler;
+    if (typeof retryScheduler === 'function') {
+      retryScheduler({
+        label: 'timecode-init',
+        interval: 120,
+        maxAttempts: 30,
+        check: () => {
+          const root =
+            (typeof YouTubeUtils.querySelector === 'function' &&
+              YouTubeUtils.querySelector('ytd-app')) ||
+            $('ytd-app');
+          if (!root) return false;
+          init();
+          return true;
+        },
+      });
+      return;
+    }
+
+    const rafId = requestAnimationFrame(init);
+    YouTubeUtils.cleanupManager?.registerAnimationFrame?.(rafId);
+  };
+
+  const parseLeadingTimestampToken = (/** @type {string} */ input) => {
+    const s = String(input || '');
+    let i = 0;
+    const readNumber = () => {
+      const start = i;
+      while (i < s.length && s[i] >= '0' && s[i] <= '9') i += 1;
+      return i > start ? s.slice(start, i) : '';
+    };
+
+    const a = readNumber();
+    if (!a || i >= s.length || s[i] !== ':') return null;
+    i += 1;
+    const b = readNumber();
+    if (b.length !== 2) return null;
+
+    if (i < s.length && s[i] === ':') {
+      i += 1;
+      const c = readNumber();
+      if (c.length !== 2) return null;
+      return { token: `${a}:${b}:${c}`, length: i };
+    }
+
+    return { token: `${a}:${b}`, length: i };
+  };
+
+  const stripLeadingTimePrefix = (/** @type {string} */ value) => {
+    const input = String(value || '').trimStart();
+    const parsed = parseLeadingTimestampToken(input);
+    if (!parsed) return input;
+
+    let rest = input.slice(parsed.length).trimStart();
+    if (
+      rest.startsWith('-') ||
+      rest.startsWith('–') ||
+      rest.startsWith('—') ||
+      rest.startsWith(':')
+    ) {
+      rest = rest.slice(1).trimStart();
+    }
+
+    return rest;
   };
 
   // Utilities
@@ -71,7 +159,7 @@
 
       const parsed = JSON.parse(saved);
       if (typeof parsed !== 'object' || parsed === null) {
-        console.warn('[Timecode] Invalid settings format');
+        window.console.warn('[Timecode] Invalid settings format');
         return;
       }
 
@@ -123,7 +211,7 @@
         }
       }
     } catch (error) {
-      console.error('[Timecode] Error loading settings:', error);
+      window.console.error('[Timecode] Error loading settings:', error);
     }
   };
 
@@ -144,7 +232,7 @@
       };
       localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
     } catch (error) {
-      console.error('[Timecode] Error saving settings:', error);
+      window.console.error('[Timecode] Error saving settings:', error);
     }
   };
 
@@ -158,13 +246,13 @@
   const clampPanelPosition = (panel, left, top) => {
     try {
       if (!panel || !(panel instanceof HTMLElement)) {
-        console.warn('[Timecode] Invalid panel element');
+        window.console.warn('[Timecode] Invalid panel element');
         return { left: 0, top: 0 };
       }
 
       // Validate input coordinates
       if (typeof left !== 'number' || typeof top !== 'number' || isNaN(left) || isNaN(top)) {
-        console.warn('[Timecode] Invalid position coordinates');
+        window.console.warn('[Timecode] Invalid position coordinates');
         return { left: 0, top: 0 };
       }
 
@@ -180,7 +268,7 @@
         top: Math.min(Math.max(0, top), maxTop),
       };
     } catch (error) {
-      console.error('[Timecode] Error clamping panel position:', error);
+      window.console.error('[Timecode] Error clamping panel position:', error);
       return { left: 0, top: 0 };
     }
   };
@@ -200,13 +288,13 @@
   const savePanelPosition = (left, top) => {
     try {
       if (typeof left !== 'number' || typeof top !== 'number' || isNaN(left) || isNaN(top)) {
-        console.warn('[Timecode] Invalid position coordinates for saving');
+        window.console.warn('[Timecode] Invalid position coordinates for saving');
         return;
       }
       config.panelPosition = { left, top };
       saveSettings();
     } catch (error) {
-      console.error('[Timecode] Error saving panel position:', error);
+      window.console.error('[Timecode] Error saving panel position:', error);
     }
   };
 
@@ -241,21 +329,8 @@
     YouTubeUtils.NotificationManager.show(message, { duration, type });
   };
 
-  /**
-   * Format seconds into HH:MM:SS or MM:SS time string
-   * @param {number} seconds - Number of seconds to format
-   * @returns {string} Formatted time string
-   */
-  const formatTime = seconds => {
-    if (isNaN(seconds)) return '00:00';
-    seconds = Math.round(seconds);
-    const h = Math.floor(seconds / 3600);
-    const m = Math.floor((seconds % 3600) / 60);
-    const s = seconds % 60;
-    return h > 0
-      ? `${h}:${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`
-      : `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
-  };
+  const formatTime = (/** @type {number} */ seconds) =>
+    window.YouTubeUtils?.formatTime?.(seconds) || '0:00';
 
   /**
    * Remove duplicate text patterns from a string
@@ -367,7 +442,7 @@
 
       return null;
     } catch (error) {
-      console.error('[Timecode] Error parsing time:', error);
+      window.console.error('[Timecode] Error parsing time:', error);
       return null;
     }
   };
@@ -383,62 +458,53 @@
 
       // Security: limit text length to prevent DoS
       if (text.length > 50000) {
-        console.warn('[Timecode] Text too long, truncating');
+        window.console.warn('[Timecode] Text too long, truncating');
         text = text.substring(0, 50000);
       }
 
       const timecodes = [];
       const seen = new Set();
-      const patterns = [
-        /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—]\s*(.+?)$/gm,
-        /^(\d{1,2}:\d{2}(?::\d{2})?)\s+(.+?)$/gm,
-        /(\d{1,2}:\d{2}(?::\d{2})?)\s*[-–—:]\s*([^\n\r]{1,100}?)(?=\s*\d{1,2}:\d{2}|\s*$)/g,
-        /(\d{1,2}:\d{2}(?::\d{2})?)\s*[–—-]\s*([^\n]+)/gm,
-        /^(\d{1,2}:\d{2}(?::\d{2})?)\s*(.+)$/gm,
-      ];
+      const lines = String(text || '')
+        .replace(/\r/g, '')
+        .split('\n');
+      const maxIterations = 1000; // Prevent runaway parsing on malformed input
 
-      for (const pattern of patterns) {
-        let match;
-        let iterations = 0;
-        const maxIterations = 1000; // Prevent infinite loops
+      for (let i = 0; i < lines.length && i < maxIterations; i += 1) {
+        const line = lines[i].trim();
+        if (!line) continue;
 
-        while ((match = pattern.exec(text)) !== null && iterations++ < maxIterations) {
-          const time = parseTime(match[1]);
-          if (time !== null && !seen.has(time)) {
-            seen.add(time);
-            // Sanitize label text - only use match[2] if it exists and is not empty
-            let label = (match[2] || '')
-              .trim()
-              .replace(/^\d+[\.\)]\s*/, '')
-              .replace(/\s+/g, ' ') // Normalize whitespace
-              .substring(0, 100); // Limit label length
+        const timeMatch = parseLeadingTimestampToken(line);
+        if (!timeMatch) continue;
 
-            // Debug logging
-            const originalLabel = label;
+        const time = parseTime(timeMatch.token);
+        if (time === null || seen.has(time)) continue;
+        seen.add(time);
 
-            // Remove potentially dangerous characters
-            label = label.replace(/[<>\"']/g, '');
+        let label = stripLeadingTimePrefix(line.slice(timeMatch.length));
+        label = label
+          .trim()
+          .replace(/^\d+[\.\)]\s*/, '')
+          .replace(/\s+/g, ' ')
+          .substring(0, 100);
 
-            // Remove duplicate text in label
-            label = removeDuplicateText(label);
+        const originalLabel = label;
+        label = label.replace(/[<>\"']/g, '');
+        label = removeDuplicateText(label);
 
-            if (originalLabel !== label && label.length > 0) {
-              console.warn('[Timecode] Description deduplicated:', originalLabel, '->', label);
-            }
-
-            // Only add if we have actual content (time is always added, label can be empty)
-            timecodes.push({ time, label: label || '', originalText: match[1] });
-          }
+        if (originalLabel !== label && label.length > 0) {
+          window.console.warn('[Timecode] Description deduplicated:', originalLabel, '->', label);
         }
 
-        if (iterations >= maxIterations) {
-          console.warn('[Timecode] Maximum iterations reached during extraction');
-        }
+        timecodes.push({ time, label: label || '', originalText: timeMatch.token });
+      }
+
+      if (lines.length > maxIterations) {
+        window.console.warn('[Timecode] Maximum iterations reached during extraction');
       }
 
       return timecodes.sort((a, b) => a.time - b.time);
     } catch (error) {
-      console.error('[Timecode] Error extracting timecodes:', error);
+      window.console.error('[Timecode] Error extracting timecodes:', error);
       return [];
     }
   };
@@ -555,7 +621,7 @@
           await sleep(400);
           return true;
         } catch (error) {
-          console.warn('[Timecode] Failed to click expand button:', error);
+          window.console.warn('[Timecode] Failed to click expand button:', error);
         }
       }
     }
@@ -778,17 +844,17 @@
 
           // Debug logging
           if (cleanTitle && cleanTitle.length > 0) {
-            console.warn('[Timecode Debug] Raw chapter title:', cleanTitle);
+            window.console.warn('[Timecode Debug] Raw chapter title:', cleanTitle);
           }
 
           // Remove time prefix if present in label
-          cleanTitle = cleanTitle.replace(/^\d{1,2}:\d{2}(?::\d{2})?\s*[-–—:]?\s*/, '');
+          cleanTitle = stripLeadingTimePrefix(cleanTitle);
 
           // Remove duplicate text (some YouTube chapters repeat the title)
           const deduplicated = removeDuplicateText(cleanTitle);
 
           if (cleanTitle !== deduplicated) {
-            console.warn('[Timecode] Removed duplicate:', cleanTitle, '->', deduplicated);
+            window.console.warn('[Timecode] Removed duplicate:', cleanTitle, '->', deduplicated);
           }
 
           cleanTitle = deduplicated;
@@ -806,9 +872,7 @@
 
   // Settings panel
   const addTimecodePanelSettings = () => {
-    const advancedSection = document.querySelector(
-      '.ytp-plus-settings-section[data-section="advanced"]'
-    );
+    const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
     if (!advancedSection || advancedSection.querySelector('.timecode-settings-item')) {
       return;
     }
@@ -842,7 +906,9 @@
     const enableDiv = document.createElement('div');
     enableDiv.className =
       'ytp-plus-settings-item timecode-settings-item ytp-plus-settings-item--with-submenu';
-    enableDiv.innerHTML = _createHTML(`
+    renderTemplateClone(
+      enableDiv,
+      `
         <div>
           <label class="ytp-plus-settings-item-label" for="timecode-enable-checkbox">${t(
             'enableTimecode'
@@ -867,7 +933,8 @@
             config.enabled ? 'checked' : ''
           }>
         </div>
-      `);
+      `
+    );
 
     const submenuWrap = document.createElement('div');
     submenuWrap.className = 'timecode-submenu';
@@ -886,7 +953,9 @@
     const shortcutDiv = document.createElement('div');
     shortcutDiv.className = 'ytp-plus-settings-item timecode-settings-item timecode-shortcut-item';
     /** @type {any} */ (shortcutDiv).style.display = 'flex';
-    shortcutDiv.innerHTML = _createHTML(`
+    renderTemplateClone(
+      shortcutDiv,
+      `
         <div>
           <label class="ytp-plus-settings-item-label">${t('keyboardShortcut')}</label>
           <div class="ytp-plus-settings-item-description">${t('shortcutDescription')}</div>
@@ -957,115 +1026,19 @@
           </div>
 
           <span style="color:inherit;opacity:0.8;">+</span>
-          <input type="text" id="timecode-key" value="${config.shortcut.key}" maxlength="1" style="width: 30px; text-align: center; background: rgba(34, 34, 34, var(--yt-header-bg-opacity)); color: white; border: 1px solid rgba(255,255,255,0.1); border-radius: 4px; padding: 4px;">
+          <input type="text" id="timecode-key" value="${config.shortcut.key}" maxlength="1" style="width: 30px; text-align: center; background: var(--yt-input-bg); color: var(--yt-text-primary); border: 1px solid var(--yt-border-color); border-radius: 4px; padding: 4px;">
         </div>
-      `);
+      `
+    );
 
     submenuCard.appendChild(shortcutDiv);
     submenuWrap.appendChild(submenuCard);
     advancedSection.append(enableDiv, submenuWrap);
 
-    // Initialize custom glass dropdown interactions
-    const initGlassDropdown = () => {
-      const hiddenSelect = byId('timecode-modifier-combo');
-      const dropdown = byId('timecode-modifier-dropdown');
-      if (!hiddenSelect || !dropdown) return;
-
-      const toggle = $('.glass-dropdown__toggle', /** @type {any} */ (dropdown));
-      const list = /** @type {any} */ ($('.glass-dropdown__list', /** @type {any} */ (dropdown)));
-      const label = /** @type {any} */ ($('.glass-dropdown__label', /** @type {any} */ (dropdown)));
-      if (!toggle || !list || !label) return;
-
-      let items = Array.from($$('.glass-dropdown__item', /** @type {any} */ (list)));
-      let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
-      if (idx < 0) idx = 0;
-
-      const closeList = () => {
-        dropdown.setAttribute('aria-expanded', 'false');
-        /** @type {any} */ (list).style.display = 'none';
-      };
-
-      const openList = () => {
-        dropdown.setAttribute('aria-expanded', 'true');
-        /** @type {any} */ (list).style.display = 'block';
-        items = Array.from($$('.glass-dropdown__item', /** @type {any} */ (list)));
-      };
-
-      // Set initial state
-      closeList();
-
-      toggle.addEventListener('click', () => {
-        const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-        if (expanded) closeList();
-        else openList();
-      });
-
-      // Click outside to close
-      const outsideClickHandler = (/** @type {any} */ e) => {
-        if (!dropdown.contains(e.target)) closeList();
-      };
-      if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-        YouTubeUtils.cleanupManager.registerListener(document, 'click', outsideClickHandler);
-      } else {
-        document.addEventListener('click', outsideClickHandler);
-      }
-
-      // Item selection
-      list.addEventListener('click', (/** @type {any} */ e) => {
-        const it = /** @type {any} */ (e.target).closest('.glass-dropdown__item');
-        if (!it) return;
-        const val = /** @type {any} */ (it).dataset.value;
-        hiddenSelect.value = val;
-        // update aria-selected
-        list
-          .querySelectorAll('.glass-dropdown__item')
-          .forEach((/** @type {any} */ li) => li.removeAttribute('aria-selected'));
-        it.setAttribute('aria-selected', 'true');
-        idx = items.indexOf(it);
-        label.textContent = it.textContent;
-        // trigger change to reuse existing save logic
-        hiddenSelect.dispatchEvent(new Event('change', { bubbles: true }));
-        closeList();
-      });
-
-      // keyboard support with arrow navigation
-      dropdown.addEventListener('keydown', (/** @type {any} */ e) => {
-        const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          if (!expanded) openList();
-          idx = Math.min(idx + 1, items.length - 1);
-          items.forEach(it => it.removeAttribute('aria-selected'));
-          items[idx].setAttribute('aria-selected', 'true');
-          items[idx].scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          if (!expanded) openList();
-          idx = Math.max(idx - 1, 0);
-          items.forEach(it => it.removeAttribute('aria-selected'));
-          items[idx].setAttribute('aria-selected', 'true');
-          items[idx].scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          if (!expanded) {
-            openList();
-            return;
-          }
-          const it = items[idx];
-          if (it) {
-            hiddenSelect.value = /** @type {any} */ (it).dataset.value;
-            hiddenSelect.dispatchEvent(new Event('change', { bubbles: true }));
-            label.textContent = it.textContent;
-            closeList();
-          }
-        } else if (e.key === 'Escape') {
-          closeList();
-        }
-      });
-    };
-
-    // Defer init to ensure elements are in DOM
-    setTimeout(initGlassDropdown, 0);
+    window.YouTubePlusDesignSystem?.initGlassDropdown?.({
+      dropdown: byId('timecode-modifier-dropdown'),
+      hiddenSelect: byId('timecode-modifier-combo'),
+    });
 
     // Event listeners
     advancedSection.addEventListener('change', e => {
@@ -1113,8 +1086,8 @@
   };
 
   const ensureTimecodePanelSettings = (attempt = 0) => {
-    const advancedVisible = $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)');
-    if (!advancedVisible) {
+    const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
+    if (!advancedSection) {
       if (attempt < 20) setTimeout(() => ensureTimecodePanelSettings(attempt + 1), 80);
       return;
     }
@@ -1130,58 +1103,59 @@
     if (byId('timecode-panel-styles')) return;
 
     const styles = `
-        :root{--tc-panel-bg:rgba(255,255,255,0.06);--tc-panel-border:rgba(255,255,255,0.12);--tc-panel-color:#fff}
-        html[dark],body[dark]{--tc-panel-bg:rgba(34,34,34,0.75);--tc-panel-border:rgba(255,255,255,0.12);--tc-panel-color:#fff}
-        html:not([dark]){--tc-panel-bg:rgba(255,255,255,0.95);--tc-panel-border:rgba(0,0,0,0.08);--tc-panel-color:#222}
-        #timecode-panel{position:fixed;right:20px;top:80px;background:var(--tc-panel-bg);border-radius:16px;box-shadow:0 12px 40px rgba(0,0,0,0.45);width:320px;max-height:70vh;z-index:10000;color:var(--tc-panel-color);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--tc-panel-border);transition:transform .28s cubic-bezier(.4,0,.2,1),opacity .28s;overflow:hidden;display:flex;flex-direction:column}
+      html[dark],body[dark]{--yt-timecode-panel-bg:var(--yt-timecode-panel-bg-dark);--yt-timecode-panel-border:var(--yt-timecode-panel-border-dark);--yt-timecode-panel-color:var(--yt-timecode-panel-color-dark)}
+      html:not([dark]){--yt-timecode-panel-bg:var(--yt-timecode-panel-bg-light);--yt-timecode-panel-border:var(--yt-timecode-panel-border-light);--yt-timecode-panel-color:var(--yt-timecode-panel-color-light)}
+      #timecode-panel{position:fixed;right:20px;top:80px;background:var(--yt-timecode-panel-bg);border-radius:16px;box-shadow:0 12px 40px var(--yt-timecode-panel-shadow);width:320px;max-height:70vh;z-index:10000;color:var(--yt-timecode-panel-color);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-timecode-panel-border);transition:transform .28s cubic-bezier(.4,0,.2,1),opacity .28s;overflow:hidden;display:flex;flex-direction:column}
         #timecode-panel.hidden{transform:translateX(300px);opacity:0;pointer-events:none}
-        #timecode-panel.auto-tracking{box-shadow:0 12px 48px rgba(255,0,0,0.12);border-color:rgba(255,0,0,0.25)}
-        #timecode-header{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid rgba(255,255,255,0.04);background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);cursor:move}
+      #timecode-panel.auto-tracking{box-shadow:0 12px 48px var(--yt-danger-ghost);border-color:var(--yt-danger-border)}
+      #timecode-header{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid var(--yt-surface-overlay-subtle);background:linear-gradient(180deg, var(--yt-surface-overlay-faint), transparent);cursor:move}
         #timecode-title{font-weight:600;margin:0;font-size:15px;user-select:none;display:flex;align-items:center;gap:8px}
-        #timecode-tracking-indicator{width:8px;height:8px;background:red;border-radius:50%;opacity:0;transition:opacity .3s}
+      #timecode-tracking-indicator{width:8px;height:8px;background:var(--yt-accent);border-radius:50%;opacity:0;transition:opacity .3s}
         #timecode-panel.auto-tracking #timecode-tracking-indicator{opacity:1}
-        #timecode-current-time{font-family:monospace;font-size:12px;padding:2px 6px;background:rgba(255,0,0,.3);border-radius:3px;margin-left:auto}
+      #timecode-current-time{font-family:monospace;font-size:12px;padding:2px 6px;background:var(--yt-danger-border);border-radius:3px;margin-left:auto}
         #timecode-header-controls{display:flex;align-items:center;gap:6px}
         #timecode-reload,#timecode-close{background:transparent;border:none;color:inherit;cursor:pointer;width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:background .18s,color .18s}
-        #timecode-reload:hover,#timecode-close:hover{background:rgba(255,255,255,0.04)}
+      #timecode-header-controls svg{width:16px;height:16px;display:block;flex-shrink:0}
+      #timecode-header-controls svg path{vector-effect:non-scaling-stroke}
+      #timecode-reload:hover,#timecode-close:hover{background:var(--yt-surface-overlay-subtle)}
         #timecode-reload.loading{animation:spin .8s linear infinite}
-        #timecode-list{overflow-y:auto;padding:8px 0;max-height:calc(70vh - 80px);scrollbar-width:thin;scrollbar-color:rgba(255,255,255,.3) transparent}
+      #timecode-list{overflow-y:auto;padding:8px 0;max-height:calc(70vh - 80px);scrollbar-width:thin;scrollbar-color:var(--yt-scrollbar-outline) transparent}
         #timecode-list::-webkit-scrollbar{width:6px}
-        #timecode-list::-webkit-scrollbar-thumb{background:rgba(255,255,255,.3);border-radius:3px}
+      #timecode-list::-webkit-scrollbar-thumb{background:var(--yt-scrollbar-outline);border-radius:3px}
         .timecode-item{padding:10px 14px;display:flex;align-items:center;cursor:pointer;transition:background-color .16s,transform .12s;border-left:3px solid transparent;position:relative;border-radius:8px;margin:6px 10px}
-        .timecode-item:hover{background:rgba(255,255,255,0.04);transform:translateY(-2px)}
+      .timecode-item:hover{background:var(--yt-surface-overlay-subtle);transform:translateY(-2px)}
         .timecode-item:hover .timecode-actions{opacity:1}
-        .timecode-item.active{background:linear-gradient(90deg, rgba(255,68,68,0.12), rgba(255,68,68,0.04));border-left-color:#ff6666;box-shadow:inset 0 0 0 1px rgba(255,68,68,0.03)}
-        .timecode-item.active.pulse{animation:pulse .8s ease-out}
-        .timecode-item.editing{background:linear-gradient(90deg, rgba(255,170,0,0.08), rgba(255,170,0,0.03));border-left-color:#ffaa00}
+      .timecode-item.active{background:linear-gradient(90deg, var(--yt-timecode-active-bg-start), var(--yt-timecode-active-bg-end));border-left-color:var(--yt-timecode-active-border);box-shadow:inset 0 0 0 1px var(--yt-timecode-active-inset)}
+        .timecode-item.active.pulse{animation:timecodePulse .8s ease-out}
+      .timecode-item.editing{background:linear-gradient(90deg, var(--yt-warning-soft), var(--yt-panel-overlay-weak));border-left-color:var(--yt-warning)}
         .timecode-item.editing .timecode-actions{opacity:1}
-        @keyframes pulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
+        @keyframes timecodePulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
         /* spin keyframe defined in shared-keyframes (basic.js) */
-        .timecode-time{font-family:monospace;margin-right:10px;color:rgba(255,255,255,.8);font-size:13px;min-width:45px;flex-shrink:0}
+      .timecode-time{font-family:monospace;margin-right:10px;color:var(--yt-text-secondary);font-size:13px;min-width:45px;flex-shrink:0}
         .timecode-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;flex:1;margin-left:4px}
         .timecode-item:not(:has(.timecode-label)) .timecode-time{flex:1;text-align:left}
-        .timecode-item.has-chapter .timecode-time{color:#ff4444}
-        .timecode-progress{width:0;height:2px;background:#ff4444;position:absolute;bottom:0;left:0;transition:width .3s;opacity:.8}
-        .timecode-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:4px;opacity:0;transition:opacity .2s;background:rgba(0,0,0,.8);border-radius:4px;padding:2px}
-        .timecode-action{background:none;border:none;color:rgba(255,255,255,.8);cursor:pointer;padding:4px;font-size:12px;border-radius:2px;transition:color .2s,background-color .2s}
-        .timecode-action:hover{color:#fff;background:rgba(255,255,255,.2)}
-        .timecode-action.edit:hover{color:#ffaa00}
-        .timecode-action.delete:hover{color:#ff4444}
-        #timecode-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;color:rgba(255,255,255,.7);font-size:13px}
-        #timecode-form{padding:12px;border-top:1px solid rgba(255,255,255,.04);display:none}
+      .timecode-item.has-chapter .timecode-time{color:var(--yt-timecode-chapter)}
+      .timecode-progress{width:0;height:2px;background:var(--yt-timecode-chapter);position:absolute;bottom:0;left:0;transition:width .3s;opacity:.8}
+      .timecode-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:4px;opacity:0;transition:opacity .2s;background:var(--yt-overlay-strong);border-radius:4px;padding:2px}
+      .timecode-action{background:none;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:4px;font-size:12px;border-radius:2px;transition:color .2s,background-color .2s}
+      .timecode-action:hover{color:var(--yt-text-primary);background:var(--yt-button-bg)}
+      .timecode-action.edit:hover{color:var(--yt-warning)}
+      .timecode-action.delete:hover{color:var(--yt-timecode-chapter)}
+      #timecode-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;color:var(--yt-text-secondary);font-size:13px}
+      #timecode-form{padding:12px;border-top:1px solid var(--yt-surface-overlay-subtle);display:none}
         #timecode-form.visible{display:block}
-        #timecode-form input{width:100%;margin-bottom:8px;padding:8px;background:rgba(255,255,255,.1);border:1px solid rgba(255,255,255,.2);border-radius:4px;color:#fff;font-size:13px}
-        #timecode-form input::placeholder{color:rgba(255,255,255,.6)}
+      #timecode-form input{width:100%;margin-bottom:8px;padding:8px;background:var(--yt-input-bg);border:1px solid var(--yt-glass-border);border-radius:4px;color:var(--yt-text-primary);font-size:13px}
+      #timecode-form input::placeholder{color:var(--yt-text-secondary)}
         #timecode-form-buttons{display:flex;gap:8px;justify-content:flex-end}
         #timecode-form-buttons button{padding:6px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s}
-        #timecode-form-cancel{background:rgba(255,255,255,.2);color:#fff}
-        #timecode-form-cancel:hover{background:rgba(255,255,255,.3)}
-        #timecode-form-save{background:#ff4444;color:#fff}
-        #timecode-form-save:hover{background:#ff6666}
-        #timecode-actions{padding:10px;border-top:1px solid rgba(255,255,255,.04);display:flex;gap:8px;background:linear-gradient(180deg,transparent,rgba(0,0,0,0.03))}
-        #timecode-actions button{padding:8px 12px;border:none;border-radius:8px;cursor:pointer;font-size:13px;transition:background .18s;color:inherit;background:rgba(255,255,255,0.02)}
-        #timecode-actions button:hover{background:rgba(255,255,255,0.04)}
-        #timecode-track-toggle.active{background:linear-gradient(90deg,#ff6b6b,#ff4444);color:#fff}
+      #timecode-form-cancel{background:var(--yt-button-bg);color:var(--yt-text-primary)}
+      #timecode-form-cancel:hover{background:var(--yt-hover-bg)}
+      #timecode-form-save{background:var(--yt-timecode-chapter);color:var(--yt-text-primary)}
+      #timecode-form-save:hover{background:var(--yt-timecode-active-border)}
+      #timecode-actions{padding:10px;border-top:1px solid var(--yt-surface-overlay-subtle);display:flex;gap:8px;background:linear-gradient(180deg,transparent,var(--yt-panel-overlay-subtle))}
+      #timecode-actions button{padding:8px 12px;border:none;border-radius:8px;cursor:pointer;font-size:13px;transition:background .18s;color:inherit;background:var(--yt-surface-overlay-faint)}
+      #timecode-actions button:hover{background:var(--yt-surface-overlay-subtle)}
+      #timecode-track-toggle.active{background:linear-gradient(90deg,var(--yt-timecode-toggle-active-start),var(--yt-timecode-chapter));color:var(--yt-text-primary)}
       `;
     YouTubeUtils.StyleManager.add('timecode-panel-styles', styles);
   };
@@ -1198,7 +1172,9 @@
     panel.className = config.enabled ? '' : 'hidden';
     if (config.autoTrackPlayback) panel.classList.add('auto-tracking');
 
-    panel.innerHTML = _createHTML(`
+    renderTemplateClone(
+      panel,
+      `
         <div id="timecode-header">
           <h3 id="timecode-title">
             <div id="timecode-tracking-indicator"></div>
@@ -1206,10 +1182,15 @@
             <span id="timecode-current-time"></span>
           </h3>
           <div id="timecode-header-controls">
-            <button id="timecode-reload" title="${t('reload')}" aria-label="${t('reload')}">⟳</button>
+            <button id="timecode-reload" title="${t('reload')}" aria-label="${t('reload')}">
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M21.5 2v6h-6M2.5 22v-6h6"/>
+                <path d="M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1"/>
+              </svg>
+            </button>
             <button id="timecode-close" title="${t('close')}" aria-label="${t('close')}">
-              <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M6 6L18 18M18 6L6 18"/>
               </svg>
             </button>
           </div>
@@ -1232,7 +1213,8 @@
           <button id="timecode-export-btn" ${config.export ? '' : 'style="display:none"'}>${t('export')}</button>
           <button id="timecode-track-toggle" class="${config.autoTrackPlayback ? 'active' : ''}">${config.autoTrackPlayback ? t('tracking') : t('track')}</button>
         </div>
-      `);
+      `
+    );
 
     // Cache DOM elements
     state.dom = {
@@ -1434,8 +1416,8 @@
     const exportBtn = state.dom.panel?.querySelector('#timecode-export-btn');
     if (exportBtn) {
       exportBtn.textContent = t('copied');
-      exportBtn.style.backgroundColor = 'rgba(0,220,0,0.8)';
-      setTimeout(() => {
+      exportBtn.style.backgroundColor = 'var(--yt-timecode-export-success-bg)';
+      setTimeout_(function () {
         exportBtn.textContent = t('export');
         exportBtn.style.backgroundColor = '';
       }, 2000);
@@ -1469,7 +1451,8 @@
       return;
     }
 
-    list.innerHTML = _createHTML(
+    renderTemplateClone(
+      list,
       timecodes
         .map((/** @type {any} */ tc, /** @type {any} */ i) => {
           const timeStr = formatTime(tc.time);
@@ -1477,15 +1460,14 @@
           let rawLabel = tc.label?.trim() || '';
 
           // Remove time prefix from label if it starts with the same time
-          const timePattern = /^\d{1,2}:\d{2}(?::\d{2})?\s*[-–—:]?\s*/;
-          rawLabel = rawLabel.replace(timePattern, '');
+          rawLabel = stripLeadingTimePrefix(rawLabel);
 
           // Remove duplicate text in label (final safety check)
           const beforeDedup = rawLabel;
           rawLabel = removeDuplicateText(rawLabel);
 
           if (beforeDedup !== rawLabel && rawLabel.length > 0) {
-            console.warn('[Timecode] Display deduplicated:', beforeDedup, '->', rawLabel);
+            window.console.warn('[Timecode] Display deduplicated:', beforeDedup, '->', rawLabel);
           }
 
           // Normalize time comparisons (remove leading zeros for comparison)
@@ -1635,7 +1617,7 @@
           state.trackingId = requestAnimationFrame(track);
         }
       } catch (error) {
-        console.warn('Timecode tracking error:', error);
+        window.console.warn('Timecode tracking error:', error);
         // Stop tracking on error to prevent infinite error loops
         if (state.trackingId) {
           cancelAnimationFrame(state.trackingId);
@@ -1802,7 +1784,7 @@
         updateTimecodePanel(saved);
       } else if (config.autoDetect) {
         detectTimecodes().catch((/** @type {any} */ err) =>
-          console.error('[Timecode] Detection failed:', err)
+          window.console.error('[Timecode] Detection failed:', err)
         );
       }
 
@@ -1833,7 +1815,9 @@
         } else if (config.autoDetect) {
           setTimeout(
             () =>
-              detectTimecodes().catch(err => console.error('[Timecode] Detection failed:', err)),
+              detectTimecodes().catch(err =>
+                window.console.error('[Timecode] Detection failed:', err)
+              ),
             500
           );
         }
@@ -1887,6 +1871,40 @@
     }
   };
 
+  const setupTimecodeSettingsIntegration = () => {
+    if (state.settingsIntegrationStarted) return;
+    state.settingsIntegrationStarted = true;
+
+    // Ensure UI reflects persisted values even when opened outside /watch.
+    loadSettings();
+
+    const settingsModalHandler = () => {
+      setTimeout(() => ensureTimecodePanelSettings(), 100);
+    };
+    if (YouTubeUtils.cleanupManager?.registerListener) {
+      YouTubeUtils.cleanupManager.registerListener(
+        document,
+        'youtube-plus-settings-modal-opened',
+        settingsModalHandler
+      );
+    } else {
+      document.addEventListener('youtube-plus-settings-modal-opened', settingsModalHandler);
+    }
+
+    const clickHandler = (/** @type {any} */ e) => {
+      const target = /** @type {HTMLElement} */ (e.target);
+      const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
+      if (navItem?.dataset?.section === 'advanced') {
+        setTimeout(() => ensureTimecodePanelSettings(), 50);
+      }
+    };
+    if (YouTubeUtils.cleanupManager?.registerListener) {
+      YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
+    } else {
+      document.addEventListener('click', clickHandler, true);
+    }
+  };
+
   // Initialize
   const init = () => {
     if (initStarted) return;
@@ -1910,46 +1928,64 @@
     setupNavigation();
 
     // Settings modal observer
-    /** @type {any} */ let modalObserver = null;
+    /** @type {string | null} */ let modalObserverSubId = null;
     /** @type {ReturnType<typeof setTimeout> | null} */ let modalObserverTimeout = null;
 
     const attachModalObserver = (/** @type {any} */ modalEl) => {
       if (!modalEl || !(modalEl instanceof Element)) return;
-      if (modalObserver) {
+      const coordinator = window.YouTubeMutationCoordinator;
+      if (modalObserverSubId && coordinator?.unsubscribe) {
         try {
-          modalObserver.disconnect();
+          coordinator.unsubscribe(modalObserverSubId);
         } catch (e) {
           // Non-critical, suppressed
         }
-        modalObserver = null;
+        modalObserverSubId = null;
       }
 
-      modalObserver = new MutationObserver(() => {
-        // Debounce modal observer to reduce unnecessary checks
-        if (modalObserverTimeout) return;
-        modalObserverTimeout = setTimeout(() => {
-          modalObserverTimeout = null;
-          if (
-            $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)') &&
-            !$('.timecode-settings-item')
-          ) {
-            setTimeout(() => ensureTimecodePanelSettings(), 50);
-          }
-        }, 30);
-      });
+      if (!coordinator?.watchTarget) return;
 
-      YouTubeUtils.cleanupManager.registerObserver(modalObserver);
-      modalObserver.observe(modalEl, {
-        childList: true,
-        subtree: true,
-        attributes: true,
-        attributeFilter: ['class'],
-      });
+      modalObserverSubId = `timecode::settingsModal::${Date.now()}::${Math.random()
+        .toString(36)
+        .slice(2, 8)}`;
+
+      coordinator.watchTarget(
+        modalObserverSubId,
+        modalEl,
+        () => {
+          // Debounce modal observer to reduce unnecessary checks
+          if (modalObserverTimeout) return;
+          modalObserverTimeout = setTimeout(() => {
+            modalObserverTimeout = null;
+            if (
+              $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)') &&
+              !$('.timecode-settings-item')
+            ) {
+              setTimeout(() => ensureTimecodePanelSettings(), 50);
+            }
+          }, 30);
+        },
+        {
+          childList: true,
+          subtree: true,
+          attributes: true,
+          attributeFilter: ['class'],
+        }
+      );
+
+      if (YouTubeUtils.cleanupManager?.register) {
+        YouTubeUtils.cleanupManager.register(() => {
+          if (modalObserverSubId && coordinator?.unsubscribe) {
+            coordinator.unsubscribe(modalObserverSubId);
+            modalObserverSubId = null;
+          }
+        });
+      }
     };
 
     // Settings modal integration — use event instead of body MutationObserver
     const settingsModalHandler = () => {
-      const modal = document.querySelector('.ytp-plus-settings-modal');
+      const modal = $('.ytp-plus-settings-modal');
       if (modal) {
         attachModalObserver(modal);
         setTimeout(() => ensureTimecodePanelSettings(), 100);
@@ -1997,6 +2033,7 @@
   };
 
   const handleNavigate = () => {
+    setupTimecodeSettingsIntegration();
     if (!isRelevantRoute()) {
       if (initStarted) cleanup();
       return;
@@ -2006,7 +2043,10 @@
 
   // Register with LazyLoader for deferred initialization
   if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register('timecode', handleNavigate, { priority: 1 });
+    window.YouTubePlusLazyLoader.register('timecode', handleNavigate, {
+      priority: 1,
+      shouldLoad: () => isRelevantRoute() || isSettingsModalOpen(),
+    });
   } else {
     // Fallback: direct initialization
     if (document.readyState === 'loading') {

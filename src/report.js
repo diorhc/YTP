@@ -7,7 +7,8 @@
  */
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+
+  const setTimeout_ = setTimeout;
 
   // Minimal guards for shared utils
   const Y = window.YouTubeUtils || {};
@@ -32,12 +33,7 @@
       if (k === 'class') {
         el.className = /** @type {string} */ (v);
       } else if (k === 'html') {
-        if (typeof window._ytplusCreateHTML === 'function') {
-          el.innerHTML = window._ytplusCreateHTML(/** @type {string} */ (v));
-        } else {
-          // Fallback: sanitize and set
-          el.innerHTML = _createHTML(sanitizeHTML(/** @type {string} */ (v)));
-        }
+        window.YouTubeUtils.setSafeHTML(el, /** @type {string} */ (v), true);
       } else if (k.startsWith('on') && typeof v === 'function') {
         el.addEventListener(k.substring(2).toLowerCase(), /** @type {EventListener} */ (v));
       } else {
@@ -56,25 +52,16 @@
    * @returns {string} Sanitized HTML
    */
   function sanitizeHTML(html) {
+    if (window.YouTubeSafeDOM?.sanitizeHTML) {
+      return window.YouTubeSafeDOM.sanitizeHTML(html);
+    }
     if (Y?.sanitizeHTML && typeof Y.sanitizeHTML === 'function') {
       return Y.sanitizeHTML(html);
     }
-    // Fallback sanitizer
     if (typeof html !== 'string') return '';
-    const map = {
-      '<': '&lt;',
-      '>': '&gt;',
-      '&': '&amp;',
-      '"': '&quot;',
-      "'": '&#39;',
-      '/': '&#x2F;',
-      '`': '&#x60;',
-      '=': '&#x3D;',
-    };
-    return html.replace(
-      /[<>&"'\/`=]/g,
-      char => /** @type {Record<string,string>} */ (map)[char] || char
-    );
+    const div = document.createElement('div');
+    div.textContent = html;
+    return div.innerHTML;
   }
 
   /**
@@ -236,7 +223,9 @@
     return new Promise((resolve, reject) => {
       const ta = document.createElement('textarea');
       ta.value = text;
-      ta.setAttribute('style', 'position:fixed;left:-9999px;opacity:0');
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      ta.style.opacity = '0';
       document.body.appendChild(ta);
       try {
         ta.select();
@@ -363,7 +352,8 @@
     );
 
     const actions = mk('div', {
-      style: 'display:flex;gap:var(--yt-space-sm);margin-top:var(--yt-space-sm);flex-wrap:wrap;',
+      style:
+        'display:flex;gap:var(--yt-space-sm);margin-top:var(--yt-space-sm);flex-wrap:wrap;justify-content:center;',
     });
     const submitBtn = mk('button', { class: 'glass-button' }, [t('openGitHub')]);
     const copyBtn = mk('button', { class: 'glass-button' }, [t('copyReport')]);
@@ -407,121 +397,16 @@
     section.appendChild(form);
     section.appendChild(privacy);
 
-    // Initialize interactions for the glass-dropdown (sync to hidden select)
-    (function initReportTypeDropdown() {
-      try {
-        const hidden = typeSelect; // the hidden native select
-        const dropdown = typeDropdown;
-        const toggle = dropdown.querySelector('.glass-dropdown__toggle');
-        const list = dropdown.querySelector('.glass-dropdown__list');
-        const label = dropdown.querySelector('.glass-dropdown__label');
-        let items = Array.from(list ? list.querySelectorAll('.glass-dropdown__item') : []);
-        let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
-        if (idx < 0) idx = 0;
-
-        const openList = () => {
-          dropdown.setAttribute('aria-expanded', 'true');
-          if (list) {
-            list.setAttribute('style', 'display:block');
-          }
-          items = Array.from(list ? list.querySelectorAll('.glass-dropdown__item') : []);
-        };
-        const closeList = () => {
-          dropdown.setAttribute('aria-expanded', 'false');
-          if (list) {
-            list.setAttribute('style', 'display:none');
-          }
-        };
-
-        // ensure initial hidden select value matches selected item
-        const selectedItem = items[idx];
-        if (selectedItem) {
-          hidden.value = selectedItem.getAttribute('data-value') || '';
-          if (label) label.textContent = selectedItem.textContent || '';
-        }
-
-        if (toggle) {
-          toggle.addEventListener('click', () => {
-            const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-            if (expanded) closeList();
-            else openList();
-          });
-        }
-
-        const _rDocClick = /** @param {Event} e */ e => {
-          if (!dropdown.contains(/** @type {Node|null} */ (/** @type {MouseEvent} */ (e).target))) {
-            closeList();
-          }
-        };
-        if (window.YouTubeUtils?.cleanupManager?.registerListener) {
-          window.YouTubeUtils.cleanupManager.registerListener(document, 'click', _rDocClick);
-        } else {
-          document.addEventListener('click', _rDocClick);
-        }
-
-        if (list) {
-          list.addEventListener(
-            'click',
-            /** @param {Event} e */ e => {
-              const it =
-                e.target instanceof Element ? e.target.closest('.glass-dropdown__item') : null;
-              if (!it) return;
-              const val = it.getAttribute('data-value');
-              hidden.value = val ?? '';
-              list
-                .querySelectorAll('.glass-dropdown__item')
-                .forEach(li => li.removeAttribute('aria-selected'));
-              it.setAttribute('aria-selected', 'true');
-              if (label) label.textContent = it.textContent;
-              hidden.dispatchEvent(new Event('change', { bubbles: true }));
-              closeList();
-            }
-          );
-        }
-
-        // keyboard navigation
-        dropdown.addEventListener(
-          'keydown',
-          /** @param {KeyboardEvent} e */ e => {
-            const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-            if (e.key === 'ArrowDown') {
-              e.preventDefault();
-              if (!expanded) openList();
-              idx = Math.min(idx + 1, items.length - 1);
-              items.forEach(it => it.removeAttribute('aria-selected'));
-              items[idx].setAttribute('aria-selected', 'true');
-              items[idx].scrollIntoView({ block: 'nearest' });
-            } else if (e.key === 'ArrowUp') {
-              e.preventDefault();
-              if (!expanded) openList();
-              idx = Math.max(idx - 1, 0);
-              items.forEach(it => it.removeAttribute('aria-selected'));
-              items[idx].setAttribute('aria-selected', 'true');
-              items[idx].scrollIntoView({ block: 'nearest' });
-            } else if (e.key === 'Enter' || e.key === ' ') {
-              e.preventDefault();
-              if (!expanded) {
-                openList();
-                return;
-              }
-              const it = items[idx];
-              if (it) {
-                hidden.value = it.getAttribute('data-value') ?? '';
-                hidden.dispatchEvent(new Event('change', { bubbles: true }));
-                if (label) label.textContent = it.textContent;
-                closeList();
-              }
-            } else if (e.key === 'Escape') {
-              closeList();
-            }
-          }
-        );
-      } catch (err) {
-        if (Y && typeof Y.logError === 'function') {
-          Y.logError('Report', 'initReportTypeDropdown', err);
-        }
+    try {
+      window.YouTubePlusDesignSystem?.initGlassDropdown?.({
+        dropdown: typeDropdown,
+        hiddenSelect: typeSelect,
+      });
+    } catch (err) {
+      if (Y && typeof Y.logError === 'function') {
+        Y.logError('Report', 'initReportTypeDropdown', err);
       }
-    })();
+    }
 
     // (debugPreview is appended inside the form, directly under the checkbox)
 
@@ -603,10 +488,10 @@
           );
           debugPreview.appendChild(fullDetails);
 
-          debugPreview.setAttribute('style', 'display:block');
+          debugPreview.style.display = 'block';
         } else {
           debugPreview.replaceChildren();
-          debugPreview.setAttribute('style', 'display:none');
+          debugPreview.style.display = 'none';
         }
       } catch (err) {
         if (Y && typeof Y.logError === 'function') {
@@ -675,7 +560,7 @@
           if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
             Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
           } else {
-            console.warn('[Report] Validation errors:', data.errors);
+            window.console.warn('[Report] Validation errors:', data.errors);
           }
           return;
         }
@@ -684,7 +569,7 @@
         const originalText = submitBtn.textContent;
         submitBtn.disabled = true;
         submitBtn.textContent = t('opening');
-        submitBtn.setAttribute('style', 'opacity:0.6');
+        submitBtn.style.opacity = '0.6';
 
         const payload = buildIssuePayload(data);
         openGitHubIssue(
@@ -697,10 +582,10 @@
         }
 
         // Reset button after a delay
-        setTimeout(() => {
+        setTimeout_(() => {
           submitBtn.disabled = false;
           submitBtn.textContent = originalText;
-          submitBtn.setAttribute('style', 'opacity:1');
+          submitBtn.style.opacity = '1';
         }, 2000);
       } catch (err) {
         if (Y.logError) Y.logError('Report', 'Failed to open GitHub issue', err);
@@ -712,7 +597,7 @@
         }
         submitBtn.disabled = false;
         submitBtn.textContent = t('openGitHub');
-        submitBtn.setAttribute('style', 'opacity:1');
+        submitBtn.style.opacity = '1';
       }
     });
 
@@ -729,7 +614,7 @@
           if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
             Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
           } else {
-            console.warn('[Report] Validation errors:', data.errors);
+            window.console.warn('[Report] Validation errors:', data.errors);
           }
           return;
         }
@@ -738,7 +623,7 @@
         const originalText = copyBtn.textContent;
         copyBtn.disabled = true;
         copyBtn.textContent = t('copying');
-        copyBtn.setAttribute('style', 'opacity:0.6');
+        copyBtn.style.opacity = '0.6';
 
         const payload = buildIssuePayload(data);
         const full = `Title: ${payload.title}\n\n${payload.body}`;
@@ -749,8 +634,8 @@
               Y.NotificationManager.show(t('reportCopied'), { duration: 2000 });
             }
             copyBtn.textContent = t('copied');
-            copyBtn.setAttribute('style', 'opacity:1');
-            setTimeout(() => {
+            copyBtn.style.opacity = '1';
+            setTimeout_(() => {
               copyBtn.disabled = false;
               copyBtn.textContent = originalText;
             }, 2000);
@@ -763,17 +648,17 @@
                 type: 'error',
               });
             } else {
-              console.warn('Copy failed; please copy manually', err);
+              window.console.warn('Copy failed; please copy manually', err);
             }
             copyBtn.disabled = false;
             copyBtn.textContent = originalText;
-            copyBtn.setAttribute('style', 'opacity:1');
+            copyBtn.style.opacity = '1';
           });
       } catch (err) {
         if (Y.logError) Y.logError('Report', 'Failed to copy report', err);
         copyBtn.disabled = false;
         copyBtn.textContent = t('copyReport');
-        copyBtn.setAttribute('style', 'opacity:1');
+        copyBtn.style.opacity = '1';
       }
     });
 
@@ -790,7 +675,7 @@
           if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
             Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
           } else {
-            console.warn('[Report] Validation errors:', data.errors);
+            window.console.warn('[Report] Validation errors:', data.errors);
           }
           return;
         }
@@ -798,7 +683,7 @@
         const originalText = emailBtn.textContent;
         emailBtn.disabled = true;
         emailBtn.textContent = t('opening');
-        emailBtn.setAttribute('style', 'opacity:0.6');
+        emailBtn.style.opacity = '0.6';
 
         const payload = buildIssuePayload(data);
         const subject = payload.title;
@@ -808,16 +693,16 @@
         )}`;
         window.location.href = mailto;
 
-        setTimeout(() => {
+        setTimeout_(() => {
           emailBtn.disabled = false;
           emailBtn.textContent = originalText;
-          emailBtn.setAttribute('style', 'opacity:1');
+          emailBtn.style.opacity = '1';
         }, 2000);
       } catch (err) {
         if (Y.logError) Y.logError('Report', 'Failed to prepare email', err);
         emailBtn.disabled = false;
         emailBtn.textContent = t('prepareEmail');
-        emailBtn.setAttribute('style', 'opacity:1');
+        emailBtn.style.opacity = '1';
       }
     });
   }

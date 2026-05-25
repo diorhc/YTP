@@ -8,7 +8,7 @@ const path = require('path');
 const { performance } = require('perf_hooks');
 const { execSync } = require('child_process');
 
-const ROOT = path.resolve(__dirname);
+const ROOT = path.resolve(__dirname, '..');
 const ITERATIONS = 5;
 
 // Reserved for future build type comparison feature

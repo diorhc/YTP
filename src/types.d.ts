@@ -66,6 +66,7 @@ interface NotificationManagerAPI {
 }
 
 interface StyleManagerAPI {
+  styles: Map<string, string>;
   add(id: string, css: string): void;
   remove(id: string): void;
   clear(): void;
@@ -86,6 +87,7 @@ interface YouTubeUtilsAPI {
 
   // Translation
   t: (key: string, params?: Record<string, string | number>) => string;
+  onDomReady: (cb: () => void) => void;
 
   // Utilities
   debounce: <T extends (...args: any[]) => any>(
@@ -105,6 +107,7 @@ interface YouTubeUtilsAPI {
     parent?: Element | Document
   ) => Promise<HTMLElement>;
   sanitizeHTML: (html: string) => string;
+  setSafeHTML: (element: Element, html: string, sanitize?: boolean) => void;
   escapeHTMLAttribute: (str: string) => string;
   isValidURL: (url: string) => boolean;
   safeMerge: (
@@ -114,6 +117,10 @@ interface YouTubeUtilsAPI {
   validateVideoId: (videoId: string) => string | null;
   validatePlaylistId: (playlistId: string) => string | null;
   loadFeatureEnabled: (featureKey: string, defaultValue?: boolean) => boolean;
+  isWatchPage?: (urlLike?: string) => boolean;
+  isShortsPage?: (urlLike?: string) => boolean;
+  isChannelPage?: (urlLike?: string) => boolean;
+  formatTime?: (seconds: number) => string;
   logError: (module: string, message: string, error: Error | unknown) => void;
   isStudioPage?: () => boolean;
 
@@ -142,9 +149,18 @@ interface YouTubeUtilsAPI {
   ObserverRegistry?: {
     track(key?: string, observer?: unknown): void;
     untrack(key?: string): void;
-    [key: string]: unknown;
+    loadFeatureEnabled: (featureKey: string, defaultValue?: boolean) => boolean;
   };
   createRetryScheduler?: (...args: unknown[]) => { stop: () => void } | null | undefined;
+  createVisibilityAwareInterval?: (
+    callback: () => void,
+    delay: number
+  ) => {
+    stop: () => void;
+    pause: () => void;
+    resume: () => void;
+    active: boolean;
+  };
 
   // Managers
   cleanupManager: CleanupManager;
@@ -172,7 +188,7 @@ interface YouTubeUtilsAPI {
 
   // Settings key
   SETTINGS_KEY?: string;
-  getLanguage?: () => string;
+  getLanguage: () => string;
 }
 
 // ---------------------------------------------------------------------------
@@ -286,7 +302,7 @@ interface YouTubePerformanceAPI {
 // YouTubeErrorBoundary (error-boundary.js)
 // ---------------------------------------------------------------------------
 
-interface YouTubeErrorBoundaryAPI {
+interface YouTubeErrorBoundaryMethodsAPI {
   withErrorBoundary(
     fn: (...args: unknown[]) => unknown,
     context?: string
@@ -308,6 +324,8 @@ interface YouTubeErrorBoundaryAPI {
   config: Record<string, unknown>;
 }
 
+interface YouTubeErrorBoundaryAPI extends YouTubeErrorBoundaryMethodsAPI {}
+
 // ---------------------------------------------------------------------------
 // YouTubePlusI18n (i18n.js)
 // ---------------------------------------------------------------------------
@@ -327,7 +345,7 @@ interface YouTubePlusI18nAPI {
 // YouTubePlusLogger (logger.js)
 // ---------------------------------------------------------------------------
 
-interface YouTubePlusLoggerAPI {
+interface YouTubePlusLoggerAPI extends YouTubeErrorBoundaryMethodsAPI {
   error(module: string, message: string, data?: unknown): void;
   warn(module: string, message: string, data?: unknown): void;
   info(module: string, message: string, data?: unknown): void;

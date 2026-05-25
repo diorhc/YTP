@@ -1,18 +1,26 @@
 // Play All
 (async function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || (s => s);
+  const setTimeout_ = setTimeout.bind(window);
+  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
+  const renderTemplateClone = (/** @type {Element} */ container, /** @type {string} */ html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
 
   let featureEnabled = true;
   /** @type {(() => void)|null} */
   let stopRandomPlayTimers = null;
   /** @type {(() => void)|null} */
   let scheduleApplyRandomPlay = null;
-  /** @type {number|null} */
+  /** @type {any|null} */
   let addButtonRetryTimer = null;
-  let addButtonRetryAttempts = 0;
-  const loadFeatureEnabled = () =>
-    window.YouTubeUtils?.loadFeatureEnabled?.('enablePlayAll') ?? true;
   const setFeatureEnabled = (/** @type {boolean|undefined} */ nextEnabled) => {
     featureEnabled = nextEnabled !== false;
     if (!featureEnabled) {
@@ -22,9 +30,11 @@
         /* feature disable cleanup */
       }
       try {
-        if (addButtonRetryTimer) clearTimeout(addButtonRetryTimer);
+        if (addButtonRetryTimer) {
+          clearTimeout(addButtonRetryTimer);
+          if (typeof addButtonRetryTimer.cancel === 'function') addButtonRetryTimer.cancel();
+        }
         addButtonRetryTimer = null;
-        addButtonRetryAttempts = 0;
       } catch (e) {
         /* timer cleanup safe to ignore */
       }
@@ -47,10 +57,11 @@
     }
   };
 
-  featureEnabled = loadFeatureEnabled();
+  featureEnabled = window.YouTubeUtils?.loadFeatureEnabled?.('enablePlayAll') ?? true;
 
   // Shared DOM helpers from YouTubeUtils
-  const { $, $$ } = window.YouTubeUtils || {};
+  const $ = window.YouTubeUtils.$;
+  const $$ = window.YouTubeUtils.$$;
   const _cm = window.YouTubeUtils?.cleanupManager;
   const onDomReady = (() => {
     let ready = document.readyState !== 'loading';
@@ -62,7 +73,7 @@
         try {
           if (cb) cb();
         } catch (e) {
-          console.warn('[Play All] DOMReady callback error:', e);
+          window.console.warn('[Play All] DOMReady callback error:', e);
         }
       }
     };
@@ -73,7 +84,7 @@
     };
   })();
 
-  const t = window.YouTubeUtils?.t || (key => key || '');
+  const t = window.YouTubeUtils.t;
 
   const hasTranslation = (/** @type {string} */ key) => {
     try {
@@ -99,21 +110,21 @@
 
   const resolveChannelIdFromDom = () => {
     try {
-      const metaChannel = document.querySelector('meta[itemprop="channelId"]');
+      const metaChannel = $('meta[itemprop="channelId"]');
       const metaValue = metaChannel?.getAttribute('content');
       if (metaValue && /^UC[a-zA-Z0-9_-]{22}$/.test(metaValue)) return metaValue;
 
-      const canonical = document.querySelector('link[rel="canonical"]');
+      const canonical = $('link[rel="canonical"]');
       const canonicalHref = canonical?.getAttribute('href') || '';
       const canonicalMatch = canonicalHref.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
       if (canonicalMatch?.[1]) return canonicalMatch[1];
 
-      const browseNode = document.querySelector('ytd-browse[page-subtype="channels"]');
+      const browseNode = $('ytd-browse[page-subtype="channels"]');
       const attrId =
         browseNode?.getAttribute?.('channel-id') || browseNode?.getAttribute?.('external-id');
       if (attrId && /^UC[a-zA-Z0-9_-]{22}$/.test(attrId)) return attrId;
 
-      const channelHrefNode = document.querySelector(
+      const channelHrefNode = $(
         'ytd-channel-name a[href*="/channel/UC"], #channel-name a[href*="/channel/UC"], a[href^="/channel/UC"]'
       );
       const channelHref = channelHrefNode?.getAttribute?.('href') || '';
@@ -137,7 +148,7 @@
         if (cfgId && /^UC[a-zA-Z0-9_-]{22}$/.test(cfgId)) return cfgId;
       }
     } catch (e) {
-      console.warn('[Play All] Failed to resolve channel ID from DOM:', e);
+      window.console.warn('[Play All] Failed to resolve channel ID from DOM:', e);
     }
     return null;
   };
@@ -150,13 +161,14 @@
     }
   };
 
-  /** @type {any} */
-  const globalContext =
-    typeof unsafeWindow !== 'undefined'
-      ? /** @type {any} */ (unsafeWindow)
-      : /** @type {any} */ (window);
-
-  const gmInfo = globalContext?.GM_info ?? null;
+  /** @type {{ script?: { version?: string } } | null} */
+  const gmInfo =
+    /** @type {{ script?: { version?: string } } | null} */ (
+      /** @type {any} */ (globalThis)?.GM_info ?? null
+    ) ||
+    /** @type {{ script?: { version?: string } } | null} */ (
+      /** @type {any} */ (window)?.GM_info ?? null
+    );
 
   const scriptVersion = gmInfo?.script?.version ?? null;
   if (scriptVersion && /-(alpha|beta|dev|test)$/.test(scriptVersion)) {
@@ -164,7 +176,7 @@
       window.YouTubeUtils &&
         window.YouTubeUtils?.logger?.info?.(
           '%cytp - YouTube Play All\n',
-          'color: #bf4bcc; font-size: 32px; font-weight: bold',
+          'color: var(--yt-playall-accent-purple); font-size: 32px; font-weight: bold',
           'You are currently running a test version:',
           scriptVersion
         );
@@ -179,6 +191,7 @@
     try {
       const target = document.head || document.documentElement;
       if (target && typeof target.insertAdjacentHTML === 'function') {
+        // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
         target.insertAdjacentHTML('beforeend', _createHTML(html));
         return;
       }
@@ -188,6 +201,7 @@
         try {
           const t = document.head || document.documentElement;
           if (t && typeof t.insertAdjacentHTML === 'function') {
+            // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
             t.insertAdjacentHTML('beforeend', _createHTML(html));
           }
         } catch (e) {
@@ -196,40 +210,16 @@
       };
       onDomReady(onReady);
     } catch (e) {
-      console.warn('[Play All] Style insertion error:', e);
+      window.console.warn('[Play All] Style insertion error:', e);
     }
   };
 
-  scheduleNonCritical(() =>
-    insertStylesSafely(`<style>
-        .ytp-btn {border-radius: 8px; font-family: 'Roboto', 'Arial', sans-serif; font-size: 1.4rem; line-height: 3.2rem; font-weight: 500; padding: 0 12px; margin-left: 0; user-select: none; white-space: nowrap;}        
-        .ytp-btn, .ytp-btn > * {text-decoration: none; cursor: pointer;}        
-        .ytp-badge {border-radius: 8px; padding: 0.2em; font-size: 0.8em; vertical-align: top;} 
-        .ytp-random-badge, .ytp-random-notice {background-color: #2b66da; color: white;} 
-        /* Style Play All as a YouTube chip button */
-        .ytp-play-all-btn {display:inline-flex;align-items:center;justify-content:center;height:32px;padding:0 12px;white-space:nowrap;flex-shrink:0;max-width:fit-content;border-radius:8px;font-size:1.4rem;line-height:2rem;font-weight:500;background-color:var(--yt-spec-badge-chip-background,rgba(255,255,255,0.1));color:var(--yt-spec-text-primary,#fff);border:none;transition:background-color .2s;cursor:pointer;text-decoration:none;}
-        .ytp-play-all-btn:hover {background-color:var(--yt-spec-badge-chip-background-hover,rgba(255,255,255,0.2));}        
-        html:not([dark]) .ytp-play-all-btn {background-color:var(--yt-spec-badge-chip-background,rgba(0,0,0,0.05));color:var(--yt-spec-text-primary,#0f0f0f);}
-        html:not([dark]) .ytp-play-all-btn:hover {background-color:var(--yt-spec-badge-chip-background-hover,rgba(0,0,0,0.1));}
-        .ytp-button-row-wrapper {width: 100%; display: block; margin: 0 0 0.6rem 0;} 
-        .ytp-button-container {display: inline-flex; align-items: center; gap: 0.6em; width: auto; margin: 0; flex-wrap: nowrap; overflow-x: auto; max-width: 100%;} 
-        /* Ensure Play All sits inside chip bar container flow */
-        ytd-feed-filter-chip-bar-renderer .ytp-play-all-btn,
-        yt-chip-cloud-renderer .ytp-play-all-btn,
-        chip-bar-view-model.ytChipBarViewModelHost .ytp-play-all-btn,
-        .ytp-button-container .ytp-play-all-btn {height:32px;line-height:32px;vertical-align:middle;}
-        ytd-rich-grid-renderer .ytp-button-row-wrapper {margin-left: 0;}        
-        /* fetch() API introduces a race condition. This hides the occasional duplicate buttons */
-        .ytp-play-all-btn ~ .ytp-play-all-btn {display: none;}        
-        /* Fix for mobile view */
-        ytm-feed-filter-chip-bar-renderer .ytp-btn {margin-right: 12px; padding: 0.4em;}        
-        body:has(#secondary ytd-playlist-panel-renderer[ytp-random]) .ytp-prev-button.ytp-button, body:has(#secondary ytd-playlist-panel-renderer[ytp-random]) .ytp-next-button.ytp-button:not([ytp-random="applied"]) {display: none !important;}        
-        #secondary ytd-playlist-panel-renderer[ytp-random] ytd-menu-renderer.ytd-playlist-panel-renderer {height: 1em; visibility: hidden;}        
-        #secondary ytd-playlist-panel-renderer[ytp-random]:not(:hover) ytd-playlist-panel-video-renderer {filter: blur(2em);} 
-        #secondary ytd-playlist-panel-renderer[ytp-random] #header {display: flex; align-items: center; gap: 8px; flex-wrap: nowrap;}       
-        .ytp-random-notice {padding: 0.3em 0.7em; z-index: 1000; white-space: nowrap;}        
-    </style>`)
-  );
+  scheduleNonCritical(() => {
+    const css =
+      window.YouTubePlusStyleResources?.playall ||
+      `.ytp-play-all-btn{display:inline-flex;align-items:center;padding:0 12px;height:32px;border-radius:8px;background:linear-gradient(135deg,var(--yt-playall-accent-purple),var(--yt-playall-accent-blue));color:#fff;font-size:1.4rem;font-weight:500;text-decoration:none;white-space:nowrap;cursor:pointer;flex-shrink:0;user-select:none;font-family:Roboto,Arial,sans-serif;letter-spacing:.007em;line-height:1;vertical-align:middle;border:none;outline:none}.ytp-play-all-btn:hover{opacity:.85}`;
+    insertStylesSafely(`<style>${css}</style>`);
+  });
 
   const getVideoId = (/** @type {string} */ url) => {
     try {
@@ -258,7 +248,14 @@
    */
   const getPlayer = () => /** @type {PlayerElement | null} */ ($('#movie_player'));
 
-  const isSupportedTabPath = () => /\/(videos|shorts|streams)\/?$/.test(window.location.pathname);
+  const isSupportedTabPath = () => {
+    const path = window.location.pathname || '';
+    return (
+      /^\/(?:@[^/]+|channel\/[^/]+|c\/[^/]+|user\/[^/]+)(?:\/(videos|shorts|streams))?\/?$/.test(
+        path
+      ) || /\/(videos|shorts|streams)\/?$/.test(path)
+    );
+  };
 
   const isAdPlaying = () => !!$('.ad-interrupting');
 
@@ -304,10 +301,30 @@
   };
 
   let id = '';
+  /** @type {string | null} */
+  let observerSubId = null;
+  /** @type {ReturnType<typeof setInterval> | null} */
+  let observerFallbackTimerId = null;
+  const scheduleApplyRetry = (
+    /** @type {number} */ retryCount,
+    /** @type {string} */ selector,
+    /** @type {number} */ timeoutMs
+  ) => {
+    if (retryCount >= 12) return;
+    const waitFor = window.YouTubeUtils?.waitFor || window.YouTubeUtils?.waitForElement;
+    if (typeof waitFor === 'function') {
+      waitFor(selector, timeoutMs)
+        .then(() => apply(retryCount + 1))
+        .catch(() => apply(retryCount + 1));
+      return;
+    }
+    requestAnimationFrame(() => apply(retryCount + 1));
+  };
+
   const apply = (retryCount = 0) => {
     if (id === '') {
       // do not apply prematurely, caused by mutation observer
-      console.warn('[Play All] Channel ID not yet determined');
+      window.console.warn('[Play All] Channel ID not yet determined');
       return;
     }
 
@@ -330,7 +347,7 @@
       ];
 
       for (const selector of desktopParentSelectors) {
-        const candidate = document.querySelector(selector);
+        const candidate = $(selector);
         if (candidate instanceof HTMLElement) {
           parent = candidate;
           break;
@@ -344,10 +361,12 @@
         'ytd-rich-grid-renderer, ytm-rich-grid-renderer, div.ytChipBarViewModelChipWrapper'
       );
       if (!grid) {
-        // Grid not yet rendered — retry (handles SPA navigation timing)
-        if (retryCount < 12) {
-          setTimeout(() => apply(retryCount + 1), 300);
-        }
+        // Grid not yet rendered — retry via shared wait helper
+        scheduleApplyRetry(
+          retryCount,
+          'ytd-rich-grid-renderer, ytm-rich-grid-renderer, div.ytChipBarViewModelChipWrapper',
+          1500
+        );
         return;
       }
 
@@ -358,13 +377,18 @@
       if (chipBarInGrid instanceof HTMLElement) {
         parent = chipBarInGrid;
       } else if (retryCount < 8) {
-        // Chip bar not rendered yet — wait and retry (up to ~2.4s total)
-        setTimeout(() => apply(retryCount + 1), 300);
+        // Chip bar not rendered yet — retry via shared wait helper
+        scheduleApplyRetry(
+          retryCount,
+          'chip-bar-view-model.ytChipBarViewModelHost, ytd-feed-filter-chip-bar-renderer iron-selector#chips, ytd-feed-filter-chip-bar-renderer #chips-wrapper, yt-chip-cloud-renderer #chips',
+          1200
+        );
         return;
       } else {
         // Last resort: insert a wrapper at the top of the grid
         let existingContainer = grid.querySelector('.ytp-button-container');
         if (!existingContainer) {
+          // eslint-disable-next-line no-unsanitized/method -- static literal HTML wrapped by Trusted Types policy
           grid.insertAdjacentHTML(
             'afterbegin',
             _createHTML('<div class="ytp-button-container"></div>')
@@ -376,7 +400,7 @@
     }
 
     if (!parent) {
-      console.warn('[Play All] Could not find parent container');
+      window.console.warn('[Play All] Could not find parent container');
       return;
     }
 
@@ -391,19 +415,19 @@
     }
 
     // See: available-lists.md
-    const [allPlaylist] = window.location.pathname.endsWith('/videos')
-      ? // Normal videos
-        // list=UU<ID> adds shorts into the playlist, list=UULF<ID> has videos without shorts
-        ['UULF']
-      : // Shorts
-        window.location.pathname.endsWith('/shorts')
-        ? ['UUSH']
-        : // Live streams
-          ['UULV'];
+    const path = window.location.pathname || '';
+    const [allPlaylist] = path.endsWith('/shorts')
+      ? ['UUSH']
+      : path.endsWith('/streams')
+        ? ['UULV']
+        : // Default for /@channel, /channel/* and /videos is regular videos.
+          // list=UU<ID> may include shorts, list=UULF<ID> is videos-only.
+          ['UULF'];
 
     const playlistSuffix = id.startsWith('UC') ? id.substring(2) : id;
 
     // Insert button directly into the container (chip bar or fallback wrapper)
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
     parent.insertAdjacentHTML(
       'beforeend',
       _createHTML(
@@ -429,21 +453,10 @@
         });
       }
     } else {
-      // Use event delegation for desktop buttons
-      if (!parent.hasAttribute('data-ytp-delegated')) {
-        parent.setAttribute('data-ytp-delegated', 'true');
-        parent.addEventListener('click', event => {
-          const tgt = event.target instanceof Element ? event.target : null;
-          const btn = /** @type {HTMLAnchorElement|null} */ (
-            tgt?.closest?.('.ytp-play-all-btn') ?? null
-          );
-          if (btn && btn.href) {
-            event.preventDefault();
-            event.stopPropagation();
-            navigate(btn.href);
-          }
-        });
-      }
+      // Desktop: do NOT intercept the click. The inserted element is a real
+      // <a href="/playlist?...">, so YouTube's polymer router will pick up the
+      // navigation natively. Calling preventDefault() here previously made
+      // the click look ignored when chip-bar-view-model swallowed our handler.
     }
   };
 
@@ -455,7 +468,7 @@
     apply();
   };
 
-  const observer = new MutationObserver(() => {
+  const scheduleObserverWork = () => {
     if (!featureEnabled) return;
     if (observerFrame) return;
     if (typeof requestAnimationFrame === 'function') {
@@ -465,10 +478,42 @@
     observerFrame = /** @type {number} */ (
       /** @type {unknown} */ (setTimeout(runObserverWork, 16))
     );
-  });
+  };
+
+  const detachObserver = () => {
+    if (observerSubId && window.YouTubeMutationCoordinator?.unsubscribe) {
+      window.YouTubeMutationCoordinator.unsubscribe(observerSubId);
+      observerSubId = null;
+    }
+    if (observerFallbackTimerId) {
+      clearInterval(observerFallbackTimerId);
+      observerFallbackTimerId = null;
+    }
+  };
+
+  const attachObserver = (/** @type {Element | null | undefined} */ observeTarget) => {
+    detachObserver();
+    if (!featureEnabled || !observeTarget) return;
+
+    const coordinator = window.YouTubeMutationCoordinator;
+    if (coordinator?.watchTarget) {
+      observerSubId = 'playall::observer';
+      coordinator.watchTarget(observerSubId, observeTarget, () => scheduleObserverWork(), {
+        attributes: true,
+        childList: true,
+        subtree: true,
+      });
+      return;
+    }
+
+    // Fallback for environments without MutationCoordinator; low-frequency polling only.
+    observerFallbackTimerId = setInterval(() => {
+      scheduleObserverWork();
+    }, 500);
+  };
 
   const addButton = async () => {
-    observer.disconnect();
+    detachObserver();
 
     if (!featureEnabled) return;
 
@@ -480,18 +525,12 @@
     // Observe the grid (attribute changes when chip selection changes) and
     // also observe chip-bar-view-model directly for the new 2026 UI.
     const observeTarget =
-      document.querySelector('ytd-rich-grid-renderer') ||
-      document.querySelector('chip-bar-view-model.ytChipBarViewModelHost') ||
+      $('ytd-rich-grid-renderer') ||
+      $('chip-bar-view-model.ytChipBarViewModelHost') ||
       $(
         'ytm-feed-filter-chip-bar-renderer .iron-selected, ytm-feed-filter-chip-bar-renderer .chip-bar-contents .selected'
       );
-    if (observeTarget) {
-      observer.observe(observeTarget, {
-        attributes: true,
-        childList: false,
-        subtree: false,
-      });
-    }
+    attachObserver(observeTarget);
 
     // This check is necessary for the mobile Interval
     if ($('.ytp-play-all-btn')) {
@@ -532,7 +571,7 @@
         }
       }
     } catch (e) {
-      console.warn('[Play All] Error extracting channel ID from canonical:', e);
+      window.console.warn('[Play All] Error extracting channel ID from canonical:', e);
     }
 
     // Fallback: fetch HTML and parse
@@ -545,11 +584,13 @@
         parsedUrl.hostname !== 'youtube.com' &&
         parsedUrl.hostname !== 'm.youtube.com'
       ) {
-        console.warn('[Play All] Skipping fetch for non-YouTube URL');
+        window.console.warn('[Play All] Skipping fetch for non-YouTube URL');
         return;
       }
       const _fetchCtrl = new AbortController();
-      const _fetchTimer = setTimeout(() => _fetchCtrl.abort(), 10000); // 10 s timeout
+      const _fetchTimer = setTimeout_(function () {
+        _fetchCtrl.abort();
+      }, 10000); // 10 s timeout
       let _fetchResp;
       try {
         _fetchResp = await fetch(currentUrl, { signal: _fetchCtrl.signal });
@@ -574,17 +615,19 @@
       if (id) {
         apply();
       } else {
-        console.warn('[Play All] Could not extract channel ID');
+        window.console.warn('[Play All] Could not extract channel ID');
       }
     } catch (e) {
-      console.error('[Play All] Error fetching channel data:', e);
+      window.console.error('[Play All] Error fetching channel data:', e);
     }
   };
 
   const stopAddButtonRetries = () => {
-    if (addButtonRetryTimer) clearTimeout(addButtonRetryTimer);
+    if (addButtonRetryTimer) {
+      clearTimeout(addButtonRetryTimer);
+      if (typeof addButtonRetryTimer.cancel === 'function') addButtonRetryTimer.cancel();
+    }
     addButtonRetryTimer = null;
-    addButtonRetryAttempts = 0;
   };
 
   const queueDesktopAddButton = (reset = true) => {
@@ -597,34 +640,23 @@
       stopAddButtonRetries();
     }
 
-    const run = () => {
-      if (!featureEnabled) {
-        stopAddButtonRetries();
-        return;
-      }
+    const scheduler = window.YouTubeUtils?.createRetryScheduler?.({
+      label: 'playall-add-button',
+      interval: 120,
+      maxAttempts: 80,
+      check: () => {
+        if (!featureEnabled || !isSupportedTabPath()) return true;
+        addButton();
+        return !!$('.ytp-play-all-btn');
+      },
+    });
 
-      if (!isSupportedTabPath()) {
-        stopAddButtonRetries();
-        return;
-      }
+    if (scheduler) {
+      addButtonRetryTimer = scheduler;
+      return;
+    }
 
-      addButton();
-
-      if (document.querySelector('.ytp-play-all-btn')) {
-        stopAddButtonRetries();
-        return;
-      }
-
-      if (addButtonRetryAttempts >= 30) {
-        stopAddButtonRetries();
-        return;
-      }
-
-      addButtonRetryAttempts += 1;
-      addButtonRetryTimer = /** @type {number} */ (/** @type {unknown} */ (setTimeout(run, 300)));
-    };
-
-    run();
+    requestAnimationFrame(addButton);
   };
 
   // Removing the button prevents it from still existing when switching between "Videos", "Shorts", and "Live"
@@ -635,483 +667,543 @@
     );
   };
 
-  if (location.host === 'm.youtube.com') {
-    // The "yt-navigate-finish" event does not fire on mobile
-    // Detect URL changes via pushState/replaceState override + popstate (lightweight)
-    let lastUrl = location.href;
-    const checkUrlChange = () => {
-      if (location.href !== lastUrl) {
-        lastUrl = location.href;
-        addButton();
-      }
-    };
-    // Use centralized pushState/replaceState event from utils.js
-    const _ytpNavHandler = () => setTimeout(checkUrlChange, 50);
-    if (_cm?.registerListener) {
-      _cm.registerListener(window, 'ytp-history-navigate', _ytpNavHandler, { passive: true });
-      _cm.registerListener(window, 'popstate', checkUrlChange, { passive: true });
-    } else {
-      window.addEventListener('ytp-history-navigate', _ytpNavHandler, { passive: true });
-      window.addEventListener('popstate', checkUrlChange, { passive: true });
-    }
-    // Initial call
-    addButton();
-  } else {
-    const _navStartHandler = () => {
-      stopAddButtonRetries();
-      removeButton();
-      id = '';
-    };
-    const _navFinishHandler = () => {
-      queueDesktopAddButton();
-      setTimeout(() => queueDesktopAddButton(false), 120);
-      setTimeout(() => queueDesktopAddButton(false), 600);
-      setTimeout(() => queueDesktopAddButton(false), 1400);
-    };
-    const _pageshowHandler = () => setTimeout(() => queueDesktopAddButton(), 120);
-    const _visChangeHandler = () => {
-      if (document.visibilityState === 'visible') {
-        queueDesktopAddButton();
-      }
-    };
-    if (_cm?.registerListener) {
-      _cm.registerListener(window, 'yt-navigate-start', _navStartHandler);
-      _cm.registerListener(window, 'yt-navigate-finish', _navFinishHandler);
-      _cm.registerListener(document, 'yt-page-data-updated', _navFinishHandler);
-      _cm.registerListener(window, 'pageshow', _pageshowHandler);
-      _cm.registerListener(document, 'visibilitychange', _visChangeHandler);
-    } else {
-      window.addEventListener('yt-navigate-start', _navStartHandler);
-      window.addEventListener('yt-navigate-finish', _navFinishHandler);
-      document.addEventListener('yt-page-data-updated', _navFinishHandler);
-      window.addEventListener('pageshow', _pageshowHandler);
-      document.addEventListener('visibilitychange', _visChangeHandler);
-    }
-    // Also attempt to add buttons on initial script run in case the SPA navigation event
-    // already happened before this script was loaded (some browsers/firefox timing).
-    try {
-      onDomReady(() => queueDesktopAddButton(false));
-      setTimeout(() => queueDesktopAddButton(false), 50);
-      setTimeout(() => queueDesktopAddButton(false), 400);
-      setTimeout(() => queueDesktopAddButton(false), 1200);
-    } catch (e) {
-      /* setTimeout unlikely to fail */
-    }
-  }
+  let playAllRuntimeStarted = false;
+  const startPlayAllRuntime = () => {
+    if (playAllRuntimeStarted) return;
+    playAllRuntimeStarted = true;
 
-  const _settingsUpdHandler = (/** @type {Event} */ e) => {
-    try {
-      const custom = e instanceof CustomEvent ? e : null;
-      const nextEnabled = custom?.detail?.enablePlayAll !== false;
-      if (nextEnabled === featureEnabled) return;
-      setFeatureEnabled(nextEnabled);
-    } catch (e) {
-      setFeatureEnabled(loadFeatureEnabled());
-    }
-  };
-  if (_cm?.registerListener) {
-    _cm.registerListener(window, 'youtube-plus-settings-updated', _settingsUpdHandler);
-  } else {
-    window.addEventListener('youtube-plus-settings-updated', _settingsUpdHandler);
-  }
-
-  // Random play feature
-  (() => {
-    // Random play is not supported for mobile devices
     if (location.host === 'm.youtube.com') {
-      return;
-    }
-
-    const getParams = () => new URLSearchParams(window.location.search);
-
-    /** @returns {{ params: URLSearchParams, mode: 'random', list: string, storageKey: string } | null} */
-    const getRandomConfig = () => {
-      const params = getParams();
-      const modeParam = params.get('ytp-random');
-      if (!modeParam || modeParam === '0') return null;
-      const list = params.get('list') || '';
-      if (!list) return null;
-
-      return { params, mode: 'random', list, storageKey: `ytp-random-${list}` };
-    };
-
-    const getStorage = (/** @type {string} */ storageKey) => {
-      try {
-        return JSON.parse(localStorage.getItem(storageKey) || '{}');
-      } catch (e) {
-        return {};
-      }
-    };
-
-    const isWatched = (/** @type {string} */ storageKey, /** @type {string} */ videoId) =>
-      getStorage(storageKey)[videoId] || false;
-    const markWatched = (/** @type {string} */ storageKey, /** @type {string} */ videoId) => {
-      localStorage.setItem(
-        storageKey,
-        JSON.stringify({ ...getStorage(storageKey), [videoId]: true })
-      );
-      document
-        .querySelectorAll('#wc-endpoint[href*=zsA3X40nz9w]')
-        .forEach(element => element.parentElement?.setAttribute('hidden', ''));
-    };
-
-    const playNextRandom = (/** @type {Record<string,any>} */ cfg, reload = false) => {
-      const playerInstance = getPlayer();
-      if (playerInstance && typeof playerInstance.pauseVideo === 'function') {
-        playerInstance.pauseVideo();
-      }
-
-      const videos = Object.entries(getStorage(cfg.storageKey)).filter(([_, watched]) => !watched);
-      const params = new URLSearchParams(window.location.search);
-
-      if (videos.length === 0) {
-        return;
-      }
-
-      let videoIndex = Math.floor(Math.random() * videos.length);
-
-      // Safety clamp in case of unexpected edge cases
-      if (videoIndex < 0) videoIndex = 0;
-      if (videoIndex >= videos.length) videoIndex = videos.length - 1;
-
-      if (reload) {
-        params.set('v', videos[videoIndex][0]);
-        params.set('ytp-random', cfg.mode);
-        params.delete('t');
-        params.delete('index');
-        params.delete('ytp-random-initial');
-        window.location.href = `${window.location.pathname}?${params.toString()}`;
+      // The "yt-navigate-finish" event does not fire on mobile
+      // Detect URL changes via pushState/replaceState override + popstate (lightweight)
+      let lastUrl = location.href;
+      const checkUrlChange = () => {
+        if (location.href !== lastUrl) {
+          lastUrl = location.href;
+          addButton();
+        }
+      };
+      // Use centralized pushState/replaceState event from utils.js
+      const _ytpNavHandler = () => setTimeout(checkUrlChange, 50);
+      if (_cm?.registerListener) {
+        _cm.registerListener(window, 'ytp-history-navigate', _ytpNavHandler, { passive: true });
+        _cm.registerListener(window, 'popstate', checkUrlChange, { passive: true });
       } else {
-        // Use the redirect() function for consistent navigation
-        try {
-          const listId = params.get('list') || '';
-          redirect(videos[videoIndex][0], listId, cfg.mode);
-        } catch (error) {
-          console.error(
-            '[Play All] Error using redirect(), falling back to manual redirect:',
-            error
-          );
-          // Fallback to manual redirect if the redirect() function fails
-          const redirector = document.createElement('a');
-          redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
-          redirector.setAttribute('hidden', '');
-          redirector.data = {
-            commandMetadata: {
-              webCommandMetadata: {
-                url: `/watch?v=${videos[videoIndex][0]}&list=${params.get('list')}&ytp-random=${cfg.mode}`,
-                webPageType: 'WEB_PAGE_TYPE_WATCH',
-                rootVe: 3832,
-              },
-            },
-            watchEndpoint: {
-              videoId: videos[videoIndex][0],
-              playlistId: params.get('list'),
-            },
-          };
-          const listContainer = $('ytd-playlist-panel-renderer #items');
-          if (listContainer instanceof HTMLElement) {
-            listContainer.append(redirector);
-          } else {
-            document.body.appendChild(redirector);
-          }
-          redirector.click();
-        }
+        window.addEventListener('ytp-history-navigate', _ytpNavHandler, { passive: true });
+        window.addEventListener('popstate', checkUrlChange, { passive: true });
       }
-    };
-
-    /** @type {number | { stop: () => void } | null} */
-    let applyRetryTimeoutId = null;
-    /** @type {number|boolean|null} */
-    let progressIntervalId = null;
-
-    stopRandomPlayTimers = () => {
-      if (applyRetryTimeoutId) {
-        if (typeof applyRetryTimeoutId === 'number') {
-          clearTimeout(applyRetryTimeoutId);
-        } else {
-          applyRetryTimeoutId.stop();
-        }
-      }
-      applyRetryTimeoutId = null;
-      // progressIntervalId is now a boolean or event listener, not a timer
-      if (progressIntervalId && typeof progressIntervalId !== 'boolean') {
-        clearInterval(progressIntervalId);
-      }
-      progressIntervalId = null;
-    };
-
-    const applyRandomPlay = (/** @type {Record<string,any>} */ cfg) => {
-      if (!featureEnabled) return;
-      if (!window.location.pathname.endsWith('/watch')) return;
-
-      const playlistContainer = $('#secondary ytd-playlist-panel-renderer');
-      if (playlistContainer === null) {
-        return;
-      }
-      if (playlistContainer.hasAttribute('ytp-random')) {
-        return;
-      }
-
-      playlistContainer.setAttribute('ytp-random', 'applied');
-      const headerContainer = playlistContainer.querySelector('#header');
-      if (headerContainer && !headerContainer.querySelector('.ytp-random-notice')) {
-        headerContainer.insertAdjacentHTML(
-          'beforeend',
-          _createHTML(`<span class="ytp-random-notice">Play All mode</span>`)
-        );
-      }
-
-      const storage = getStorage(cfg.storageKey);
-
-      // Robustly collect playlist anchors - different YT layouts use different selectors
-      const anchorSelectors = [
-        '#wc-endpoint',
-        'ytd-playlist-panel-video-renderer a#wc-endpoint',
-        'ytd-playlist-panel-video-renderer a',
-        'a#video-title',
-        '#secondary ytd-playlist-panel-renderer a[href*="/watch?"]',
-      ];
-
-      /** @type {HTMLAnchorElement[]} */
-      const anchors = [];
-      anchorSelectors.forEach(sel => {
-        playlistContainer.querySelectorAll(sel).forEach(a => {
-          if (a instanceof Element && a.tagName === 'A') anchors.push(/** @type {any} */ (a));
-        });
-      });
-
-      // Deduplicate by href
-      /** @type {HTMLAnchorElement[]} */
-      const uniq = [];
-      const seen = new Set();
-      anchors.forEach(a => {
-        const href = /** @type {HTMLAnchorElement} */ (a).href || a.getAttribute('href') || '';
-        if (!seen.has(href)) {
-          seen.add(href);
-          uniq.push(a);
-        }
-      });
-
-      const navigate = (/** @type {string} */ href) => (window.location.href = href);
-
-      // Mark videos and prepare links
-      uniq.forEach(element => {
-        let videoId = null;
-        try {
-          videoId = new URL(element.href, window.location.origin).searchParams.get('v');
-        } catch (e) {
-          videoId = new URLSearchParams(element.search || '').get('v');
-        }
-
-        if (!videoId) return;
-
-        if (!isWatched(cfg.storageKey, videoId)) {
-          storage[videoId] = false;
-        }
-
-        // Ensure ytp-random param present
-        try {
-          const u = new URL(element.href, window.location.origin);
-          u.searchParams.set('ytp-random', cfg.mode);
-          element.href = u.toString();
-        } catch (e) {
-          /* malformed URL ignored */
-        }
-
-        element.setAttribute('data-ytp-random-link', 'true');
-
-        const entryKey = getVideoId(element.href);
-        if (entryKey && isWatched(cfg.storageKey, entryKey)) {
-          element.parentElement?.setAttribute('hidden', '');
-        }
-      });
-
-      // Use event delegation for video links
-      if (playlistContainer && !playlistContainer.hasAttribute('data-ytp-random-delegated')) {
-        playlistContainer.setAttribute('data-ytp-random-delegated', 'true');
-        playlistContainer.addEventListener('click', event => {
-          const tgt = event.target instanceof Element ? event.target : null;
-          const link = /** @type {HTMLAnchorElement|null} */ (
-            tgt?.closest?.('a[data-ytp-random-link]') ?? null
-          );
-          if (link && link.href) {
-            event.preventDefault();
-            navigate(link.href);
-          }
-        });
-      }
-      localStorage.setItem(cfg.storageKey, JSON.stringify(storage));
-
-      const currentVideoId = getVideoId(location.href);
-      if (
-        cfg.params.get('ytp-random-initial') === '1' ||
-        (currentVideoId && isWatched(cfg.storageKey, currentVideoId))
-      ) {
-        playNextRandom(cfg);
-
-        return;
-      }
-
-      const header = playlistContainer.querySelector('h3 a');
-      if (header && header.tagName === 'A') {
-        const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
-        anchorHeader.insertAdjacentHTML(
-          'beforeend',
-          _createHTML(
-            ` <span class="ytp-badge ytp-random-badge">Play All <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`
-          )
-        );
-        anchorHeader.href = '#';
-        const badge = anchorHeader.querySelector('.ytp-random-badge');
-        if (badge) {
-          badge.addEventListener('click', event => {
-            event.preventDefault();
-
-            localStorage.removeItem(cfg.storageKey);
-
-            const params = new URLSearchParams(location.search);
-            params.delete('ytp-random');
-            window.location.href = `${window.location.pathname}?${params.toString()}`;
-          });
-        }
-      }
-
-      const _keydownHandler = (/** @type {Event} */ event) => {
-        if (!(event instanceof KeyboardEvent)) return;
-        // SHIFT + N
-        if (event.shiftKey && event.key.toLowerCase() === 'n') {
-          event.stopImmediatePropagation();
-          event.preventDefault();
-
-          const videoId = getVideoId(location.href);
-          if (videoId) markWatched(cfg.storageKey, videoId);
-          // Unfortunately there is no workaround to YouTube redirecting to the next in line without a reload
-          playNextRandom(cfg, true);
+      // Initial call
+      addButton();
+    } else {
+      const _navStartHandler = () => {
+        stopAddButtonRetries();
+        removeButton();
+        id = '';
+      };
+      const _navFinishHandler = () => {
+        queueDesktopAddButton();
+        setTimeout(function () {
+          queueDesktopAddButton(false);
+        }, 120);
+        setTimeout(function () {
+          queueDesktopAddButton(false);
+        }, 600);
+        setTimeout_(function () {
+          queueDesktopAddButton(false);
+        }, 1400);
+        setTimeout_(function () {
+          queueDesktopAddButton(false);
+        }, 2800);
+      };
+      const _pageshowHandler = () =>
+        setTimeout(function () {
+          queueDesktopAddButton();
+        }, 120);
+      const _visChangeHandler = () => {
+        if (document.visibilityState === 'visible') {
+          queueDesktopAddButton();
         }
       };
       if (_cm?.registerListener) {
-        _cm.registerListener(document, 'keydown', _keydownHandler, true);
+        _cm.registerListener(window, 'yt-navigate-start', _navStartHandler);
+        _cm.registerListener(window, 'yt-navigate-finish', _navFinishHandler);
+        _cm.registerListener(document, 'yt-page-data-updated', _navFinishHandler);
+        _cm.registerListener(document, 'yt-page-data-fetched', _navFinishHandler);
+        _cm.registerListener(window, 'pageshow', _pageshowHandler);
+        _cm.registerListener(document, 'visibilitychange', _visChangeHandler);
       } else {
-        document.addEventListener('keydown', _keydownHandler, true);
+        window.addEventListener('yt-navigate-start', _navStartHandler);
+        window.addEventListener('yt-navigate-finish', _navFinishHandler);
+        document.addEventListener('yt-page-data-updated', _navFinishHandler);
+        document.addEventListener('yt-page-data-fetched', _navFinishHandler);
+        window.addEventListener('pageshow', _pageshowHandler);
+        document.addEventListener('visibilitychange', _visChangeHandler);
+      }
+      // Also attempt to add buttons on initial script run in case the SPA navigation event
+      // already happened before this script was loaded (some browsers/firefox timing).
+      try {
+        onDomReady(() => queueDesktopAddButton(false));
+        setTimeout(function () {
+          queueDesktopAddButton(false);
+        }, 50);
+        setTimeout(function () {
+          queueDesktopAddButton(false);
+        }, 400);
+        setTimeout_(function () {
+          queueDesktopAddButton(false);
+        }, 1200);
+      } catch (e) {
+        /* setTimeout unlikely to fail */
       }
 
-      if (progressIntervalId) return;
-
-      // Use video timeupdate event instead of setInterval for better performance
-      const videoEl = $('video');
-      if (!videoEl) return;
-
-      const handleProgress = () => {
-        const videoId = getVideoId(location.href);
-
-        const params = new URLSearchParams(location.search);
-        params.set('ytp-random', cfg.mode);
-        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
-
-        const player = getPlayer();
-        if (!player || typeof player.getProgressState !== 'function') {
-          return;
-        }
-
-        const progressState = player.getProgressState();
-        if (
-          !progressState ||
-          typeof progressState.current !== 'number' ||
-          typeof progressState.duration !== 'number'
-        ) {
-          return;
-        }
-
-        // Do not listen for watch progress when watching advertisements
-        if (!isAdPlaying()) {
-          if (progressState.current / progressState.duration >= 0.9) {
-            if (videoId) markWatched(cfg.storageKey, videoId);
+      // Safety net: LazyLoader dispatches ytp:nav-refresh after every SPA nav.
+      // Re-queue the desktop Add button so it appears reliably after in-page
+      // navigation between channel tabs / playlists.
+      try {
+        window.addEventListener('ytp:nav-refresh', function () {
+          try {
+            queueDesktopAddButton(false);
+          } catch (e) {
+            void e;
           }
+        });
+      } catch (e) {
+        void e;
+      }
+    }
 
-          // Autoplay random video
-          if (progressState.current >= progressState.duration - 2) {
-            // make sure vanilla autoplay doesnt take over
-            if (typeof player.pauseVideo === 'function') player.pauseVideo();
-            if (typeof player.seekTo === 'function') player.seekTo(0);
-            playNextRandom(cfg);
-          }
-        }
-
-        const nextButton = $('#ytd-player .ytp-next-button.ytp-button:not([ytp-random="applied"])');
-        if (nextButton instanceof HTMLElement) {
-          // Replace with span to prevent anchor click events
-          const newButton = document.createElement('span');
-          newButton.className = nextButton.className;
-          newButton.innerHTML = _createHTML(nextButton.innerHTML);
-          nextButton.replaceWith(newButton);
-
-          newButton.setAttribute('ytp-random', 'applied');
-          newButton.addEventListener('click', () => {
-            if (videoId) markWatched(cfg.storageKey, videoId);
-            playNextRandom(cfg);
-          });
-        }
-      };
-
-      videoEl.addEventListener('timeupdate', handleProgress, { passive: true });
-      progressIntervalId = true; // Mark as initialized
+    const _settingsUpdHandler = (/** @type {Event} */ e) => {
+      try {
+        const custom = e instanceof CustomEvent ? e : null;
+        const nextEnabled = custom?.detail?.enablePlayAll !== false;
+        if (nextEnabled === featureEnabled) return;
+        setFeatureEnabled(nextEnabled);
+      } catch (e) {
+        setFeatureEnabled(window.YouTubeUtils?.loadFeatureEnabled?.('enablePlayAll') ?? true);
+      }
     };
+    if (_cm?.registerListener) {
+      _cm.registerListener(window, 'youtube-plus-settings-updated', _settingsUpdHandler);
+    } else {
+      window.addEventListener('youtube-plus-settings-updated', _settingsUpdHandler);
+    }
 
-    scheduleApplyRandomPlay = () => {
-      if (!featureEnabled) return;
-      stopRandomPlayTimers?.();
-
-      if (!window.location.pathname.endsWith('/watch')) return;
-
-      const performApply = () => {
-        const cfg = getRandomConfig();
-        if (!cfg) return false;
-
-        // Storage needs to now be { [videoId]: bool }
-        try {
-          const current = localStorage.getItem(cfg.storageKey);
-          if (current && Array.isArray(JSON.parse(current))) {
-            localStorage.removeItem(cfg.storageKey);
-          }
-        } catch (e) {
-          localStorage.removeItem(cfg.storageKey);
-        }
-
-        applyRandomPlay(cfg);
-        // Consider done when playlist panel is found
-        return !!document.querySelector('#secondary ytd-playlist-panel-renderer[ytp-random]');
-      };
-
-      // Use shared retry scheduler instead of manual recursion
-      const scheduler = window.YouTubeUtils?.createRetryScheduler?.({
-        check: performApply,
-        maxAttempts: 30,
-        interval: 250,
-      });
-      if (scheduler) applyRetryTimeoutId = scheduler;
-    };
-
-    const onNavigate = () => {
-      if (!featureEnabled) {
-        stopRandomPlayTimers?.();
+    // Random play feature
+    (() => {
+      // Random play is not supported for mobile devices
+      if (location.host === 'm.youtube.com') {
         return;
       }
-      stopRandomPlayTimers?.();
-      scheduleApplyRandomPlay?.();
-    };
 
-    onNavigate();
-    const _navFinishRandom = () => setTimeout(onNavigate, 200);
-    if (_cm?.registerListener) {
-      _cm.registerListener(window, 'yt-navigate-finish', _navFinishRandom);
-    } else {
-      window.addEventListener('yt-navigate-finish', _navFinishRandom);
-    }
-  })();
+      const getParams = () => new URLSearchParams(window.location.search);
+
+      /** @returns {{ params: URLSearchParams, mode: 'random', list: string, storageKey: string } | null} */
+      const getRandomConfig = () => {
+        const params = getParams();
+        const modeParam = params.get('ytp-random');
+        if (!modeParam || modeParam === '0') return null;
+        const list = params.get('list') || '';
+        if (!list) return null;
+
+        return { params, mode: 'random', list, storageKey: `ytp-random-${list}` };
+      };
+
+      const getStorage = (/** @type {string} */ storageKey) => {
+        try {
+          return JSON.parse(localStorage.getItem(storageKey) || '{}');
+        } catch (e) {
+          return {};
+        }
+      };
+
+      const isWatched = (/** @type {string} */ storageKey, /** @type {string} */ videoId) =>
+        getStorage(storageKey)[videoId] || false;
+      const markWatched = (/** @type {string} */ storageKey, /** @type {string} */ videoId) => {
+        localStorage.setItem(
+          storageKey,
+          JSON.stringify({ ...getStorage(storageKey), [videoId]: true })
+        );
+        document
+          .querySelectorAll('#wc-endpoint[href*=zsA3X40nz9w]')
+          .forEach(element => element.parentElement?.setAttribute('hidden', ''));
+      };
+
+      const playNextRandom = (/** @type {Record<string,any>} */ cfg, reload = false) => {
+        const playerInstance = getPlayer();
+        if (playerInstance && typeof playerInstance.pauseVideo === 'function') {
+          playerInstance.pauseVideo();
+        }
+
+        const videos = Object.entries(getStorage(cfg.storageKey)).filter(
+          ([_, watched]) => !watched
+        );
+        const params = new URLSearchParams(window.location.search);
+
+        if (videos.length === 0) {
+          return;
+        }
+
+        let videoIndex = Math.floor(Math.random() * videos.length);
+
+        // Safety clamp in case of unexpected edge cases
+        if (videoIndex < 0) videoIndex = 0;
+        if (videoIndex >= videos.length) videoIndex = videos.length - 1;
+
+        if (reload) {
+          params.set('v', videos[videoIndex][0]);
+          params.set('ytp-random', cfg.mode);
+          params.delete('t');
+          params.delete('index');
+          params.delete('ytp-random-initial');
+          window.location.href = `${window.location.pathname}?${params.toString()}`;
+        } else {
+          // Use the redirect() function for consistent navigation
+          try {
+            const listId = params.get('list') || '';
+            redirect(videos[videoIndex][0], listId, cfg.mode);
+          } catch (error) {
+            window.console.error(
+              '[Play All] Error using redirect(), falling back to manual redirect:',
+              error
+            );
+            // Fallback to manual redirect if the redirect() function fails
+            const redirector = document.createElement('a');
+            redirector.className =
+              'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
+            redirector.setAttribute('hidden', '');
+            redirector.data = {
+              commandMetadata: {
+                webCommandMetadata: {
+                  url: `/watch?v=${videos[videoIndex][0]}&list=${params.get('list')}&ytp-random=${cfg.mode}`,
+                  webPageType: 'WEB_PAGE_TYPE_WATCH',
+                  rootVe: 3832,
+                },
+              },
+              watchEndpoint: {
+                videoId: videos[videoIndex][0],
+                playlistId: params.get('list'),
+              },
+            };
+            const listContainer = $('ytd-playlist-panel-renderer #items');
+            if (listContainer instanceof HTMLElement) {
+              listContainer.append(redirector);
+            } else {
+              document.body.appendChild(redirector);
+            }
+            redirector.click();
+          }
+        }
+      };
+
+      /** @type {number | { stop: () => void } | null} */
+      let applyRetryTimeoutId = null;
+      /** @type {number|boolean|null} */
+      let progressIntervalId = null;
+
+      stopRandomPlayTimers = () => {
+        if (applyRetryTimeoutId) {
+          if (typeof applyRetryTimeoutId === 'number') {
+            clearTimeout(applyRetryTimeoutId);
+          } else {
+            applyRetryTimeoutId.stop();
+          }
+        }
+        applyRetryTimeoutId = null;
+        // progressIntervalId is now a boolean or event listener, not a timer
+        if (progressIntervalId && typeof progressIntervalId !== 'boolean') {
+          clearInterval(progressIntervalId);
+        }
+        progressIntervalId = null;
+      };
+
+      const applyRandomPlay = (/** @type {Record<string,any>} */ cfg) => {
+        if (!featureEnabled) return;
+        if (!window.location.pathname.endsWith('/watch')) return;
+
+        const playlistContainer = $('#secondary ytd-playlist-panel-renderer');
+        if (playlistContainer === null) {
+          return;
+        }
+        if (playlistContainer.hasAttribute('ytp-random')) {
+          return;
+        }
+
+        playlistContainer.setAttribute('ytp-random', 'applied');
+        const headerContainer = playlistContainer.querySelector('#header');
+        if (headerContainer && !headerContainer.querySelector('.ytp-random-notice')) {
+          // eslint-disable-next-line no-unsanitized/method -- static template wrapped by Trusted Types policy (_createHTML)
+          headerContainer.insertAdjacentHTML(
+            'beforeend',
+            _createHTML(`<span class="ytp-random-notice">Play All mode</span>`)
+          );
+        }
+
+        const storage = getStorage(cfg.storageKey);
+
+        // Robustly collect playlist anchors - different YT layouts use different selectors
+        const anchorSelectors = [
+          '#wc-endpoint',
+          'ytd-playlist-panel-video-renderer a#wc-endpoint',
+          'ytd-playlist-panel-video-renderer a',
+          'a#video-title',
+          '#secondary ytd-playlist-panel-renderer a[href*="/watch?"]',
+        ];
+
+        /** @type {HTMLAnchorElement[]} */
+        const anchors = [];
+        anchorSelectors.forEach(sel => {
+          playlistContainer.querySelectorAll(sel).forEach(a => {
+            if (a instanceof Element && a.tagName === 'A') anchors.push(/** @type {any} */ (a));
+          });
+        });
+
+        // Deduplicate by href
+        /** @type {HTMLAnchorElement[]} */
+        const uniq = [];
+        const seen = new Set();
+        anchors.forEach(a => {
+          const href = /** @type {HTMLAnchorElement} */ (a).href || a.getAttribute('href') || '';
+          if (!seen.has(href)) {
+            seen.add(href);
+            uniq.push(a);
+          }
+        });
+
+        const navigate = (/** @type {string} */ href) => (window.location.href = href);
+
+        // Mark videos and prepare links
+        uniq.forEach(element => {
+          let videoId = null;
+          try {
+            videoId = new URL(element.href, window.location.origin).searchParams.get('v');
+          } catch (e) {
+            videoId = new URLSearchParams(element.search || '').get('v');
+          }
+
+          if (!videoId) return;
+
+          if (!isWatched(cfg.storageKey, videoId)) {
+            storage[videoId] = false;
+          }
+
+          // Ensure ytp-random param present
+          try {
+            const u = new URL(element.href, window.location.origin);
+            u.searchParams.set('ytp-random', cfg.mode);
+            element.href = u.toString();
+          } catch (e) {
+            /* malformed URL ignored */
+          }
+
+          element.setAttribute('data-ytp-random-link', 'true');
+
+          const entryKey = getVideoId(element.href);
+          if (entryKey && isWatched(cfg.storageKey, entryKey)) {
+            element.parentElement?.setAttribute('hidden', '');
+          }
+        });
+
+        // Use event delegation for video links
+        if (playlistContainer && !playlistContainer.hasAttribute('data-ytp-random-delegated')) {
+          playlistContainer.setAttribute('data-ytp-random-delegated', 'true');
+          playlistContainer.addEventListener('click', event => {
+            const tgt = event.target instanceof Element ? event.target : null;
+            const link = /** @type {HTMLAnchorElement|null} */ (
+              tgt?.closest?.('a[data-ytp-random-link]') ?? null
+            );
+            if (link && link.href) {
+              event.preventDefault();
+              navigate(link.href);
+            }
+          });
+        }
+        localStorage.setItem(cfg.storageKey, JSON.stringify(storage));
+
+        const currentVideoId = getVideoId(location.href);
+        if (
+          cfg.params.get('ytp-random-initial') === '1' ||
+          (currentVideoId && isWatched(cfg.storageKey, currentVideoId))
+        ) {
+          playNextRandom(cfg);
+
+          return;
+        }
+
+        const header = playlistContainer.querySelector('h3 a');
+        if (header && header.tagName === 'A') {
+          const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
+          // eslint-disable-next-line no-unsanitized/method -- static template wrapped by Trusted Types policy (_createHTML)
+          anchorHeader.insertAdjacentHTML(
+            'beforeend',
+            _createHTML(
+              ` <span class="ytp-badge ytp-random-badge">Play All <span style="font-size: 2rem; vertical-align: top">&times;</span></span>`
+            )
+          );
+          anchorHeader.href = '#';
+          const badge = anchorHeader.querySelector('.ytp-random-badge');
+          if (badge) {
+            badge.addEventListener('click', event => {
+              event.preventDefault();
+
+              localStorage.removeItem(cfg.storageKey);
+
+              const params = new URLSearchParams(location.search);
+              params.delete('ytp-random');
+              window.location.href = `${window.location.pathname}?${params.toString()}`;
+            });
+          }
+        }
+
+        const _keydownHandler = (/** @type {Event} */ event) => {
+          if (!(event instanceof KeyboardEvent)) return;
+          // SHIFT + N
+          if (event.shiftKey && event.key.toLowerCase() === 'n') {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+
+            const videoId = getVideoId(location.href);
+            if (videoId) markWatched(cfg.storageKey, videoId);
+            // Unfortunately there is no workaround to YouTube redirecting to the next in line without a reload
+            playNextRandom(cfg, true);
+          }
+        };
+        if (_cm?.registerListener) {
+          _cm.registerListener(document, 'keydown', _keydownHandler, true);
+        } else {
+          document.addEventListener('keydown', _keydownHandler, true);
+        }
+
+        if (progressIntervalId) return;
+
+        // Use video timeupdate event instead of setInterval for better performance
+        const videoEl = $('video');
+        if (!videoEl) return;
+
+        const handleProgress = () => {
+          const videoId = getVideoId(location.href);
+
+          const params = new URLSearchParams(location.search);
+          params.set('ytp-random', cfg.mode);
+          window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+
+          const player = getPlayer();
+          if (!player || typeof player.getProgressState !== 'function') {
+            return;
+          }
+
+          const progressState = player.getProgressState();
+          if (
+            !progressState ||
+            typeof progressState.current !== 'number' ||
+            typeof progressState.duration !== 'number'
+          ) {
+            return;
+          }
+
+          // Do not listen for watch progress when watching advertisements
+          if (!isAdPlaying()) {
+            if (progressState.current / progressState.duration >= 0.9) {
+              if (videoId) markWatched(cfg.storageKey, videoId);
+            }
+
+            // Autoplay random video
+            if (progressState.current >= progressState.duration - 2) {
+              // make sure vanilla autoplay doesnt take over
+              if (typeof player.pauseVideo === 'function') player.pauseVideo();
+              if (typeof player.seekTo === 'function') player.seekTo(0);
+              playNextRandom(cfg);
+            }
+          }
+
+          const nextButton = $(
+            '#ytd-player .ytp-next-button.ytp-button:not([ytp-random="applied"])'
+          );
+          if (nextButton instanceof HTMLElement) {
+            // Replace with span to prevent anchor click events
+            const newButton = document.createElement('span');
+            newButton.className = nextButton.className;
+            renderTemplateClone(newButton, nextButton.innerHTML);
+            nextButton.replaceWith(newButton);
+
+            newButton.setAttribute('ytp-random', 'applied');
+            newButton.addEventListener('click', () => {
+              if (videoId) markWatched(cfg.storageKey, videoId);
+              playNextRandom(cfg);
+            });
+          }
+        };
+
+        videoEl.addEventListener('timeupdate', handleProgress, { passive: true });
+        progressIntervalId = true; // Mark as initialized
+      };
+
+      scheduleApplyRandomPlay = () => {
+        if (!featureEnabled) return;
+        stopRandomPlayTimers?.();
+
+        if (!window.location.pathname.endsWith('/watch')) return;
+
+        const performApply = () => {
+          const cfg = getRandomConfig();
+          if (!cfg) return false;
+
+          // Storage needs to now be { [videoId]: bool }
+          try {
+            const current = localStorage.getItem(cfg.storageKey);
+            if (current && Array.isArray(JSON.parse(current))) {
+              localStorage.removeItem(cfg.storageKey);
+            }
+          } catch (e) {
+            localStorage.removeItem(cfg.storageKey);
+          }
+
+          applyRandomPlay(cfg);
+          // Consider done when playlist panel is found
+          return !!$('#secondary ytd-playlist-panel-renderer[ytp-random]');
+        };
+
+        // Use shared retry scheduler instead of manual recursion
+        const scheduler = window.YouTubeUtils?.createRetryScheduler?.({
+          check: performApply,
+          maxAttempts: 30,
+          interval: 250,
+        });
+        if (scheduler) applyRetryTimeoutId = scheduler;
+      };
+
+      const onNavigate = () => {
+        if (!featureEnabled) {
+          stopRandomPlayTimers?.();
+          return;
+        }
+        stopRandomPlayTimers?.();
+        scheduleApplyRandomPlay?.();
+      };
+
+      onNavigate();
+      const _navFinishRandom = () => setTimeout(onNavigate, 200);
+      if (_cm?.registerListener) {
+        _cm.registerListener(window, 'yt-navigate-finish', _navFinishRandom);
+      } else {
+        window.addEventListener('yt-navigate-finish', _navFinishRandom);
+      }
+    })();
+  };
+
+  if (window.YouTubePlusLazyLoader?.register) {
+    window.YouTubePlusLazyLoader.register('playall', startPlayAllRuntime, {
+      priority: 55,
+      delay: 0,
+      // Keep runtime listeners active globally; route checks are handled inside
+      // addButton/isSupportedTabPath, which avoids missing early SPA transitions.
+      shouldLoad: () => true,
+    });
+  } else {
+    startPlayAllRuntime();
+  }
 })().catch(error =>
-  console.error(
+  window.console.error(
     '%cytp - YouTube Play All\n',
-    'color: #bf4bcc; font-size: 32px; font-weight: bold',
+    'color: var(--yt-playall-accent-purple); font-size: 32px; font-weight: bold',
     error
   )
 );

@@ -6,7 +6,270 @@
 
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || ((/** @type {string} */ s) => s);
+  const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
+  const createVisibilityAwareInterval =
+    window.YouTubeUtils?.createVisibilityAwareInterval ||
+    /**
+     * @type {(callback: () => void, delay: number) => { stop: () => void; pause: () => void; resume: () => void; active: boolean }}
+     */
+    (
+      (callback, delay) => {
+        // Interval fallback is used only when shared visibility-aware scheduler is unavailable.
+        const id = setInterval(() => {
+          if (!document.hidden) callback();
+        }, delay);
+        return {
+          stop() {
+            clearInterval(id);
+          },
+          pause() {
+            clearInterval(id);
+          },
+          resume() {},
+          get active() {
+            return true;
+          },
+        };
+      }
+    );
+  const setTimeout_ = setTimeout.bind(window);
+
+  // -------------------------------------------------------------------------
+  // PoT (Proof-of-Origin Token) collector
+  // -------------------------------------------------------------------------
+  // YouTube's `/api/timedtext` endpoint silently returns HTTP 200 with an
+  // empty body for ASR (auto-generated) and many translated captions unless
+  // the request carries a `pot` (BotGuard) token plus the matching client
+  // metadata params. Userscripts cannot generate `pot` themselves, but the
+  // YouTube player attaches it to every subtitle request it makes. We hook
+  // `fetch`/`XMLHttpRequest` on `unsafeWindow` once at startup, observe the
+  // player's own `/api/timedtext` URLs, extract `pot`+`potc`+client params,
+  // cache them per `videoId`, and reuse them when downloading subtitles.
+  // Verified against video E5XMrPPe1LQ (Russian ASR): without these params
+  // every URL variant returns 0 bytes; with them, all formats (srv1/json3/
+  // vtt/ttml) and translations return valid content (53-458 KB).
+  /** @type {Map<string, Record<string, string>>} */
+  const _potParamsByVideoId = new Map();
+  /** Params copied from a player request to forge our own. */
+  const _potCarriedParamNames = [
+    'pot',
+    'potc',
+    'c',
+    'cver',
+    'cplayer',
+    'cos',
+    'cosver',
+    'cplatform',
+    'cbr',
+    'cbrver',
+    'xorb',
+    'xobt',
+    'xovt',
+  ];
+  let _potHooksInstalled = false;
+  let _potElicitInflight = false;
+
+  function _pageGlobal() {
+    return typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
+  }
+
+  function _rememberPotFromTimedtextUrl(/** @type {string} */ rawUrl) {
+    try {
+      if (!rawUrl || rawUrl.indexOf('/api/timedtext') === -1) return;
+      const u = new URL(rawUrl, 'https://www.youtube.com');
+      const videoId = u.searchParams.get('v');
+      const pot = u.searchParams.get('pot');
+      if (!videoId || !pot) return;
+      /** @type {Record<string, string>} */
+      const collected = {};
+      for (const name of _potCarriedParamNames) {
+        const value = u.searchParams.get(name);
+        if (value != null && value !== '') collected[name] = value;
+      }
+      _potParamsByVideoId.set(videoId, collected);
+    } catch (e) {
+      // Ignore parse failures — never break the page over a hook side-effect.
+    }
+  }
+
+  function _installPotHooksOnce() {
+    if (_potHooksInstalled) return;
+    const pg = _pageGlobal();
+    if (!pg || typeof pg !== 'object') return;
+    try {
+      const origFetch = pg.fetch;
+      if (typeof origFetch === 'function') {
+        pg.fetch = function patchedFetch(input, _init) {
+          try {
+            const inputWithUrl = /** @type {{ url?: unknown }} */ (
+              input && typeof input === 'object' ? input : {}
+            );
+            const url =
+              typeof input === 'string'
+                ? input
+                : input instanceof URL
+                  ? input.toString()
+                  : typeof inputWithUrl.url === 'string'
+                    ? inputWithUrl.url
+                    : '';
+            if (url) _rememberPotFromTimedtextUrl(url);
+          } catch (e) {
+            // Never block the player's network requests
+          }
+          return origFetch.call(this, input, _init);
+        };
+      }
+      const xhrProto = pg.XMLHttpRequest && pg.XMLHttpRequest.prototype;
+      if (xhrProto && typeof xhrProto.open === 'function') {
+        const origOpen = /** @type {(...args: unknown[]) => void} */ (xhrProto.open);
+        const patchedOpen = /** @this {XMLHttpRequest} */ function (
+          /** @type {unknown[]} */ ...args
+        ) {
+          try {
+            const url = args[1];
+            if (typeof url === 'string') _rememberPotFromTimedtextUrl(url);
+          } catch (e) {
+            // Ignore
+          }
+          return origOpen.apply(this, args);
+        };
+        xhrProto.open = /** @type {typeof xhrProto.open} */ (patchedOpen);
+      }
+      _potHooksInstalled = true;
+    } catch (e) {
+      // If we cannot patch (sandboxed window), we silently degrade.
+    }
+  }
+  // Install ASAP so we capture the very first caption request the player makes.
+  _installPotHooksOnce();
+
+  /**
+   * Try to elicit a PoT for the currently playing video by briefly toggling
+   * the player's caption track. Resolves once a pot has been captured or
+   * after a short timeout. Idempotent and never throws.
+   * @returns {Promise<boolean>}
+   */
+  async function _tryElicitPotForCurrentVideo() {
+    if (_potElicitInflight) return false;
+    _potElicitInflight = true;
+    try {
+      const pg = _pageGlobal();
+      const videoId = (() => {
+        try {
+          const params = new URLSearchParams(pg.location?.search || '');
+          return params.get('v') || '';
+        } catch (e) {
+          return '';
+        }
+      })();
+      if (!videoId) return false;
+      if (_potParamsByVideoId.has(videoId)) return true;
+
+      const playerEl = pg.document?.querySelector?.('.html5-video-player');
+      if (!playerEl) return false;
+
+      // Snapshot current caption state so we can restore it on the user's behalf.
+      let priorTrack = null;
+      try {
+        priorTrack =
+          typeof playerEl.getOption === 'function' ? playerEl.getOption('captions', 'track') : null;
+      } catch (e) {
+        priorTrack = null;
+      }
+
+      // Pick an available track (prefer Russian ASR if present, else first).
+      let trackToLoad = null;
+      try {
+        const list =
+          typeof playerEl.getOption === 'function'
+            ? playerEl.getOption('captions', 'tracklist', { includeAsr: true }) || []
+            : [];
+        if (Array.isArray(list) && list.length) {
+          trackToLoad = list.find(t => t && t.languageCode === 'ru' && t.kind === 'asr') || list[0];
+        }
+      } catch (e) {
+        trackToLoad = null;
+      }
+
+      if (trackToLoad && typeof playerEl.setOption === 'function') {
+        try {
+          playerEl.setOption('captions', 'track', trackToLoad);
+        } catch (e) {
+          // Ignore — fall through to button-click fallback
+        }
+      } else {
+        // Fallback: click the CC button to force a fetch
+        try {
+          const ccBtn = pg.document?.querySelector?.('.ytp-subtitles-button');
+          if (ccBtn && ccBtn.getAttribute('aria-pressed') !== 'true') ccBtn.click();
+        } catch (e) {
+          // Ignore
+        }
+      }
+
+      // Poll for up to ~2s for a pot to land in the cache
+      const deadline = Date.now() + 2200;
+      while (Date.now() < deadline) {
+        if (_potParamsByVideoId.has(videoId)) break;
+        await waitMs(120);
+      }
+
+      // Restore prior caption state (turn off if it was off, or restore previous track)
+      try {
+        if (priorTrack && typeof playerEl.setOption === 'function') {
+          playerEl.setOption('captions', 'track', priorTrack);
+        } else if (typeof playerEl.toggleSubtitles === 'function') {
+          // If we turned them on by clicking CC, turn them back off
+          const ccBtn = pg.document?.querySelector?.('.ytp-subtitles-button');
+          if (ccBtn && ccBtn.getAttribute('aria-pressed') === 'true') ccBtn.click();
+        }
+      } catch (e) {
+        // Ignore restore failures
+      }
+
+      return _potParamsByVideoId.has(videoId);
+    } catch (e) {
+      return false;
+    } finally {
+      _potElicitInflight = false;
+    }
+  }
+
+  function _getVideoIdFromCandidate(/** @type {string} */ url) {
+    try {
+      const u = new URL(url, 'https://www.youtube.com');
+      return u.searchParams.get('v') || '';
+    } catch (e) {
+      return '';
+    }
+  }
+
+  /**
+   * Given a list of candidate timedtext URLs, prepend equivalent variants
+   * with PoT+client params applied (when known for the candidate's video).
+   * @param {string[]} candidates
+   * @returns {string[]}
+   */
+  function augmentSubtitleCandidatesWithPot(candidates) {
+    if (!Array.isArray(candidates) || candidates.length === 0) return candidates || [];
+    /** @type {string[]} */
+    const augmented = [];
+    for (const candidate of candidates) {
+      try {
+        const videoId = _getVideoIdFromCandidate(candidate);
+        const params = videoId ? _potParamsByVideoId.get(videoId) : null;
+        if (!params) continue;
+        const u = new URL(candidate, 'https://www.youtube.com');
+        for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
+        augmented.push(u.toString());
+      } catch (e) {
+        // Skip malformed candidate
+      }
+    }
+    // De-duplicate while preserving order (augmented first, then originals)
+    const merged = augmented.concat(candidates);
+    return Array.from(new Set(merged.filter(u => typeof u === 'string' && u.length > 0)));
+  }
 
   const isRelevantRoute = () => {
     try {
@@ -27,11 +290,11 @@
 
   // Shared DOM helpers from YouTubeUtils
   const $ = (/** @type {string} */ sel) =>
-    window.YouTubeUtils?.$(sel) || document.querySelector(sel);
+    window.YouTubeUtils?.$(sel) || document['querySelector'](sel);
 
   // Check dependencies
   if (typeof YouTubeUtils === 'undefined') {
-    console.error('[YouTube+ Download] YouTubeUtils not found!');
+    window.console.error('[YouTube+ Download] YouTubeUtils not found!');
     return;
   }
 
@@ -47,7 +310,7 @@
       width: '100%',
       marginBottom: '8px',
       fontSize: '14px',
-      color: '#fff',
+      color: 'var(--yt-text-primary)',
       cursor: 'pointer',
     });
 
@@ -55,14 +318,14 @@
     Object.assign(/** @type {any} */ (_ssDisplay).style || {}, {
       padding: '10px 12px',
       borderRadius: '10px',
-      background: 'linear-gradient(135deg, rgba(255,255,255,0.04), rgba(255,255,255,0.02))',
-      border: '1px solid rgba(255,255,255,0.06)',
+      background: 'linear-gradient(135deg, var(--yt-glass-bg), var(--yt-surface-overlay-faint))',
+      border: '1px solid var(--yt-glass-border)',
       display: 'flex',
       alignItems: 'center',
       justifyContent: 'space-between',
       gap: '8px',
       backdropFilter: 'blur(6px)',
-      boxShadow: '0 4px 18px rgba(0,0,0,0.35) inset',
+      boxShadow: '0 4px 18px var(--yt-shadow-inset-strong) inset',
     });
     const _ssLabel = document.createElement('div');
     if (_ssLabel.style) {
@@ -87,9 +350,9 @@
       maxHeight: '220px',
       overflowY: 'auto',
       borderRadius: '10px',
-      background: 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.02))',
-      border: '1px solid rgba(255,255,255,0.06)',
-      boxShadow: '0 8px 30px rgba(0,0,0,0.6)',
+      background: 'linear-gradient(180deg, var(--yt-glass-bg), var(--yt-surface-overlay-faint))',
+      border: '1px solid var(--yt-glass-border)',
+      boxShadow: '0 8px 30px var(--yt-shadow-flyout)',
       backdropFilter: 'blur(8px)',
       zIndex: '9999',
       display: 'none',
@@ -113,7 +376,7 @@
       const item = target.closest('[data-value]');
       if (!item || !_ssList.contains(item)) return;
       if (/** @type {any} */ (item).style) /** @type {any} */ {
-        item.style.background = 'rgba(255,255,255,0.02)';
+        item.style.background = 'var(--yt-surface-overlay-faint)';
       }
     });
 
@@ -150,8 +413,8 @@
         Object.assign(/** @type {any} */ (item).style || {}, {
           padding: '10px 12px',
           cursor: 'pointer',
-          borderBottom: '1px solid rgba(255,255,255,0.02)',
-          color: '#fff',
+          borderBottom: '1px solid var(--yt-surface-overlay-faint)',
+          color: 'var(--yt-text-primary)',
         });
         _ssList.appendChild(item);
       });
@@ -265,15 +528,15 @@
       : {
           debug: () => {},
           info: () => {},
-          warn: console.warn.bind(console),
-          error: console.error.bind(console),
+          warn: window.console.warn.bind(console),
+          error: window.console.error.bind(console),
         };
 
   /**
    * Download Configuration
    */
   const DownloadConfig = {
-    // TubeInsights API endpoints (mp3yt.is backend)
+    // cnv.cx conversion backend endpoints
     API: {
       KEY_URL: 'https://cnv.cx/v2/sanity/key',
       CONVERT_URL: 'https://cnv.cx/v2/converter',
@@ -334,6 +597,39 @@
   function getVideoUrl() {
     const videoId = getVideoId();
     return videoId ? `https://www.youtube.com/watch?v=${videoId}` : window.location.href;
+  }
+
+  /**
+   * Redact sensitive URL params and IDs before writing debug logs.
+   * @param {string} rawUrl
+   * @returns {string}
+   */
+  function sanitizeUrlForLog(rawUrl) {
+    try {
+      if (!rawUrl || typeof rawUrl !== 'string') return '';
+      const u = new URL(rawUrl, window.location.origin || 'https://www.youtube.com');
+      const sensitiveParams = [
+        'v',
+        'videoId',
+        'pot',
+        'potc',
+        'key',
+        'token',
+        'sig',
+        'signature',
+        'oauth',
+        'authorization',
+        'cookie',
+      ];
+      for (const name of sensitiveParams) {
+        if (u.searchParams.has(name)) {
+          u.searchParams.set(name, '<redacted>');
+        }
+      }
+      return `${u.origin}${u.pathname}`;
+    } catch (e) {
+      return '<redacted-url>';
+    }
   }
 
   /**
@@ -516,7 +812,7 @@
         // S7: Check backoff
         const backoff = backoffUntil.get(host) || 0;
         if (now < backoff) {
-          console.warn(
+          window.console.warn(
             `[YouTube+ Download] Rate limit backoff: ${host} blocked for ${Math.ceil((backoff - now) / 1000)}s more`
           );
           return false;
@@ -528,7 +824,7 @@
           const consecutiveHits = Math.min(5, Math.floor(recent.length / maxRequests));
           const backoffMs = Math.min(60000, 2000 * Math.pow(2, consecutiveHits));
           backoffUntil.set(host, now + backoffMs);
-          console.warn(
+          window.console.warn(
             `[YouTube+ Download] Rate limit: ${recent.length}/${maxRequests} requests to ${host}, backing off ${backoffMs}ms`
           );
           return false;
@@ -688,7 +984,7 @@
   // ---------------------------------------------------------------------------
   const _playerDataCache = (() => {
     const TTL_MS = 5 * 60 * 1000; // 5 minutes
-    /** @type {Map<string, { data: any, ts: number }>} */
+    /** @type {Map<string, { data: PlayerResponse, ts: number }>} */
     const store = new Map();
     return {
       get(/** @type {string} */ videoId) {
@@ -700,7 +996,7 @@
         }
         return entry.data;
       },
-      set(/** @type {string} */ videoId, /** @type {any} */ data) {
+      set(/** @type {string} */ videoId, /** @type {PlayerResponse} */ data) {
         // Evict oldest entry when cache exceeds 10 videos to bound memory
         if (store.size >= 10) {
           const oldestKey = store.keys().next().value;
@@ -714,7 +1010,7 @@
   /**
    * Fetch player data from YouTube API
    * @param {string} videoId - Video ID
-   * @returns {Promise<any>} Player data response
+   * @returns {Promise<PlayerResponse>} Player data response
    * @private
    */
   async function fetchPlayerData(videoId) {
@@ -744,28 +1040,161 @@
       throw new Error(`Failed to get player data: ${response.status}`);
     }
 
-    const parsed = JSON.parse(response.responseText);
+    const parsed = /** @type {PlayerResponse} */ (JSON.parse(response.responseText));
     _playerDataCache.set(videoId, parsed); // P5: store in cache
     return parsed;
   }
 
   /**
+   * Extract available video qualities from player streaming data.
+   * Uses only actual video-capable formats exposed by YouTube for the current video.
+   * @param {PlayerResponse | null | undefined} playerData
+   * @returns {string[]}
+   */
+  function extractAvailableVideoQualities(playerData) {
+    const streamingData =
+      /** @type {{ formats?: Array<{ mimeType?: string, qualityLabel?: string }>, adaptiveFormats?: Array<{ mimeType?: string, qualityLabel?: string }> }} */ (
+        /** @type {any} */ (playerData)?.streamingData || {}
+      );
+    /** @type {Array<{ mimeType?: string, qualityLabel?: string }>} */
+    const combined = [
+      ...(Array.isArray(streamingData.formats) ? streamingData.formats : []),
+      ...(Array.isArray(streamingData.adaptiveFormats) ? streamingData.adaptiveFormats : []),
+    ];
+
+    const qualitySet = new Set();
+    combined.forEach(format => {
+      const mimeType = String(format?.mimeType || '');
+      if (!mimeType.includes('video/')) return;
+
+      const qualityLabel = String(format?.qualityLabel || '').trim();
+      const match = qualityLabel.match(/(\d{3,4})p/i);
+      if (!match) return;
+
+      qualitySet.add(match[1]);
+    });
+
+    return Array.from(qualitySet).sort((left, right) => Number(left) - Number(right));
+  }
+
+  /**
+   * Get the actual available video qualities for the current video.
+   * Falls back to watch HTML and then to configured defaults if player data is unavailable.
+   * @param {string} videoId
+   * @returns {Promise<string[]>}
+   */
+  async function getAvailableVideoQualities(videoId) {
+    if (!videoId) return DownloadConfig.VIDEO_QUALITIES.slice();
+
+    try {
+      const playerData = await fetchPlayerData(videoId);
+      const actualQualities = extractAvailableVideoQualities(playerData);
+      if (actualQualities.length > 0) return actualQualities;
+    } catch (error) {
+      logger.warn('Primary player quality fetch failed:', error);
+    }
+
+    try {
+      const fallbackPlayerData = await fetchPlayerResponseFromWatchHtml(videoId);
+      const fallbackQualities = extractAvailableVideoQualities(fallbackPlayerData);
+      if (fallbackQualities.length > 0) return fallbackQualities;
+    } catch (error) {
+      logger.warn('Watch HTML quality fallback failed:', error);
+    }
+
+    return DownloadConfig.VIDEO_QUALITIES.slice();
+  }
+
+  /**
+   * Choose the initial quality selection from available options.
+   * @param {string[]} qualities
+   * @param {string} preferredQuality
+   * @returns {string}
+   */
+  function pickDefaultVideoQuality(qualities, preferredQuality) {
+    if (!Array.isArray(qualities) || qualities.length === 0) {
+      return preferredQuality || DownloadConfig.DEFAULTS.videoQuality;
+    }
+
+    if (qualities.includes(preferredQuality)) return preferredQuality;
+    if (qualities.includes(DownloadConfig.DEFAULTS.videoQuality)) {
+      return DownloadConfig.DEFAULTS.videoQuality;
+    }
+
+    const sorted = qualities.slice().sort((left, right) => Number(left) - Number(right));
+    return sorted[sorted.length - 1] || preferredQuality || DownloadConfig.DEFAULTS.videoQuality;
+  }
+
+  /**
    * Extract player response from watch HTML when runtime globals are unavailable.
    * @param {string} videoId - Video ID
-   * @returns {Promise<any|null>} Parsed player response or null
+   * @returns {Promise<PlayerResponse|null>} Parsed player response or null
    * @private
    */
-  async function fetchPlayerResponseFromWatchHtml(videoId) {
+  /**
+   * Extract a balanced JSON object starting at the `{` at `startIdx` from `src`.
+   * Respects strings and escape sequences so embedded `{}` inside string literals
+   * do not throw off the brace counter. Returns null if no balanced object found.
+   * @param {string} src
+   * @param {number} startIdx
+   * @returns {string|null}
+   * @private
+   */
+  function extractBalancedJsonObject(src, startIdx) {
+    if (startIdx < 0 || startIdx >= src.length || src[startIdx] !== '{') return null;
+    let depth = 0;
+    let inStr = false;
+    let escape = false;
+    for (let i = startIdx; i < src.length; i++) {
+      const ch = src[i];
+      if (escape) {
+        escape = false;
+        continue;
+      }
+      if (inStr) {
+        if (ch === '\\') {
+          escape = true;
+        } else if (ch === '"') {
+          inStr = false;
+        }
+        continue;
+      }
+      if (ch === '"') {
+        inStr = true;
+      } else if (ch === '{') {
+        depth++;
+      } else if (ch === '}') {
+        depth--;
+        if (depth === 0) return src.slice(startIdx, i + 1);
+      }
+    }
+    return null;
+  }
+
+  async function fetchPlayerResponseFromWatchHtml(/** @type {string} */ videoId) {
     try {
       const watchUrl = `https://www.youtube.com/watch?v=${encodeURIComponent(videoId)}`;
       const response = await gmXmlHttpRequest({ method: 'GET', url: watchUrl });
       if (response.status !== 200 || !response.responseText) return null;
 
       const html = String(response.responseText);
-      const match = html.match(/ytInitialPlayerResponse\s*=\s*(\{[\s\S]*?\})\s*;\s*<\/script>/);
-      if (!match || !match[1]) return null;
-
-      return JSON.parse(match[1]);
+      // Locate ytInitialPlayerResponse assignment. Some adblock/userscripts
+      // (e.g. jsonPrune) inject extra content after the value, so a lazy regex
+      // ending at `;</script>` can capture mangled JSON. Use a balanced-brace
+      // scanner that respects string literals to extract the exact object.
+      const assignRe = /ytInitialPlayerResponse\s*=\s*\{/g;
+      let match;
+      while ((match = assignRe.exec(html)) !== null) {
+        const braceIdx = match.index + match[0].length - 1;
+        const jsonText = extractBalancedJsonObject(html, braceIdx);
+        if (!jsonText) continue;
+        try {
+          return JSON.parse(jsonText);
+        } catch (e) {
+          // Try the next occurrence (rare: multiple assignments)
+        }
+      }
+      return null;
     } catch (error) {
       logger.warn('Watch HTML subtitle fallback failed:', error);
       return null;
@@ -775,16 +1204,13 @@
   /**
    * Try to obtain captions renderer from page runtime state.
    * Helps in browsers where youtubei player request is blocked/limited.
-   * @returns {{captions: any, videoTitle: string}|null}
+   * @returns {{captions: PlayerCaptionsTracklistRenderer, videoTitle: string}|null}
    * @private
    */
   function getCaptionsFromPageFallback() {
     try {
       const title = getVideoTitle();
-      const globalContext =
-        typeof unsafeWindow !== 'undefined'
-          ? /** @type {any} */ (unsafeWindow)
-          : /** @type {any} */ (window);
+      const globalContext = _pageGlobal();
 
       const initial = globalContext.ytInitialPlayerResponse;
       const initialCaps = initial?.captions?.playerCaptionsTracklistRenderer;
@@ -792,8 +1218,10 @@
         return { captions: initialCaps, videoTitle: initial?.videoDetails?.title || title };
       }
 
-      const playerEl = document.getElementById('movie_player');
-      const player = /** @type {any} */ (playerEl);
+      const playerEl =
+        window.YouTubeUtils?.byId?.('movie_player') || document['getElementById']('movie_player');
+      /** @type {(HTMLElement & { getPlayerResponse?: () => PlayerResponse | null }) | null} */
+      const player = playerEl instanceof HTMLElement ? playerEl : null;
       const response =
         (typeof player?.getPlayerResponse === 'function' && player.getPlayerResponse()) || null;
       const respCaps = response?.captions?.playerCaptionsTracklistRenderer;
@@ -876,7 +1304,7 @@
 
     // Priority 4: response is an XML/HTML Document object
     if (rawResponse && typeof rawResponse === 'object') {
-      const rawDocument = /** @type {any} */ (rawResponse);
+      const rawDocument = /** @type {Document | XMLDocument | null} */ (rawResponse);
       if (typeof rawDocument?.documentElement?.nodeName === 'string' && window.XMLSerializer) {
         try {
           const serialized = new window.XMLSerializer().serializeToString(rawDocument).trim();
@@ -923,18 +1351,17 @@
 
     // Priority 8: response is a text-like object from userscript APIs
     if (rawResponse && typeof rawResponse === 'object') {
-      const maybeText =
-        /** @type {any} */ (rawResponse).text ||
-        /** @type {any} */ (rawResponse).data ||
-        /** @type {any} */ (rawResponse).content;
+      /** @type {Record<string, unknown> & { text?: unknown; data?: unknown; content?: unknown }} */
+      const rawObject = rawResponse;
+      const maybeText = rawObject.text || rawObject.data || rawObject.content;
       if (typeof maybeText === 'string' && maybeText.trim()) {
         return maybeText.trim();
       }
 
       // Some wrappers expose async text() method
-      if (typeof (/** @type {any} */ (rawResponse).text) === 'function') {
+      if (typeof rawObject.text === 'function') {
         try {
-          const extracted = await /** @type {any} */ (rawResponse).text();
+          const extracted = await rawObject.text();
           if (typeof extracted === 'string' && extracted.trim()) {
             return extracted.trim();
           }
@@ -949,7 +1376,7 @@
 
   /**
    * Build fallback request profiles for subtitle payload retrieval.
-   * @returns {any[]}
+   * @returns {GMRequestProfile[]}
    */
   function getSubtitleRequestProfiles() {
     return [
@@ -958,21 +1385,31 @@
         withCredentials: true,
         anonymous: false,
         responseType: 'text', // Forces GM_xmlhttpRequest to populate responseText
-        headers: { Referer: 'https://www.youtube.com/' },
+        headers: {
+          Referer: 'https://www.youtube.com/',
+          // Avoid gzipped empty-body bug in some GM_xmlhttpRequest implementations.
+          'Accept-Encoding': 'identity',
+          'Cache-Control': 'no-cache',
+          Pragma: 'no-cache',
+        },
       },
       {
         method: 'GET',
         withCredentials: true,
         anonymous: false,
         // No responseType — lets Firefox return responseXML for XML content
+        headers: {
+          Referer: 'https://www.youtube.com/',
+          'Accept-Encoding': 'identity',
+        },
       },
     ];
   }
 
   /**
    * Parse caption tracks into subtitle objects
-   * @param {any[]} captionTracks - Caption track data
-   * @returns {any[]} Subtitle objects
+   * @param {CaptionTrack[]} captionTracks - Caption track data
+   * @returns {SubtitleTrack[]} Subtitle objects
    * @private
    */
   function parseCaptionTracks(captionTracks) {
@@ -982,25 +1419,89 @@
       url: buildSubtitleUrl(track.baseUrl),
       baseUrl: normalizeSubtitleBaseUrl(track.baseUrl),
       isAutoGenerated: track.kind === 'asr',
+      trackId: String(track?.vssId || ''),
+      kind: String(track?.kind || ''),
     }));
   }
 
   /**
+   * Pick the most suitable caption track for translation or refresh retries.
+   * Prefer exact baseUrl/lang/kind matches, then translatable tracks.
+   * @param {CaptionTrack[]} captionTracks
+   * @param {{ languageCode?: string, isAutoGenerated?: boolean | null, baseUrl?: string, trackId?: string }} [criteria]
+   * @returns {CaptionTrack | null}
+   */
+  function findBestCaptionTrack(captionTracks, criteria = {}) {
+    const tracks = Array.isArray(captionTracks) ? captionTracks.filter(Boolean) : [];
+    if (tracks.length === 0) return null;
+
+    const wantedLang = String(criteria.languageCode || '').trim();
+    const wantedBaseUrl = normalizeSubtitleBaseUrl(criteria.baseUrl || '');
+    const wantedTrackId = String(criteria.trackId || '').trim();
+    const wantsAuto =
+      typeof criteria.isAutoGenerated === 'boolean' ? criteria.isAutoGenerated : null;
+
+    const scoreTrack = (/** @type {CaptionTrack} */ track) => {
+      let score = 0;
+      const trackBaseUrl = normalizeSubtitleBaseUrl(track?.baseUrl || '');
+      const trackLang = String(track?.languageCode || '');
+      const trackId = String(track?.vssId || '');
+      const trackIsAuto = track?.kind === 'asr';
+      const langPrefix = wantedLang ? wantedLang.split('-')[0] : '';
+
+      if (wantedTrackId && trackId && trackId === wantedTrackId) score += 120;
+      if (wantedBaseUrl && trackBaseUrl && trackBaseUrl === wantedBaseUrl) score += 100;
+      if (wantedLang && trackLang === wantedLang) score += 40;
+      else if (langPrefix && trackLang.startsWith(langPrefix)) score += 20;
+
+      if (wantsAuto !== null) {
+        score += trackIsAuto === wantsAuto ? 15 : -5;
+      }
+
+      if (track?.isTranslatable !== false) score += 5;
+      if (trackBaseUrl) score += 2;
+      return score;
+    };
+
+    return (
+      tracks
+        .map(track => ({ track, score: scoreTrack(track) }))
+        .sort((left, right) => right.score - left.score)[0]?.track || null
+    );
+  }
+
+  /**
+   * Choose the source caption track used for translated subtitle variants.
+   * @param {CaptionTrack[]} captionTracks
+   * @returns {CaptionTrack | null}
+   */
+  function getTranslationSourceTrack(captionTracks) {
+    return (
+      findBestCaptionTrack(captionTracks, { isAutoGenerated: true }) ||
+      findBestCaptionTrack(captionTracks) ||
+      null
+    );
+  }
+
+  /**
    * Parse translation languages into subtitle objects
-   * @param {any[]} translationLanguages - Translation language data
-   * @param {string} baseUrl - Base URL for translations (from source caption track)
-   * @param {string} sourceLanguageCode - Language code of the source caption track
-   * @returns {any[]} Auto-translation subtitle objects
+   * @param {CaptionTranslationLanguage[]} translationLanguages - Translation language data
+   * @param {CaptionTrack | null} sourceTrack - Source caption track used for translations
+   * @returns {SubtitleTrack[]} Auto-translation subtitle objects
    * @private
    */
-  function parseTranslationLanguages(translationLanguages, baseUrl, sourceLanguageCode) {
+  function parseTranslationLanguages(translationLanguages, sourceTrack) {
+    const sourceBaseUrl = normalizeSubtitleBaseUrl(sourceTrack?.baseUrl || '');
+    const sourceLanguageCode = String(sourceTrack?.languageCode || '');
+    const sourceTrackId = String(sourceTrack?.vssId || '');
     return translationLanguages.map(lang => ({
       name: lang.languageName?.simpleText || lang.languageCode,
       languageCode: lang.languageCode,
       sourceLanguageCode: sourceLanguageCode || '',
-      baseUrl: normalizeSubtitleBaseUrl(baseUrl),
-      url: buildSubtitleUrl(baseUrl),
-      isAutoGenerated: true,
+      baseUrl: sourceBaseUrl,
+      url: buildSubtitleUrl(sourceBaseUrl),
+      isAutoGenerated: sourceTrack?.kind === 'asr',
+      trackId: sourceTrackId,
       translateTo: lang.languageCode,
     }));
   }
@@ -1009,7 +1510,7 @@
    * Create empty subtitle result
    * @param {string} videoId - Video ID
    * @param {string} videoTitle - Video title
-   * @returns {any} Empty subtitle result
+   * @returns {SubtitleData} Empty subtitle result
    * @private
    */
   function createEmptySubtitleResult(videoId, videoTitle) {
@@ -1024,7 +1525,7 @@
   /**
    * Get subtitles for a video
    * @param {string} videoId - Video ID
-   * @returns {Promise<any>} Subtitle data or null on error
+   * @returns {Promise<SubtitleData | null>} Subtitle data or null on error
    */
   async function getSubtitles(videoId) {
     try {
@@ -1056,18 +1557,13 @@
 
       const captionTracks = captions.captionTracks || [];
       const translationLanguages = captions.translationLanguages || [];
-      const baseUrl = captionTracks[0]?.baseUrl || '';
-      const sourceLanguageCode = captionTracks[0]?.languageCode || '';
+      const translationSourceTrack = getTranslationSourceTrack(captionTracks);
 
       return {
         videoId,
         videoTitle,
         subtitles: parseCaptionTracks(captionTracks),
-        autoTransSubtitles: parseTranslationLanguages(
-          translationLanguages,
-          baseUrl,
-          sourceLanguageCode
-        ),
+        autoTransSubtitles: parseTranslationLanguages(translationLanguages, translationSourceTrack),
       };
     } catch (error) {
       logger.error('Error getting subtitles:', error);
@@ -1078,10 +1574,10 @@
   /**
    * Parse subtitle XML to cues
    * @param {string} xml - XML subtitle content
-   * @returns {any[]} Array of cues
+   * @returns {SubtitleCue[]} Array of cues
    */
   function parseSubtitleXML(xml) {
-    /** @type {any[]} */
+    /** @type {SubtitleCue[]} */
     const cues = [];
     const normalizedXml = String(xml || '').replace(/\uFEFF/g, '');
     const domParser = typeof window.DOMParser === 'function' ? new window.DOMParser() : null;
@@ -1137,7 +1633,7 @@
     }
 
     // srv3 format: <p t="1234" d="2000"><s>..</s></p>
-    const pTagRegex = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
+    const pTagRegex = /<p\b([^>]*)>([\s\S]{0,20000}?)<\/p>/gi;
     while ((match = pTagRegex.exec(normalizedXml)) !== null) {
       const attrs = match[1] || '';
       const inner = match[2] || '';
@@ -1256,13 +1752,13 @@
   /**
    * Parse subtitle JSON3 to cues
    * @param {string} jsonText - JSON3 subtitle content
-   * @returns {any[]} Array of cues
+   * @returns {SubtitleCue[]} Array of cues
    */
   function parseSubtitleJSON3(jsonText) {
     try {
       const data = JSON.parse(jsonText);
       const events = Array.isArray(data?.events) ? data.events : [];
-      /** @type {any[]} */
+      /** @type {SubtitleCue[]} */
       const cues = [];
 
       events.forEach((/** @type {any} */ event) => {
@@ -1288,24 +1784,62 @@
   /**
    * Parse VTT text to cues
    * @param {string} vttText - VTT subtitle content
-   * @returns {any[]} Array of cues
+   * @returns {SubtitleCue[]} Array of cues
    */
   function parseSubtitleVTT(vttText) {
-    /** @type {any[]} */
+    /** @type {SubtitleCue[]} */
     const cues = [];
     const blocks = String(vttText || '')
       .replace(/\r/g, '')
       .split(/\n\n+/);
 
-    const parseVttTime = (/** @type {string} */ value) => {
-      const raw = value.trim();
-      const m = raw.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/);
-      if (!m) return 0;
-      const h = Number(m[1] || 0);
-      const min = Number(m[2] || 0);
-      const sec = Number(m[3] || 0);
-      const ms = Number((m[4] || '0').padEnd(3, '0'));
-      return h * 3600 + min * 60 + sec + ms / 1000;
+    const parseClockTime = (/** @type {string} */ value) => {
+      const raw = String(value || '').trim();
+      if (!raw) return 0;
+      const parts = raw.split(':');
+      if (parts.length !== 2 && parts.length !== 3) return 0;
+      const isNumericPart = (/** @type {string} */ part) => {
+        if (!part) return false;
+        let dotSeen = false;
+        for (let i = 0; i < part.length; i += 1) {
+          const ch = part[i];
+          if (ch >= '0' && ch <= '9') continue;
+          if (ch === '.' && !dotSeen) {
+            dotSeen = true;
+            continue;
+          }
+          return false;
+        }
+        return true;
+      };
+      if (!parts.every(isNumericPart)) return 0;
+
+      let h = 0;
+      let m = 0;
+      let secPart = '';
+      if (parts.length === 2) {
+        m = Number(parts[0]);
+        secPart = parts[1];
+      } else {
+        h = Number(parts[0]);
+        m = Number(parts[1]);
+        secPart = parts[2];
+      }
+
+      const dot = secPart.indexOf('.');
+      const sec = Number(dot >= 0 ? secPart.slice(0, dot) : secPart);
+      const frac = dot >= 0 ? secPart.slice(dot + 1) : '';
+      const ms = frac ? Number(frac.padEnd(3, '0').slice(0, 3)) : 0;
+
+      if (
+        !Number.isFinite(h) ||
+        !Number.isFinite(m) ||
+        !Number.isFinite(sec) ||
+        !Number.isFinite(ms)
+      ) {
+        return 0;
+      }
+      return h * 3600 + m * 60 + sec + ms / 1000;
     };
 
     blocks.forEach((/** @type {string} */ block) => {
@@ -1322,8 +1856,8 @@
       const range = lines[timeIndex].split('-->');
       if (range.length < 2) return;
 
-      const start = parseVttTime(range[0]);
-      const end = parseVttTime(range[1].split(' ')[0]);
+      const start = parseClockTime(range[0]);
+      const end = parseClockTime(range[1].split(' ')[0]);
       const duration = Math.max(0, end - start);
       const text = lines
         .slice(timeIndex + 1)
@@ -1342,24 +1876,66 @@
   /**
    * Parse TTML subtitles to cues
    * @param {string} ttmlText - TTML subtitle content
-   * @returns {any[]} Array of cues
+   * @returns {SubtitleCue[]} Array of cues
    */
   function parseSubtitleTTML(ttmlText) {
-    /** @type {any[]} */
+    /** @type {SubtitleCue[]} */
     const cues = [];
     const normalizedTtml = String(ttmlText || '').replace(/\uFEFF/g, '');
-    const pTagRegex = /<p\b([^>]*)>([\s\S]*?)<\/p>/gi;
+    const pTagRegex = /<p\b([^>]*)>([\s\S]{0,20000}?)<\/p>/gi;
 
     const parseTtmlTime = (/** @type {string} */ value) => {
       const v = String(value || '').trim();
       if (!v) return 0;
-      if (/^\d+(?:\.\d+)?s$/.test(v)) return parseFloat(v);
-      const match = v.match(/^(?:(\d+):)?(\d{1,2}):(\d{1,2})(?:\.(\d{1,3}))?$/);
-      if (!match) return 0;
-      const h = Number(match[1] || 0);
-      const m = Number(match[2] || 0);
-      const s = Number(match[3] || 0);
-      const ms = Number((match[4] || '0').padEnd(3, '0'));
+
+      const last = v[v.length - 1];
+      if (last === 's' || last === 'S') {
+        const n = Number(v.slice(0, -1));
+        return Number.isFinite(n) ? n : 0;
+      }
+
+      const parts = v.split(':');
+      if (parts.length !== 2 && parts.length !== 3) return 0;
+      const isNumericPart = (/** @type {string} */ part) => {
+        if (!part) return false;
+        let dotSeen = false;
+        for (let i = 0; i < part.length; i += 1) {
+          const ch = part[i];
+          if (ch >= '0' && ch <= '9') continue;
+          if (ch === '.' && !dotSeen) {
+            dotSeen = true;
+            continue;
+          }
+          return false;
+        }
+        return true;
+      };
+      if (!parts.every(isNumericPart)) return 0;
+
+      let h = 0;
+      let m = 0;
+      let secPart = '';
+      if (parts.length === 2) {
+        m = Number(parts[0]);
+        secPart = parts[1];
+      } else {
+        h = Number(parts[0]);
+        m = Number(parts[1]);
+        secPart = parts[2];
+      }
+
+      const dot = secPart.indexOf('.');
+      const s = Number(dot >= 0 ? secPart.slice(0, dot) : secPart);
+      const frac = dot >= 0 ? secPart.slice(dot + 1) : '';
+      const ms = frac ? Number(frac.padEnd(3, '0').slice(0, 3)) : 0;
+      if (
+        !Number.isFinite(h) ||
+        !Number.isFinite(m) ||
+        !Number.isFinite(s) ||
+        !Number.isFinite(ms)
+      ) {
+        return 0;
+      }
       return h * 3600 + m * 60 + s + ms / 1000;
     };
 
@@ -1440,7 +2016,7 @@
 
   /**
    * Convert cues to transcript XML
-   * @param {any[]} cues - Array of cues
+   * @param {SubtitleCue[]} cues - Array of cues
    * @returns {string} XML transcript
    */
   function convertToXML(cues) {
@@ -1469,9 +2045,29 @@
       return url.toString();
     } catch (e) {
       const encoded = `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
-      const re = new RegExp(`([?&])${key}=[^&]*`);
-      if (re.test(inputUrl)) return inputUrl.replace(re, `$1${encoded}`);
-      return `${inputUrl}${inputUrl.includes('?') ? '&' : '?'}${encoded}`;
+      const str = String(inputUrl || '');
+      const qPos = str.indexOf('?');
+      const hashPos = str.indexOf('#');
+      const baseEnd = qPos >= 0 ? qPos : hashPos >= 0 ? hashPos : str.length;
+      const base = str.slice(0, baseEnd);
+      const hash = hashPos >= 0 ? str.slice(hashPos) : '';
+      const queryStart = qPos >= 0 ? qPos + 1 : baseEnd;
+      const queryEnd = hashPos >= 0 ? hashPos : str.length;
+      const rawQuery = str.slice(queryStart, queryEnd);
+      const pairs = rawQuery ? rawQuery.split('&').filter(Boolean) : [];
+
+      let replaced = false;
+      for (let i = 0; i < pairs.length; i += 1) {
+        const pair = pairs[i];
+        const eq = pair.indexOf('=');
+        const name = eq >= 0 ? pair.slice(0, eq) : pair;
+        if (decodeURIComponent(name) === key) {
+          pairs[i] = encoded;
+          replaced = true;
+        }
+      }
+      if (!replaced) pairs.push(encoded);
+      return `${base}?${pairs.join('&')}${hash}`;
     }
   }
 
@@ -1487,11 +2083,23 @@
       url.searchParams.delete(key);
       return url.toString();
     } catch (e) {
-      const re = new RegExp(`([?&])${key}=[^&]*`, 'g');
-      const cleaned = String(inputUrl || '')
-        .replace(re, '$1')
-        .replace(/\?&/, '?');
-      return cleaned.replace(/[?&]$/, '');
+      const str = String(inputUrl || '');
+      const qPos = str.indexOf('?');
+      if (qPos < 0) return str;
+      const hashPos = str.indexOf('#');
+      const base = str.slice(0, qPos);
+      const hash = hashPos >= 0 ? str.slice(hashPos) : '';
+      const query = str.slice(qPos + 1, hashPos >= 0 ? hashPos : str.length);
+      const nextPairs = query
+        .split('&')
+        .filter(Boolean)
+        .filter(pair => {
+          const eq = pair.indexOf('=');
+          const name = eq >= 0 ? pair.slice(0, eq) : pair;
+          return decodeURIComponent(name) !== key;
+        });
+      const nextQuery = nextPairs.join('&');
+      return `${base}${nextQuery ? `?${nextQuery}` : ''}${hash}`;
     }
   }
 
@@ -1678,8 +2286,9 @@
    */
   async function fetchSubtitlePayloadViaPageFetch(candidates) {
     try {
-      const pageGlobal =
-        typeof unsafeWindow !== 'undefined' ? /** @type {any} */ (unsafeWindow) : window;
+      const pageGlobal = /** @type {Window & typeof globalThis & { fetch?: unknown }} */ (
+        _pageGlobal()
+      );
       const pageFetch = pageGlobal?.fetch;
       if (typeof pageFetch !== 'function') return null;
 
@@ -1719,9 +2328,43 @@
     const allProfiles = getSubtitleRequestProfiles();
     const profiles = minimalMode ? allProfiles.slice(0, 1) : allProfiles;
 
-    const normalizedCandidates = minimalMode
+    // If we don't yet have a PoT for this video, try to elicit one once.
+    // The YouTube player's own caption requests include `pot`+client params
+    // that are required by the server for ASR/translated tracks.
+    if (!minimalMode) {
+      try {
+        const candidateVideoId =
+          (candidates || []).map(_getVideoIdFromCandidate).find(Boolean) || '';
+        if (candidateVideoId && !_potParamsByVideoId.has(candidateVideoId)) {
+          await _tryElicitPotForCurrentVideo();
+        }
+      } catch (e) {
+        // Non-critical
+      }
+    }
+
+    const baseNormalized = minimalMode
       ? buildMinimalRateLimitCandidates(candidates)
       : normalizeSubtitleCandidates(candidates);
+    const normalizedCandidates = minimalMode
+      ? baseNormalized
+      : augmentSubtitleCandidatesWithPot(baseNormalized);
+
+    // Try page-context fetch first when available. The page is same-origin with
+    // youtube.com and carries the full session, so signed timedtext URLs (and
+    // ASR / translated tracks like Russian auto-generated) succeed there even
+    // when GM_xmlhttpRequest returns HTTP 200 with an empty body.
+    if (!minimalMode) {
+      try {
+        const earlyPageFetched = await fetchSubtitlePayloadViaPageFetch(normalizedCandidates);
+        if (earlyPageFetched && earlyPageFetched.kind !== 'raw') {
+          return { payload: earlyPageFetched, hadRateLimit };
+        }
+        if (earlyPageFetched && !firstNonEmpty) firstNonEmpty = earlyPageFetched;
+      } catch (e) {
+        // Non-critical — fall through to GM_xmlhttpRequest loop.
+      }
+    }
 
     for (const candidateUrl of normalizedCandidates) {
       for (const profile of profiles) {
@@ -1776,6 +2419,25 @@
   }
 
   /**
+   * Trigger a browser file download and revoke the object URL after the click settles.
+   * Immediate revocation is flaky in Chromium/Firefox and breaks repeated downloads.
+   * @param {Blob} blob
+   * @param {string} filename
+   * @param {number} [revokeDelayMs=1500]
+   */
+  function triggerBlobDownload(blob, filename, revokeDelayMs = 1500) {
+    const blobUrl = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = blobUrl;
+    a.download = filename;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout_(() => URL.revokeObjectURL(blobUrl), Math.max(500, Number(revokeDelayMs) || 1500));
+  }
+
+  /**
    * Download subtitle file
    * @param {object} options - Download options
    * @param {string} options.videoId - Video ID
@@ -1785,6 +2447,7 @@
    * @param {boolean} [options.isAutoGenerated=false] - Whether subtitle is auto-generated
    * @param {string} [options.format='srt'] - Format: 'srt', 'txt', 'xml'
    * @param {string | null} [options.translateTo] - Target language code for translation
+   * @param {string} [options.trackId] - Caption track identifier
    * @returns {Promise<void>}
    */
   async function downloadSubtitle(options = /** @type {any} */ ({})) {
@@ -1796,6 +2459,7 @@
       isAutoGenerated = false,
       format = 'srt',
       translateTo = null,
+      trackId = '',
     } = options;
 
     if (!videoId || (!baseUrl && !languageCode)) {
@@ -1818,15 +2482,17 @@
       ...buildDirectSubtitleCandidates(videoId, languageCode, false, null),
     ];
 
-    // Firefox: prefer minimal source candidates first to avoid timedtext 429 bursts
-    // that are frequently triggered by translated ASR requests.
+    // When user explicitly selected auto-translation, never prioritize source
+    // tracks, otherwise we may silently download the wrong language.
+    const primaryCandidates = translateTo ? translatedCandidates : sourceCandidates;
+
+    // Firefox: still use minimal candidate strategy to reduce 429 bursts, but
+    // preserve user intent for translated subtitle downloads.
     const candidates = isFirefox
-      ? buildMinimalRateLimitCandidates([
-          ...sourceNoAsrCandidates,
-          ...sourceCandidates,
-          ...translatedCandidates,
-        ])
-      : translatedCandidates;
+      ? buildMinimalRateLimitCandidates(
+          translateTo ? [...primaryCandidates] : [...sourceNoAsrCandidates, ...sourceCandidates]
+        )
+      : primaryCandidates;
 
     NotificationManager.show(t('subtitleDownloading'), {
       duration: 2000,
@@ -1845,31 +2511,20 @@
         await waitMs(900);
       }
 
-      // Fallback 1: if translated subtitles fail (404 is common for some target langs),
-      // retry source captions without tlang.
-      if (!payload && translateTo) {
-        const sourceAttempt = await fetchSubtitlePayload(sourceCandidates);
-        payload = sourceAttempt.payload;
-        hadRateLimit = hadRateLimit || sourceAttempt.hadRateLimit;
-        sawRateLimit = sawRateLimit || sourceAttempt.hadRateLimit;
-      }
-
-      // Fallback 2: some videos expose captions but reject kind=asr with translation;
+      // Fallback 1: some videos expose captions but reject kind=asr with translation;
       // retry direct timedtext without ASR flag and without tlang.
-      if (!payload && isAutoGenerated) {
+      if (!payload && isAutoGenerated && !translateTo) {
         const langOnlyAttempt = await fetchSubtitlePayload(sourceNoAsrCandidates);
         payload = langOnlyAttempt.payload;
         hadRateLimit = hadRateLimit || langOnlyAttempt.hadRateLimit;
         sawRateLimit = sawRateLimit || langOnlyAttempt.hadRateLimit;
       }
 
-      // Fallback 3: aggressive minimal retry specifically for 429-heavy sessions.
+      // Fallback 2: aggressive minimal retry specifically for 429-heavy sessions.
       if (!payload && hadRateLimit) {
-        const rateLimitCandidates = buildMinimalRateLimitCandidates([
-          ...sourceNoAsrCandidates,
-          ...sourceCandidates,
-          ...translatedCandidates,
-        ]);
+        const rateLimitCandidates = buildMinimalRateLimitCandidates(
+          translateTo ? [...translatedCandidates] : [...sourceNoAsrCandidates, ...sourceCandidates]
+        );
         const finalAttempt = await fetchSubtitlePayload(rateLimitCandidates, { minimalMode: true });
         payload = finalAttempt.payload;
         sawRateLimit = sawRateLimit || finalAttempt.hadRateLimit;
@@ -1884,21 +2539,29 @@
           const freshTracks =
             freshPlayerResponse?.captions?.playerCaptionsTracklistRenderer?.captionTracks || [];
           // Find a matching track by language code (exact match, then prefix match)
-          const freshTrack =
-            freshTracks.find(
-              (/** @type {any} */ t) => String(t?.languageCode || '') === languageCode
-            ) ||
-            freshTracks.find((/** @type {any} */ t) =>
-              String(t?.languageCode || '').startsWith(languageCode.split('-')[0])
-            );
+          const freshTrack = findBestCaptionTrack(freshTracks, {
+            languageCode,
+            isAutoGenerated,
+            baseUrl,
+            trackId,
+          });
           if (freshTrack?.baseUrl) {
             const freshBase = normalizeSubtitleBaseUrl(freshTrack.baseUrl);
-            const freshCandidates = [
-              ...buildSubtitleCandidates(freshBase, translateTo),
-              ...buildSubtitleCandidates(freshBase, null),
-              ...buildDirectSubtitleCandidates(videoId, languageCode, isAutoGenerated, translateTo),
-              ...buildDirectSubtitleCandidates(videoId, languageCode, false, null),
-            ];
+            const freshCandidates = translateTo
+              ? [
+                  ...buildSubtitleCandidates(freshBase, translateTo),
+                  ...buildDirectSubtitleCandidates(
+                    videoId,
+                    languageCode,
+                    isAutoGenerated,
+                    translateTo
+                  ),
+                ]
+              : [
+                  ...buildSubtitleCandidates(freshBase, null),
+                  ...buildDirectSubtitleCandidates(videoId, languageCode, isAutoGenerated, null),
+                  ...buildDirectSubtitleCandidates(videoId, languageCode, false, null),
+                ];
             const freshAttempt = await fetchSubtitlePayload(freshCandidates);
             payload = freshAttempt.payload;
             sawRateLimit = sawRateLimit || freshAttempt.hadRateLimit;
@@ -1909,6 +2572,9 @@
       }
 
       if (!payload) {
+        if (translateTo) {
+          throw new Error('Translated subtitle track is unavailable for this video/language');
+        }
         throw new Error('Empty subtitle response');
       }
 
@@ -1957,14 +2623,7 @@
 
       // Download file
       const blob = new Blob([content], { type: 'text/plain;charset=utf-8' });
-      const blobUrl = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = blobUrl;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(blobUrl);
+      triggerBlobDownload(blob, filename);
 
       NotificationManager.show(t('subtitleDownloaded'), {
         duration: 3000,
@@ -1995,7 +2654,7 @@
   /**
    * Download video or audio from YouTube
    *
-   * This is the main download function that uses TubeInsights API (mp3yt.is)
+   * This is the main download function that uses the cnv.cx conversion backend
    * to convert and download YouTube videos/audio.
    *
    * @param {object} options - Download options
@@ -2041,7 +2700,7 @@
     });
 
     try {
-      // Step 1: Get API key from TubeInsights endpoint
+      // Step 1: Get conversion API key from cnv.cx backend
       logger.debug('Fetching API key...');
       const keyResponse = await gmXmlHttpRequest({
         method: 'GET',
@@ -2084,7 +2743,11 @@
       }
 
       // Step 3: Request conversion
-      logger.debug('Requesting conversion...', payload);
+      logger.debug('Requesting conversion...', {
+        format: payload?.format,
+        videoQuality: payload?.videoQuality,
+        audioBitrate: payload?.audioBitrate,
+      });
       const customHeaders = {
         ...DownloadConfig.HEADERS,
         key,
@@ -2102,14 +2765,14 @@
       }
 
       const apiDownloadInfo = JSON.parse(downloadResponse.responseText);
-      logger.debug('Conversion response:', apiDownloadInfo);
+      logger.debug('Conversion response received');
 
       if (!apiDownloadInfo.url) {
         throw new Error('No download URL received from API');
       }
 
       // Step 4: Download the file
-      logger.debug('Downloading file from:', apiDownloadInfo.url);
+      logger.debug('Downloading file from:', sanitizeUrlForLog(String(apiDownloadInfo.url || '')));
       return new Promise((resolve, reject) => {
         if (typeof GM_xmlhttpRequest === 'undefined') {
           // Fallback: open in new tab
@@ -2167,20 +2830,9 @@
               }
 
               // Create download link and trigger download
-              const blobUrl = URL.createObjectURL(blob);
-              const a = document.createElement('a');
-              a.href = blobUrl;
-
               const filename =
                 apiDownloadInfo.filename || `${title}.${format === 'video' ? 'mp4' : 'mp3'}`;
-              a.download = sanitizeFilename(filename);
-
-              document.body.appendChild(a);
-              a.click();
-              document.body.removeChild(a);
-
-              // Clean up blob URL after download
-              setTimeout(() => URL.revokeObjectURL(blobUrl), 100);
+              triggerBlobDownload(blob, sanitizeFilename(filename), 2000);
 
               NotificationManager.show(t('downloadCompleted'), {
                 duration: 3000,
@@ -2243,13 +2895,13 @@
       Object.assign(btn.style, {
         flex: 'initial',
         padding: '8px 18px',
-        border: '1px solid rgba(255,255,255,0.06)',
+        border: '1px solid var(--yt-surface-overlay-border)',
         background: 'transparent',
         cursor: 'pointer',
         fontSize: '13px',
         fontWeight: '600',
         transition: 'all 0.18s ease',
-        color: '#666',
+        color: 'var(--yt-muted-text)',
         borderRadius: '999px',
       });
       // Accessibility & artifact prevention
@@ -2264,18 +2916,18 @@
       // Reset all to inactive style
       [videoTab, audioTab, subTab].forEach(b => {
         b.style.background = 'transparent';
-        b.style.color = '#666';
-        b.style.border = '1px solid rgba(255,255,255,0.06)';
+        b.style.color = 'var(--yt-muted-text)';
+        b.style.border = '1px solid var(--yt-surface-overlay-border)';
         b.style.boxShadow = 'none';
         b.setAttribute('aria-selected', 'false');
       });
 
       // Active look: green for main, white text.
       Object.assign(btn.style, {
-        background: '#10c56a',
-        color: '#fff',
-        border: '1px solid rgba(0,0,0,0.06)',
-        boxShadow: '0 1px 0 rgba(0,0,0,0.04) inset',
+        background: 'var(--yt-success-accent)',
+        color: 'var(--yt-text-primary)',
+        border: '1px solid var(--yt-shadow-inset-soft)',
+        boxShadow: '0 1px 0 var(--yt-shadow-inset-soft) inset',
       });
       btn.setAttribute('aria-selected', 'true');
 
@@ -2354,7 +3006,7 @@
     embedLabel.style.display = 'flex';
     embedLabel.style.alignItems = 'center';
     embedLabel.style.gap = '6px';
-    embedLabel.style.color = '#fff';
+    embedLabel.style.color = 'var(--yt-text-primary)';
     // Keep the embed thumbnail option always enabled but hidden from the UI
     embedLabel.style.display = 'none';
     embedLabel.appendChild(embedCheckbox);
@@ -2389,9 +3041,9 @@
       Object.assign(btn.style || {}, {
         padding: '6px 12px',
         borderRadius: '999px',
-        border: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(255,255,255,0.02)',
-        color: '#fff',
+        border: '1px solid var(--yt-surface-soft)',
+        background: 'var(--yt-surface-overlay-faint)',
+        color: 'var(--yt-text-primary)',
         cursor: 'pointer',
         fontSize: '13px',
         fontWeight: '600',
@@ -2399,13 +3051,13 @@
       btn.addEventListener('click', () => {
         Array.from(formatSelect.children).forEach((/** @type {any} */ c) => {
           c.style.background = 'transparent';
-          c.style.color = '#fff';
-          c.style.border = '1px solid rgba(255,255,255,0.08)';
+          c.style.color = 'var(--yt-text-primary)';
+          c.style.border = '1px solid var(--yt-surface-soft)';
           if (c.setAttribute) c.setAttribute('aria-checked', 'false');
         });
-        btn.style.background = '#111';
-        btn.style.color = '#10c56a';
-        btn.style.border = '1px solid rgba(16,197,106,0.15)';
+        btn.style.background = 'var(--yt-surface-contrast)';
+        btn.style.color = 'var(--yt-success-accent)';
+        btn.style.border = '1px solid var(--yt-success-accent-soft)';
         btn.setAttribute('aria-checked', 'true');
         formatSelect.value = fmt;
       });
@@ -2428,11 +3080,11 @@
     Object.assign(cancelBtn.style || {}, {
       padding: '8px 16px',
       borderRadius: '8px',
-      border: '1px solid rgba(255,255,255,0.12)',
+      border: '1px solid var(--yt-surface-active)',
       background: 'transparent',
       cursor: 'pointer',
       fontSize: '14px',
-      color: '#fff',
+      color: 'var(--yt-text-primary)',
     });
 
     const downloadBtn = /** @type {any} */ (document.createElement('button'));
@@ -2441,9 +3093,9 @@
     Object.assign(downloadBtn.style || {}, {
       padding: '8px 20px',
       borderRadius: '8px',
-      border: '1px solid rgba(255,255,255,0.12)',
+      border: '1px solid var(--yt-surface-active)',
       background: 'transparent',
-      color: '#fff',
+      color: 'var(--yt-text-primary)',
       cursor: 'pointer',
       fontSize: '14px',
       fontWeight: '600',
@@ -2457,7 +3109,7 @@
     Object.assign(progressBar.style || {}, {
       width: '100%',
       height: '3px',
-      background: '#e0e0e0',
+      background: 'var(--yt-progress-track)',
       borderRadius: '5px',
       overflow: 'hidden',
       marginBottom: '6px',
@@ -2467,7 +3119,7 @@
     Object.assign(progressFill.style || {}, {
       width: '0%',
       height: '100%',
-      background: '#1a73e8',
+      background: 'var(--yt-progress-fill)',
       transition: 'width 200ms linear',
     });
 
@@ -2475,7 +3127,7 @@
 
     const progressText = /** @type {any} */ (document.createElement('div'));
     progressText.style.fontSize = '12px';
-    progressText.style.color = '#666';
+    progressText.style.color = 'var(--yt-muted-text)';
 
     progressWrapper.appendChild(progressBar);
     progressWrapper.appendChild(progressText);
@@ -2508,7 +3160,7 @@
       }
       if (formParts.cancelBtn) formParts.cancelBtn.disabled = true;
     } catch (e) {
-      console.error('Error disabling form controls:', e);
+      window.console.error('Error disabling form controls:', e);
     }
   }
 
@@ -2529,7 +3181,7 @@
         formParts.downloadBtn.style.pointerEvents = 'auto';
       }
     } catch (e) {
-      console.error('Error enabling form controls:', e);
+      window.console.error('Error enabling form controls:', e);
     }
   }
 
@@ -2568,12 +3220,13 @@
     const effectiveTranslateTo = subtitle.translateTo || null;
     await downloadSubtitle({
       videoId,
-      url: subtitle.url,
+      url: subtitle.baseUrl || subtitle.url,
       languageCode: effectiveLanguageCode,
       languageName: subtitle.name,
       isAutoGenerated: !!subtitle.isAutoGenerated,
       format: subtitleFormat,
       translateTo: effectiveTranslateTo,
+      trackId: subtitle.trackId || '',
     });
   }
 
@@ -2628,22 +3281,22 @@
   function handleDownloadError(formParts, err) {
     const errorMsg = err?.message || 'Unknown error';
     formParts.progressText.textContent = `${t('downloadFailed')} ${errorMsg}`;
-    formParts.progressText.style.color = '#ff5555';
+    formParts.progressText.style.color = 'var(--yt-danger-text)';
 
     // Ensure controls are re-enabled even if something goes wrong
     enableFormControls(formParts);
 
     // Add a safety timeout to force re-enable after 500ms
-    setTimeout(() => {
+    setTimeout_(() => {
       try {
         enableFormControls(formParts);
       } catch (e) {
-        console.error('Failed to re-enable controls:', e);
+        window.console.error('Failed to re-enable controls:', e);
       }
     }, 500);
 
     // Reset progress text color after 3 seconds
-    setTimeout(() => {
+    setTimeout_(() => {
       formParts.progressText.style.color = '#fff';
     }, 3000);
   }
@@ -2672,11 +3325,11 @@
         }
         completeDownload(formParts);
       } catch (err) {
-        console.error('[Download Error]:', err);
+        window.console.error('[Download Error]:', err);
         handleDownloadError(formParts, /** @type {any} */ (err));
       } finally {
         // Extra safety: ensure controls are re-enabled
-        setTimeout(() => {
+        setTimeout_(() => {
           if (formParts.downloadBtn && !formParts.downloadBtn.disabled) {
             return; // Already enabled
           }
@@ -2710,7 +3363,7 @@
       subtitlesData.original = data.subtitles;
       subtitlesData.translated = data.autoTransSubtitles.map((/** @type {any} */ autot) => ({
         ...autot,
-        url: autot.url || data.subtitles[0]?.url || '',
+        url: autot.url || (autot.baseUrl ? buildSubtitleUrl(autot.baseUrl) : ''),
         translateTo: autot.languageCode,
       }));
       subtitlesData.all = [...subtitlesData.original, ...subtitlesData.translated];
@@ -2754,10 +3407,19 @@
       formParts.embedLabel.style.display = 'none';
       formParts.subtitleWrapper.style.display = 'none';
 
-      // Render custom pill buttons for video qualities, split low/high and show VP9 label
+      const videoId = getVideoId() || '';
+      const renderToken = String(Date.now()) + Math.random().toString(36).slice(2);
+      formParts.qualitySelect.dataset.renderToken = renderToken;
       formParts.qualitySelect.replaceChildren();
-      const lowQuals = DownloadConfig.VIDEO_QUALITIES.filter(q => parseInt(q, 10) <= 1080);
-      const highQuals = DownloadConfig.VIDEO_QUALITIES.filter(q => parseInt(q, 10) > 1080);
+
+      const loadingLabel = document.createElement('div');
+      loadingLabel.textContent = t('loading');
+      Object.assign(loadingLabel.style || {}, {
+        fontSize: '13px',
+        color: 'var(--yt-text-secondary)',
+        padding: '8px 0',
+      });
+      formParts.qualitySelect.appendChild(loadingLabel);
 
       function makeQualityButton(/** @type {string} */ q) {
         const btn = /** @type {any} */ (document.createElement('button'));
@@ -2772,9 +3434,9 @@
           gap: '8px',
           padding: '8px 12px',
           borderRadius: '999px',
-          border: '1px solid rgba(255,255,255,0.08)',
-          background: 'rgba(255,255,255,0.02)',
-          color: '#fff',
+          border: '1px solid var(--yt-surface-soft)',
+          background: 'var(--yt-surface-overlay-faint)',
+          color: 'var(--yt-text-primary)',
           cursor: 'pointer',
           fontSize: '13px',
           fontWeight: '600',
@@ -2784,14 +3446,14 @@
           Array.from(formParts.qualitySelect.children).forEach((/** @type {any} */ c) => {
             if (c.dataset && c.dataset.value) {
               c.style.background = 'transparent';
-              c.style.color = '#fff';
-              c.style.border = '1px solid rgba(255,255,255,0.08)';
+              c.style.color = 'var(--yt-text-primary)';
+              c.style.border = '1px solid var(--yt-surface-soft)';
               if (c.setAttribute) c.setAttribute('aria-checked', 'false');
             }
           });
-          btn.style.background = '#111';
-          btn.style.color = '#10c56a';
-          btn.style.border = '1px solid rgba(16,197,106,0.15)';
+          btn.style.background = 'var(--yt-surface-contrast)';
+          btn.style.color = 'var(--yt-success-accent)';
+          btn.style.border = '1px solid var(--yt-success-accent-soft)';
           btn.setAttribute('aria-checked', 'true');
           formParts.qualitySelect.value = q;
         });
@@ -2799,44 +3461,60 @@
         return btn;
       }
 
-      lowQuals.forEach(q => formParts.qualitySelect.appendChild(makeQualityButton(q)));
+      void getAvailableVideoQualities(videoId).then(qualities => {
+        if (activeFormat !== 'video') return;
+        if (formParts.qualitySelect.dataset.renderToken !== renderToken) return;
 
-      if (highQuals.length > 0) {
-        const labelWrap = /** @type {any} */ (document.createElement('div'));
-        Object.assign(labelWrap.style || {}, {
-          display: 'flex',
-          alignItems: 'center',
-          gap: '12px',
-          width: '100%',
-          margin: '8px 0',
-        });
-        const lineLeft = /** @type {any} */ (document.createElement('div'));
-        lineLeft.style.flex = '1';
-        lineLeft.style.borderTop = '1px solid rgba(255,255,255,0.06)';
-        const label = /** @type {any} */ (document.createElement('div'));
-        label.textContent = t('vp9Label');
-        Object.assign(label.style || {}, {
-          fontSize: '12px',
-          color: 'rgba(255,255,255,0.7)',
-          padding: '0 8px',
-        });
-        const lineRight = /** @type {any} */ (document.createElement('div'));
-        lineRight.style.flex = '1';
-        lineRight.style.borderTop = '1px solid rgba(255,255,255,0.06)';
-        labelWrap.appendChild(lineLeft);
-        labelWrap.appendChild(label);
-        labelWrap.appendChild(lineRight);
-        formParts.qualitySelect.appendChild(labelWrap);
+        const availableQualities =
+          Array.isArray(qualities) && qualities.length > 0
+            ? qualities
+            : DownloadConfig.VIDEO_QUALITIES.slice();
+        const lowQuals = availableQualities.filter(q => parseInt(q, 10) <= 1080);
+        const highQuals = availableQualities.filter(q => parseInt(q, 10) > 1080);
+        const previousQuality = String(formParts.qualitySelect.value || '');
 
-        highQuals.forEach(q => formParts.qualitySelect.appendChild(makeQualityButton(q)));
-      }
+        formParts.qualitySelect.replaceChildren();
+        lowQuals.forEach(q => formParts.qualitySelect.appendChild(makeQualityButton(q)));
 
-      // select default
-      formParts.qualitySelect.value = DownloadConfig.DEFAULTS.videoQuality;
-      const defaultBtn = Array.from(formParts.qualitySelect.children).find(
-        c => c.dataset && c.dataset.value === formParts.qualitySelect.value
-      );
-      if (defaultBtn) defaultBtn.click();
+        if (highQuals.length > 0) {
+          const labelWrap = /** @type {any} */ (document.createElement('div'));
+          Object.assign(labelWrap.style || {}, {
+            display: 'flex',
+            alignItems: 'center',
+            gap: '12px',
+            width: '100%',
+            margin: '8px 0',
+          });
+          const lineLeft = /** @type {any} */ (document.createElement('div'));
+          lineLeft.style.flex = '1';
+          lineLeft.style.borderTop = '1px solid var(--yt-surface-overlay-border)';
+          const label = /** @type {any} */ (document.createElement('div'));
+          label.textContent = t('vp9Label');
+          Object.assign(label.style || {}, {
+            fontSize: '12px',
+            color: 'var(--yt-text-secondary)',
+            padding: '0 8px',
+          });
+          const lineRight = /** @type {any} */ (document.createElement('div'));
+          lineRight.style.flex = '1';
+          lineRight.style.borderTop = '1px solid var(--yt-surface-overlay-border)';
+          labelWrap.appendChild(lineLeft);
+          labelWrap.appendChild(label);
+          labelWrap.appendChild(lineRight);
+          formParts.qualitySelect.appendChild(labelWrap);
+
+          highQuals.forEach(q => formParts.qualitySelect.appendChild(makeQualityButton(q)));
+        }
+
+        formParts.qualitySelect.value = pickDefaultVideoQuality(
+          availableQualities,
+          previousQuality
+        );
+        const defaultBtn = Array.from(formParts.qualitySelect.children).find(
+          c => c.dataset && c.dataset.value === formParts.qualitySelect.value
+        );
+        if (defaultBtn) defaultBtn.click();
+      });
 
       return;
     }
@@ -2861,9 +3539,9 @@
         gap: '8px',
         padding: '8px 12px',
         borderRadius: '999px',
-        border: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(255,255,255,0.02)',
-        color: '#fff',
+        border: '1px solid var(--yt-surface-soft)',
+        background: 'var(--yt-surface-overlay-faint)',
+        color: 'var(--yt-text-primary)',
         cursor: 'pointer',
         fontSize: '13px',
         fontWeight: '600',
@@ -2872,13 +3550,13 @@
       btn.addEventListener('click', () => {
         Array.from(formParts.qualitySelect.children).forEach((/** @type {any} */ c) => {
           c.style.background = 'transparent';
-          c.style.color = '#fff';
-          c.style.border = '1px solid rgba(255,255,255,0.08)';
+          c.style.color = 'var(--yt-text-primary)';
+          c.style.border = '1px solid var(--yt-surface-soft)';
           if (c.setAttribute) c.setAttribute('aria-checked', 'false');
         });
-        btn.style.background = '#111';
-        btn.style.color = '#10c56a';
-        btn.style.border = '1px solid rgba(16,197,106,0.15)';
+        btn.style.background = 'var(--yt-surface-contrast)';
+        btn.style.color = 'var(--yt-success-accent)';
+        btn.style.border = '1px solid var(--yt-success-accent-soft)';
         btn.setAttribute('aria-checked', 'true');
         formParts.qualitySelect.value = b;
       });
@@ -2915,12 +3593,12 @@
     Object.assign(box.style || {}, {
       width: '420px',
       maxWidth: '94%',
-      background: 'rgba(20,20,20,0.64)',
-      color: '#fff',
+      background: 'var(--yt-modal-surface)',
+      color: 'var(--yt-text-primary)',
       borderRadius: '12px',
-      boxShadow: '0 8px 40px rgba(0,0,0,0.6)',
+      boxShadow: '0 8px 40px var(--yt-shadow-flyout)',
       fontFamily: 'Arial, sans-serif',
-      border: '1px solid rgba(255,255,255,0.06)',
+      border: '1px solid var(--yt-surface-overlay-border)',
       backdropFilter: 'blur(8px)',
     });
 
@@ -3010,21 +3688,21 @@
         return resolve(window.YouTubePlusDownload);
       }
 
-      const id = setInterval(() => {
+      const id = createVisibilityAwareInterval(() => {
         waited += interval;
         if (typeof window.YouTubePlusDownload !== 'undefined') {
-          clearInterval(id);
+          id.stop();
           return resolve(window.YouTubePlusDownload);
         }
         if (waited >= timeout) {
-          clearInterval(id);
+          id.stop();
           return resolve(undefined);
         }
       }, interval);
       // Register with cleanupManager for safe SPA cleanup
       try {
-        if (window.YouTubeUtils?.cleanupManager?.registerInterval) {
-          window.YouTubeUtils.cleanupManager.registerInterval(id);
+        if (window.YouTubeUtils?.cleanupManager?.register) {
+          window.YouTubeUtils.cleanupManager.register(() => id.stop());
         }
       } catch (e) {
         // Non-critical, suppressed
@@ -3117,13 +3795,12 @@
     button.setAttribute('role', 'button');
     button.setAttribute('aria-haspopup', 'true');
     button.setAttribute('aria-expanded', 'false');
-    button.innerHTML = _createHTML(`
-      <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round" style="display:block;margin:auto;vertical-align:middle;">
-        <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-        <polyline points="7 10 12 15 17 10"></polyline>
-        <line x1="12" y1="15" x2="12" y2="3"></line>
-      </svg>
-    `);
+    _setSafeHTML(
+      button,
+      `
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="--darkreader-inline-stroke: var(--darkreader-text-ffffff, #cad3f5);" data-darkreader-inline-stroke=""></path> <path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="--darkreader-inline-stroke: var(--darkreader-text-ffffff, #cad3f5);" data-darkreader-inline-stroke=""></path></svg>
+    `
+    );
     return button;
   };
 
@@ -3170,7 +3847,7 @@
     const handleDirectDownload = async () => {
       const api = await waitForDownloadAPI(2000);
       if (!api) {
-        console.error('[YouTube+] Direct download module not loaded');
+        window.console.error('[YouTube+] Direct download module not loaded');
         ytUtils.NotificationManager.show(tFn('directDownloadModuleNotAvailable'), {
           duration: 3000,
           type: 'error',
@@ -3188,7 +3865,7 @@
           return;
         }
       } catch (err) {
-        console.error('[YouTube+] Direct download invocation failed:', err);
+        window.console.error('[YouTube+] Direct download invocation failed:', err);
       }
 
       ytUtils.NotificationManager.show(tFn('directDownloadModuleNotAvailable'), {
@@ -3610,12 +4287,12 @@
               /** @type {any} */ (window).youtubePlus.settings =
                 /** @type {any} */ (window).youtubePlus.settings || settings;
             } catch (e) {
-              console.warn('[YouTube+] rebuildDownloadDropdown failed:', e);
+              window.console.warn('[YouTube+] rebuildDownloadDropdown failed:', e);
             }
           };
         }
       } catch (e) {
-        console.warn('[YouTube+] expose rebuildDownloadDropdown failed:', e);
+        window.console.warn('[YouTube+] expose rebuildDownloadDropdown failed:', e);
       }
 
       controls.insertBefore(button, controls.firstChild);
@@ -3753,7 +4430,14 @@
 
   // Register with LazyLoader for deferred initialization
   if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register('download', ensureInit, { priority: 2 });
+    window.YouTubePlusLazyLoader.register(
+      'download',
+      ensureInit,
+      /** @type {any} */ ({
+        priority: 2,
+        shouldLoad: isRelevantRoute,
+      })
+    );
   } else {
     // Fallback: direct initialization
     onDomReady(ensureInit);

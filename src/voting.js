@@ -5,9 +5,66 @@
 
 (function () {
   'use strict';
-  const _createHTML = window._ytplusCreateHTML || ((/** @type {string} */ s) => s);
+
+  const setTimeout_ = setTimeout.bind(window);
+  const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
+  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
+  const byId =
+    window.YouTubeUtils?.byId ||
+    ((/** @type {string} */ id) =>
+      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
+  const $ =
+    window.YouTubeUtils?.$ ||
+    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
+      (root || document).querySelector(selector));
 
   if (typeof window === 'undefined') return;
+
+  const isSettingsModalOpen = () => {
+    try {
+      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const isRelevantRoute = () => {
+    try {
+      const host = window.location.hostname || '';
+      if (!host.endsWith('youtube.com') || host === 'music.youtube.com') return false;
+      if (isSettingsModalOpen()) return true;
+      const path = window.location.pathname || '';
+      return path === '/watch' || path.startsWith('/shorts') || path.startsWith('/channel/');
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const queryOne = (
+    /** @type {string} */ selector,
+    /** @type {Document | Element | null | undefined} */ root = document
+  ) => {
+    const cache = window.YouTubeDOMCache;
+    if (cache && typeof cache.querySelector === 'function') {
+      return cache.querySelector(selector, root || document);
+    }
+    return (root || document).querySelector(selector);
+  };
+
+  /**
+   * @param {Element} container
+   * @param {string} html
+   */
+  const renderTemplateClone = (container, html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
 
   const SUPABASE_URL = 'https://ldpccocxlrdsyejfhrvc.supabase.co';
   // This is a Supabase anonymous (public) key — intentionally embedded in client-side code.
@@ -29,10 +86,10 @@
   let settingsPanelBaseMarginLeftPx = null;
 
   const getSettingsShell = () =>
-    /** @type {HTMLElement|null} */ (document.querySelector('.ytp-plus-settings-shell'));
+    /** @type {HTMLElement|null} */ (queryOne('.ytp-plus-settings-shell'));
 
   const getSettingsPanel = () =>
-    /** @type {HTMLElement|null} */ (document.querySelector('.ytp-plus-settings-panel'));
+    /** @type {HTMLElement|null} */ (queryOne('.ytp-plus-settings-panel'));
 
   function ensureSettingsPanelBaseMargin() {
     if (settingsPanelBaseMarginLeftPx !== null) return;
@@ -111,7 +168,7 @@
       });
   }
 
-  const t = window.YouTubeUtils?.t || ((/** @type {string} */ key) => key || '');
+  const t = window.YouTubeUtils.t;
 
   const tf = (
     /** @type {string} */ key,
@@ -168,6 +225,16 @@
     return userId;
   }
 
+  const normalizeUserText = (/** @type {string} */ value) => {
+    const normalized = String(value || '')
+      .normalize('NFKC')
+      .replace(/[\u0000-\u001F\u007F]+/g, ' ')
+      .trim();
+    const sanitizeText = window.YouTubeSecurityUtils?.sanitizeText;
+    const safe = typeof sanitizeText === 'function' ? sanitizeText(normalized) : normalized;
+    return safe.split(/\s+/).join(' ').trim();
+  };
+
   function normalizeVoteType(/** @type {any} */ value) {
     const numeric = Number(value);
     if (numeric === 1) return 1;
@@ -208,7 +275,7 @@
       'ytplus_feature_requests?select=*&order=created_at.desc'
     );
     if (error) {
-      console.error('[Voting] Error fetching features:', error);
+      window.console.error('[Voting] Error fetching features:', error);
       return [];
     }
     return data || [];
@@ -219,7 +286,7 @@
       'ytplus_feature_votes?select=feature_id,vote_type,ip_address'
     );
     if (error) {
-      console.error('[Voting] Error fetching votes:', error);
+      window.console.error('[Voting] Error fetching votes:', error);
       return {};
     }
     /** @type {Record<string, {upvotes: number, downvotes: number}>} */
@@ -241,7 +308,7 @@
       `ytplus_feature_votes?select=feature_id,vote_type&ip_address=eq.${userId}`
     );
     if (error) {
-      console.error('[Voting] Error fetching user votes:', error);
+      window.console.error('[Voting] Error fetching user votes:', error);
       return {};
     }
     /** @type {Record<string, number>} */
@@ -287,7 +354,7 @@
     });
 
     if (error) {
-      console.error('[Voting] Vote error:', error);
+      window.console.error('[Voting] Vote error:', error);
       return { success: false, error };
     }
     return { success: true, action: 'added' };
@@ -296,16 +363,11 @@
   async function submitFeature(/** @type {string} */ title, /** @type {string} */ description) {
     const MAX_TITLE = 200;
     const MAX_DESC = 2000;
-    const stripHTML = (/** @type {string} */ s) =>
-      String(s || '')
-        .replace(/<[^>]*>/g, '')
-        .replace(/\s+/g, ' ')
-        .trim();
+    const normalizeTitle = (/** @type {string} */ value) =>
+      normalizeUserText(value).toLocaleLowerCase();
 
-    const normalizeTitle = (/** @type {string} */ value) => stripHTML(value).toLocaleLowerCase();
-
-    title = stripHTML(title).slice(0, MAX_TITLE);
-    description = stripHTML(description).slice(0, MAX_DESC);
+    title = normalizeUserText(title).slice(0, MAX_TITLE);
+    description = normalizeUserText(description).slice(0, MAX_DESC);
 
     if (!title) {
       return { success: false, error: 'Title is required' };
@@ -336,7 +398,7 @@
     });
 
     if (error) {
-      console.error('[Voting] Submit error:', error);
+      window.console.error('[Voting] Submit error:', error);
       return { success: false, error };
     }
     return { success: true };
@@ -352,7 +414,7 @@
     );
 
     if (error) {
-      console.error('[Voting] Error fetching comments:', error);
+      window.console.error('[Voting] Error fetching comments:', error);
       return {};
     }
 
@@ -368,10 +430,7 @@
   }
 
   async function addComment(/** @type {string} */ featureId, /** @type {string} */ commentText) {
-    const text = String(commentText || '')
-      .replace(/<[^>]*>/g, '')
-      .trim()
-      .slice(0, 1000);
+    const text = normalizeUserText(commentText).slice(0, 1000);
     if (!text) {
       return { success: false, error: 'Comment is required' };
     }
@@ -387,7 +446,7 @@
     });
 
     if (error) {
-      console.error('[Voting] Add comment error:', error);
+      window.console.error('[Voting] Add comment error:', error);
       return { success: false, error };
     }
 
@@ -409,17 +468,11 @@
   }
 
   function getRenderableFeatureTitle(/** @type {any} */ feature) {
-    return String(feature?.title || '')
-      .replace(/<[^>]*>/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    return normalizeUserText(String(feature?.title || ''));
   }
 
   function getRenderableFeatureDescription(/** @type {any} */ feature) {
-    return String(feature?.description || '')
-      .replace(/<[^>]*>/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
+    return normalizeUserText(String(feature?.description || ''));
   }
 
   function getNormalizedRenderableFeatureTitle(/** @type {any} */ feature) {
@@ -447,7 +500,7 @@
     });
 
     if (error) {
-      console.error('[Voting] Error creating preview row:', error);
+      window.console.error('[Voting] Error creating preview row:', error);
 
       // Recover if preview row already exists (e.g. conflict/race condition on insert)
       const encodedTitle = encodeURIComponent(PREVIEW_FEATURE_TITLE);
@@ -467,7 +520,9 @@
   }
 
   function createVotingUI(/** @type {HTMLElement} */ container) {
-    container.innerHTML = _createHTML(`
+    renderTemplateClone(
+      container,
+      `
       <div class="ytp-plus-voting">
         <div class="ytp-plus-voting-header">
           <h3>${tf('featureRequests', 'Feature Requests')}</h3>
@@ -487,17 +542,20 @@
           </div>
         </div>
       </div>
-    `);
+    `
+    );
   }
 
   function ensureCommentsModal() {
-    if (document.getElementById('ytp-plus-comments-panel')) return true;
+    if (byId('ytp-plus-comments-panel')) return true;
     if (!document.body || !document.head) return false;
 
     const panel = document.createElement('div');
     panel.id = 'ytp-plus-comments-panel';
     panel.className = 'ytp-plus-comments-sidepanel';
-    panel.innerHTML = _createHTML(`
+    renderTemplateClone(
+      panel,
+      `
       <div class="ytp-plus-comments-header">
         <div class="ytp-plus-comments-title" id="ytp-plus-comments-title">${tf('comments', 'Comments')}</div>
         <button class="ytp-plus-comments-close" data-comments-close="1" type="button">×</button>
@@ -507,27 +565,28 @@
         <textarea id="ytp-plus-comments-input" maxlength="1000" placeholder="${tf('addCommentPlaceholder', 'Add a comment...')}"></textarea>
         <button id="ytp-plus-comments-submit" type="button">${tf('submit', 'Submit')}</button>
       </div>
-    `);
+    `
+    );
     document.body.appendChild(panel);
 
-    if (!document.getElementById('ytp-plus-comments-modal-style')) {
+    if (!byId('ytp-plus-comments-modal-style')) {
       const style = document.createElement('style');
       style.id = 'ytp-plus-comments-modal-style';
       style.textContent = `
-        .ytp-plus-comments-sidepanel{position:fixed;top:10vh;left:calc(50% + 390px);width:min(440px,34vw);max-width:92vw;height:60vh;background:var(--yt-glass-bg);border:1.5px solid var(--yt-glass-border);border-radius:24px;display:none;z-index:100001;box-shadow:0 12px 40px rgba(0,0,0,.45);overflow:hidden;backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);contain:layout style paint;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
+        .ytp-plus-comments-sidepanel{position:fixed;top:10vh;left:calc(50% + 390px);width:min(440px,34vw);max-width:92vw;height:60vh;background:var(--yt-glass-bg);border:1.5px solid var(--yt-glass-border);border-radius:24px;display:none;z-index:100001;box-shadow:0 12px 40px var(--yt-timecode-panel-shadow);overflow:hidden;backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);contain:layout style paint;font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif}
         .ytp-plus-comments-sidepanel.open{display:flex;flex-direction:column}
-        .ytp-plus-comments-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid rgba(255,255,255,.08)}
+        .ytp-plus-comments-header{display:flex;align-items:center;justify-content:space-between;padding:14px 16px;border-bottom:1px solid var(--yt-stats-card-border-dark)}
         .ytp-plus-comments-title{font-size:16px;font-weight:500;color:var(--yt-text-primary);font-family:inherit}
-        .ytp-plus-comments-close{border:0;background:transparent;color:#cbd4e4;font-size:24px;cursor:pointer;line-height:1}
+        .ytp-plus-comments-close{border:0;background:transparent;color:var(--yt-text-secondary);font-size:24px;cursor:pointer;line-height:1}
         .ytp-plus-comments-list{flex:1;overflow:auto;padding:12px 16px;display:flex;flex-direction:column;gap:10px}
-        .ytp-plus-comments-item{border:1px solid rgba(255,255,255,.08);background:rgba(255,255,255,.02);border-radius:10px;padding:10px}
-        .ytp-plus-comments-item-text{color:#e7ecf5;white-space:pre-wrap;word-break:break-word}
-        .ytp-plus-comments-item-meta{margin-top:6px;color:#9aabc5;font-size:12px}
-        .ytp-plus-comments-form{padding:12px 16px;border-top:1px solid rgba(255,255,255,.08);display:flex;gap:8px;align-items:flex-end}
-        #ytp-plus-comments-input{flex:1;min-height:72px;max-height:160px;resize:vertical;background:var(--yt-glass-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);border-radius:10px;padding:10px}
+        .ytp-plus-comments-item{border:1px solid var(--yt-stats-card-border-dark);background:var(--yt-surface-overlay-faint);border-radius:10px;padding:10px}
+        .ytp-plus-comments-item-text{color:var(--yt-text-primary);white-space:pre-wrap;word-break:break-word;font-size:small}
+        .ytp-plus-comments-item-meta{margin-top:6px;color:var(--yt-text-secondary);font-size:12px}
+        .ytp-plus-comments-form{padding:12px 16px;border-top:1px solid var(--yt-stats-card-border-dark);display:flex;gap:8px;align-items:center}
+        #ytp-plus-comments-input{flex:1;min-height:15px;max-height:160px;resize:vertical;background:var(--yt-glass-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);border-radius:10px;padding:10px}
         #ytp-plus-comments-submit{border:1px solid var(--yt-glass-border);background:var(--yt-accent);color:var(--yt-text-primary);border-radius:10px;padding:10px 14px;cursor:pointer}
         .ytp-plus-voting-item-status-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:8px}
-        .ytp-plus-voting-comments-icon{border:1px solid var(--yt-glass-border);background:rgba(255,255,255,0.1);color:var(--yt-text-secondary);border-radius:999px;min-width:28px;height:28px;padding:0 10px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;line-height:1;transition:background-color .2s ease,color .2s ease,border-color .2s ease}
+        .ytp-plus-voting-comments-icon{border:1px solid var(--yt-glass-border);background:var(--yt-button-bg);color:var(--yt-text-secondary);border-radius:999px;min-width:28px;height:28px;padding:0 10px;display:inline-flex;align-items:center;justify-content:center;cursor:pointer;line-height:1;transition:background-color .2s ease,color .2s ease,border-color .2s ease}
         .ytp-plus-voting-comments-icon:hover{background:var(--yt-hover-bg);color:var(--yt-text-primary)}
         .ytp-plus-voting-comments-icon svg{width:14px;height:14px;display:block;fill:currentColor}
         .ytp-plus-comments-sidepanel textarea,
@@ -541,7 +600,7 @@
     }
 
     const reposition = () => {
-      const sidePanel = document.getElementById('ytp-plus-comments-panel');
+      const sidePanel = byId('ytp-plus-comments-panel');
       if (!(sidePanel instanceof HTMLElement)) return;
       if (!sidePanel.classList.contains('open')) return;
       layoutCommentsPanel(sidePanel);
@@ -576,7 +635,7 @@
   }
 
   function closeCommentsModal() {
-    const panel = document.getElementById('ytp-plus-comments-panel');
+    const panel = byId('ytp-plus-comments-panel');
     if (panel) panel.classList.remove('open');
     resetSettingsPanelOffset();
   }
@@ -584,15 +643,11 @@
   function openCommentsModal(/** @type {string} */ featureId) {
     if (!ensureCommentsModal()) return;
 
-    const panel = document.getElementById('ytp-plus-comments-panel');
-    const titleEl = document.getElementById('ytp-plus-comments-title');
-    const listEl = document.getElementById('ytp-plus-comments-list');
-    const inputEl = /** @type {HTMLTextAreaElement|null} */ (
-      document.getElementById('ytp-plus-comments-input')
-    );
-    const submitEl = /** @type {HTMLButtonElement|null} */ (
-      document.getElementById('ytp-plus-comments-submit')
-    );
+    const panel = byId('ytp-plus-comments-panel');
+    const titleEl = byId('ytp-plus-comments-title');
+    const listEl = byId('ytp-plus-comments-list');
+    const inputEl = /** @type {HTMLTextAreaElement|null} */ (byId('ytp-plus-comments-input'));
+    const submitEl = /** @type {HTMLButtonElement|null} */ (byId('ytp-plus-comments-submit'));
     if (!panel || !titleEl || !listEl || !inputEl || !submitEl) return;
 
     const feature = votingFeaturesCache[featureId];
@@ -600,18 +655,21 @@
     panel.setAttribute('data-feature-id', featureId);
     titleEl.textContent = String(feature?.title || '').trim() || tf('comments', 'Comments');
 
-    listEl.innerHTML = comments.length
-      ? comments
-          .map(
-            (/** @type {any} */ c) => `
+    renderTemplateClone(
+      listEl,
+      comments.length
+        ? comments
+            .map(
+              (/** @type {any} */ c) => `
           <div class="ytp-plus-comments-item">
             <div class="ytp-plus-comments-item-text">${escapeHtml(String(c.comment || ''))}</div>
             <div class="ytp-plus-comments-item-meta">${escapeHtml(formatCommentDate(String(c.created_at || '')))}</div>
           </div>
         `
-          )
-          .join('')
-      : `<div class="ytp-plus-voting-empty">No comments yet</div>`;
+            )
+            .join('')
+        : `<div class="ytp-plus-voting-empty">No comments yet</div>`
+    );
 
     inputEl.value = '';
     submitEl.disabled = false;
@@ -623,7 +681,7 @@
   }
 
   async function loadFeatures() {
-    const listEl = document.getElementById('ytp-plus-voting-list');
+    const listEl = byId('ytp-plus-voting-list');
     if (!listEl) return;
 
     const allFeaturesRaw = await getFeatures();
@@ -652,7 +710,8 @@
     });
 
     if (renderFeatures.length === 0) {
-      listEl.innerHTML = _createHTML(
+      _setSafeHTML(
+        listEl,
         `<div class="ytp-plus-voting-empty">${tf('noFeatures', 'No feature requests yet')}</div>`
       );
       // Still update the aggregate vote bar even when there are no user features —
@@ -661,7 +720,8 @@
       return;
     }
 
-    listEl.innerHTML = _createHTML(
+    renderTemplateClone(
+      listEl,
       renderFeatures
         .map((/** @type {any} */ f) => {
           const votes = allVotes[f.id] || { upvotes: 0, downvotes: 0 };
@@ -687,7 +747,7 @@
                 <span class="ytp-plus-vote-total">${totalVotes} ${tf('votes', 'votes')}</span>
               </div>
               <div class="ytp-plus-voting-buttons">
-                <div class="ytp-plus-voting-buttons-track" style="background:linear-gradient(to right, #4caf50 ${upPercent}%, #f44336 ${upPercent}%);"></div>
+                <div class="ytp-plus-voting-buttons-track" style="background:linear-gradient(to right, var(--yt-success) ${upPercent}%, var(--yt-danger) ${upPercent}%);"></div>
                 <button class="ytp-plus-vote-btn ${userVote === 1 ? 'active' : ''}" data-vote="1" title="${tf('like', 'Like')}" type="button" aria-label="${tf('like', 'Like')}">
                   <svg class="ytp-plus-vote-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"> <path d="M20.9751 12.1852L20.2361 12.0574L20.9751 12.1852ZM20.2696 16.265L19.5306 16.1371L20.2696 16.265ZM6.93776 20.4771L6.19055 20.5417H6.19055L6.93776 20.4771ZM6.1256 11.0844L6.87281 11.0198L6.1256 11.0844ZM13.9949 5.22142L14.7351 5.34269V5.34269L13.9949 5.22142ZM13.3323 9.26598L14.0724 9.38725V9.38725L13.3323 9.26598ZM6.69813 9.67749L6.20854 9.10933H6.20854L6.69813 9.67749ZM8.13687 8.43769L8.62646 9.00585H8.62646L8.13687 8.43769ZM10.518 4.78374L9.79207 4.59542L10.518 4.78374ZM10.9938 2.94989L11.7197 3.13821L11.7197 3.13821L10.9938 2.94989ZM12.6676 2.06435L12.4382 2.77841L12.4382 2.77841L12.6676 2.06435ZM12.8126 2.11093L13.0419 1.39687L13.0419 1.39687L12.8126 2.11093ZM9.86194 6.46262L10.5235 6.81599V6.81599L9.86194 6.46262ZM13.9047 3.24752L13.1787 3.43584V3.43584L13.9047 3.24752ZM11.6742 2.13239L11.3486 1.45675L11.3486 1.45675L11.6742 2.13239ZM20.2361 12.0574L19.5306 16.1371L21.0086 16.3928L21.7142 12.313L20.2361 12.0574ZM13.245 21.25H8.59634V22.75H13.245V21.25ZM7.68497 20.4125L6.87281 11.0198L5.37839 11.149L6.19055 20.5417L7.68497 20.4125ZM19.5306 16.1371C19.0238 19.0677 16.3813 21.25 13.245 21.25V22.75C17.0712 22.75 20.3708 20.081 21.0086 16.3928L19.5306 16.1371ZM13.2548 5.10015L12.5921 9.14472L14.0724 9.38725L14.7351 5.34269L13.2548 5.10015ZM7.18772 10.2456L8.62646 9.00585L7.64728 7.86954L6.20854 9.10933L7.18772 10.2456ZM11.244 4.97206L11.7197 3.13821L10.2678 2.76157L9.79207 4.59542L11.244 4.97206ZM12.4382 2.77841L12.5832 2.82498L13.0419 1.39687L12.897 1.3503L12.4382 2.77841ZM10.5235 6.81599C10.8354 6.23198 11.0777 5.61339 11.244 4.97206L9.79207 4.59542C9.65572 5.12107 9.45698 5.62893 9.20041 6.10924L10.5235 6.81599ZM12.5832 2.82498C12.8896 2.92342 13.1072 3.16009 13.1787 3.43584L14.6306 3.05921C14.4252 2.26719 13.819 1.64648 13.0419 1.39687L12.5832 2.82498ZM11.7197 3.13821C11.7547 3.0032 11.8522 2.87913 11.9998 2.80804L11.3486 1.45675C10.8166 1.71309 10.417 2.18627 10.2678 2.76157L11.7197 3.13821ZM11.9998 2.80804C12.1345 2.74311 12.2931 2.73181 12.4382 2.77841L12.897 1.3503C12.3872 1.18655 11.8312 1.2242 11.3486 1.45675L11.9998 2.80804ZM14.1537 10.9842H19.3348V9.4842H14.1537V10.9842ZM14.7351 5.34269C14.8596 4.58256 14.824 3.80477 14.6306 3.0592L13.1787 3.43584C13.3197 3.97923 13.3456 4.54613 13.2548 5.10016L14.7351 5.34269ZM8.59634 21.25C8.12243 21.25 7.726 20.887 7.68497 20.4125L6.19055 20.5417C6.29851 21.7902 7.34269 22.75 8.59634 22.75V21.25ZM8.62646 9.00585C9.30632 8.42 10.0391 7.72267 10.5235 6.81599L9.20041 6.10924C8.85403 6.75767 8.30249 7.30493 7.64728 7.86954L8.62646 9.00585ZM21.7142 12.313C21.9695 10.8365 20.8341 9.4842 19.3348 9.4842V10.9842C19.9014 10.9842 20.3332 11.4959 20.2361 12.0574L21.7142 12.313ZM12.5921 9.14471C12.4344 10.1076 13.1766 10.9842 14.1537 10.9842V9.4842C14.1038 9.4842 14.0639 9.43901 14.0724 9.38725L12.5921 9.14471ZM6.87281 11.0198C6.84739 10.7258 6.96474 10.4378 7.18772 10.2456L6.20854 9.10933C5.62021 9.61631 5.31148 10.3753 5.37839 11.149L6.87281 11.0198Z" fill="currentColor"></path> <path opacity="0.5" d="M3.9716 21.4709L3.22439 21.5355L3.9716 21.4709ZM3 10.2344L3.74721 10.1698C3.71261 9.76962 3.36893 9.46776 2.96767 9.48507C2.5664 9.50239 2.25 9.83274 2.25 10.2344L3 10.2344ZM4.71881 21.4063L3.74721 10.1698L2.25279 10.299L3.22439 21.5355L4.71881 21.4063ZM3.75 21.5129V10.2344H2.25V21.5129H3.75ZM3.22439 21.5355C3.2112 21.383 3.33146 21.2502 3.48671 21.2502V22.7502C4.21268 22.7502 4.78122 22.1281 4.71881 21.4063L3.22439 21.5355ZM3.48671 21.2502C3.63292 21.2502 3.75 21.3686 3.75 21.5129H2.25C2.25 22.1954 2.80289 22.7502 3.48671 22.7502V21.2502Z" fill="currentColor"></path> </svg>
                 </button>
@@ -747,6 +807,7 @@
 
   function escapeHtml(/** @type {string} */ str) {
     if (!str) return '';
+    if (window.YouTubeSafeDOM?.escapeHTML) return window.YouTubeSafeDOM.escapeHTML(str);
     if (window.YouTubeSecurityUtils?.escapeHtml) return window.YouTubeSecurityUtils.escapeHtml(str);
     const div = document.createElement('div');
     div.textContent = str;
@@ -759,10 +820,10 @@
     /** @type {Record<string, number>} */ userVotes,
     /** @type {string|null} */ previewFeatureId
   ) {
-    const fillEl = document.getElementById('ytp-plus-vote-bar-fill');
-    const countEl = document.getElementById('ytp-plus-vote-bar-count');
-    const upBtn = document.getElementById('ytp-plus-vote-bar-up');
-    const downBtn = document.getElementById('ytp-plus-vote-bar-down');
+    const fillEl = byId('ytp-plus-vote-bar-fill');
+    const countEl = byId('ytp-plus-vote-bar-count');
+    const upBtn = byId('ytp-plus-vote-bar-up');
+    const downBtn = byId('ytp-plus-vote-bar-down');
     if (!fillEl || !countEl) return;
 
     const previewVotes = previewFeatureId
@@ -775,7 +836,7 @@
     const total = totalUp + totalDown;
     const pct = total > 0 ? Math.round((totalUp / total) * 100) : 50;
     /** @type {any} */ (fillEl).style.background =
-      `linear-gradient(to right, #4caf50 ${pct}%, #f44336 ${pct}%)`;
+      `linear-gradient(to right, var(--yt-success) ${pct}%, var(--yt-danger) ${pct}%)`;
     countEl.textContent = total > 0 ? `${total}` : '0';
 
     const previewUserVote = previewFeatureId ? userVotes[previewFeatureId] || 0 : 0;
@@ -785,7 +846,7 @@
 
   /** Before/After comparison slider */
   function initSlider() {
-    const container = /** @type {any} */ (document.querySelector('.ytp-plus-ba-container'));
+    const container = /** @type {any} */ ($('.ytp-plus-ba-container'));
     if (!container || container.dataset.sliderInit) return;
     container.dataset.sliderInit = '1';
 
@@ -820,7 +881,7 @@
         rafId = null;
       }
       if (resumeTimer) clearTimeout(resumeTimer);
-      resumeTimer = setTimeout(() => {
+      resumeTimer = setTimeout_(() => {
         divider.classList.add('autoplay');
         startAutoplayRaf();
       }, 3000);
@@ -913,13 +974,14 @@
     setPosition(50, true);
 
     // start autoplay after short delay
-    setTimeout(() => {
+    setTimeout_(() => {
       divider.classList.add('autoplay');
       startAutoplayRaf();
     }, 400);
   }
 
   function initVoting() {
+    if (!isRelevantRoute()) return;
     if (votingInitialized) return;
     votingInitialized = true;
     if (!ensureCommentsModal()) {
@@ -929,7 +991,7 @@
       if (document.readyState === 'loading') {
         document.addEventListener('DOMContentLoaded', onReady, { once: true });
       } else {
-        setTimeout(onReady, 0);
+        setTimeout_(onReady, 0);
       }
     }
 
@@ -967,17 +1029,17 @@
       const submitBtn = e.target?.closest?.('#ytp-plus-submit-feature');
 
       if (showAddBtn) {
-        const addFormEl = document.getElementById('ytp-plus-voting-add-form');
-        const showAddEl = document.getElementById('ytp-plus-show-add-feature');
+        const addFormEl = byId('ytp-plus-voting-add-form');
+        const showAddEl = byId('ytp-plus-show-add-feature');
         if (addFormEl) /** @type {any} */ (addFormEl).style.display = 'block';
         if (showAddEl) /** @type {any} */ (showAddEl).style.display = 'none';
       }
 
       if (cancelBtn) {
-        const addFormEl = document.getElementById('ytp-plus-voting-add-form');
-        const showAddEl = document.getElementById('ytp-plus-show-add-feature');
-        const titleEl = document.getElementById('ytp-plus-feature-title');
-        const descEl = document.getElementById('ytp-plus-feature-desc');
+        const addFormEl = byId('ytp-plus-voting-add-form');
+        const showAddEl = byId('ytp-plus-show-add-feature');
+        const titleEl = byId('ytp-plus-feature-title');
+        const descEl = byId('ytp-plus-feature-desc');
 
         if (addFormEl) /** @type {any} */ (addFormEl).style.display = 'none';
         if (showAddEl) /** @type {any} */ (showAddEl).style.display = 'block';
@@ -986,8 +1048,8 @@
       }
 
       if (submitBtn) {
-        const titleInput = document.getElementById('ytp-plus-feature-title');
-        const descInput = document.getElementById('ytp-plus-feature-desc');
+        const titleInput = byId('ytp-plus-feature-title');
+        const descInput = byId('ytp-plus-feature-desc');
         const title = /** @type {any} */ (titleInput)?.value?.trim?.() || '';
         const desc = /** @type {any} */ (descInput)?.value?.trim?.() || '';
         if (titleInput instanceof HTMLInputElement) {
@@ -1015,8 +1077,8 @@
           }
 
           if (result.success) {
-            const addFormEl = document.getElementById('ytp-plus-voting-add-form');
-            const showAddEl = document.getElementById('ytp-plus-show-add-feature');
+            const addFormEl = byId('ytp-plus-voting-add-form');
+            const showAddEl = byId('ytp-plus-show-add-feature');
             if (addFormEl) /** @type {any} */ (addFormEl).style.display = 'none';
             if (showAddEl) /** @type {any} */ (showAddEl).style.display = 'block';
             if (titleInput) /** @type {any} */ (titleInput).value = '';
@@ -1055,11 +1117,9 @@
       const submitCommentBtn = e.target?.closest?.('#ytp-plus-comments-submit');
       if (!submitCommentBtn) return;
 
-      const panel = document.getElementById('ytp-plus-comments-panel');
+      const panel = byId('ytp-plus-comments-panel');
       const featureId = panel?.getAttribute('data-feature-id') || '';
-      const input = /** @type {HTMLTextAreaElement|null} */ (
-        document.getElementById('ytp-plus-comments-input')
-      );
+      const input = /** @type {HTMLTextAreaElement|null} */ (byId('ytp-plus-comments-input'));
       const value = String(input?.value || '').trim();
       if (!featureId || !value) return;
 
@@ -1107,6 +1167,26 @@
 
   // Register with LazyLoader for deferred initialization
   if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register('voting', initVoting, { priority: 0 });
+    window.YouTubePlusLazyLoader.register(
+      'voting',
+      initVoting,
+      /** @type {any} */ ({
+        priority: 0,
+        shouldLoad: isRelevantRoute,
+      })
+    );
+  } else if (isRelevantRoute()) {
+    initVoting();
+  }
+
+  // Close comments when route changes via SPA navigation.
+  if (window.YouTubeUtils?.cleanupManager) {
+    window.YouTubeUtils.cleanupManager.registerListener(window, 'yt-navigate-start', () => {
+      closeCommentsModal();
+    });
+  } else {
+    window.addEventListener('yt-navigate-start', () => {
+      closeCommentsModal();
+    });
   }
 })();

@@ -1,19 +1,79 @@
 // Update checker module
 (function () {
   'use strict';
+
+  const setTimeout_ = setTimeout.bind(window);
   const _createHTML =
     window._ytplusCreateHTML || /** @type {any} */ ((/** @type {string} */ s) => s);
+  /**
+   * @param {Element} container
+   * @param {string} html
+   */
+  const renderTemplateClone = (container, html) => {
+    if (!(container instanceof Element)) return;
+    const template = document.createElement('template');
+    const range = document.createRange();
+    const root = document.body || document.documentElement;
+    if (root) range.selectNode(root);
+    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
+    template.content.append(range.createContextualFragment(_createHTML(html)));
+    container.replaceChildren(template.content.cloneNode(true));
+  };
+
+  const REFRESH_ICON_PATHS = [
+    'M21.5 2v6h-6M2.5 22v-6h6',
+    'M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1',
+  ];
+
+  /**
+   * @param {boolean} spinning
+   * @returns {SVGSVGElement}
+   */
+  const createRefreshIconElement = spinning => {
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', '16');
+    svg.setAttribute('height', '16');
+    svg.setAttribute('viewBox', '0 0 24 24');
+    svg.setAttribute('fill', 'none');
+    svg.setAttribute('stroke', 'currentColor');
+    svg.setAttribute('stroke-width', '2');
+    svg.setAttribute('stroke-linecap', 'round');
+    svg.setAttribute('stroke-linejoin', 'round');
+    svg.style.display = 'inline-block';
+    svg.style.flexShrink = '0';
+    svg.style.verticalAlign = 'middle';
+    if (spinning) {
+      svg.style.animation = 'spin .8s linear infinite';
+    }
+
+    for (const d of REFRESH_ICON_PATHS) {
+      const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+      path.setAttribute('d', d);
+      svg.appendChild(path);
+    }
+
+    return svg;
+  };
+
+  /**
+   * @param {HTMLElement} button
+   * @param {string} label
+   * @param {boolean} spinning
+   */
+  const setManualCheckButtonContent = (button, label, spinning) => {
+    if (!(button instanceof HTMLElement)) return;
+    button.replaceChildren(createRefreshIconElement(spinning), document.createTextNode(label));
+  };
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils?.t || /** @type {any} */ ((/** @type {string} */ key) => key || '');
+  const t = window.YouTubeUtils.t;
+  const byId =
+    window.YouTubeUtils?.byId ||
+    ((/** @type {string} */ id) =>
+      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
 
   // Language helper delegating to global i18n when available
-  const getLanguage = () => {
-    if (window.YouTubePlusI18n?.getLanguage) return window.YouTubePlusI18n.getLanguage();
-    if (window.YouTubeUtils?.getLanguage) return window.YouTubeUtils.getLanguage();
-    const lang = document.documentElement.lang || navigator.language || 'en';
-    return lang.startsWith('ru') ? 'ru' : 'en';
-  };
+  const getLanguage = () => window.YouTubeUtils.getLanguage();
 
   /** @type {any} */
   const UPDATE_CONFIG = {
@@ -59,6 +119,33 @@
     updateAvailable: false,
     checkInProgress: false,
     updateDetails: null,
+  };
+
+  const isVersionString = (/** @type {string} */ value) => {
+    const text = String(value || '').trim();
+    if (!text) return false;
+
+    const parts = text.split('.');
+    if (parts.length < 1 || parts.length > 3) return false;
+
+    return parts.every(
+      part => part.length > 0 && Array.from(part).every(ch => ch >= '0' && ch <= '9')
+    );
+  };
+
+  const extractMetadataField = (/** @type {string} */ text, /** @type {string} */ field) => {
+    const prefix = `@${field} `;
+    const lines = String(text || '')
+      .replace(/\r/g, '')
+      .split('\n');
+
+    for (const line of lines) {
+      const trimmed = line.trimStart();
+      if (!trimmed.startsWith(prefix)) continue;
+      return trimmed.slice(prefix.length).trim();
+    }
+
+    return '';
   };
 
   // Pluralization helper for time units (available to this module)
@@ -139,7 +226,7 @@
 
         // Validate parsed object structure
         if (typeof parsed !== 'object' || parsed === null) {
-          console.error('[YouTube+][Update]', 'Invalid settings structure');
+          window.console.error('[YouTube+][Update]', 'Invalid settings structure');
           return;
         }
 
@@ -150,8 +237,8 @@
 
         // Accept version formats like '2.2' or '2.2.0' or 'v2.2.0'
         if (typeof parsed.lastVersion === 'string') {
-          const ver = parsed.lastVersion.replace(/^v/i, '');
-          if (/^\d+(?:\.\d+){0,2}$/.test(ver)) {
+          const ver = parsed.lastVersion.replace(/^v/i, '').trim();
+          if (isVersionString(ver)) {
             updateState.lastVersion = ver;
           }
         }
@@ -164,13 +251,13 @@
           // Validate updateDetails properties
           if (
             typeof parsed.updateDetails.version === 'string' &&
-            /^\d+\.\d+\.\d+/.test(parsed.updateDetails.version)
+            isVersionString(parsed.updateDetails.version)
           ) {
             updateState.updateDetails = parsed.updateDetails;
           }
         }
       } catch (e) {
-        console.error('[YouTube+][Update]', 'Failed to load update settings:', e);
+        window.console.error('[YouTube+][Update]', 'Failed to load update settings:', e);
       }
     },
 
@@ -189,7 +276,7 @@
 
         localStorage.setItem(UPDATE_CONFIG.storageKey, JSON.stringify(dataToSave));
       } catch (e) {
-        console.error('[YouTube+][Update]', 'Failed to save update settings:', e);
+        window.console.error('[YouTube+][Update]', 'Failed to save update settings:', e);
       }
     },
 
@@ -202,7 +289,7 @@
     compareVersions: (v1, v2) => {
       // Validate version format
       if (typeof v1 !== 'string' || typeof v2 !== 'string') {
-        console.error('[YouTube+][Update]', 'Invalid version format - must be strings');
+        window.console.error('[YouTube+][Update]', 'Invalid version format - must be strings');
         return 0;
       }
 
@@ -229,25 +316,30 @@
      * @returns {any} Parsed metadata with version, description, downloadUrl
      */
     parseMetadata: (/** @type {any} */ text) => {
+      // Normalize null/undefined/empty responses silently; only treat genuinely
+      // unexpected payloads (non-string, oversized) as errors worth logging.
+      if (text === null || text === undefined || text === '') {
+        return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
+      }
       if (typeof text !== 'string' || text.length > 100000) {
-        console.error('[YouTube+][Update]', 'Invalid metadata text');
+        window.console.warn('[YouTube+][Update]', 'Invalid metadata text');
         return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
       }
 
-      const escapeRegex = (/** @type {any} */ s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      const extractField = (/** @type {any} */ field) =>
-        text.match(new RegExp(`@${escapeRegex(field)}\\s+([^\\r\\n]+)`))?.[1]?.trim();
-
-      let version = extractField('version');
-      const description = extractField('description') || '';
-      const downloadUrl = extractField('downloadURL') || UPDATE_CONFIG.autoInstallUrl;
+      let version = extractMetadataField(text, 'version');
+      const description = extractMetadataField(text, 'description');
+      const downloadUrl = extractMetadataField(text, 'downloadURL') || UPDATE_CONFIG.autoInstallUrl;
 
       // Validate extracted version
       if (version) {
         version = version.replace(/^v/i, '').trim();
         // Accept '2.2' or '2.2.0' or '2'
-        if (!/^\d+(?:\.\d+){0,2}$/.test(version)) {
-          console.error('[YouTube+][Update]', 'Invalid version format in metadata:', version);
+        if (!isVersionString(version)) {
+          window.console.error(
+            '[YouTube+][Update]',
+            'Invalid version format in metadata:',
+            version
+          );
           return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
         }
       }
@@ -328,7 +420,7 @@
       try {
         sessionStorage.setItem('update_dismissed', details.version);
       } catch (err) {
-        console.error('[YouTube+][Update]', 'Failed to persist dismissal state:', err);
+        window.console.error('[YouTube+][Update]', 'Failed to persist dismissal state:', err);
       }
     }
   };
@@ -345,7 +437,7 @@
         GM_openInTab_safe(url, { active: true, insert: true, setParent: true });
         return true;
       } catch (gmError) {
-        console.error('[YouTube+] GM_openInTab update install failed:', gmError);
+        window.console.error('[YouTube+] GM_openInTab update install failed:', gmError);
       }
     }
 
@@ -354,7 +446,7 @@
       const popup = window.open(url, '_blank', 'noopener');
       if (popup) return true;
     } catch (popupError) {
-      console.error('[YouTube+] window.open update install failed:', popupError);
+      window.console.error('[YouTube+] window.open update install failed:', popupError);
     }
 
     // Method 3: Navigate
@@ -362,7 +454,7 @@
       window.location.assign(url);
       return true;
     } catch (navigationError) {
-      console.error('[YouTube+] Navigation to update URL failed:', navigationError);
+      window.console.error('[YouTube+] Navigation to update URL failed:', navigationError);
     }
 
     return false;
@@ -379,7 +471,7 @@
     // Validate URL
     const validation = validateDownloadUrl(downloadUrl);
     if (!validation.valid) {
-      console.error('[YouTube+][Update]', validation.error);
+      window.console.error('[YouTube+][Update]', validation.error);
       return false;
     }
 
@@ -396,9 +488,9 @@
   const showUpdateNotification = (/** @type {any} */ updateDetails) => {
     // Optionally render notification icon (can be disabled via config)
     const iconHtml = UPDATE_CONFIG.showNotificationIcon
-      ? `<div style="background: linear-gradient(180deg, rgba(255,255,255,0.06), rgba(255,255,255,0.03));
-                        border-radius: 10px; padding: 10px; flex-shrink: 0; border: 1px solid rgba(255,255,255,0.08);
-                        backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px);">
+      ? `<div style="background: var(--yt-glass-bg);
+                        border-radius: var(--yt-radius-xs); padding: 10px; flex-shrink: 0; border: 1px solid var(--yt-glass-border);
+                        backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur);">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 12c0 1-1 2-1 2s-1-1-1-2 1-2 1-2 1 1 1 2z"/>
               <path d="m21 12-5-5v3H8v4h8v3l5-5z"/>
@@ -412,16 +504,18 @@
     // Use centralized notification container for consistent placement. Keep visual styles but remove fixed positioning.
     /** @type {any} */ (notification).style.cssText = `
       z-index: 10001; max-width: 360px;
-      background: rgba(255,255,255,0.04); padding: 16px 18px; border-radius: 14px;
-      color: rgba(255,255,255,0.95);
-      box-shadow: 0 8px 30px rgba(11, 15, 25, 0.45), inset 0 1px 0 rgba(255,255,255,0.02);
-      border: 1px solid rgba(255,255,255,0.08);
-      -webkit-backdrop-filter: blur(10px) saturate(120%);
-      backdrop-filter: blur(10px) saturate(120%);
+      background: var(--yt-notification-bg); padding: 16px 18px; border-radius: var(--yt-radius-lg);
+      color: var(--yt-text-primary);
+      box-shadow: var(--yt-shadow);
+      border: 1px solid var(--yt-glass-border);
+      -webkit-backdrop-filter: var(--yt-glass-blur);
+      backdrop-filter: var(--yt-glass-blur);
       animation: slideInFromBottom 0.4s ease-out;
     `;
 
-    notification.innerHTML = _createHTML(`
+    renderTemplateClone(
+      notification,
+      `
         <div style="position: relative; display: flex; align-items: flex-start; gap: 12px;">
             ${iconHtml}
           <div style="flex: 1; min-width: 0;">
@@ -470,24 +564,23 @@
 
                     return (
                       `<div style="font-size:12px; font-weight:600; opacity:0.95; margin-bottom:6px;">${header}</div>` +
-                      `<div style="font-size:12px; line-height:1.4; max-height:120px; overflow-y:auto; padding:8px; background: rgba(0,0,0,0.2); border-radius:6px; border:1px solid rgba(255,255,255,0.05); white-space:normal;">${listHtml}</div>`
+                      `<div style="font-size:12px; line-height:1.4; max-height:120px; overflow-y:auto; padding:8px; background: var(--yt-overlay-deep); border-radius:6px; border:1px solid var(--yt-surface-overlay-border); white-space:normal;">${listHtml}</div>`
                     );
                   })()
                 : `<div style="font-size: 12px); opacity: 0.85; margin-bottom: 12px;">${t('newFeatures')}</div>`
             }
             <div style="display: flex; gap: 8px;">
               <button id="update-install-btn" type="button" style="
-                background: linear-gradient(180deg, rgba(255,255,255,0.08), rgba(255,255,255,0.03));
-                color: #ff5a1a; border: 1px solid rgba(255,90,30,0.12);
-                padding: 8px 16px; border-radius: 8px; cursor: pointer;
+                background: var(--yt-accent); color: white; border: none;
+                padding: 8px 16px; border-radius: var(--yt-radius-xs); cursor: pointer;
                 font-size: 13px; font-weight: 700; transition: transform 0.15s ease;
-                box-shadow: 0 6px 18px rgba(90,30,0,0.12);
-                backdrop-filter: blur(6px);
+                box-shadow: 0 6px 18px var(--yt-danger-ghost);
+                backdrop-filter: var(--yt-glass-blur);
               ">${t('installUpdate')}</button>
               <button id="update-dismiss-btn" type="button" style="
-                background: transparent; color: rgba(255,255,255,0.9);
-                border: 1px solid rgba(255,255,255,0.06); padding: 8px 12px;
-                border-radius: 8px; cursor: pointer; font-size: 13px; transition: all 0.12s ease;
+                background: var(--yt-button-bg); color: var(--yt-text-primary);
+                border: 1px solid var(--yt-glass-border); padding: 8px 12px;
+                border-radius: var(--yt-radius-xs); cursor: pointer; font-size: 13px; transition: all 0.12s ease;
               ">${t('later')}</button>
             </div>
           </div>
@@ -495,28 +588,17 @@
             position: absolute; top: -8px; right: -8px; width: 28px; height: 28px;
             border-radius: 50%; border: none; cursor: pointer; display: flex;
             align-items: center; justify-content: center; font-size: 16px; line-height: 1;
-            background: rgba(255,255,255,0.04); color: rgba(255,255,255,0.85); transition: background 0.18s ease;
-            border: 1px solid rgba(255,255,255,0.06);
+            background: var(--yt-button-bg); color: var(--yt-text-primary); transition: background 0.18s ease;
+            border: 1px solid var(--yt-glass-border);
           ">&times;</button>
         </div>
-        <style>
-          @keyframes slideInFromBottom {
-            from { transform: translateY(100%); opacity: 0; }
-            to { transform: translateY(0); opacity: 1; }
-          }
-          @keyframes slideOutToBottom {
-            from { transform: translateY(0); opacity: 1; }
-            to { transform: translateY(100%); opacity: 0; }
-          }
-          #update-close-btn:hover {
-            background: rgba(255, 255, 255, 0.25);
-          }
-        </style>
-      `);
+        <style>${window.YouTubePlusStyleResources?.update || ''}</style>
+      `
+    );
 
     // Append into centralized notification container (created if missing)
     const _containerId = 'youtube-enhancer-notification-container';
-    let _container = document.getElementById(_containerId);
+    let _container = byId(_containerId);
     if (!_container) {
       _container = document.createElement('div');
       _container.id = _containerId;
@@ -536,7 +618,7 @@
     const removeNotification = () => {
       // use explicit slide-out animation so it exits downward like the entry
       /** @type {any} */ (notification).style.animation = 'slideOutToBottom 0.35s ease-in forwards';
-      setTimeout(() => notification.remove(), 360);
+      setTimeout_(() => notification.remove(), 360);
     };
 
     // Event handlers
@@ -546,7 +628,7 @@
         const success = installUpdate(updateDetails);
         if (success) {
           removeNotification();
-          setTimeout(() => utils.showNotification(t('installing')), 500);
+          setTimeout_(() => utils.showNotification(t('installing')), 500);
         } else {
           utils.showNotification(t('manualInstallHint'), 'error', 5000);
           window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
@@ -575,7 +657,7 @@
     }
 
     // Auto-dismiss
-    setTimeout(() => {
+    setTimeout_(() => {
       if (notification.isConnected) removeNotification();
     }, UPDATE_CONFIG.notificationDuration);
   };
@@ -607,7 +689,7 @@
     const fetchMeta = async (/** @type {any} */ requestUrl) => {
       if (typeof GM_xmlhttpRequest !== 'undefined') {
         return new Promise((resolve, reject) => {
-          const timeoutId = setTimeout(() => reject(new Error('Update check timeout')), 10000);
+          const timeoutId = setTimeout_(() => reject(new Error('Update check timeout')), 10000);
           GM_xmlhttpRequest({
             method: 'GET',
             url: requestUrl,
@@ -632,7 +714,7 @@
 
       // Fallback to fetch with AbortController timeout
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 10000);
+      const timeoutId = setTimeout_(() => controller.abort(), 10000);
       try {
         const res = await fetch(requestUrl, {
           method: 'GET',
@@ -706,7 +788,10 @@
       const fetchPage = async (/** @type {any} */ requestUrl) => {
         if (typeof GM_xmlhttpRequest !== 'undefined') {
           return new Promise((resolve, reject) => {
-            const timeoutId = setTimeout(() => reject(new Error('Changelog fetch timeout')), 10000);
+            const timeoutId = setTimeout_(
+              () => reject(new Error('Changelog fetch timeout')),
+              10000
+            );
             GM_xmlhttpRequest({
               method: 'GET',
               url: requestUrl,
@@ -730,7 +815,7 @@
         }
 
         const controller = new AbortController();
-        const timeoutId = setTimeout(() => controller.abort(), 10000);
+        const timeoutId = setTimeout_(() => controller.abort(), 10000);
         try {
           const res = await fetch(requestUrl, {
             method: 'GET',
@@ -750,42 +835,47 @@
       // Parse changelog from HTML
       // Look for version link followed by changelog span
       // Structure: <a ...>v2.4.5</a> ... <span class="version-changelog">...</span>
-      const escapedVersion = version.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-      // Match anchor tag content that contains the version number (handling prefixes like 'v', 'вер. ', etc.)
-      const versionRegex = new RegExp(
-        `>[^<]*?${escapedVersion}</a>[\\s\\S]*?class="version-changelog"[^>]*>([\\s\\S]*?)</span>`,
-        'i'
-      );
+      const domParser = typeof window.DOMParser === 'function' ? new window.DOMParser() : null;
+      if (domParser) {
+        try {
+          const doc = domParser.parseFromString(html, 'text/html');
+          const versionText = String(version || '').trim();
+          const anchors = Array.from(doc.querySelectorAll('a'));
+          const matchingLink = anchors.find(anchor => {
+            const linkText = String(anchor.textContent || '').trim();
+            return (
+              linkText === versionText ||
+              linkText === `v${versionText}` ||
+              linkText.includes(versionText)
+            );
+          });
 
-      const match = html.match(versionRegex);
+          const container =
+            matchingLink?.closest('li, article, section, div') ||
+            matchingLink?.parentElement ||
+            null;
+          const changelogNode =
+            container?.querySelector('.version-changelog') ||
+            (matchingLink?.nextElementSibling?.matches?.('.version-changelog')
+              ? matchingLink.nextElementSibling
+              : null);
 
-      if (match && match[1]) {
-        let changelog = match[1].trim();
-
-        // Convert HTML breaks/paragraphs to newlines and strip tags
-        changelog = changelog
-          .replace(/<br\s*\/?>/gi, '\n')
-          .replace(/<\/p>/gi, '\n')
-          .replace(/<[^>]+>/g, '')
-          .replace(/&amp;/g, '&')
-          .replace(/&lt;/g, '<')
-          .replace(/&gt;/g, '>')
-          .replace(/&quot;/g, '"')
-          .replace(/&#039;/g, "'");
-
-        // Clean up whitespace
-        changelog = changelog
-          .split('\n')
-          .map((/** @type {any} */ line) => line.trim())
-          .filter((/** @type {any} */ line) => line.length > 0)
-          .join('\n');
-
-        return changelog || '';
+          const changelogText = String(changelogNode?.textContent || '').trim();
+          if (changelogText) {
+            return changelogText
+              .split('\n')
+              .map(line => line.trim())
+              .filter(line => line.length > 0)
+              .join('\n');
+          }
+        } catch (e) {
+          /* fall through to empty result */
+        }
       }
 
       return '';
     } catch (error) {
-      console.warn(
+      window.console.warn(
         '[YouTube+][Update] Failed to fetch changelog:',
         /** @type {any} */ (error).message
       );
@@ -812,8 +902,8 @@
           metaText = fallbackText;
         }
       } catch (fallbackErr) {
-        if (typeof console !== 'undefined' && console.warn) {
-          console.warn(
+        if (typeof console !== 'undefined' && window.console.warn) {
+          window.console.warn(
             '[YouTube+][Update] Fallback metadata fetch failed:',
             /** @type {any} */ (fallbackErr).message
           );
@@ -828,7 +918,7 @@
         // Keep original metadata description but expose fetched changelog on a separate property
         details.changelog = typeof changelog === 'string' && changelog.length > 0 ? changelog : '';
       } catch (changelogErr) {
-        console.warn(
+        window.console.warn(
           '[YouTube+][Update] Failed to fetch changelog:',
           /** @type {any} */ (changelogErr).message
         );
@@ -869,7 +959,7 @@
       validateUpdateUrl(UPDATE_CONFIG.updateUrl);
       return true;
     } catch (urlError) {
-      console.error('[YouTube+][Update]', 'Invalid update URL configuration:', urlError);
+      window.console.error('[YouTube+][Update]', 'Invalid update URL configuration:', urlError);
       throw urlError;
     }
   };
@@ -911,14 +1001,14 @@
               // Non-critical, suppressed
             }
           } else {
-            console.warn(
+            window.console.warn(
               '[YouTube+][Update] Auto-install could not be initiated for',
               updateDetails.downloadUrl
             );
           }
         }
       } catch (e) {
-        console.error('[YouTube+][Update] Auto-installation failed:', e);
+        window.console.error('[YouTube+][Update] Auto-installation failed:', e);
       }
     }
   };
@@ -955,15 +1045,15 @@
     const RETRY_DELAY = 2000;
 
     if (isTransientError(error) && retryCount < MAX_RETRIES) {
-      console.warn(
+      window.console.warn(
         `[YouTube+][Update] Retry ${retryCount + 1}/${MAX_RETRIES} after error:`,
         error.message
       );
-      await new Promise(resolve => setTimeout(resolve, RETRY_DELAY * Math.pow(2, retryCount)));
+      await new Promise(resolve => setTimeout_(resolve, RETRY_DELAY * Math.pow(2, retryCount)));
       return checkForUpdates(force, retryCount + 1);
     }
 
-    console.error('[YouTube+][Update] Check failed after retries:', error);
+    window.console.error('[YouTube+][Update] Check failed after retries:', error);
     if (force) {
       utils.showNotification(t('updateCheckFailed').replace('{msg}', error.message), 'error', 4000);
     }
@@ -1011,15 +1101,17 @@
     updateContainer.className = 'update-settings-container';
     /** @type {any} */ (updateContainer).style.cssText = `
         padding: 16px; margin-top: 20px; border-radius: 12px;
-        background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.06);
+        background: var(--yt-surface-overlay-subtle); border: 1px solid var(--yt-surface-overlay-border);
         -webkit-backdrop-filter: blur(10px) saturate(120%);
         backdrop-filter: blur(10px) saturate(120%);
-        box-shadow: 0 6px 20px rgba(6, 10, 20, 0.45);
+        box-shadow: 0 6px 20px var(--yt-update-card-shadow);
       `;
 
     const lastCheckTime = utils.formatTimeAgo(updateState.lastCheck);
 
-    updateContainer.innerHTML = _createHTML(`
+    renderTemplateClone(
+      updateContainer,
+      `
         <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
           <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--yt-spec-text-primary);">
             ${t('enhancedExperience')}
@@ -1027,19 +1119,19 @@
         </div>
         
         <div style="display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; 
-                    padding: 16px; background: rgba(255, 255, 255, 0.03); border-radius: 10px; margin-bottom: 16px;">
+                    padding: 16px; background: var(--yt-surface-overlay-subtle); border-radius: 10px; margin-bottom: 16px;">
           <div>
             <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
               <span style="font-size: 14px; font-weight: 600; color: var(--yt-spec-text-primary);">${t('currentVersion')}</span>
               <span style="font-size: 13px; font-weight: 600; color: var(--yt-spec-text-primary); 
-                           padding: 3px 10px; background: rgba(255, 255, 255, 0.1); border-radius: 12px; 
-                           border: 1px solid rgba(255, 255, 255, 0.2);">${UPDATE_CONFIG.currentVersion}</span>
+                           padding: 3px 10px; background: var(--yt-surface-overlay-soft); border-radius: 12px; 
+                           border: 1px solid var(--yt-glass-border);">${UPDATE_CONFIG.currentVersion}</span>
             </div>
             <div style="font-size: 12px; color: var(--yt-spec-text-secondary);">
               ${t('lastChecked')}: <span style="font-weight: 500;">${lastCheckTime}</span>
               ${
                 updateState.lastVersion && updateState.lastVersion !== UPDATE_CONFIG.currentVersion
-                  ? `<br>${t('latestAvailable')}: <span style="color: #ff6666; font-weight: 600;">${updateState.lastVersion}</span>`
+                  ? `<br>${t('latestAvailable')}: <span style="color: var(--yt-update-available-text); font-weight: 600;">${updateState.lastVersion}</span>`
                   : ''
               }
             </div>
@@ -1050,25 +1142,25 @@
               ? `
             <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
               <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; 
-                          background: linear-gradient(135deg, rgba(255, 68, 68, 0.2), rgba(255, 68, 68, 0.3)); 
-                          border: 1px solid rgba(255, 68, 68, 0.4); border-radius: 20px;">
-                <div style="width: 6px; height: 6px; background: #ff4444; border-radius: 50%; animation: pulse 2s infinite;"></div>
-                <span style="font-size: 11px; color: #ff6666; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                          background: linear-gradient(135deg, var(--yt-danger-soft), var(--yt-danger-border)); 
+                          border: 1px solid var(--yt-danger-card-border); border-radius: 20px;">
+                <div style="width: 6px; height: 6px; background: var(--yt-update-available-dot); border-radius: 50%; animation: pulse 2s infinite;"></div>
+                <span style="font-size: 11px; color: var(--yt-update-available-text); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
                   ${t('updateAvailable')}
                 </span>
               </div>
-              <button id="install-update-btn" style="background: linear-gradient(135deg, #ff4500, #ff6b35); 
+              <button id="install-update-btn" style="background: linear-gradient(135deg, var(--yt-update-install-bg-start), var(--yt-update-install-bg-end)); 
                       color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; 
                       font-size: 12px; font-weight: 600; transition: all 0.3s ease; 
-                      box-shadow: 0 4px 12px rgba(255, 69, 0, 0.3);">${t('installUpdate')}</button>
+                      box-shadow: 0 4px 12px var(--yt-update-install-shadow);">${t('installUpdate')}</button>
             </div>
           `
               : `
             <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; 
-                        background: linear-gradient(135deg, rgba(34, 197, 94, 0.2), rgba(34, 197, 94, 0.3)); 
-                        border: 1px solid rgba(34, 197, 94, 0.4); border-radius: 20px;">
-              <div style="width: 6px; height: 6px; background: #22c55e; border-radius: 50%;"></div>
-              <span style="font-size: 11px; color: #22c55e; font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+                        background: linear-gradient(135deg, var(--yt-success-soft), var(--yt-success-soft-hover)); 
+                        border: 1px solid var(--yt-success-accent-soft); border-radius: 20px;">
+              <div style="width: 6px; height: 6px; background: var(--yt-success-accent); border-radius: 50%;"></div>
+              <span style="font-size: 11px; color: var(--yt-success-accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
                 ${t('upToDate')}
               </span>
             </div>
@@ -1078,13 +1170,13 @@
         
         <div style="display: flex; gap: 12px;">
           <button class="ytp-plus-button ytp-plus-button-primary" id="manual-update-check" 
-                  style="flex: 1; padding: 12px; font-size: 13px; font-weight: 600;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="margin-right: 6px;">
+                  style="flex: 1; padding: 12px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 6px;">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; flex-shrink: 0;">
               <path d="M21.5 2v6h-6M2.5 22v-6h6M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1"/>
             </svg>
             ${t('checkForUpdates')}
           </button>
-          <button class="ytp-plus-button" id="open-update-page" style="padding: 12px 16px; font-size: 13px; background: rgba(255, 255, 255, 0.1); border: 1px solid rgba(255, 255, 255, 0.2);">
+          <button class="ytp-plus-button" id="open-update-page" style="padding: 12px 16px; font-size: 13px; background: var(--yt-button-bg); border: 1px solid var(--yt-glass-border);">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="gray" stroke-width="2">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
               <polyline points="15,3 21,3 21,9"/>
@@ -1093,11 +1185,9 @@
           </button>
         </div>
 
-        <style>
-          @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.7; transform: scale(1.1); } }
-          @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        </style>
-      `);
+        <style>${window.YouTubePlusStyleResources?.update || ''}</style>
+      `
+    );
 
     aboutSection.appendChild(updateContainer);
 
@@ -1113,28 +1203,26 @@
 
     // Event listeners with optimization
     const attachClickHandler = (/** @type {any} */ id, /** @type {any} */ handler) => {
-      const element = document.getElementById(id);
+      const element = byId(id);
       if (element) YouTubeUtils.cleanupManager.registerListener(element, 'click', handler);
     };
 
     // Destructure event parameter to prefer destructuring
     attachClickHandler('manual-update-check', async (/** @type {any} */ evt) => {
-      const button = /** @type {HTMLElement} */ (/** @type {any} */ (evt).target);
-      const originalHTML = button.innerHTML;
-
-      button.innerHTML = _createHTML(`
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" 
-               style="margin-right: 6px; animation: spin 1s linear infinite;">
-            <path d="M21.5 2v6h-6M2.5 22v-6h6M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1"/>
-          </svg>
-          ${t('checkingForUpdates')}
-        `);
+      const button =
+        evt.currentTarget instanceof HTMLElement
+          ? evt.currentTarget
+          : evt.target instanceof Element
+            ? /** @type {HTMLElement|null} */ (evt.target.closest('#manual-update-check'))
+            : null;
+      if (!button) return;
+      setManualCheckButtonContent(button, t('checkingForUpdates'), true);
       button.disabled = true;
 
       await checkForUpdates(true);
 
-      setTimeout(() => {
-        button.innerHTML = _createHTML(originalHTML);
+      setTimeout_(() => {
+        setManualCheckButtonContent(button, t('checkForUpdates'), false);
         button.disabled = false;
       }, 1000);
     });
@@ -1162,10 +1250,20 @@
    */
   const setupUpdateChecks = () => {
     // Initial check with delay
-    setTimeout(() => checkForUpdates(), 3000);
+    setTimeout_(() => checkForUpdates(), 3000);
+
+    const globalObject = /** @type {any} */ (typeof window !== 'undefined' ? window : globalThis);
+    const previousIntervalId = globalObject.__ytpUpdateCheckIntervalId;
+    if (previousIntervalId) {
+      clearInterval(previousIntervalId);
+      if (YouTubeUtils.cleanupManager?.unregisterInterval) {
+        YouTubeUtils.cleanupManager.unregisterInterval(previousIntervalId);
+      }
+    }
 
     // Periodic checks - register interval in cleanupManager
     const intervalId = setInterval(() => checkForUpdates(), UPDATE_CONFIG.checkInterval);
+    globalObject.__ytpUpdateCheckIntervalId = intervalId;
     YouTubeUtils.cleanupManager.registerInterval(intervalId);
     if (YouTubeUtils.cleanupManager?.registerListener) {
       YouTubeUtils.cleanupManager.registerListener(window, 'beforeunload', () =>
@@ -1182,7 +1280,7 @@
    */
   const setupSettingsObserver = () => {
     const handler = () => {
-      setTimeout(addUpdateSettings, 100);
+      setTimeout_(addUpdateSettings, 100);
     };
     if (YouTubeUtils.cleanupManager?.registerListener) {
       YouTubeUtils.cleanupManager.registerListener(
@@ -1203,7 +1301,7 @@
     const clickHandler = (/** @type {any} */ evt) => {
       const el = /** @type {HTMLElement} */ (/** @type {any} */ (evt).target);
       if (el.classList?.contains('ytp-plus-settings-nav-item') && el.dataset?.section === 'about') {
-        setTimeout(addUpdateSettings, 50);
+        setTimeout_(addUpdateSettings, 50);
       }
     };
 
@@ -1251,10 +1349,35 @@
     logInitialization();
   };
 
-  // Start
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
+  const isUpdateRelevantRoute = () => {
+    const path = location.pathname || '';
+    if (location.hostname === 'music.youtube.com') return true;
+    return path === '/watch' || path.startsWith('/shorts');
+  };
+
+  const isSettingsModalOpen = () => {
+    try {
+      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const startUpdateRuntime = () => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', init, { once: true });
+    } else {
+      init();
+    }
+  };
+
+  if (window.YouTubePlusLazyLoader?.register) {
+    window.YouTubePlusLazyLoader.register('update', startUpdateRuntime, {
+      priority: 20,
+      delay: 0,
+      shouldLoad: () => isUpdateRelevantRoute() || isSettingsModalOpen(),
+    });
   } else {
-    init();
+    startUpdateRuntime();
   }
 })();

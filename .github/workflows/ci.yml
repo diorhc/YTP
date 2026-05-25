@@ -27,6 +27,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
 
       - name: Setup Node.js ${{ matrix.node-version }}
         uses: actions/setup-node@v5
@@ -39,6 +41,24 @@ jobs:
 
       - name: Run linting
         run: npm run lint
+
+      - name: Run CSP compatibility check
+        run: npm run lint:csp
+
+      - name: Run full security suite on PR
+        if: github.event_name == 'pull_request' && matrix.node-version == '22.x'
+        run: npm run security:full
+
+      - name: Enforce complexity budget on changed code
+        if: github.event_name == 'pull_request'
+        run: npm run lint:complexity-budget
+
+      - name: Run knip strict
+        if: matrix.node-version == '22.x'
+        run: npm run knip:strict
+
+      - name: Run Stylelint
+        run: npm run stylelint
 
       - name: Run type checking
         run: npm run typecheck
@@ -60,8 +80,6 @@ jobs:
 
       - name: Run unit tests with coverage
         run: npm run test:ci
-        # Temporary: don't fail the job on coverage threshold failures
-        continue-on-error: true
         env:
           NODE_OPTIONS: --max_old_space_size=4096
 
@@ -74,8 +92,11 @@ jobs:
           flags: unittests
           name: codecov-umbrella
 
-      - name: Build userscript
-        run: npm run build
+      - name: Build userscript (production)
+        run: npm run build:production
+
+      - name: Check bundle size
+        run: npm run size:check
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v5
@@ -84,6 +105,56 @@ jobs:
           name: userscript
           path: youtube.user.js
           retention-days: 30
+
+  ui-audits:
+    name: UI Audit Suite
+    runs-on: ubuntu-latest
+    needs: test
+    env:
+      HUSKY: '0'
+      PUPPETEER_SKIP_DOWNLOAD: 'true'
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: '22.x'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build userscript
+        run: npm run build
+
+      - name: Start fixture server
+        run: |
+          node scripts/audit-fixture-server.js &
+          echo $! > fixture-server.pid
+          for i in {1..30}; do
+            if curl -fsS http://127.0.0.1:4173/healthz >/dev/null; then
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "Fixture server failed to start" >&2
+          exit 1
+
+      - name: Run Lighthouse CI
+        run: npm run audit:lhci
+
+      - name: Run pa11y CI
+        run: npm run audit:a11y
+
+      - name: Stop fixture server
+        if: always()
+        run: |
+          if [ -f fixture-server.pid ]; then
+            kill "$(cat fixture-server.pid)" || true
+          fi
 
   release:
     name: Create Release
@@ -192,9 +263,6 @@ jobs:
           cache: 'npm'
 
       - name: Install dependencies
-        run: npm ci
-
-      - name: Install SARIF formatter
         run: npm ci
 
       - name: Run ESLint with SARIF output

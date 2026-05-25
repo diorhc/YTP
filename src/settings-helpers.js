@@ -131,6 +131,64 @@
   }
 
   /**
+   * Creates a checkbox row with nested submenu select.
+   * @param {string} label
+   * @param {string} description
+   * @param {string} toggleSetting
+   * @param {boolean} checked
+   * @param {string} submenuKey
+   * @param {string} selectLabel
+   * @param {string} selectDescription
+   * @param {string} selectSetting
+   * @param {any} selectValue
+   * @param {Array<{value: any, label: string}>} options
+   * @returns {string}
+   */
+  function createSettingsToggleWithSelectSubmenu(
+    label,
+    description,
+    toggleSetting,
+    checked,
+    submenuKey,
+    selectLabel,
+    selectDescription,
+    selectSetting,
+    selectValue,
+    options
+  ) {
+    const toggleInputId = `ytp-plus-setting-${toggleSetting}`;
+    return `
+    <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
+      <div>
+        <label class="ytp-plus-settings-item-label" for="${toggleInputId}">${label}</label>
+        <div class="ytp-plus-settings-item-description">${description}</div>
+      </div>
+      <div class="ytp-plus-settings-item-actions">
+        <button
+          type="button"
+          class="ytp-plus-submenu-toggle"
+          data-submenu="${submenuKey}"
+          aria-label="Toggle ${submenuKey} submenu"
+          aria-expanded="${checked ? 'true' : 'false'}"
+          ${checked ? '' : 'disabled'}
+          style="display:${checked ? 'inline-flex' : 'none'};"
+        >
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="6 9 12 15 18 9"></polyline>
+          </svg>
+        </button>
+        <input type="checkbox" id="${toggleInputId}" class="ytp-plus-settings-checkbox" data-setting="${toggleSetting}" ${checked ? 'checked' : ''} aria-label="${label}">
+      </div>
+    </div>
+    <div class="style-side-videos-submenu" data-submenu="${submenuKey}" style="display:${checked ? 'block' : 'none'};margin-left:12px;margin-bottom:8px;">
+      <div class="glass-card" style="display:flex;flex-direction:column;gap:8px;">
+        ${createSettingsSelect(selectLabel, selectDescription, selectSetting, selectValue, options)}
+      </div>
+    </div>
+  `;
+  }
+
+  /**
    * Creates the download site option section
    * @param {{ key: string; name: string; description: string; checked: boolean; hasControls: boolean; controls?: string }} site - Site configuration
    * @param {Function} _t - Translation function (unused, kept for API consistency)
@@ -166,9 +224,11 @@
 
     return `
     <input type="text" placeholder="${t('siteName')}" value="${name}" 
-        data-site="externalDownloader" data-field="name" class="download-site-input">
+        data-site="externalDownloader" data-field="name" class="download-site-input"
+        aria-label="${t('siteName')}">
     <input type="text" placeholder="${t('urlTemplate')}" value="${url}" 
-      data-site="externalDownloader" data-field="url" class="download-site-input small">
+      data-site="externalDownloader" data-field="url" class="download-site-input small"
+      aria-label="${t('urlTemplate')}">
     <div class="download-site-cta">
       <button class="glass-button" id="download-externalDownloader-save">${t('saveButton')}</button>
       <button class="glass-button danger" id="download-externalDownloader-reset">${t('resetButton')}</button>
@@ -267,6 +327,12 @@
    */
   function createStyleSubmenu(settings, t) {
     const display = settings.enableZenStyles ? 'block' : 'none';
+    const rawSideVideosColumns = Number(settings.zenStyles?.sideVideosColumns);
+    const sideVideosColumnsValue = Number.isFinite(rawSideVideosColumns)
+      ? Math.max(0, Math.min(2, rawSideVideosColumns))
+      : 0;
+    const sideVideosColumnsEnabled =
+      settings.zenStyles?.sideVideosColumnsEnabled === true || sideVideosColumnsValue > 0;
 
     const rows = [
       {
@@ -322,17 +388,6 @@
         value: settings.zenStyles?.compactFeed,
       },
       {
-        label: tr(t, 'zenStyleSideVideosColumnsLabel', 'Side Videos Columns'),
-        desc: tr(
-          t,
-          'zenStyleSideVideosColumnsDesc',
-          'Related videos layout: 0 = YouTube default (off), 1 = single-column cards, 2 = two-column grid'
-        ),
-        key: 'zenStyles.sideVideosColumns',
-        value: settings.zenStyles?.sideVideosColumns ?? 1,
-        isSelect: true,
-      },
-      {
         label: tr(t, 'zenStyleBetterCaptionsLabel', 'Better Captions'),
         desc: tr(t, 'zenStyleBetterCaptionsDesc', 'Enhanced subtitle styling with blur backdrop'),
         key: 'zenStyles.betterCaptions',
@@ -365,17 +420,31 @@
     return `
     <div class="style-submenu" data-submenu="style" style="display:${display};">
       <div class="glass-card style-submenu-container">
-        ${rows
-          .map(r =>
-            r.isSelect
-              ? createSettingsSelect(r.label, r.desc, r.key, r.value, [
-                  { value: 0, label: 'Default (Off)' },
-                  { value: 1, label: '1 Column' },
-                  { value: 2, label: '2 Columns' },
-                ])
-              : createSettingsItem(r.label, r.desc, r.key, r.value)
-          )
-          .join('')}
+        ${rows.map(r => createSettingsItem(r.label, r.desc, r.key, r.value)).join('')}
+        ${createSettingsToggleWithSelectSubmenu(
+          tr(t, 'zenStyleSideVideosColumnsLabel', 'Side Videos Columns'),
+          tr(
+            t,
+            'zenStyleSideVideosColumnsDesc',
+            'Choose how many columns to use for side videos in Zen mode'
+          ),
+          'zenStyles.sideVideosColumnsEnabled',
+          sideVideosColumnsEnabled,
+          'style-side-videos',
+          tr(t, 'zenStyleSideVideosColumnsLabel', 'Side Videos Columns'),
+          tr(
+            t,
+            'zenStyleSideVideosColumnsDesc',
+            'Choose how many columns to use for side videos in Zen mode'
+          ),
+          'zenStyles.sideVideosColumns',
+          sideVideosColumnsValue,
+          [
+            { value: 0, label: 'Default (Off)' },
+            { value: 1, label: '1 Column' },
+            { value: 2, label: '2 Columns' },
+          ]
+        )}
       </div>
     </div>
   `;
@@ -638,7 +707,7 @@
         <button class="glass-button" id="open-ytp-greasyfork" type="button">GreasyFork</button>
       </div>
       <div class="ytp-plus-about-footer" style="text-align:center;color:var(--yt-text-secondary);font-size:13px;line-height:1.6;margin-bottom:12px;">        
-        <div>Made with ❤️ by <a href="https://github.com/diorhc" target="_blank" rel="noopener noreferrer" style="color:var(--yt-text-primary);">diorhc</a></div>
+        <div>Made with ❤️ by <a href="https://github.com/diorhc" target="_blank" rel="noopener noreferrer" style="color:var(--yt-text-primary);font-style:italic;text-decoration:none;">diorhc</a></div>
         <div>License: MIT</div>
       </div>
     </div>
@@ -670,12 +739,14 @@
           const parsed = JSON.parse(stored);
           if (parsed && typeof parsed === 'object') {
             const merged = { ...defaults };
-            const mergedAny = /** @type {Record<string,any>} */ (merged);
-            const parsedAny = /** @type {Record<string,any>} */ (parsed);
+            const mergedSettings = /** @type {Record<string,any>} */ (merged);
+            const parsedSettings = /** @type {Record<string,any>} */ (parsed);
             if (typeof parsed.enableMusic === 'boolean') merged.enableMusic = parsed.enableMusic;
             for (const key of Object.keys(defaults)) {
               if (key === 'enableMusic') continue;
-              if (typeof parsedAny[key] === 'boolean') mergedAny[key] = parsedAny[key];
+              if (typeof parsedSettings[key] === 'boolean') {
+                mergedSettings[key] = parsedSettings[key];
+              }
             }
 
             // Legacy flags mapping
@@ -706,12 +777,14 @@
         const parsed = JSON.parse(stored);
         if (parsed && typeof parsed === 'object') {
           const merged = { ...defaults };
-          const mergedAny2 = /** @type {Record<string,any>} */ (merged);
-          const parsedAny2 = /** @type {Record<string,any>} */ (parsed);
+          const mergedSettings2 = /** @type {Record<string,any>} */ (merged);
+          const parsedSettings2 = /** @type {Record<string,any>} */ (parsed);
           if (typeof parsed.enableMusic === 'boolean') merged.enableMusic = parsed.enableMusic;
           for (const key of Object.keys(defaults)) {
             if (key === 'enableMusic') continue;
-            if (typeof parsedAny2[key] === 'boolean') mergedAny2[key] = parsedAny2[key];
+            if (typeof parsedSettings2[key] === 'boolean') {
+              mergedSettings2[key] = parsedSettings2[key];
+            }
           }
 
           // Legacy flags mapping
@@ -742,7 +815,7 @@
         }
       }
     } catch (e) {
-      console.warn('[YouTube+] Failed to load music settings:', e);
+      window.console.warn('[YouTube+] Failed to load music settings:', e);
     }
     return defaults;
   }
@@ -1018,6 +1091,9 @@
    * @returns {string} Voting section HTML
    */
   function createVotingSection(_settings, t) {
+    const previewBefore = tr(t, 'votingPreviewBefore', 'Before');
+    const previewAfter = tr(t, 'votingPreviewAfter', 'After');
+
     return `
     <div class="ytp-plus-settings-section hidden" data-section="voting">
       <div class="ytp-plus-settings-voting-header">
@@ -1028,12 +1104,12 @@
       <div class="ytp-plus-voting-preview">
         <div class="ytp-plus-ba-container">
           <div class="ytp-plus-ba-before">
-            <img src="https://i.imgur.com/FVW4tdH.jpeg" alt="Before" draggable="false" />
-            <span class="ytp-plus-ba-label ytp-plus-ba-label-before">Before</span>
+            <img src="https://i.imgur.com/FVW4tdH.jpeg" alt="${previewBefore}" draggable="false" />
+            <span class="ytp-plus-ba-label ytp-plus-ba-label-before">${previewBefore}</span>
           </div>
           <div class="ytp-plus-ba-after">
-            <img src="https://i.imgur.com/ljq1KeL.jpeg" alt="After" draggable="false" />
-            <span class="ytp-plus-ba-label ytp-plus-ba-label-after">After</span>
+            <img src="https://i.imgur.com/ljq1KeL.jpeg" alt="${previewAfter}" draggable="false" />
+            <span class="ytp-plus-ba-label ytp-plus-ba-label-after">${previewAfter}</span>
           </div>
           <div class="ytp-plus-ba-divider" role="separator" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
         </div>

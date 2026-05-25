@@ -2,240 +2,153 @@
  * @jest-environment jsdom
  */
 
-describe('YouTubeErrorBoundary', () => {
-  /** @typedef {{ totalErrors: number, recentErrors: number, lastErrorTime: number, isRecovering: boolean, errorsByType: Record<string, number> }} ErrorStats */
-  /**
-   * @typedef {{
-   *   logError: (error: unknown, context?: object) => void,
-   *   withErrorBoundary: (fn: Function, context?: string) => Function,
-   *   withAsyncErrorBoundary: (fn: Function, context?: string) => Function,
-   *   getErrorStats: () => ErrorStats,
-   *   clearErrors: () => void
-   * }} ErrorBoundaryMock
-   */
-
-  /** @type {ErrorBoundaryMock} */
+describe('YouTubeErrorBoundary (real integration)', () => {
+  /** @type {any} */
+  let logger;
+  /** @type {any} */
   let errorBoundary;
-  /** @type {ReturnType<typeof jest.spyOn>} */
-  let consoleErrorSpy;
-  /** @type {ReturnType<typeof jest.spyOn>} */
-  let consoleWarnSpy;
 
   beforeEach(() => {
-    // Mock implementation of error boundary for testing
-    /** @type {ErrorStats} */
-    const stats = {
-      totalErrors: 0,
-      recentErrors: 0,
-      lastErrorTime: 0,
-      isRecovering: false,
-      errorsByType: {},
+    jest.resetModules();
+
+    delete window.YouTubePlusLogger;
+    delete window.YouTubeErrorBoundary;
+    delete window.YouTubeUtils;
+    delete window.YouTubePlusErrorRecovery;
+
+    window.YouTubeUtils = {
+      NotificationManager: {
+        show: jest.fn(),
+      },
     };
 
-    errorBoundary = {
-      logError: jest.fn((error, context) => {
-        stats.totalErrors++;
-        stats.recentErrors++;
-        stats.lastErrorTime = Date.now();
-        const errorType = error instanceof Error ? error.constructor.name : 'UnknownError';
-        stats.errorsByType[errorType] = (stats.errorsByType[errorType] || 0) + 1;
-        console.error('[YouTube+ Error]', error, context);
-      }),
-
-      withErrorBoundary: jest.fn((fn, context) => {
-        return /** @this {unknown} */ function (/** @type {unknown[]} */ ...args) {
-          try {
-            return fn.apply(this, args);
-          } catch (error) {
-            errorBoundary.logError(error, { context, args });
-            return undefined;
-          }
-        };
-      }),
-
-      withAsyncErrorBoundary: jest.fn((fn, context) => {
-        return /** @this {unknown} */ async function (/** @type {unknown[]} */ ...args) {
-          try {
-            return await fn.apply(this, args);
-          } catch (error) {
-            errorBoundary.logError(error, { context, args });
-            return undefined;
-          }
-        };
-      }),
-
-      getErrorStats: jest.fn(() => ({ ...stats })),
-
-      clearErrors: jest.fn(() => {
-        stats.totalErrors = 0;
-        stats.recentErrors = 0;
-        stats.lastErrorTime = 0;
-        stats.isRecovering = false;
-        stats.errorsByType = {};
-      }),
+    window.YouTubePlusErrorRecovery = {
+      attemptRecovery: jest.fn(),
     };
 
-    // Spy on console methods
-    consoleErrorSpy = jest.spyOn(console, 'error').mockImplementation();
-    consoleWarnSpy = jest.spyOn(console, 'warn').mockImplementation();
+    jest.spyOn(window.console, 'error').mockImplementation(() => {});
+    jest.spyOn(window.console, 'warn').mockImplementation(() => {});
+
+    require('../src/logger.js');
+
+    logger = window.YouTubePlusLogger;
+    errorBoundary = window.YouTubeErrorBoundary;
+
+    logger.setLevel('debug');
+    logger.clear();
+    errorBoundary.clearErrors();
   });
 
   afterEach(() => {
-    consoleErrorSpy.mockRestore();
-    consoleWarnSpy.mockRestore();
-    jest.clearAllTimers();
+    jest.restoreAllMocks();
   });
 
-  describe('Basic Error Handling', () => {
-    test('should log error with context', () => {
-      const testError = new Error('Test error');
-      errorBoundary.logError(testError, { module: 'TestModule' });
-
-      expect(consoleErrorSpy).toHaveBeenCalled();
-      const stats = errorBoundary.getErrorStats();
-      expect(stats.totalErrors).toBe(1);
-    });
-
-    test('should track error statistics', () => {
-      const error1 = new Error('Error 1');
-      const error2 = new Error('Error 2');
-
-      errorBoundary.logError(error1);
-      errorBoundary.logError(error2);
-
-      const stats = errorBoundary.getErrorStats();
-      expect(stats.totalErrors).toBe(2);
-      expect(stats.recentErrors).toBe(2);
-    });
-
-    test('should clear error statistics', () => {
-      errorBoundary.logError(new Error('Test'));
-      errorBoundary.clearErrors();
-
-      const stats = errorBoundary.getErrorStats();
-      expect(stats.totalErrors).toBe(0);
-      expect(stats.recentErrors).toBe(0);
-    });
+  test('exports real boundary API from logger module', () => {
+    expect(errorBoundary).toBeDefined();
+    expect(typeof errorBoundary.withErrorBoundary).toBe('function');
+    expect(typeof errorBoundary.withAsyncErrorBoundary).toBe('function');
+    expect(typeof errorBoundary.logError).toBe('function');
+    expect(typeof errorBoundary.getErrorStats).toBe('function');
+    expect(typeof errorBoundary.getErrorRate).toBe('function');
   });
 
-  describe('withErrorBoundary', () => {
-    test('should wrap synchronous functions', () => {
-      const mockFn = jest.fn(() => 'success');
-      const wrapped = errorBoundary.withErrorBoundary(mockFn, 'TestContext');
+  test('withErrorBoundary captures sync error and records stats', () => {
+    const wrapped = errorBoundary.withErrorBoundary(() => {
+      throw new TypeError('Cannot read property x of undefined');
+    }, 'sync-module');
 
-      const result = wrapped();
-      expect(result).toBe('success');
-      expect(mockFn).toHaveBeenCalled();
-    });
+    const result = wrapped('arg1');
 
-    test('should catch synchronous errors', () => {
-      const mockFn = jest.fn(() => {
-        throw new Error('Sync error');
-      });
-      const wrapped = errorBoundary.withErrorBoundary(mockFn, 'TestContext');
-
-      const result = wrapped();
-      expect(result).toBeUndefined();
-      expect(consoleErrorSpy).toHaveBeenCalled();
-
-      const stats = errorBoundary.getErrorStats();
-      expect(stats.totalErrors).toBeGreaterThan(0);
-    });
-
-    test('should preserve function context and arguments', () => {
-      const mockFn = jest.fn(function (/** @type {number} */ a, /** @type {number} */ b) {
-        return a + b;
-      });
-      const wrapped = errorBoundary.withErrorBoundary(mockFn, 'TestContext');
-
-      const result = wrapped(2, 3);
-      expect(result).toBe(5);
-      expect(mockFn).toHaveBeenCalledWith(2, 3);
-    });
+    expect(result).toBeNull();
+    const stats = errorBoundary.getErrorStats();
+    expect(stats.totalErrors).toBe(0);
+    expect(stats.recentErrors).toBe(1);
+    expect(stats.errorsByType.medium).toBeGreaterThanOrEqual(1);
+    expect(window.YouTubePlusErrorRecovery.attemptRecovery).toHaveBeenCalled();
   });
 
-  describe('withAsyncErrorBoundary', () => {
-    test('should wrap asynchronous functions', async () => {
-      const mockFn = jest.fn(async () => 'async success');
-      const wrapped = errorBoundary.withAsyncErrorBoundary(mockFn, 'TestContext');
+  test('withAsyncErrorBoundary captures async error and logs via logger', async () => {
+    const wrapped = errorBoundary.withAsyncErrorBoundary(async () => {
+      throw new Error('network timeout while fetching captions');
+    }, 'async-module');
 
-      const result = await wrapped();
-      expect(result).toBe('async success');
-      expect(mockFn).toHaveBeenCalled();
-    });
+    const result = await wrapped();
 
-    test('should catch asynchronous errors', async () => {
-      const mockFn = jest.fn(async () => {
-        throw new Error('Async error');
-      });
-      const wrapped = errorBoundary.withAsyncErrorBoundary(mockFn, 'TestContext');
-
-      const result = await wrapped();
-      expect(result).toBeUndefined();
-      expect(consoleErrorSpy).toHaveBeenCalled();
-
-      const stats = errorBoundary.getErrorStats();
-      expect(stats.totalErrors).toBeGreaterThan(0);
-    });
-
-    test('should preserve async function context and arguments', async () => {
-      const mockFn = jest.fn(async function (/** @type {number} */ a, /** @type {number} */ b) {
-        return a * b;
-      });
-      const wrapped = errorBoundary.withAsyncErrorBoundary(mockFn, 'TestContext');
-
-      const result = await wrapped(4, 5);
-      expect(result).toBe(20);
-      expect(mockFn).toHaveBeenCalledWith(4, 5);
-    });
+    expect(result).toBeNull();
+    const recentErrors = logger.getRecent(10, 'error');
+    expect(recentErrors.some(e => e.module === 'ErrorBoundary')).toBe(true);
+    expect(window.YouTubePlusErrorRecovery.attemptRecovery).toHaveBeenCalled();
   });
 
-  describe('Error Categories', () => {
-    test('should categorize errors by type', () => {
-      const typeError = new TypeError('Type error');
-      const referenceError = new ReferenceError('Reference error');
-      const syntaxError = new SyntaxError('Syntax error');
+  test('logError stores fallback message from context when message is empty', () => {
+    const emptyError = new Error('');
+    errorBoundary.logError(emptyError, { filename: 'main.js', lineno: 123 });
 
-      errorBoundary.logError(typeError);
-      errorBoundary.logError(referenceError);
-      errorBoundary.logError(syntaxError);
-
-      const stats = errorBoundary.getErrorStats();
-      expect(stats.errorsByType).toBeDefined();
-      expect(stats.errorsByType.TypeError).toBe(1);
-      expect(stats.errorsByType.ReferenceError).toBe(1);
-      expect(stats.errorsByType.SyntaxError).toBe(1);
-    });
+    const recentErrors = logger.getRecent(10, 'error');
+    const boundaryEntry = recentErrors.find(e => e.module === 'ErrorBoundary');
+    expect(boundaryEntry).toBeDefined();
+    expect(boundaryEntry.message).toContain('main.js:123');
   });
 
-  describe('Error Stats API', () => {
-    test('should provide comprehensive error statistics', () => {
-      errorBoundary.logError(new Error('Test'));
+  test('clearErrors resets stats and persisted storage', () => {
+    errorBoundary.logError(new Error('first'));
+    errorBoundary.logError(new Error('second'));
 
-      const stats = errorBoundary.getErrorStats();
+    expect(errorBoundary.getErrorStats().recentErrors).toBeGreaterThan(0);
 
-      expect(stats).toHaveProperty('totalErrors');
-      expect(stats).toHaveProperty('recentErrors');
-      expect(stats).toHaveProperty('lastErrorTime');
-      expect(stats).toHaveProperty('isRecovering');
-      expect(stats).toHaveProperty('errorsByType');
+    errorBoundary.clearErrors();
 
-      expect(typeof stats.totalErrors).toBe('number');
-      expect(typeof stats.recentErrors).toBe('number');
-      expect(typeof stats.isRecovering).toBe('boolean');
-      expect(typeof stats.errorsByType).toBe('object');
+    const stats = errorBoundary.getErrorStats();
+    expect(stats.recentErrors).toBe(0);
+    expect(stats.totalErrors).toBe(0);
+    expect(localStorage.getItem(errorBoundary.config.storageKey)).toBeNull();
+  });
+
+  test('global error event updates error counters and logs', () => {
+    const evt = new ErrorEvent('error', {
+      message: 'ReferenceError: bad value',
+      filename: 'https://www.youtube.com/watch',
+      lineno: 10,
+      colno: 20,
+      error: new ReferenceError('bad value'),
     });
 
-    test('should update lastErrorTime when errors occur', () => {
-      const beforeTime = Date.now();
+    window.dispatchEvent(evt);
 
-      errorBoundary.logError(new Error('Test'));
+    const stats = errorBoundary.getErrorStats();
+    expect(stats.totalErrors).toBeGreaterThanOrEqual(1);
+    expect(stats.lastErrorTime).toBeGreaterThan(0);
+  });
 
-      const stats = errorBoundary.getErrorStats();
-      const afterTime = Date.now();
-
-      expect(stats.lastErrorTime).toBeGreaterThanOrEqual(beforeTime);
-      expect(stats.lastErrorTime).toBeLessThanOrEqual(afterTime);
+  test('unhandledrejection event increments counters', () => {
+    const rejectionEvent = new Event('unhandledrejection');
+    Object.defineProperty(rejectionEvent, 'reason', {
+      value: new Error('promise failed hard'),
+      configurable: true,
     });
+    Object.defineProperty(rejectionEvent, 'promise', {
+      value: Promise.reject(new Error('inner reject')).catch(() => {}),
+      configurable: true,
+    });
+
+    window.dispatchEvent(rejectionEvent);
+
+    const stats = errorBoundary.getErrorStats();
+    expect(stats.totalErrors).toBeGreaterThanOrEqual(1);
+  });
+
+  test('critical errors notify but skip recovery attempts', () => {
+    window.YouTubePlusErrorRecovery.attemptRecovery.mockClear();
+    window.YouTubeUtils.NotificationManager.show.mockClear();
+
+    errorBoundary.logError(new Error('security csp violation detected'));
+    const wrapped = errorBoundary.withErrorBoundary(() => {
+      throw new Error('security csp violation detected');
+    }, 'critical-module');
+
+    wrapped();
+
+    expect(window.YouTubeUtils.NotificationManager.show).toHaveBeenCalled();
+    expect(window.YouTubePlusErrorRecovery.attemptRecovery).not.toHaveBeenCalled();
   });
 });

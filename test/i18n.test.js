@@ -276,4 +276,38 @@ describe('i18n Module', () => {
       }).not.toThrow();
     });
   });
+
+  describe('Extended API coverage', () => {
+    test('should add translations and report key availability', () => {
+      jest.resetModules();
+      delete require.cache[require.resolve('../src/i18n.js')];
+      require('../src/i18n.js');
+
+      window.YouTubePlusI18n.addTranslation('custom.key', 'Custom value');
+
+      expect(window.YouTubePlusI18n.hasTranslation('custom.key')).toBe(true);
+      expect(window.YouTubePlusI18n.t('custom.key')).toBe('Custom value');
+    });
+
+    test('should notify listeners when language changes', async () => {
+      window.YouTubePlusEmbeddedTranslations = {
+        en: { greeting: 'Hello' },
+        fr: { greeting: 'Bonjour' },
+      };
+
+      jest.resetModules();
+      delete require.cache[require.resolve('../src/i18n.js')];
+      require('../src/i18n.js');
+      await Promise.resolve();
+
+      const listener = jest.fn();
+      const unsubscribe = window.YouTubePlusI18n.onLanguageChange(listener);
+
+      await expect(window.YouTubePlusI18n.setLanguage('fr')).resolves.toBe(true);
+      expect(window.YouTubePlusI18n.getLanguage()).toBe('fr');
+      expect(listener).toHaveBeenCalledWith('fr', expect.any(String));
+
+      unsubscribe();
+    });
+  });
 });

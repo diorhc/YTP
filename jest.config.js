@@ -5,18 +5,32 @@ module.exports = {
   },
   testMatch: ['**/test/**/*.test.js', '**/test/**/*.spec.js'],
   testPathIgnorePatterns: ['/node_modules/', '/e2e/'],
-  collectCoverageFrom: ['src/**/*.js', '!src/**/*.min.js', '!src/**/*.d.ts', '!node_modules/**'],
+  // Keep coverage meaningful: only include modules currently exercised by unit tests.
+  // Large DOM-heavy runtime modules are validated by lint/build/e2e and will be added here
+  // as dedicated unit tests are introduced.
+  collectCoverageFrom: [
+    'src/event-delegation.js',
+    'src/i18n.js',
+    'src/logger.js',
+    'src/module-registry.js',
+    'src/safe-dom.js',
+  ],
   coverageDirectory: 'coverage',
   coverageReporters: ['text', 'lcov', 'html', 'json-summary'],
-  coveragePathIgnorePatterns: ['/node_modules/', '/test/', '/coverage/', 'youtube.user.js'],
-  // Coverage thresholds set below current measured levels (40-47% lines, 37% functions)
-  // to catch regressions without being overly restrictive.
+  coveragePathIgnorePatterns: [
+    '/node_modules/',
+    '<rootDir>/test/',
+    '<rootDir>/coverage/',
+    'youtube.user.js',
+  ],
+  // Coverage thresholds set below the current measured baseline (~79% lines/statements,
+  // ~70% branches, ~63% functions) to catch regressions without blocking CI.
   coverageThreshold: {
     global: {
-      branches: 35,
-      functions: 30,
-      lines: 40,
-      statements: 40,
+      branches: 65,
+      functions: 60,
+      lines: 75,
+      statements: 75,
     },
   },
   verbose: true,
@@ -24,6 +38,7 @@ module.exports = {
   setupFilesAfterEnv: ['<rootDir>/test/setup.js'],
   moduleFileExtensions: ['js', 'json'],
   transform: {},
+  coverageProvider: 'v8',
   // Only collect coverage when explicitly requested via --coverage flag
   collectCoverage: false,
   // Improve test performance

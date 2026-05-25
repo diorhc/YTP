@@ -5,8 +5,6 @@
   let featureEnabled = true;
   /** @type {(() => void) | null} */
   let activeCleanup = null;
-  const loadFeatureEnabled = () =>
-    window.YouTubeUtils?.loadFeatureEnabled?.('enableResumeTime') ?? true;
   /** @param {boolean} [nextEnabled] */
   const setFeatureEnabled = nextEnabled => {
     featureEnabled = nextEnabled !== false;
@@ -36,31 +34,16 @@
     }
   };
 
-  featureEnabled = loadFeatureEnabled();
+  featureEnabled = window.YouTubeUtils?.loadFeatureEnabled?.('enableResumeTime') ?? true;
 
   // Shared DOM helpers from YouTubeUtils
   const { $, byId } = window.YouTubeUtils || {};
-  const onDomReady = (() => {
-    let ready = document.readyState !== 'loading';
-    /** @type {Array<() => void>} */
-    const queue = [];
-    const run = () => {
-      ready = true;
-      while (queue.length) {
-        const cb = queue.shift();
-        try {
-          cb?.();
-        } catch (e) {
-          console.error('[YouTube+] DOMReady callback error:', e);
-        }
-      }
-    };
-    if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
-    return /** @param {() => void} cb */ cb => {
-      if (ready) cb();
-      else queue.push(cb);
-    };
-  })();
+  const onDomReady =
+    window.YouTubeUtils?.onDomReady ||
+    ((/** @type {() => void} */ cb) => {
+      if (document.readyState !== 'loading') cb();
+      else document.addEventListener('DOMContentLoaded', cb, { once: true });
+    });
 
   const setupResumeDelegation = (() => {
     let attached = false;
@@ -140,8 +123,6 @@
     startOver: { en: 'Start over', ru: 'Начать сначала' },
   };
 
-  const escapeRegex = /** @param {string} s */ s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
   /**
    * @param {string} key
    * @param {Record<string,any>} [params]
@@ -157,7 +138,8 @@
     if (!params || Object.keys(params).length === 0) return val;
     let result = val;
     for (const [k, v] of Object.entries(params)) {
-      result = result.replace(new RegExp(`\\{${escapeRegex(k)}\\}`, 'g'), String(v));
+      const token = `{${k}}`;
+      result = result.split(token).join(String(v));
     }
     return result;
   };
@@ -177,7 +159,7 @@
     try {
       localStorage.setItem(RESUME_STORAGE_KEY, JSON.stringify(obj));
     } catch (e) {
-      console.warn('[YouTube+] Failed to save resume time:', e);
+      window.console.warn('[YouTube+] Failed to save resume time:', e);
     }
   };
 
@@ -238,18 +220,18 @@
 
     // Ensure glassmorphism styles are available for the overlay
     const resumeOverlayStyles = `
-      .ytp-resume-overlay{min-width:180px;max-width:36vw;background:var(--yt-glass-bg);color:var(--yt-text-primary,#fff);padding:12px 14px;border-radius:12px;backdrop-filter:blur(8px) saturate(150%);-webkit-backdrop-filter:blur(8px) saturate(150%);box-shadow:0 14px 40px rgba(0,0,0,0.48);border:1.25px solid rgba(255,255,255,0.06);font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;align-items:center;text-align:center;animation:ytp-resume-fadein 0.3s ease-out}
+      .ytp-resume-overlay{min-width:180px;max-width:36vw;background:var(--yt-glass-bg);color:var(--yt-text-primary,#fff);padding:12px 14px;border-radius:12px;backdrop-filter:blur(8px) saturate(150%);-webkit-backdrop-filter:blur(8px) saturate(150%);box-shadow:0 14px 40px var(--yt-shadow-flyout);border:1.25px solid var(--yt-surface-overlay-border);font-family:Arial,Helvetica,sans-serif;display:flex;flex-direction:column;align-items:center;text-align:center;animation:ytp-resume-fadein 0.3s ease-out}
       @keyframes ytp-resume-fadein{from{opacity:0;transform:translateY(10px)}to{opacity:1;transform:translateY(0)}}
       .ytp-resume-overlay .ytp-resume-title{font-weight:600;margin-bottom:8px;font-size:13px}
       .ytp-resume-overlay .ytp-resume-actions{display:flex;gap:8px;justify-content:center;margin-top:6px}
       .ytp-resume-overlay .ytp-resume-btn{padding:6px 12px;border-radius:8px;border:none;cursor:pointer;font-size:12px;font-weight:500;transition:all 0.2s ease;outline:none}
-      .ytp-resume-overlay .ytp-resume-btn:focus{box-shadow:0 0 0 2px rgba(255,255,255,0.3);outline:2px solid transparent}
+      .ytp-resume-overlay .ytp-resume-btn:focus{box-shadow:0 0 0 2px var(--yt-glass-border);outline:2px solid transparent}
       .ytp-resume-overlay .ytp-resume-btn:hover{transform:translateY(-1px)}
       .ytp-resume-overlay .ytp-resume-btn:active{transform:translateY(0)}
-      .ytp-resume-overlay .ytp-resume-btn.primary{background:#1e88e5;color:#fff}
-      .ytp-resume-overlay .ytp-resume-btn.primary:hover{background:#1976d2}
-      .ytp-resume-overlay .ytp-resume-btn.ghost{background:rgba(255,255,255,0.06);color:#fff}
-      .ytp-resume-overlay .ytp-resume-btn.ghost:hover{background:rgba(255,255,255,0.12)}
+      .ytp-resume-overlay .ytp-resume-btn.primary{background:var(--yt-accent-secondary);color:#fff}
+      .ytp-resume-overlay .ytp-resume-btn.primary:hover{background:var(--yt-accent-secondary-light)}
+      .ytp-resume-overlay .ytp-resume-btn.ghost{background:var(--yt-button-bg);color:var(--yt-text-primary)}
+      .ytp-resume-overlay .ytp-resume-btn.ghost:hover{background:var(--yt-hover-bg)}
     `;
     try {
       if (window.YouTubeUtils && YouTubeUtils.StyleManager) {
@@ -261,7 +243,7 @@
         (document.head || document.documentElement).appendChild(s);
       }
     } catch (e) {
-      console.warn('[YouTube+] Failed to inject resume overlay styles:', e);
+      window.console.warn('[YouTube+] Failed to inject resume overlay styles:', e);
     }
 
     if (inPlayer) {
@@ -270,26 +252,30 @@
         const playerStyle = window.getComputedStyle(
           /** @type {Element} */ (/** @type {unknown} */ (player))
         );
-        if (playerStyle.position === 'static') player.setAttribute('style', 'position:relative;');
+        if (playerStyle.position === 'static') player.style.position = 'relative';
       } catch (e) {
         /* Intentional: player element may be detached */
       }
 
       // Position centered inside the player
-      wrap.className = 'ytp-resume-overlay';
+      wrap.className = 'ytp-resume-overlay ytp-plus-resume-overlay';
       // absolute center (use transform to center by both axes)
-      wrap.setAttribute(
-        'style',
-        'position:absolute;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:9999;pointer-events:auto;'
-      );
+      wrap.style.position = 'absolute';
+      wrap.style.left = '50%';
+      wrap.style.bottom = '5%';
+      wrap.style.transform = 'translate(-50%,-50%)';
+      wrap.style.zIndex = '9999';
+      wrap.style.pointerEvents = 'auto';
       player.appendChild(wrap);
     } else {
       // Fallback: fixed centered on the page
-      wrap.className = 'ytp-resume-overlay';
-      wrap.setAttribute(
-        'style',
-        'position:fixed;left:50%;bottom:5%;transform:translate(-50%,-50%);z-index:1200;pointer-events:auto;'
-      );
+      wrap.className = 'ytp-resume-overlay ytp-plus-resume-overlay';
+      wrap.style.position = 'fixed';
+      wrap.style.left = '50%';
+      wrap.style.bottom = '5%';
+      wrap.style.transform = 'translate(-50%,-50%)';
+      wrap.style.zIndex = '1200';
+      wrap.style.pointerEvents = 'auto';
       document.body.appendChild(wrap);
     }
 
@@ -315,7 +301,7 @@
       try {
         onResume();
       } catch (err) {
-        console.error('[YouTube+] Resume error:', err);
+        window.console.error('[YouTube+] Resume error:', err);
       }
       try {
         wrap.remove();
@@ -328,7 +314,7 @@
       try {
         onRestart();
       } catch (err) {
-        console.error('[YouTube+] Restart error:', err);
+        window.console.error('[YouTube+] Restart error:', err);
       }
       try {
         wrap.remove();
@@ -404,7 +390,7 @@
   const attachResumeHandlers = videoEl => {
     if (!featureEnabled) return null;
     if (!videoEl || videoEl.tagName !== 'VIDEO') {
-      console.warn('[YouTube+] Invalid video element for resume handlers');
+      window.console.warn('[YouTube+] Invalid video element for resume handlers');
       return;
     }
 
@@ -443,7 +429,7 @@
             lastSavedAt = now;
           }
         } catch (e) {
-          console.warn('[YouTube+] Error saving playback time:', e);
+          window.console.warn('[YouTube+] Error saving playback time:', e);
         }
       };
       videoEl.addEventListener('timeupdate', timeUpdateHandler, { passive: true });
@@ -480,7 +466,7 @@
             videoEl.currentTime = saved;
             videoEl.play();
           } catch (e) {
-            console.error('[YouTube+] Failed to resume playback:', e);
+            window.console.error('[YouTube+] Failed to resume playback:', e);
           }
         },
         () => {
@@ -488,7 +474,7 @@
             videoEl.currentTime = 0;
             videoEl.play();
           } catch (e) {
-            console.error('[YouTube+] Failed to start over:', e);
+            window.console.error('[YouTube+] Failed to start over:', e);
           }
         }
       );
@@ -523,7 +509,7 @@
         }
         delete videoEl._ytpResumeAttached;
       } catch (err) {
-        console.error('[YouTube+] Resume cleanup error:', err);
+        window.console.error('[YouTube+] Resume cleanup error:', err);
       }
     };
 
@@ -601,8 +587,12 @@
     if (videoEl) {
       attachResumeHandlers(videoEl);
     } else {
-      // Retry after a short delay if video not found yet
-      setTimeout(initResume, 500);
+      const waitFor = window.YouTubeUtils?.waitForElement || window.YouTubeUtils?.waitFor;
+      if (typeof waitFor === 'function') {
+        waitFor('video', 1200).then(() => initResume());
+      } else {
+        requestAnimationFrame(initResume);
+      }
     }
   };
 
@@ -630,7 +620,7 @@
       setFeatureEnabled(nextEnabled);
     } catch (e) {
       /* empty */
-      setFeatureEnabled(loadFeatureEnabled());
+      setFeatureEnabled(window.YouTubeUtils?.loadFeatureEnabled?.('enableResumeTime') ?? true);
     }
   };
   if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {

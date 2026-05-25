@@ -1,4 +1,5 @@
 // DOM Query Cache System - Performance Optimization (Enhanced)
+// @ts-check
 (function () {
   'use strict';
 
@@ -18,7 +19,8 @@
       // so a 1-second stale window for "not found" entries is safe and cuts
       // repeated querySelector calls by ~75 % for elements absent from the page.
       this.maxSize = 500; // Max cache entries
-      this.cleanupInterval = null;
+      this.cleanupSubId = null;
+      this.cleanupPending = false;
       this.enabled = true;
 
       // Statistics
@@ -27,12 +29,12 @@
       this.contextUids = new WeakMap();
       this.uidCounter = 0;
 
-      // Shared MutationObserver for waitForElement
+      // Shared coordinator subscription for waitForElement
       this.observerCallbacks = new Set();
-      this.sharedObserver = null;
+      this.sharedObserverSubId = null;
       this.sharedObserverPending = false;
 
-      // Start periodic cleanup
+      // Start coordinator-coalesced cleanup
       this.startCleanup();
     }
 
@@ -208,9 +210,8 @@
      * Start periodic cache cleanup
      */
     startCleanup() {
-      if (this.cleanupInterval) return;
+      if (this.cleanupSubId) return;
 
-      // Use requestIdleCallback if available for cleanup to avoid blocking main thread
       const cleanupFn = () => {
         const now = Date.now();
         let deletedCount = 0;
@@ -229,17 +230,37 @@
         }
       };
 
-      this.cleanupInterval = setInterval(() => {
-        if (typeof requestIdleCallback !== 'undefined') {
-          requestIdleCallback(cleanupFn, { timeout: 1000 });
-        } else {
-          cleanupFn();
-        }
-      }, 5000); // Run every 5 seconds
+      const coordinator = window.YouTubeMutationCoordinator;
+      if (!coordinator?.subscribeRoot) return;
 
-      // Register with cleanupManager for SPA lifecycle
-      if (window.YouTubeUtils?.cleanupManager?.registerInterval) {
-        window.YouTubeUtils.cleanupManager.registerInterval(this.cleanupInterval);
+      this.cleanupSubId = coordinator.subscribeRoot(
+        'dom-cache::cleanup',
+        () => {
+          if (this.cleanupPending) return;
+          this.cleanupPending = true;
+
+          const run = () => {
+            this.cleanupPending = false;
+            cleanupFn();
+          };
+
+          if (typeof requestIdleCallback === 'function') {
+            requestIdleCallback(run, { timeout: 1000 });
+          } else {
+            setTimeout(run, 0);
+          }
+        },
+        { childList: true, attributes: true, subtree: true }
+      );
+
+      if (this.cleanupSubId && window.YouTubeUtils?.cleanupManager?.register) {
+        window.YouTubeUtils.cleanupManager.register(() => {
+          if (this.cleanupSubId && window.YouTubeMutationCoordinator?.unsubscribe) {
+            window.YouTubeMutationCoordinator.unsubscribe(this.cleanupSubId);
+            this.cleanupSubId = null;
+          }
+          this.cleanupPending = false;
+        });
       }
     }
 
@@ -247,15 +268,16 @@
      * Stop cache cleanup and clear all caches
      */
     destroy() {
-      if (this.cleanupInterval) {
-        clearInterval(this.cleanupInterval);
-        this.cleanupInterval = null;
+      if (this.cleanupSubId && window.YouTubeMutationCoordinator?.unsubscribe) {
+        window.YouTubeMutationCoordinator.unsubscribe(this.cleanupSubId);
+        this.cleanupSubId = null;
       }
+      this.cleanupPending = false;
       this.cache.clear();
       this.multiCache.clear();
-      if (this.sharedObserver) {
-        this.sharedObserver.disconnect();
-        this.sharedObserver = null;
+      if (this.sharedObserverSubId && window.YouTubeMutationCoordinator?.unsubscribe) {
+        window.YouTubeMutationCoordinator.unsubscribe(this.sharedObserverSubId);
+        this.sharedObserverSubId = null;
       }
       this.observerCallbacks.clear();
     }
@@ -276,38 +298,39 @@
      * Initialize shared observer for waitForElement
      */
     initSharedObserver() {
-      if (this.sharedObserver) return;
+      if (this.sharedObserverSubId) return;
 
-      this.sharedObserver = new MutationObserver(() => {
-        if (this.observerCallbacks.size === 0) return;
-        if (this.sharedObserverPending) return;
+      const coordinator = window.YouTubeMutationCoordinator;
+      if (!coordinator?.subscribeRoot) return;
 
-        this.sharedObserverPending = true;
-        const flush = () => {
-          this.sharedObserverPending = false;
-          for (const callback of this.observerCallbacks) {
-            try {
-              callback();
-            } catch (e) {
-              // Log callback errors for diagnostics but don't break other observers
-              if (typeof window !== 'undefined' && window.YouTubeUtils?.logError) {
-                window.YouTubeUtils.logError('DOMCache', 'Observer callback error', e);
+      this.sharedObserverSubId = coordinator.subscribeRoot(
+        'dom-cache::waitForElementShared',
+        () => {
+          if (this.observerCallbacks.size === 0) return;
+          if (this.sharedObserverPending) return;
+
+          this.sharedObserverPending = true;
+          const flush = () => {
+            this.sharedObserverPending = false;
+            for (const callback of this.observerCallbacks) {
+              try {
+                callback();
+              } catch (e) {
+                // Log callback errors for diagnostics but don't break other observers
+                if (typeof window !== 'undefined' && window.YouTubeUtils?.logError) {
+                  window.YouTubeUtils.logError('DOMCache', 'Observer callback error', e);
+                }
               }
             }
+          };
+
+          if (typeof requestAnimationFrame === 'function') {
+            requestAnimationFrame(flush);
+          } else {
+            setTimeout(flush, 0);
           }
-        };
-
-        if (typeof requestAnimationFrame === 'function') {
-          requestAnimationFrame(flush);
-        } else {
-          setTimeout(flush, 0);
         }
-      });
-
-      this.sharedObserver.observe(document.body || document.documentElement, {
-        childList: true,
-        subtree: true,
-      });
+      );
     }
   }
 
@@ -490,27 +513,42 @@
             globalCache.observerCallbacks.delete(checkCallback);
             resolve(null);
           }, timeout);
-        } else {
-          // Fallback to local observer for specific contexts
-          const observerCtx = /** @type {Element} */ (context);
-          const observer = new MutationObserver(() => {
-            const element = observerCtx.querySelector(selector);
-            if (element) {
-              observer.disconnect();
-              resolve(element);
-            }
-          });
-
-          observer.observe(observerCtx, {
-            childList: true,
-            subtree: true,
-          });
-
-          setTimeout(() => {
-            observer.disconnect();
-            resolve(null);
-          }, timeout);
         }
+
+        // For non-root contexts, avoid creating ad-hoc MutationObservers.
+        // Use retry scheduler (or interval fallback) scoped to the context instead.
+        const retryFactory = window.YouTubeUtils?.createRetryScheduler;
+        if (typeof retryFactory === 'function') {
+          retryFactory({
+            interval: 120,
+            maxAttempts: Math.max(1, Math.ceil(timeout / 120)),
+            check: () => {
+              const element = context.querySelector(selector);
+              if (element) {
+                resolve(element);
+                return true;
+              }
+              return false;
+            },
+          });
+          setTimeout(() => resolve(null), timeout);
+          return;
+        }
+
+        const start = Date.now();
+        // Last-resort fallback for scoped contexts where shared observer/retry scheduler is unavailable.
+        const timerId = setInterval(() => {
+          const element = context.querySelector(selector);
+          if (element) {
+            clearInterval(timerId);
+            resolve(element);
+            return;
+          }
+          if (Date.now() - start >= timeout) {
+            clearInterval(timerId);
+            resolve(null);
+          }
+        }, 120);
       }
     );
   }
