@@ -217,7 +217,7 @@ jobs:
 
       - name: Run ESLint with SARIF output
         run: |
-          npx eslint "src/**/*.js" "build.js" --format @microsoft/eslint-formatter-sarif --output-file eslint-results.sarif || true
+          npx eslint "src/**/*.js" "build.js" --quiet --format @microsoft/eslint-formatter-sarif --output-file eslint-results.sarif || true
         continue-on-error: true
 
       - name: Check SARIF file exists
