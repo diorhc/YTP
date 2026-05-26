@@ -1,6 +1,25 @@
 ![Extension Cover](https://i.imgur.com/Dt5jG3M.png)
 ![Youtube Music](https://i.imgur.com/LOC8X6P.png)
 
+
+<!-- GREASYFORK_INSTALLS:START -->
+
+
+<p align="center">
+  <a href="https://greasyfork.org/ru/scripts/537017-youtube">
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-4860-blue?style=flat-square" height="25" />
+  </a>&nbsp;&nbsp;
+  <a href="https://greasyfork.org/ru/scripts/537017-youtube">
+    <img alt="version" src="https://img.shields.io/badge/version-2.5.1-blue?style=flat-square" height="25" />
+  </a>&nbsp;&nbsp;
+  <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
+    <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
+  </a>
+</p>
+
+
+<!-- GREASYFORK_INSTALLS:END -->
+
 <p align="center">
   <a href="https://greasyfork.org/ru/scripts/537017-youtube">
     <img alt="downloads" src="https://img.shields.io/badge/downloads-4816-blue?style=flat-square" height="25" />
