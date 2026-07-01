@@ -218,4 +218,103 @@ describe('Enhanced Tabviews Module', () => {
       expect(i18n[getLanguage()].scrollToTop).toBe('Прокрутить вверх');
     });
   });
+
+  describe('Return YouTube Dislike Integration', () => {
+    test('should extract video ID correctly from different sources', () => {
+      const getVideoIdForDislikeMock = (urlStr, mockDoc) => {
+        try {
+          const urlObj = new URL(urlStr);
+          const pathname = urlObj.pathname || '';
+          if (pathname.startsWith('/shorts/')) return pathname.slice(8);
+          if (pathname.startsWith('/clip/')) {
+            const meta = mockDoc.querySelector("meta[itemprop='videoId'], meta[itemprop='identifier']");
+            return meta?.getAttribute('content') || null;
+          }
+          let v = urlObj.searchParams.get('v');
+          if (v) return v;
+
+          const watchFlexy = mockDoc.querySelector('ytd-watch-flexy');
+          if (watchFlexy) {
+            v = watchFlexy.getAttribute('video-id');
+            if (v) return v;
+          }
+
+          const moviePlayer = mockDoc.getElementById('movie_player');
+          if (moviePlayer && typeof moviePlayer.getVideoData === 'function') {
+            v = moviePlayer.getVideoData()?.video_id;
+            if (v) return v;
+          }
+
+          const metaVideoId = mockDoc.querySelector("meta[itemprop='videoId']");
+          if (metaVideoId) {
+            v = metaVideoId.getAttribute('content');
+            if (v) return v;
+          }
+
+          return null;
+        } catch (_e) {
+          return null;
+        }
+      };
+
+      const mockDoc = document.implementation.createHTMLDocument();
+
+      expect(getVideoIdForDislikeMock('https://www.youtube.com/watch?v=tiFJmVhkF_s', mockDoc)).toBe('tiFJmVhkF_s');
+      expect(getVideoIdForDislikeMock('https://www.youtube.com/shorts/xyz12345', mockDoc)).toBe('xyz12345');
+
+      const meta = mockDoc.createElement('meta');
+      meta.setAttribute('itemprop', 'videoId');
+      meta.setAttribute('content', 'clip123');
+      mockDoc.head.appendChild(meta);
+      expect(getVideoIdForDislikeMock('https://www.youtube.com/clip/abc', mockDoc)).toBe('clip123');
+
+      // Test watch flexy fallback
+      const flexy = mockDoc.createElement('ytd-watch-flexy');
+      flexy.setAttribute('video-id', 'flexyId');
+      mockDoc.body.appendChild(flexy);
+      expect(getVideoIdForDislikeMock('https://www.youtube.com/watch', mockDoc)).toBe('flexyId');
+    });
+
+    test('should format numbers compactly', () => {
+      const formatCompactNumber = (number) => {
+        return new Intl.NumberFormat('en', {
+          notation: 'compact',
+          compactDisplay: 'short',
+        }).format(Number(number) || 0);
+      };
+
+      expect(formatCompactNumber(1200)).toBe('1.2K');
+      expect(formatCompactNumber(850000)).toBe('850K');
+      expect(formatCompactNumber(75)).toBe('75');
+    });
+
+    test('should find or create text container for dislike button', () => {
+      const button = document.createElement('div');
+      button.id = 'dislike-button';
+      document.body.appendChild(button);
+
+      const getOrCreateDislikeText = (dislikeButton) => {
+        const existingCustom = dislikeButton.querySelector('#ytp-plus-dislike-text');
+        if (existingCustom) return existingCustom;
+
+        const buttonShape = dislikeButton.querySelector('button') || dislikeButton;
+        let textContainer = buttonShape.querySelector('.yt-spec-button-shape-next__button-text-content');
+        if (!textContainer) {
+          textContainer = document.createElement('div');
+          textContainer.className = 'yt-spec-button-shape-next__button-text-content';
+          buttonShape.appendChild(textContainer);
+        }
+
+        const created = document.createElement('span');
+        created.id = 'ytp-plus-dislike-text';
+        textContainer.appendChild(created);
+        return created;
+      };
+
+      const textElement = getOrCreateDislikeText(button);
+      expect(textElement).not.toBeNull();
+      expect(textElement.id).toBe('ytp-plus-dislike-text');
+      expect(button.querySelector('.yt-spec-button-shape-next__button-text-content')).not.toBeNull();
+    });
+  });
 });

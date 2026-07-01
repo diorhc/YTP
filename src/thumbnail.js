@@ -1,31 +1,12 @@
+// Thumbnail — LazyLoader registered as 'thumbnail'.
+//
+// Responsibility: thumbnail preview modal, download buttons, and
+//   image quality selection for YouTube video thumbnails.
+// Public surface: none (self-contained IIFE, registered via LazyLoader).
 (function () {
-  'use strict';
-
-  const setTimeout_ = setTimeout.bind(window);
-  const _createHTML =
-    window._ytplusCreateHTML || /** @type {any} */ ((/** @type {string} */ s) => s);
-  const renderTemplateClone = (/** @type {Element} */ container, /** @type {string} */ html) => {
-    if (!(container instanceof Element)) return;
-    const template = document.createElement('template');
-    const range = document.createRange();
-    const root = document.body || document.documentElement;
-    if (root) range.selectNode(root);
-    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
-    template.content.append(range.createContextualFragment(_createHTML(html)));
-    container.replaceChildren(template.content.cloneNode(true));
-  };
-
-  // Shared DOM helpers from YouTubeUtils
-  const qs = window.YouTubeUtils?.$ || document.querySelector.bind(document);
-  const qsAll =
-    window.YouTubeUtils?.$$ || (sel => Array.from(document['querySelectorAll'](String(sel || ''))));
-  const byId =
-    window.YouTubeUtils?.byId ||
-    ((/** @type {string} */ id) =>
-      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
-
-  // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils.t;
+  // Shared helpers from YouTubeUtils (canonical boot shorthand)
+  const U = window.YouTubeUtils;
+  const { $: qs, $$: qsAll, byId, t, logger: thumbLogger, setTimeout_ } = U?.helpers ?? {};
 
   const isAllowedHost = (/** @type {string} */ host, /** @type {string} */ domain) => {
     const normalizedHost = String(host || '').toLowerCase();
@@ -40,19 +21,8 @@
   let thumbnailFeatureEnabled = loadEnableThumbnail();
   const isEnabled = () => thumbnailFeatureEnabled;
   const isRelevantRoute = () => {
-    try {
-      const host = window.location.hostname || '';
-      if (!isAllowedHost(host, 'youtube.com') || host === 'music.youtube.com') return false;
-      const path = window.location.pathname || '';
-      return (
-        path === '/watch' ||
-        path.startsWith('/shorts') ||
-        path.startsWith('/channel/') ||
-        path.startsWith('/@')
-      );
-    } catch (e) {
-      return false;
-    }
+    const U = window.YouTubeUtils;
+    return U.isYouTubeDomain() && (U.isWatchRoute() || U.isShortsRoute() || U.isChannelRoute());
   };
 
   let started = false;
@@ -73,16 +43,16 @@
   function extractVideoId(thumbnailSrc) {
     try {
       if (!thumbnailSrc || typeof thumbnailSrc !== 'string') return null;
-      const match = thumbnailSrc.match(/\/vi\/([^\/]+)\//);
+      const match = thumbnailSrc.match(/\/vi\/([^/]+)\//);
       const videoId = match ? match[1] : null;
       // Validate video ID format (11 characters, alphanumeric + - and _)
       if (videoId && !/^[a-zA-Z0-9_-]{11}$/.test(videoId)) {
-        window.console.warn('[YouTube+][Thumbnail]', 'Invalid video ID format:', videoId);
+        thumbLogger?.warn?.('Thumbnail', 'Invalid video ID format', videoId);
         return null;
       }
       return videoId;
     } catch (error) {
-      window.console.error('[YouTube+][Thumbnail]', 'Error extracting video ID:', error);
+      thumbLogger?.error?.('Thumbnail', 'Error extracting video ID', error);
       return null;
     }
   }
@@ -95,16 +65,16 @@
   function extractShortsId(href) {
     try {
       if (!href || typeof href !== 'string') return null;
-      const match = href.match(/\/shorts\/([^\/\?]+)/);
+      const match = href.match(/\/shorts\/([^/?]+)/);
       const shortsId = match ? match[1] : null;
       // Validate shorts ID format (11 characters, alphanumeric + - and _)
       if (shortsId && !/^[a-zA-Z0-9_-]{11}$/.test(shortsId)) {
-        window.console.warn('[YouTube+][Thumbnail]', 'Invalid shorts ID format:', shortsId);
+        thumbLogger?.warn?.('Thumbnail', 'Invalid shorts ID format', shortsId);
         return null;
       }
       return shortsId;
     } catch (error) {
-      window.console.error('[YouTube+][Thumbnail]', 'Error extracting shorts ID:', error);
+      thumbLogger?.error?.('Thumbnail', 'Error extracting shorts ID', error);
       return null;
     }
   }
@@ -121,7 +91,7 @@
    */
   function isValidUrlString(url) {
     if (!url || typeof url !== 'string') {
-      window.console.warn('[YouTube+][Thumbnail]', 'Invalid URL provided');
+      thumbLogger?.warn?.('Thumbnail', 'Invalid URL provided');
       return false;
     }
     return true;
@@ -134,7 +104,7 @@
    */
   function hasValidProtocol(parsedUrl) {
     if (parsedUrl.protocol !== 'https:') {
-      window.console.warn('[YouTube+][Thumbnail]', 'Only HTTPS URLs are allowed');
+      thumbLogger?.warn?.('Thumbnail', 'Only HTTPS URLs are allowed');
       return false;
     }
     return true;
@@ -147,8 +117,8 @@
    */
   function hasValidDomain(parsedUrl) {
     const { hostname } = parsedUrl;
-    if (!isAllowedHost(hostname, 'ytimg.com') && !isAllowedHost(hostname, 'youtube.com')) {
-      window.console.warn('[YouTube+][Thumbnail]', 'Only YouTube image domains are allowed');
+    if (!(isAllowedHost(hostname, 'ytimg.com') || isAllowedHost(hostname, 'youtube.com'))) {
+      thumbLogger?.warn?.('Thumbnail', 'Only YouTube image domains are allowed');
       return false;
     }
     return true;
@@ -166,7 +136,7 @@
       if (!hasValidDomain(parsedUrl)) return null;
       return parsedUrl;
     } catch (error) {
-      window.console.error('[YouTube+][Thumbnail]', 'Invalid URL:', error);
+      thumbLogger?.error?.('Thumbnail', 'Invalid URL', error);
       return null;
     }
   }
@@ -188,7 +158,7 @@
 
       clearTimeout(timeoutId);
       return response ? response.ok : true;
-    } catch (e) {
+    } catch (_e) {
       clearTimeout(timeoutId);
       return false;
     }
@@ -206,7 +176,7 @@
       if (img.parentNode) {
         img.parentNode.removeChild(img);
       }
-    } catch (e) {
+    } catch (_e) {
       // Element may already be removed
     }
   }
@@ -266,14 +236,16 @@
       // Fallback to image load test
       return await checkViaImageLoad(url);
     } catch (error) {
-      window.console.error('[YouTube+][Thumbnail]', 'Error checking image:', error);
+      thumbLogger?.error?.('Thumbnail', 'Error checking image', error);
       return false;
     }
   }
 
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+
   function createSpinner() {
-    const spinner = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-    spinner.setAttribute('xmlns', 'http://www.w3.org/2000/svg');
+    const spinner = document.createElementNS(SVG_NS, 'svg');
+    spinner.setAttribute('xmlns', SVG_NS);
     spinner.setAttribute('width', '16');
     spinner.setAttribute('height', '16');
     spinner.setAttribute('viewBox', '0 0 24 24');
@@ -283,7 +255,7 @@
     spinner.setAttribute('stroke-linecap', 'round');
     spinner.setAttribute('stroke-linejoin', 'round');
 
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const path = document.createElementNS(SVG_NS, 'path');
     path.setAttribute('d', 'M21 12a9 9 0 1 1-6.219-8.56');
     spinner.appendChild(path);
 
@@ -301,14 +273,10 @@
    * @param {HTMLElement} overlayElement - Overlay element containing the button
    * @returns {Promise<void>}
    */
-  /**
-   * Validate video ID format
-   * @param {string} videoId - Video ID to validate
-   * @returns {boolean} True if valid
-   */
-  function isValidVideoId(videoId) {
-    return !!(videoId && typeof videoId === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(videoId));
-  }
+  const isValidVideoId = /** @type {(id: string | null) => boolean} */ (
+    window.YouTubeSafeDOM?.isValidVideoId ||
+      (id => !!(id && typeof id === 'string' && /^[a-zA-Z0-9_-]{11}$/.test(id)))
+  );
 
   /**
    * Validate overlay element
@@ -374,12 +342,12 @@
    */
   function restoreOriginalSvg(overlayElement, spinner, originalSvg) {
     try {
-      if (spinner && spinner.parentNode) {
+      if (spinner?.parentNode) {
         overlayElement.replaceChild(originalSvg, spinner);
       }
     } catch (restoreError) {
-      window.console.error('[YouTube+][Thumbnail]', 'Error restoring original SVG:', restoreError);
-      if (spinner && spinner.parentNode) {
+      thumbLogger?.error?.('Thumbnail', 'Error restoring original SVG', restoreError);
+      if (spinner?.parentNode) {
         spinner.parentNode.removeChild(spinner);
       }
     }
@@ -394,18 +362,18 @@
   async function openThumbnail(videoId, isShorts, overlayElement) {
     try {
       if (!isValidVideoId(videoId)) {
-        window.console.error('[YouTube+][Thumbnail]', 'Invalid video ID:', videoId);
+        thumbLogger?.error?.('Thumbnail', 'Invalid video ID', videoId);
         return;
       }
 
       if (!isValidOverlayElement(overlayElement)) {
-        window.console.error('[YouTube+][Thumbnail]', 'Invalid overlay element');
+        thumbLogger?.error?.('Thumbnail', 'Invalid overlay element');
         return;
       }
 
       const originalSvg = overlayElement.querySelector('svg');
       if (!originalSvg) {
-        window.console.warn('[YouTube+][Thumbnail]', 'No SVG found in overlay element');
+        thumbLogger?.warn?.('Thumbnail', 'No SVG found in overlay element');
         return;
       }
 
@@ -417,66 +385,21 @@
         restoreOriginalSvg(overlayElement, spinner, originalSvg);
       }
     } catch (error) {
-      window.console.error('[YouTube+][Thumbnail]', 'Error opening thumbnail:', error);
+      thumbLogger?.error?.('Thumbnail', 'Error opening thumbnail', error);
     }
   }
 
   function ensureThumbnailStyles() {
     if (thumbnailStylesInjected) return;
     try {
-      const css = `
-        .thumbnail-overlay-container { position: absolute; bottom: 8px; left: 8px; z-index: var(--yt-z-overlay); opacity: 0; transition: opacity 0.2s ease; }
-        .thumbnail-overlay-button { width: 28px; height: 28px; background: var(--yt-glass-bg); border: none; border-radius: var(--yt-radius-xs); cursor: pointer; display: flex; align-items: center; justify-content: center; color: var(--yt-text-primary); position: relative; box-shadow: var(--yt-glass-shadow); backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur); border: 1px solid var(--yt-glass-border); }
-        .thumbnail-overlay-button svg{width:16px;height:16px;display:block;flex:none;}
-        .thumbnail-overlay-button:hover { background: var(--yt-hover-bg); }
-        .thumbnail-dropdown { position: absolute; bottom: 100%; left: 0; background: var(--yt-glass-bg); border-radius: var(--yt-radius-xs); padding: 4px; margin-bottom: 4px; display: none; flex-direction: column; min-width: 140px; box-shadow: var(--yt-glass-shadow); z-index: var(--yt-z-flyout); backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur); border: 1px solid var(--yt-glass-border); }
-        .thumbnail-dropdown.show { display: flex !important; }
-        .thumbnail-dropdown-item { background: none; border: none; color: var(--yt-text-primary); padding: 8px 12px; cursor: pointer; border-radius: 4px; font-size: 12px; text-align: left; white-space: nowrap; transition: background-color 0.2s ease; }
-        .thumbnail-dropdown-item:hover { background: var(--yt-hover-bg); }
-        .thumbnailPreview-button { position: absolute; bottom: 10px; left: 5px; background-color: var(--yt-glass-bg); color: var(--yt-text-primary); border: none; border-radius: var(--yt-radius-xs); padding: 3px; font-size: 18px; cursor: pointer; z-index: var(--yt-z-overlay); opacity: 0; transition: opacity 0.3s; display: flex; align-items: center; justify-content: center; box-shadow: var(--yt-glass-shadow); backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur); border: 1px solid var(--yt-glass-border); }
-        .thumbnailPreview-button svg{width:16px;height:16px;display:block;flex:none;}
-        .thumbnailPreview-container { position: relative; }
-        .thumbnailPreview-container:hover .thumbnailPreview-button { opacity: 1; }
-        .thumbnail-modal-overlay { position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: var(--yt-modal-bg); z-index: var(--yt-z-modal); display: flex; align-items: center; justify-content: center; animation: fadeInModal 0.22s cubic-bezier(.4,0,.2,1); backdrop-filter: blur(8px) saturate(140%); -webkit-backdrop-filter: blur(8px) saturate(140%); }
-        .thumbnail-modal-content { background: var(--yt-glass-bg); border-radius: var(--yt-radius-lg); box-shadow: 0 12px 40px var(--yt-timecode-panel-shadow); max-width: 78vw; max-height: 90vh; overflow: auto; position: relative; display: flex; flex-direction: column; align-items: center; animation: scaleInModal 0.22s cubic-bezier(.4,0,.2,1); border: 1.5px solid var(--yt-glass-border); backdrop-filter: blur(14px) saturate(150%); -webkit-backdrop-filter: blur(14px) saturate(150%);}
-        /* Wrapper to place content and action buttons side-by-side */
-        .thumbnail-modal-wrapper { display: flex; align-items: flex-start; gap: 12px; }
-        .thumbnail-modal-actions { display: flex; flex-direction: column; gap: 10px; margin-top: 6px; }
-        .thumbnail-modal-action-btn { padding: 0; line-height: 0; }
-        .thumbnail-modal-action-btn svg{width:18px;height:18px;display:block;flex:none;}
-        .thumbnail-modal-close svg{width:36px;height:36px;}
-        .thumbnail-modal-close { }
-        .thumbnail-modal-open { }
-        .thumbnail-modal-img { max-width: 72vw; max-height: 70vh; box-shadow: var(--yt-glass-shadow); background: #222; border: 1px solid var(--yt-glass-border); }
-        .thumbnail-modal-options { display: flex; flex-wrap: wrap; gap: 12px; justify-content: center; }
-        .thumbnail-modal-option-btn { background: var(--yt-button-bg); color: var(--yt-text-primary); border: none; border-radius: var(--yt-radius-xs); padding: 8px 18px; font-size: 14px; cursor: pointer; transition: background 0.2s,color .2s; margin-bottom: 6px; box-shadow: var(--yt-glass-shadow); backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur); border: 1px solid var(--yt-glass-border); }
-        .thumbnail-modal-option-btn:hover { background: var(--yt-hover-bg); color: var(--yt-accent); }
-        .thumbnail-modal-title { font-size: 18px; font-weight: 600; color: var(--yt-text-primary); margin-bottom: 10px; text-align: center; text-shadow: 0 2px 8px var(--yt-shadow-deep-1); }
-        /* fadeInModal, scaleInModal are provided by design-system */
-      `;
-
-      if (
-        window.YouTubeUtils &&
-        YouTubeUtils.StyleManager &&
-        typeof YouTubeUtils.StyleManager.add === 'function'
-      ) {
-        YouTubeUtils.StyleManager.add('thumbnail-viewer-styles', css);
-      } else {
-        const s = document.createElement('style');
-        s.id = 'ytplus-thumbnail-styles';
-        s.textContent = css;
-        (document.head || document.documentElement).appendChild(s);
+      const StyleManager = window.YouTubeUtils?.StyleManager;
+      if (StyleManager && typeof StyleManager.add === 'function') {
+        const css = window.YouTubePlusDesignSystem?.getStyle?.('thumbnail-viewer-styles') || '';
+        StyleManager.add('thumbnail-viewer-styles', css);
+        thumbnailStylesInjected = true;
       }
-      thumbnailStylesInjected = true;
     } catch (e) {
-      // fallback: inject minimal styles
-      if (!byId('ytplus-thumbnail-styles')) {
-        const s = document.createElement('style');
-        s.id = 'ytplus-thumbnail-styles';
-        s.textContent = '.thumbnail-modal-img{max-width:72vw;max-height:70vh;}';
-        (document.head || document.documentElement).appendChild(s);
-      }
-      thumbnailStylesInjected = true;
+      thumbLogger?.warn?.('Thumbnail', 'Failed to inject thumbnail styles', e);
     }
   }
 
@@ -485,16 +408,21 @@
       if (window.YouTubeUtils?.StyleManager?.remove) {
         window.YouTubeUtils.StyleManager.remove('thumbnail-viewer-styles');
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Thumbnail');
     }
 
+    // Legacy cleanup: a previous version of this module could inject a
+    // fallback <style id="ytplus-thumbnail-styles"> element when the
+    // StyleManager path was unavailable. Remove any such leftover so users
+    // upgrading from older releases don't keep stale CSS in the DOM. Safe
+    // no-op when the element is absent (current code path).
     const el = byId('ytplus-thumbnail-styles');
     if (el) {
       try {
         el.remove();
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Thumbnail');
       }
     }
 
@@ -508,28 +436,24 @@
    */
   function validateModalUrl(url) {
     if (!url || typeof url !== 'string') {
-      window.console.error('[YouTube+][Thumbnail]', 'Invalid URL provided to modal');
+      thumbLogger?.error?.('Thumbnail', 'Invalid URL provided to modal');
       return false;
     }
 
     try {
       const parsedUrl = new URL(url);
       if (parsedUrl.protocol !== 'https:') {
-        window.console.error('[YouTube+][Thumbnail]', 'Only HTTPS URLs are allowed');
+        thumbLogger?.error?.('Thumbnail', 'Only HTTPS URLs are allowed');
         return false;
       }
       const allowedDomains = ['ytimg.com', 'youtube.com', 'ggpht.com', 'googleusercontent.com'];
       if (!allowedDomains.some(d => isAllowedHost(parsedUrl.hostname, d))) {
-        window.console.error(
-          '[YouTube+][Thumbnail]',
-          'Image domain not allowed:',
-          parsedUrl.hostname
-        );
+        thumbLogger?.error?.('Thumbnail', 'Image domain not allowed', parsedUrl.hostname);
         return false;
       }
       return true;
     } catch (urlError) {
-      window.console.error('[YouTube+][Thumbnail]', 'Invalid URL format:', urlError);
+      thumbLogger?.error?.('Thumbnail', 'Invalid URL format', urlError);
       return false;
     }
   }
@@ -559,7 +483,7 @@
     const closeBtn = document.createElement('button');
     closeBtn.className = 'thumbnail-modal-close thumbnail-modal-action-btn ytp-plus-settings-close';
     closeBtn.setAttribute('data-shared-close-button', 'ytp-plus-close-settings');
-    renderTemplateClone(
+    window.YouTubeUtils.renderTemplateClone(
       closeBtn,
       `<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 9.50002L9.5 14.5M9.49998 9.5L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg>`
     );
@@ -581,7 +505,7 @@
   function createNewTabButton(img) {
     const newTabBtn = document.createElement('button');
     newTabBtn.className = 'thumbnail-modal-open thumbnail-modal-action-btn ytp-plus-settings-close';
-    renderTemplateClone(
+    window.YouTubeUtils.renderTemplateClone(
       newTabBtn,
       `\n            <svg fill="currentColor" viewBox="0 0 24 24" width="18" height="18" xmlns="http://www.w3.org/2000/svg" stroke="currentColor">\n        <g id="SVGRepo_bgCarrier" stroke-width="0"></g>\n        <g id="SVGRepo_tracerCarrier" stroke-linecap="round" stroke-linejoin="round"></g>\n        <g id="SVGRepo_iconCarrier"><path d="M14.293,9.707a1,1,0,0,1,0-1.414L18.586,4H16a1,1,0,0,1,0-2h5a1,1,0,0,1,1,1V8a1,1,0,0,1-2,0V5.414L15.707,9.707a1,1,0,0,1-1.414,0ZM3,22H8a1,1,0,0,0,0-2H5.414l4.293-4.293a1,1,0,0,0-1.414-1.414L4,18.586V16a1,1,0,0,0-2,0v5A1,1,0,0,0,3,22Z"></path></g>\n      </svg>\n        `
     );
@@ -619,7 +543,7 @@
       const urlObj = new URL(imgSrc);
       const segments = urlObj.pathname.split('/');
       a.download = segments[segments.length - 1] || 'thumbnail.jpg';
-    } catch (e) {
+    } catch (_e) {
       a.download = 'thumbnail.jpg';
     }
 
@@ -638,9 +562,9 @@
     const downloadBtn = document.createElement('button');
     downloadBtn.className =
       'thumbnail-modal-download thumbnail-modal-action-btn ytp-plus-settings-close';
-    renderTemplateClone(
+    window.YouTubeUtils.renderTemplateClone(
       downloadBtn,
-      `\n            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="--darkreader-inline-stroke: var(--darkreader-text-ffffff, #cad3f5);" data-darkreader-inline-stroke=""></path> <path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="--darkreader-inline-stroke: var(--darkreader-text-ffffff, #cad3f5);" data-darkreader-inline-stroke=""></path></svg>\n        `
+      `\n            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path> <path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>\n        `
     );
     downloadBtn.title = t('download');
     downloadBtn.setAttribute('aria-label', t('download'));
@@ -649,7 +573,7 @@
       e.stopPropagation();
       try {
         await downloadImageAsBlob(img.src);
-      } catch (e) {
+      } catch (_e) {
         window.open(img.src, '_blank');
       }
     });
@@ -746,9 +670,9 @@
         const focusTarget = overlay.querySelector('button, [tabindex="0"]');
         if (focusTarget) /** @type {HTMLElement} */ (focusTarget).focus();
       });
-      if (window.YouTubePlusModalHandlers && window.YouTubePlusModalHandlers.createFocusTrap) {
+      if (window.YouTubePlusModalHandlers?.createFocusTrap) {
         const removeTrap = window.YouTubePlusModalHandlers.createFocusTrap(overlay);
-        const coordinator = window.YouTubeMutationCoordinator;
+        const coordinator = window.YouTubePlusMutationCoordinator;
         if (coordinator?.subscribeRoot) {
           modalCleanupSubId = 'thumbnail::modalCleanup';
           coordinator.subscribeRoot(
@@ -765,7 +689,7 @@
         }
       }
     } catch (error) {
-      window.console.error('[YouTube+][Thumbnail]', 'Error showing modal:', error);
+      thumbLogger?.error?.('Thumbnail', 'Error showing modal', error);
     }
   }
 
@@ -820,21 +744,7 @@
     const overlay = /** @type {any} */ (createThumbnailOverlay(videoId, player));
     overlay.id = 'thumbnailPreview-player-overlay';
     overlay.dataset.videoId = videoId;
-    overlay.style.cssText = `
-      position: absolute;
-      top: 10%;
-      right: 8px;
-      width: 36px;
-      height: 36px;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      border-radius: 6px;
-      cursor: pointer;
-      z-index: 1001;
-      transition: all 0.15s ease;
-      opacity: 0;
-    `;
+    overlay.classList.add('thumbnail-player-overlay');
     return overlay;
   }
 
@@ -869,29 +779,29 @@
       overlay.onmouseenter = () => {
         try {
           overlay.style.opacity = '0.5';
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Thumbnail');
         }
       };
       overlay.onmouseleave = () => {
         try {
           overlay.style.opacity = '0';
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Thumbnail');
         }
       };
       overlay.onfocus = () => {
         try {
           overlay.style.opacity = '0.5';
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Thumbnail');
         }
       };
       overlay.onblur = () => {
         try {
           overlay.style.opacity = '0';
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Thumbnail');
         }
       };
       // allow Enter/Space to open the thumbnail
@@ -948,7 +858,7 @@
   function createThumbnailOverlay(/** @type {any} */ videoId, /** @type {any} */ container) {
     const overlay = document.createElement('div');
 
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('width', '16');
     svg.setAttribute('height', '16');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -959,7 +869,7 @@
     svg.setAttribute('stroke-linejoin', 'round');
     /** @type {any} */ (svg).style.transition = 'stroke 0.2s ease';
 
-    const mainRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    const mainRect = document.createElementNS(SVG_NS, 'rect');
     mainRect.setAttribute('width', '18');
     mainRect.setAttribute('height', '18');
     mainRect.setAttribute('x', '3');
@@ -968,40 +878,18 @@
     mainRect.setAttribute('ry', '2');
     svg.appendChild(mainRect);
 
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    const circle = document.createElementNS(SVG_NS, 'circle');
     circle.setAttribute('cx', '9');
     circle.setAttribute('cy', '9');
     circle.setAttribute('r', '2');
     svg.appendChild(circle);
 
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const path = document.createElementNS(SVG_NS, 'path');
     path.setAttribute('d', 'm21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21');
     svg.appendChild(path);
 
     overlay.appendChild(svg);
-    /** @type {any} */ (overlay).style.cssText = `
-        position: absolute;
-        bottom: 8px;
-        left: 8px;
-        background: var(--yt-thumbnail-overlay-idle);
-        width: 28px;
-        height: 28px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 4px;
-        cursor: pointer;
-        z-index: 1000;
-        opacity: 0;
-        transition: all 0.2s ease;
-      `;
-
-    overlay.onmouseenter = () => {
-      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-hover)';
-    };
-    overlay.onmouseleave = () => {
-      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-idle)';
-    };
+    overlay.classList.add('thumbnail-base-overlay');
 
     overlay.onclick = async (/** @type {any} */ e) => {
       /** @type {any} */ (e).preventDefault();
@@ -1122,12 +1010,12 @@
       ({ videoId, thumbnailContainer } = extractShortsInfo(container));
     }
 
-    if (!videoId || !thumbnailContainer) return;
+    if (!(videoId && thumbnailContainer)) return;
 
     ensureRelativePosition(thumbnailContainer);
 
     const overlay = createThumbnailOverlay(videoId, container);
-    overlay.className = 'thumb-overlay';
+    overlay.className = 'thumbnail-base-overlay thumb-overlay';
     thumbnailContainer.appendChild(overlay);
 
     setupOverlayHoverEffects(thumbnailContainer, overlay);
@@ -1136,7 +1024,7 @@
   function createAvatarOverlay() {
     const overlay = document.createElement('div');
 
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('width', '16');
     svg.setAttribute('height', '16');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -1147,42 +1035,19 @@
     svg.setAttribute('stroke-linejoin', 'round');
     /** @type {any} */ (svg).style.transition = 'stroke 0.2s ease';
 
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    const circle = document.createElementNS(SVG_NS, 'circle');
     circle.setAttribute('cx', '12');
     circle.setAttribute('cy', '8');
     circle.setAttribute('r', '5');
     svg.appendChild(circle);
 
-    const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+    const path = document.createElementNS(SVG_NS, 'path');
     path.setAttribute('d', 'M20 21a8 8 0 0 0-16 0');
     svg.appendChild(path);
 
     overlay.appendChild(svg);
 
-    /** @type {any} */ (overlay).style.cssText = `
-        position: absolute;
-        top: 50%;
-        left: 50%;
-        transform: translate(-50%, -50%);
-        background: var(--yt-thumbnail-overlay-hover);
-        width: 28px;
-        height: 28px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 50%;
-        cursor: pointer;
-        z-index: 1000;
-        opacity: 0;
-        transition: all 0.2s ease;
-      `;
-
-    overlay.onmouseenter = () => {
-      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-active)';
-    };
-    overlay.onmouseleave = () => {
-      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-hover)';
-    };
+    overlay.classList.add('thumbnail-base-overlay');
 
     return overlay;
   }
@@ -1229,7 +1094,7 @@
     }
 
     const overlay = createAvatarOverlay();
-    overlay.className = 'avatar-overlay';
+    overlay.className = 'thumbnail-base-overlay avatar-overlay';
 
     overlay.onclick = e => {
       /** @type {any} */ (e).preventDefault();
@@ -1251,7 +1116,7 @@
   function createBannerOverlay() {
     const overlay = document.createElement('div');
 
-    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    const svg = document.createElementNS(SVG_NS, 'svg');
     svg.setAttribute('width', '16');
     svg.setAttribute('height', '16');
     svg.setAttribute('viewBox', '0 0 24 24');
@@ -1262,7 +1127,7 @@
     svg.setAttribute('stroke-linejoin', 'round');
     /** @type {any} */ (svg).style.transition = 'stroke 0.2s ease';
 
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    const rect = document.createElementNS(SVG_NS, 'rect');
     rect.setAttribute('x', '3');
     rect.setAttribute('y', '3');
     rect.setAttribute('width', '18');
@@ -1271,41 +1136,19 @@
     rect.setAttribute('ry', '2');
     svg.appendChild(rect);
 
-    const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    const circle = document.createElementNS(SVG_NS, 'circle');
     circle.setAttribute('cx', '9');
     circle.setAttribute('cy', '9');
     circle.setAttribute('r', '2');
     svg.appendChild(circle);
 
-    const polyline = document.createElementNS('http://www.w3.org/2000/svg', 'polyline');
+    const polyline = document.createElementNS(SVG_NS, 'polyline');
     polyline.setAttribute('points', '21,15 16,10 5,21');
     svg.appendChild(polyline);
 
     overlay.appendChild(svg);
 
-    /** @type {any} */ (overlay).style.cssText = `
-        position: absolute;
-        bottom: 8px;
-        left: 8px;
-        background: var(--yt-thumbnail-overlay-hover);
-        width: 28px;
-        height: 28px;
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        border-radius: 4px;
-        cursor: pointer;
-        z-index: 1000;
-        opacity: 0;
-        transition: all 0.2s ease;
-      `;
-
-    overlay.onmouseenter = () => {
-      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-active)';
-    };
-    overlay.onmouseleave = () => {
-      /** @type {any} */ (overlay).style.background = 'var(--yt-thumbnail-overlay-hover)';
-    };
+    overlay.classList.add('thumbnail-base-overlay');
 
     return overlay;
   }
@@ -1320,7 +1163,7 @@
     }
 
     const overlay = createBannerOverlay();
-    overlay.className = 'banner-overlay';
+    overlay.className = 'thumbnail-base-overlay banner-overlay';
 
     overlay.onclick = e => {
       /** @type {any} */ (e).preventDefault();
@@ -1436,7 +1279,7 @@
         if (!isEnabled()) return;
         processAll();
       } catch (e) {
-        window.console.error('[YouTube+][Thumbnail]', 'processAll failed:', e);
+        thumbLogger?.error?.('Thumbnail', 'processAll failed', e);
       }
     }, dueIn);
   }
@@ -1446,7 +1289,7 @@
 
     // Scope to #content or #page-manager instead of full body for performance
     const startObserving = () => {
-      const coordinator = window.YouTubeMutationCoordinator;
+      const coordinator = window.YouTubePlusMutationCoordinator;
       if (!coordinator?.subscribeRoot) return;
       const target = qs('#content') || qs('#page-manager') || document.body;
       mutationObserverSubId = 'thumbnail::routeObserver';
@@ -1473,7 +1316,7 @@
 
   function teardownMutationObserver() {
     if (!mutationObserverSubId) return;
-    const coordinator = window.YouTubeMutationCoordinator;
+    const coordinator = window.YouTubePlusMutationCoordinator;
     if (coordinator?.unsubscribe) {
       coordinator.unsubscribe(mutationObserverSubId);
     }
@@ -1511,8 +1354,8 @@
         window.removeEventListener('ytp-history-navigate', onNavChange);
         window.removeEventListener('popstate', onNavChange);
         window.removeEventListener('yt-navigate-finish', ytNavigateHandler);
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Thumbnail');
       }
     };
   }
@@ -1520,19 +1363,19 @@
   function removeInjectedUi() {
     try {
       qsAll('.thumbnail-modal-overlay').forEach(m => m.remove());
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Thumbnail');
     }
     try {
       qsAll('.thumb-overlay, .avatar-overlay, .banner-overlay').forEach(el => el.remove());
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Thumbnail');
     }
     try {
       const playerOverlay = qs('#thumbnailPreview-player-overlay');
       if (playerOverlay) playerOverlay.remove();
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Thumbnail');
     }
   }
 
@@ -1545,8 +1388,8 @@
         clearTimeout(processAllTimerId);
         processAllTimerId = null;
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Thumbnail');
     }
 
     teardownMutationObserver();
@@ -1554,8 +1397,8 @@
     if (urlChangeCleanup) {
       try {
         urlChangeCleanup();
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Thumbnail');
       }
       urlChangeCleanup = null;
     }
@@ -1594,13 +1437,9 @@
       window.addEventListener('ytp:nav-refresh', () => {
         try {
           if (thumbnailFeatureEnabled) scheduleProcessAll(0);
-        } catch (e) {
-          void e;
-        }
+        } catch {}
       });
-    } catch (e) {
-      void e;
-    }
+    } catch {}
   }
 
   function startMaybe() {
@@ -1630,15 +1469,12 @@
   }
 
   // Initial state
-  if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register(
-      'thumbnail',
-      startMaybe,
-      /** @type {any} */ ({
-        priority: 1,
-        shouldLoad: isRelevantRoute,
-      })
-    );
+  if (window.YouTubeUtils?.whenRelevant) {
+    window.YouTubeUtils.whenRelevant({
+      name: 'thumbnail',
+      isRelevant: isRelevantRoute,
+      onEnter: startMaybe,
+    });
   } else {
     startMaybe();
   }
@@ -1648,7 +1484,7 @@
     try {
       const enabledFromEvent = /** @type {any} */ (e).detail?.enableThumbnail;
       setEnabled(enabledFromEvent !== false);
-    } catch (e) {
+    } catch (_e) {
       setEnabled(loadEnableThumbnail());
     }
   });

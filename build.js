@@ -8,7 +8,7 @@
  * - Userscript metadata preservation
  * - Optional minification with Terser
  * - Watch mode for development
- * - ESLint validation
+ * - Biome validation
  * - Syntax checking
  *
  * Usage:
@@ -176,13 +176,47 @@ function readFileSafe(p) {
 }
 
 /**
+ * Safely read a file asynchronously, returning null on error
+ * @param {string} p - File path
+ * @returns {Promise<string|null>} File content or null
+ */
+async function readFileSafeAsync(p) {
+  try {
+    if (!p || typeof p !== 'string') {
+      globalThis.console.error('[Build Error] Invalid file path provided');
+      return null;
+    }
+    const stats = await fs.promises.stat(p);
+    if (!stats.isFile()) {
+      globalThis.console.warn(`[Build Warning] Path is not a file: ${p}`);
+      return null;
+    }
+    return await fs.promises.readFile(p, 'utf8');
+  } catch (err) {
+    if (err.code === 'ENOENT') {
+      globalThis.console.warn(`[Build Warning] File not found: ${p}`);
+    } else {
+      globalThis.console.error(`[Build Error] Failed to read file ${p}:`, err.message);
+      if (err.code === 'EACCES') {
+        globalThis.console.error('[Build Error] Permission denied. Check file permissions.');
+      } else if (err.code === 'EMFILE') {
+        globalThis.console.error(
+          '[Build Error] Too many open files. Try closing other applications.'
+        );
+      }
+    }
+    return null;
+  }
+}
+
+/**
  * Inline CSS resources referenced from JS modules via __YTPLUS_INLINE_CSS__('relative/path.css').
  * @param {string} content
  * @param {string} filePath
  * @returns {string}
  */
 function inlineCssResources(content, filePath) {
-  if (!content || !content.includes('__YTPLUS_INLINE_CSS__')) return content;
+  if (!content?.includes('__YTPLUS_INLINE_CSS__')) return content;
 
   return content.replace(
     /__YTPLUS_INLINE_CSS__\(\s*['"]([^'"]+?)['"]\s*\)/g,
@@ -332,7 +366,11 @@ function _processRegexChar(line, j) {
   }
   if (ch === '/') {
     const flagInfo = _consumeRegexFlags(line, j);
-    return { newIdx: flagInfo.endIdx, chars: ch + flagInfo.flags, closed: true };
+    return {
+      newIdx: flagInfo.endIdx,
+      chars: ch + flagInfo.flags,
+      closed: true,
+    };
   }
   return { newIdx: j, chars: ch, closed: false };
 }
@@ -348,6 +386,8 @@ function _removeCommentsPreserveStrings(src) {
   const out = new Array(lines.length);
   let outIdx = 0;
   let inBlock = false;
+  let inString = false;
+  let stringChar = '';
 
   for (let i = 0; i < lines.length; i++) {
     let line = lines[i];
@@ -359,8 +399,6 @@ function _removeCommentsPreserveStrings(src) {
     }
 
     let result = '';
-    let inString = false;
-    let stringChar = '';
     let inRegex = false;
     const lineLength = line.length;
 
@@ -537,7 +575,7 @@ function minifyCSSInTemplateLiterals(code) {
     // Collapse around commas in selectors
     minified = minified.replace(/\s*,\s*/g, ',');
     // Clean up multiple spaces
-    minified = minified.replace(/  +/g, ' ');
+    minified = minified.replace(/ {2,}/g, ' ');
     minified = minified.trim();
 
     // Only use minified if meaningfully shorter
@@ -757,18 +795,36 @@ function collectModuleFiles() {
 }
 
 /**
- * Build the userscript once to the default output location
- * @returns {boolean} True if build succeeded, false otherwise
+ * Build the userscript once to the default output location.
+ * Returns a Promise<boolean> — callers in watch mode must await it
+ * to detect build failures.
+ * @returns {Promise<boolean>} True if build succeeded, false otherwise
  */
-function buildOnce() {
-  // Delegate to buildOnceCustom using default OUT
-  return buildOnceCustom(OUT);
+async function buildOnce() {
+  try {
+    return await buildOnceCustom(OUT);
+  } catch (err) {
+    globalThis.console.error('Build failed:', err?.message || err);
+    return false;
+  }
 }
 
 function watchAndBuild() {
   let timer = null;
   const srcDir = path.join(ROOT, 'src');
   const watchDir = fs.existsSync(srcDir) ? srcDir : ROOT;
+
+  /** @param {string} label */
+  const scheduleRebuild = label => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(async () => {
+      globalThis.console.log(`\n[${new Date().toLocaleTimeString()}] Change detected: ${label}`);
+      globalThis.console.log('Rebuilding...');
+      const ok = await buildOnce();
+      if (!ok) globalThis.console.error('Rebuild failed — waiting for next change');
+    }, DEBOUNCE_MS);
+  };
+
   // Prefer chokidar for reliable recursive watching; fall back to fs.watch
   try {
     // Try to require chokidar (may be installed as devDependency)
@@ -778,14 +834,7 @@ function watchAndBuild() {
       if (!filePath || (!filePath.endsWith('.js') && !filePath.endsWith('.css'))) return;
       const filename = path.basename(filePath);
       if (EXCLUDE.has(filename)) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        globalThis.console.log(
-          `\n[${new Date().toLocaleTimeString()}] Change detected: ${filePath}`
-        );
-        globalThis.console.log('Rebuilding...');
-        buildOnce();
-      }, DEBOUNCE_MS);
+      scheduleRebuild(filePath);
     });
     globalThis.console.log(
       `Watching (chokidar) for changes in: ${path.relative(process.cwd(), watchDir)}/`
@@ -795,14 +844,7 @@ function watchAndBuild() {
     const watcher = fs.watch(watchDir, { recursive: false }, (_eventType, filename) => {
       if (!filename || (!filename.endsWith('.js') && !filename.endsWith('.css'))) return;
       if (EXCLUDE.has(filename)) return;
-      if (timer) clearTimeout(timer);
-      timer = setTimeout(() => {
-        globalThis.console.log(
-          `\n[${new Date().toLocaleTimeString()}] Change detected: ${filename}`
-        );
-        globalThis.console.log('Rebuilding...');
-        buildOnce();
-      }, DEBOUNCE_MS);
+      scheduleRebuild(filename);
     });
     globalThis.console.log(
       `Watching (fs.watch fallback) for changes in: ${path.relative(process.cwd(), watchDir)}/`
@@ -814,19 +856,23 @@ function watchAndBuild() {
 // CLI flags
 const args = process.argv.slice(2);
 const watch = args.includes('--watch') || args.includes('-w');
-let noEslint = args.includes('--no-eslint');
+let noLint = args.includes('--no-lint') || args.includes('--no-biome');
 const verbose = args.includes('--verbose') || args.includes('-v');
 const minify = args.includes('--minify') || args.includes('-m');
-// New: optimized flag — performs aggressive trimming (remove comments/whitespace) and skips ESLint for speed
+// New: optimized flag — performs aggressive trimming (remove comments/whitespace) and skips lint for speed
 const optimized = args.includes('--optimized');
+// Dry-run: build everything but skip writing output (useful for CI validation)
+const dryRun = args.includes('--dry-run');
 if (optimized) {
-  // For backward compatibility with previous `--no-eslint` behaviour (build:fast), skip ESLint
-  noEslint = true;
+  noLint = true;
   if (verbose) {
     globalThis.console.log(
-      'Optimized build requested: skipping ESLint and performing aggressive minification'
+      'Optimized build requested: skipping lint validation and performing aggressive minification'
     );
   }
+}
+if (dryRun) {
+  globalThis.console.log('Dry-run mode: build will run but no files will be written');
 }
 // Optional pretty / sourcemap flags for minify
 const minifyPretty = args.includes('--pretty') || args.includes('--minify-pretty');
@@ -839,47 +885,12 @@ if (outIdx !== -1 && args.length > outIdx + 1) {
   OUT_PATH = path.resolve(process.cwd(), args[outIdx + 1]);
 }
 
-// Helper to ensure eslint is installed locally; creates package.json if missing
-function ensureLocalEslint() {
-  const eslintBin = path.join(
-    ROOT,
-    'node_modules',
-    '.bin',
-    process.platform === 'win32' ? 'eslint.cmd' : 'eslint'
-  );
-  if (fs.existsSync(eslintBin)) return eslintBin;
-
-  const pkgPath = path.join(ROOT, 'package.json');
-  if (!fs.existsSync(pkgPath)) {
-    try {
-      fs.writeFileSync(
-        pkgPath,
-        JSON.stringify({ name: 'youtube-plus-modular-build', private: true }, null, 2)
-      );
-      globalThis.console.log('Created minimal package.json');
-    } catch (e) {
-      globalThis.console.warn('Could not create package.json:', e && e.message);
-      return null;
-    }
-  }
-
-  try {
-    globalThis.console.log('Installing ESLint locally (this may take a moment)...');
-    execSync('npm install --no-audit --no-fund eslint --save-dev', { cwd: ROOT, stdio: 'inherit' });
-    if (fs.existsSync(eslintBin)) return eslintBin;
-  } catch (e) {
-    globalThis.console.warn('Automatic ESLint installation failed:', e && e.message);
-    return null;
-  }
-  return null;
-}
-
 /**
  * Merges module files into a single output string
  * @param {Array} files - Array of file objects
  * @returns {{code: string, mergedCount: number, skippedCount: number, changedCount: number}} Merged code and stats
  */
-function mergeModuleFiles(files) {
+async function mergeModuleFiles(files) {
   startPerfTimer('mergeModuleFiles');
 
   const parts = [header.trim(), '\n'];
@@ -887,16 +898,20 @@ function mergeModuleFiles(files) {
   let skippedCount = 0;
   let changedCount = 0;
 
-  // Read all files in parallel for better performance
-  const fileContents = files.map(f => {
+  const filePaths = files.map(f => {
     const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
     const p = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
     const displayName = typeof f === 'string' ? path.basename(f) : f.name;
     const changed = hasFileChanged(p);
     if (changed) changedCount++;
-    return { path: p, displayName, content: readFileSafe(p), changed };
-  }); // Process all file contents
-  for (const { path: p, displayName, content } of fileContents) {
+    return { path: p, displayName, changed };
+  });
+
+  const contents = await Promise.all(filePaths.map(({ path: p }) => readFileSafeAsync(p)));
+
+  for (let i = 0; i < filePaths.length; i++) {
+    const { path: p, displayName } = filePaths[i];
+    const content = contents[i];
     if (content === null) {
       globalThis.console.warn(`⚠️  Could not read: ${path.relative(ROOT, p)}`);
       skippedCount++;
@@ -947,7 +962,7 @@ function validateSyntax(code, outPath) {
     globalThis.console.log('✓ Basic syntax check passed (vm.Script)');
     return true;
   } catch (e) {
-    globalThis.console.error('❌ Syntax check failed:', e && e.message);
+    globalThis.console.error('❌ Syntax check failed:', e?.message);
     if (verbose && e.stack) {
       globalThis.console.error('Stack trace:', e.stack);
     }
@@ -956,65 +971,31 @@ function validateSyntax(code, outPath) {
 }
 
 /**
- * Gets ESLint command for the given configuration
- * @param {string} eslintPath - Path to ESLint executable
+ * Runs Biome lint validation on the output file
  * @param {string} outPath - Output file path
- * @returns {string} ESLint command to execute
+ * @returns {boolean} True if lint passes
  */
-function getEslintCommand(eslintPath, outPath) {
-  const flatConfig = path.join(ROOT, 'eslint.config.cjs');
-
-  if (fs.existsSync(flatConfig)) {
-    if (verbose) globalThis.console.log(`Using flat config: ${flatConfig}`);
-    return `"${eslintPath}" --no-warn-ignored "${outPath}"`;
-  }
-
-  const configPath = path.join(ROOT, '.eslintrc.cjs');
-  const configArg = fs.existsSync(configPath) ? `--config "${configPath}"` : '';
-  return `"${eslintPath}" --no-warn-ignored ${configArg} "${outPath}"`;
-}
-
-/**
- * Runs ESLint validation on the output file
- * @param {string} outPath - Output file path
- * @returns {boolean} True if ESLint passes
- */
-function runEslintValidation(outPath) {
-  if (noEslint) {
-    if (verbose) globalThis.console.log('Skipping ESLint (--no-eslint flag)');
+function runBiomeValidation(_outPath) {
+  if (noLint) {
+    if (verbose) globalThis.console.log('Skipping lint (--no-lint flag)');
     return true;
   }
 
-  if (verbose) globalThis.console.log('Preparing ESLint validation...');
-
-  let eslintPath = path.join(
-    ROOT,
-    'node_modules',
-    '.bin',
-    process.platform === 'win32' ? 'eslint.cmd' : 'eslint'
-  );
-
-  if (!fs.existsSync(eslintPath)) {
-    if (verbose) globalThis.console.log('ESLint not found locally, attempting installation...');
-    eslintPath = ensureLocalEslint();
-  }
-
-  if (!eslintPath || !fs.existsSync(eslintPath)) {
-    return true;
-  }
+  if (verbose) globalThis.console.log('Preparing Biome validation...');
 
   try {
-    globalThis.console.log('Running ESLint validation...');
-    const command = getEslintCommand(eslintPath, outPath);
-    execSync(command, { stdio: 'inherit' });
+    globalThis.console.log('Running Biome validation...');
+    execSync(`npx biome check --no-errors-on-unmatched "src"`, {
+      stdio: 'inherit',
+    });
 
-    if (verbose) globalThis.console.log('✓ ESLint validation passed');
-    globalThis.console.log('✓ ESLint passed');
+    if (verbose) globalThis.console.log('✓ Biome validation passed');
+    globalThis.console.log('✓ Biome passed');
     return true;
   } catch (err) {
-    globalThis.console.error('❌ ESLint reported problems');
+    globalThis.console.error('❌ Biome reported problems');
     if (verbose) {
-      globalThis.console.error('ESLint exit code:', err.status || 'unknown');
+      globalThis.console.error('Biome exit code:', err.status || 'unknown');
     }
     return false;
   }
@@ -1042,8 +1023,8 @@ async function optimizeOrMinify(code, outPath) {
 
     return await performTerserMinification(code, outPath);
   } catch (e) {
-    globalThis.console.error('[Build Error] Minification/optimization failed:', e && e.message);
-    if (verbose) globalThis.console.error(e && e.stack);
+    globalThis.console.error('[Build Error] Minification/optimization failed:', e?.message);
+    if (verbose) globalThis.console.error(e?.stack);
     return false;
   }
 }
@@ -1071,40 +1052,86 @@ async function performSimpleOptimization(code, outPath) {
       .replace(REGEX_PATTERNS.stripLineMeta, '')
       .replace(REGEX_PATTERNS.stripBlockMeta, '');
 
-    const result = await terser.minify(codeToOptimize, {
-      compress: {
-        dead_code: true,
-        drop_debugger: true,
-        drop_console: false,
-        keep_classnames: true,
-        keep_fnames: true,
-        keep_infinity: true,
-        passes: 1,
-        pure_getters: true,
-        unsafe: false,
-        arrows: true,
-        booleans: true,
-        collapse_vars: false,
-        comparisons: true,
-        conditionals: true,
-        evaluate: true,
-        hoist_funs: false,
-        if_return: true,
-        inline: 1,
-        join_vars: false,
-        loops: true,
-        properties: true,
-        reduce_vars: true,
-        sequences: false,
-        side_effects: true,
-        switches: true,
-        typeofs: true,
-        unused: true,
+    // Pre-minify CSS inside JS template literals so the design-system
+    // style bundles (CSS variables, components, feature flags) get
+    // collapsed before Terser runs. Without this pass the optimize
+    // build ships a lot of CSS whitespace and indentation that adds
+    // ~40-60 KB to the bundle.
+    const cssMinStart = Date.now();
+    const cssMinBefore = codeToOptimize.length;
+    const codeAfterCSS = minifyCSSInTemplateLiterals(codeToOptimize);
+    const cssMinSaved = cssMinBefore - codeAfterCSS.length;
+    if (verbose) {
+      const cssMinMs = Date.now() - cssMinStart;
+      globalThis.console.log(
+        `  ⏱️  CSS template minify: ${cssMinMs}ms (saved ${(cssMinSaved / 1024).toFixed(1)}KB)`
+      );
+    }
+
+    // Reuse the production-grade compress options (5 passes, full
+    // boolean/inlining/hoisting/sequences/toplevel) but force the
+    // name-preservation and drop-console-off settings we want for the
+    // readable "optimized" debug build. We still mangle local variable
+    // and parameter names so the bundle size is comparable to the
+    // production minified build, while keeping class names and
+    // identifiers matching the public window.* exports intact for
+    // debuggability.
+    //
+    // `pure_funcs` strips non-side-effect console calls (log/info/debug)
+    // that have no return value. `console.warn` and `console.error` are
+    // kept because removing them could hide real runtime issues while
+    // debugging the optimized build.
+    const baseCompress = getTerserCompressOptions();
+    const compress = {
+      ...baseCompress,
+      drop_console: false,
+      pure_funcs: ['console.log', 'console.info', 'console.debug'],
+      keep_classnames: true,
+      keep_fnames: false,
+      toplevel: true,
+    };
+
+    const result = await terser.minify(codeAfterCSS, {
+      compress,
+      mangle: {
+        // Mangle local variables, parameters, and private (underscore /
+        // dollar-prefixed) property names. Top-level identifiers and
+        // public window.* exports stay readable thanks to the reserved
+        // list. Function names are dropped where unused to mirror the
+        // minify build while leaving class names visible.
+        properties: {
+          regex: /^_[a-zA-Z_$0-9]+$/,
+          reserved: ['_yt_player'],
+        },
         toplevel: false,
-        keep_fargs: false,
-        global_defs: { DEBUG: false },
+        keep_classnames: true,
+        keep_fnames: false,
+        reserved: [
+          'YouTubeUtils',
+          'YouTubePlusI18n',
+          'YouTubeEnhancer',
+          'YouTubeErrorBoundary',
+          'YouTubePlusLogger',
+          'YouTubePlusCleanupManager',
+          'YouTubeSafeDOM',
+          'YouTubeSecurityUtils',
+          'YouTubeTrustedTypes',
+          'YouTubePlusDesignSystem',
+          'YouTubeDOMCache',
+          'YouTubePlusLazyLoader',
+          'YouTubePlusRegistry',
+          'YouTubePlusSettingsStore',
+          'YouTubePlusSettingsHelpers',
+          'YouTubePlusModalHandlers',
+          'YouTubePlusEventDelegation',
+          'YouTubePlusEmbeddedTranslations',
+          'YouTubePlusTimeLoop',
+          'youtubePlusReport',
+          'window',
+          'document',
+          'unsafeWindow',
+        ],
       },
-      mangle: false, // No mangling — keep readable
       format: {
         comments:
           /==UserScript==|==\/UserScript==|@name|@version|@description|@author|@license|@match|@grant|@namespace|@downloadURL|@updateURL|@supportURL|@homepageURL|@icon|@run-at|@require|@resource/,
@@ -1119,6 +1146,12 @@ async function performSimpleOptimization(code, outPath) {
       parse: { ecma: 2020 },
       ecma: 2020,
       module: false,
+      // IMPORTANT: Keep toplevel:false so that `executionScript` and other
+      // top-level identifiers are NOT mangled. The executionScript function
+      // is serialized via toString() and injected into the page — if Terser
+      // renames it, the injected script still works, but debugging becomes
+      // impossible because stack traces use the mangled name.
+      // Root-level toplevel:true would OVERRIDE mangle.toplevel:false below.
       toplevel: false,
       keep_classnames: true,
       keep_fnames: true,
@@ -1324,14 +1357,18 @@ async function performTerserMinification(code, outPath) {
     .replace(REGEX_PATTERNS.stripLineMeta, '')
     .replace(REGEX_PATTERNS.stripBlockMeta, '');
 
-  const minified = await terser.minify(codeToMinify, terserOpts);
+  // Pre-minify CSS inside JS template literals (design-system stylesheets)
+  // so the whitespace-heavy style bundles get collapsed before Terser runs.
+  const codeAfterCSS = minifyCSSInTemplateLiterals(codeToMinify);
+
+  const minified = await terser.minify(codeAfterCSS, terserOpts);
 
   if (minified.error) {
     globalThis.console.error('[Build Error] Terser minification error:', minified.error);
     return false;
   }
 
-  if (!minified || !minified.code) {
+  if (!minified?.code) {
     globalThis.console.error('[Build Error] Minification produced no output');
     return false;
   }
@@ -1397,14 +1434,20 @@ async function buildOnceCustom(outPath) {
   }
 
   // Merge module files
-  const { code, mergedCount, skippedCount } = mergeModuleFiles(files);
+  const { code, mergedCount, skippedCount } = await mergeModuleFiles(files);
 
   if (skippedCount > 0) {
     globalThis.console.warn(`⚠️  Skipped ${skippedCount} module(s) due to errors or empty content`);
   }
 
   startPerfTimer('writeFile');
-  fs.writeFileSync(outPath, code, 'utf8');
+  if (dryRun) {
+    globalThis.console.log(
+      `  ✓ Dry-run: would write ${outPath} (${(Buffer.byteLength(code, 'utf8') / 1024).toFixed(2)}KB)`
+    );
+  } else {
+    fs.writeFileSync(outPath, code, 'utf8');
+  }
   const writeDuration = endPerfTimer('writeFile');
 
   const fileSize = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2);
@@ -1427,16 +1470,16 @@ async function buildOnceCustom(outPath) {
   const validateDuration = endPerfTimer('validateSyntax');
   if (verbose) globalThis.console.log(`  ⏱️  Syntax validation: ${validateDuration.toFixed(2)}ms`);
 
-  // Run ESLint
-  startPerfTimer('eslint');
-  if (!runEslintValidation(outPath)) {
+  // Run Biome lint (skip in dry-run mode)
+  startPerfTimer('biome');
+  if (!dryRun && !runBiomeValidation(outPath)) {
     return false;
   }
-  const eslintDuration = endPerfTimer('eslint');
-  if (!noEslint && verbose) globalThis.console.log(`  ⏱️  ESLint: ${eslintDuration.toFixed(2)}ms`);
+  const biomeDuration = endPerfTimer('biome');
+  if (!noLint && verbose) globalThis.console.log(`  ⏱️  Biome: ${biomeDuration.toFixed(2)}ms`);
 
-  // Optimize or minify if requested
-  if (minify || optimized) {
+  // Optimize or minify if requested (skip in dry-run mode)
+  if ((minify || optimized) && !dryRun) {
     startPerfTimer('optimize');
     if (!(await optimizeOrMinify(code, outPath))) {
       return false;
@@ -1446,10 +1489,13 @@ async function buildOnceCustom(outPath) {
   }
 
   const totalDuration = endPerfTimer('totalBuild');
-  globalThis.console.log(`✓ Build completed successfully in ${(totalDuration / 1000).toFixed(2)}s`);
+  const dryRunTag = dryRun ? ' (dry-run)' : '';
+  globalThis.console.log(
+    `✓ Build completed successfully in ${(totalDuration / 1000).toFixed(2)}s${dryRunTag}`
+  );
 
-  // Save build cache for next incremental build
-  if (!watch) {
+  // Save build cache for next incremental build (skip in dry-run)
+  if (!watch && !dryRun) {
     buildCache.lastBuild = Date.now();
     saveBuildCache();
   }
@@ -1471,8 +1517,8 @@ async function buildOnceCli() {
   try {
     return await buildOnceCustom(OUT_PATH);
   } catch (err) {
-    globalThis.console.error('Build failed:', err && err.message);
-    if (verbose) globalThis.console.error(err && err.stack);
+    globalThis.console.error('Build failed:', err?.message);
+    if (verbose) globalThis.console.error(err?.stack);
     return false;
   }
 }

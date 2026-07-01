@@ -115,7 +115,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
    - [ ] Logging limited to console.warn/error
 
 5. **Code Quality**
-   - [ ] ESLint passes with no security warnings
+   - [ ] Biome passes with no security warnings
    - [ ] CodeQL analysis passes
    - [ ] No eval() or Function() constructor
    - [ ] No document.write()
@@ -125,7 +125,7 @@ We take security vulnerabilities seriously. If you discover a security issue, pl
 ### Automated Testing
 
 - **CodeQL**: Runs on every push and PR
-- **ESLint**: Security rules enabled
+- **Biome**: Security rules enabled
 - **Dependency scanning**: GitHub Dependabot (if enabled)
 
 ### Manual Testing

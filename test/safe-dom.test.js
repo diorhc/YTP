@@ -114,4 +114,127 @@ describe('YouTubeSafeDOM', () => {
 
     Range.prototype.createContextualFragment = originalCreateContextualFragment;
   });
+
+  test('createTrustedHTML Trusted Types callback neutralises nested/malformed script confusion', () => {
+    jest.resetModules();
+    delete window.YouTubeSafeDOM;
+    delete window.YouTubeTrustedTypes;
+    delete window._ytplusCreateHTML;
+    delete window.trustedTypes;
+
+    window.trustedTypes = {
+      createPolicy: (_name, rules) => ({
+        createHTML: rules.createHTML,
+        createScriptURL: rules.createScriptURL,
+        createScript: rules.createScript,
+      }),
+    };
+
+    require('../src/safe-dom.js');
+
+    const dirty = '<scr<script>ipt>alert(1)</script>';
+    const out = window.YouTubeSafeDOM.createTrustedHTML(dirty);
+
+    const container = document.createElement('div');
+    container.innerHTML = out;
+    expect(container.querySelector('script')).toBeNull();
+    expect(container.querySelectorAll('script').length).toBe(0);
+  });
+
+  test('createTrustedHTML Trusted Types callback strips tab-separated on* handlers', () => {
+    jest.resetModules();
+    delete window.YouTubeSafeDOM;
+    delete window.YouTubeTrustedTypes;
+    delete window._ytplusCreateHTML;
+    delete window.trustedTypes;
+
+    window.trustedTypes = {
+      createPolicy: (_name, rules) => ({
+        createHTML: rules.createHTML,
+        createScriptURL: rules.createScriptURL,
+        createScript: rules.createScript,
+      }),
+    };
+
+    require('../src/safe-dom.js');
+
+    const dirty = '<div\tonclick="alert(1)">x</div>';
+    const out = window.YouTubeSafeDOM.createTrustedHTML(dirty);
+    expect(out.toLowerCase()).not.toContain('onclick');
+    expect(out.toLowerCase()).not.toContain('alert(1)');
+  });
+
+  test('createTrustedHTML Trusted Types callback strips script inside svg context', () => {
+    jest.resetModules();
+    delete window.YouTubeSafeDOM;
+    delete window.YouTubeTrustedTypes;
+    delete window._ytplusCreateHTML;
+    delete window.trustedTypes;
+
+    window.trustedTypes = {
+      createPolicy: (_name, rules) => ({
+        createHTML: rules.createHTML,
+        createScriptURL: rules.createScriptURL,
+        createScript: rules.createScript,
+      }),
+    };
+
+    require('../src/safe-dom.js');
+
+    const dirty = '<svg><script>alert(1)</script></svg>';
+    const out = window.YouTubeSafeDOM.createTrustedHTML(dirty);
+    expect(out.toLowerCase()).not.toContain('alert(1)');
+    expect(out.toLowerCase()).not.toContain('<script');
+  });
+
+  test('createTrustedHTML Trusted Types callback blocks noscript and template', () => {
+    jest.resetModules();
+    delete window.YouTubeSafeDOM;
+    delete window.YouTubeTrustedTypes;
+    delete window._ytplusCreateHTML;
+    delete window.trustedTypes;
+
+    window.trustedTypes = {
+      createPolicy: (_name, rules) => ({
+        createHTML: rules.createHTML,
+        createScriptURL: rules.createScriptURL,
+        createScript: rules.createScript,
+      }),
+    };
+
+    require('../src/safe-dom.js');
+
+    const dirty = '<noscript><img src=x onerror=alert(1)></noscript><template><script>alert(2)</script></template>';
+    const out = window.YouTubeSafeDOM.createTrustedHTML(dirty);
+    expect(out.toLowerCase()).not.toContain('<noscript');
+    expect(out.toLowerCase()).not.toContain('<template');
+    expect(out.toLowerCase()).not.toContain('onerror');
+    expect(out.toLowerCase()).not.toContain('alert(1)');
+    expect(out.toLowerCase()).not.toContain('alert(2)');
+  });
+
+  test('createTrustedHTML Trusted Types callback allows safe markup and works on innerHTML sink', () => {
+    jest.resetModules();
+    delete window.YouTubeSafeDOM;
+    delete window.YouTubeTrustedTypes;
+    delete window._ytplusCreateHTML;
+    delete window.trustedTypes;
+
+    window.trustedTypes = {
+      createPolicy: (_name, rules) => ({
+        createHTML: rules.createHTML,
+        createScriptURL: rules.createScriptURL,
+        createScript: rules.createScript,
+      }),
+    };
+
+    require('../src/safe-dom.js');
+
+    const trusted = window.YouTubeSafeDOM.createTrustedHTML('<b>ok</b>');
+    const div = document.createElement('div');
+    expect(() => {
+      div.innerHTML = /** @type {any} */ (trusted);
+    }).not.toThrow();
+    expect(div.querySelector('b')?.textContent).toBe('ok');
+  });
 });

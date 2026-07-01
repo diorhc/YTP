@@ -12,7 +12,7 @@ describe('YouTubeErrorBoundary (real integration)', () => {
     jest.resetModules();
 
     delete window.YouTubePlusLogger;
-    delete window.YouTubeErrorBoundary;
+    delete window.YouTubePlusErrorBoundary;
     delete window.YouTubeUtils;
     delete window.YouTubePlusErrorRecovery;
 
@@ -32,7 +32,7 @@ describe('YouTubeErrorBoundary (real integration)', () => {
     require('../src/logger.js');
 
     logger = window.YouTubePlusLogger;
-    errorBoundary = window.YouTubeErrorBoundary;
+    errorBoundary = window.YouTubePlusErrorBoundary;
 
     logger.setLevel('debug');
     logger.clear();
@@ -150,5 +150,40 @@ describe('YouTubeErrorBoundary (real integration)', () => {
 
     expect(window.YouTubeUtils.NotificationManager.show).toHaveBeenCalled();
     expect(window.YouTubePlusErrorRecovery.attemptRecovery).not.toHaveBeenCalled();
+  });
+
+  test('error context redacts full URL and navigator.userAgent', () => {
+    errorBoundary.logError(new Error('redaction probe'));
+
+    const recentErrors = logger.getRecent(10, 'error');
+    const boundaryEntry = recentErrors.find(e => e.module === 'ErrorBoundary');
+    expect(boundaryEntry).toBeDefined();
+    const errorInfo = boundaryEntry.data;
+
+    expect(errorInfo.context.url).toBe(window.location.pathname);
+    expect(errorInfo.context.url).not.toContain('?');
+    expect(errorInfo.context.url).not.toContain('#');
+    expect(errorInfo.context).not.toHaveProperty('userAgent');
+
+    const persisted = JSON.parse(localStorage.getItem(errorBoundary.config.storageKey));
+    const lastPersisted = persisted[persisted.length - 1];
+    expect(lastPersisted.context.url).toBe(window.location.pathname);
+    expect(lastPersisted.context).not.toHaveProperty('userAgent');
+  });
+
+  test('withErrorBoundary does not include caller args in error context', () => {
+    const secret = 'super-secret-token-12345';
+    const wrapped = errorBoundary.withErrorBoundary(() => {
+      throw new Error('arg leak probe');
+    }, 'arg-leak-module');
+
+    wrapped(secret, { password: 'p@ssw0rd' });
+
+    const recentErrors = logger.getRecent(10, 'error');
+    const boundaryEntry = recentErrors.find(e => e.message === 'arg leak probe');
+    expect(boundaryEntry).toBeDefined();
+    const serialized = JSON.stringify(boundaryEntry.data);
+    expect(serialized).not.toContain(secret);
+    expect(serialized).not.toContain('p@ssw0rd');
   });
 });

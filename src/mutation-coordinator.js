@@ -1,8 +1,39 @@
-// Global MutationObserver coordinator - single root observer with subscription API
-(function () {
-  'use strict';
+// Mutation Lifecycle Coordinator — canonical mutation lifecycle service.
+//
+// Canonical responsibility: own the single shared `MutationObserver`
+// for the document, route mutation batches to subscribers, and
+// manage the watch/unwatch lifecycle for both root-level and
+// target-scoped subscriptions.
+//
+// This module is *not* a generic timer / scheduler / visibility
+// utility. The retry scheduler (`createRetryScheduler`) is kept
+// here only because it is the natural complement to the
+// mutation API — both APIs are about "react to a DOM condition"
+// — and because it has no better canonical home. Visibility-aware
+// intervals and managed timers are not mutation lifecycle and
+// are intentionally not part of this surface.
+//
+// Public API on `window.YouTubePlusMutationCoordinator`:
+//   - subscribeRoot(id, callback, options?)  // also exposed as subscribe()
+//   - unsubscribe(id)
+//   - watchTarget(id, target, callback, options?)  // also exposed as watch()
+//   - unwatch(id)
+//   - createRetryScheduler(opts)  // uses private managed timers
+//   - getStats()
+//   - dispose()                   // explicit teardown
+//
+// `createRetryScheduler` is the only remaining generic helper
+// and is kept on the public surface because it backs
+// `dom-cache.waitForElement`'s scoped-context waiting strategy
+// and is consumed directly by 8+ feature modules.
 
-  if (typeof window === 'undefined' || window.YouTubeMutationCoordinator) return;
+(function () {
+  if (typeof window === 'undefined' || window.YouTubePlusMutationCoordinator) return;
+  const mcLogger = window.YouTubeUtils?.logger || null;
+
+  // ---------------------------------------------------------------------------
+  // Internal types
+  // ---------------------------------------------------------------------------
 
   /**
    * @typedef {{
@@ -14,7 +45,19 @@
    *   subtree: boolean,
    *   attributeFilter: string[] | null
    * }} RootSubscription
+   *
+   * @typedef {{
+   *   selector?: string | null,
+   *   attributes?: boolean,
+   *   childList?: boolean,
+   *   subtree?: boolean,
+   *   attributeFilter?: string[] | null
+   * }} SubscriptionOptions
    */
+
+  // ---------------------------------------------------------------------------
+  // Shared root observer state
+  // ---------------------------------------------------------------------------
 
   /** @type {Map<string, RootSubscription>} */
   const rootSubscriptions = new Map();
@@ -27,22 +70,17 @@
   let currentObserveConfig = null;
 
   /**
-   * @typedef {{
-   *   selector?: string | null,
-   *   attributes?: boolean,
-   *   childList?: boolean,
-   *   subtree?: boolean,
-   *   attributeFilter?: string[] | null
-   * }} SubscriptionOptions
+   * @param {MutationObserverInit | null} config
+   * @returns {string}
    */
-
-  /** @param {MutationObserverInit | null} config */
   const configKey = config => (config ? JSON.stringify(config) : 'null');
 
-  const shouldNotifySelector = (
-    /** @type {string | null} */ selector,
-    /** @type {MutationRecord[]} */ mutations
-  ) => {
+  /**
+   * @param {string | null} selector
+   * @param {MutationRecord[]} mutations
+   * @returns {boolean}
+   */
+  const shouldNotifySelector = (selector, mutations) => {
     if (!selector) return true;
 
     for (const mutation of mutations) {
@@ -60,7 +98,11 @@
     return false;
   };
 
-  /** @param {RootSubscription} sub @param {MutationRecord[]} batch */
+  /**
+   * @param {RootSubscription} sub
+   * @param {MutationRecord[]} batch
+   * @returns {MutationRecord[]}
+   */
   const filterMutationsForSubscription = (sub, batch) => {
     const out = [];
     for (const mutation of batch) {
@@ -96,12 +138,14 @@
           sub.callback(filtered);
         }
       } catch (e) {
-        window.console.error('[MutationCoordinator] subscriber failed:', e);
+        mcLogger?.error?.('MutationCoordinator', 'subscriber failed', e);
       }
     }
   };
 
-  /** @returns {MutationObserverInit} */
+  /**
+   * @returns {MutationObserverInit}
+   */
   const computeObserveConfig = () => {
     let childList = false;
     let attributes = false;
@@ -130,7 +174,9 @@
     };
   };
 
-  /** @param {MutationObserverInit} nextConfig */
+  /**
+   * @param {MutationObserverInit} nextConfig
+   */
   const ensureRootObserver = nextConfig => {
     const target = document.body || document.documentElement;
     if (!target) return;
@@ -176,6 +222,7 @@
    * @param {Node} target
    * @param {MutationRecord} mutation
    * @param {{subtree?: boolean, childList?: boolean, attributes?: boolean, attributeFilter?: string[]|null}} options
+   * @returns {boolean}
    */
   const mutationTouchesTarget = (target, mutation, options) => {
     const allowSubtree = options.subtree !== false;
@@ -214,23 +261,80 @@
     return false;
   };
 
+  // ---------------------------------------------------------------------------
+  // Private managed timers — used only by createRetryScheduler.
+  //
+  // These are intentionally not part of the public API. Earlier
+  // revisions exposed `setManagedTimeout` / `setManagedInterval`
+  // on the coordinator surface, but no external module actually
+  // consumed them — callers had their own `setTimeout_` /
+  // `setInterval` fallbacks wired through the cleanup manager.
+  // Keeping them private also means we can change the backing
+  // store (e.g. move to cleanup-manager) without breaking
+  // external callers.
+  // ---------------------------------------------------------------------------
+
+  /** @type {Map<string, { kind: 'timeout', handle: ReturnType<typeof setTimeout>, label: string }>} */
+  const managedTimers = new Map();
+  let nextTimerId = 0;
+
+  const createManagedTimerId = () => `ytp:timeout:${Date.now().toString(36)}:${nextTimerId++}`;
+
   /**
-   * @typedef {{
+   * @param {() => void} callback
+   * @param {number} delay
+   * @param {string} [label]
+   * @returns {string}
+   */
+  const setManagedTimeout = (callback, delay, label = 'managed') => {
+    const id = createManagedTimerId();
+    const handle = setTimeout(() => {
+      managedTimers.delete(id);
+      try {
+        callback();
+      } catch (e) {
+        mcLogger?.error?.('MutationCoordinator', 'managed timeout failed', e);
+      }
+    }, delay);
+    managedTimers.set(id, { kind: 'timeout', handle, label });
+    return id;
+  };
+
+  /**
+   * @param {string | null | undefined} id
+   */
+  const clearManagedTimeout = id => {
+    if (!id) return;
+    const timer = managedTimers.get(id);
+    if (!timer) return;
+    clearTimeout(timer.handle);
+    managedTimers.delete(id);
+  };
+
+  // ---------------------------------------------------------------------------
+  // Public API
+  // ---------------------------------------------------------------------------
+
+  /** @type {{
    *   subscribeRoot: (id: string, callback: (mutations: MutationRecord[]) => void, options?: SubscriptionOptions) => string | null,
+   *   subscribe: (id: string, callback: (mutations: MutationRecord[]) => void, options?: SubscriptionOptions) => string | null,
    *   unsubscribe: (id: string) => void,
    *   watchTarget: (id: string, target: Node, callback: (mutations: MutationRecord[]) => void, options?: SubscriptionOptions) => string | null,
+   *   watch: (id: string, target: Node, callback: (mutations: MutationRecord[]) => void, options?: SubscriptionOptions) => string | null,
    *   unwatch: (id: string) => void,
-   *   getStats: () => { rootSubscribers: number, rootObserverActive: boolean }
-   * }} MutationCoordinatorApi
-   */
-
-  /** @type {MutationCoordinatorApi} */
+   *   createRetryScheduler: (opts: { check: () => boolean, maxAttempts?: number, interval?: number, onGiveUp?: (() => void) | undefined, label?: string | undefined }) => { stop: () => void },
+   *   getStats: () => { rootSubscribers: number, rootObserverActive: boolean, managedTimers: number },
+   *   dispose: () => void,
+   * }} */
   const api = {
-    subscribeRoot(
-      /** @type {string} */ id,
-      /** @type {(mutations: MutationRecord[]) => void} */ callback,
-      /** @type {SubscriptionOptions} */ options = {}
-    ) {
+    /**
+     * Register a subscription on the shared root observer.
+     * @param {string} id
+     * @param {(mutations: MutationRecord[]) => void} callback
+     * @param {SubscriptionOptions} [options]
+     * @returns {string | null}
+     */
+    subscribeRoot(id, callback, options = {}) {
       if (!id || typeof callback !== 'function') return null;
       rootSubscriptions.set(id, {
         id,
@@ -249,21 +353,41 @@
       return id;
     },
 
-    unsubscribe(/** @type {string} */ id) {
-      if (!id) {
-        return;
-      }
+    /**
+     * Alias for `subscribeRoot` — shorter name for the desired
+     * API direction. `subscribeRoot` is kept for back-compat
+     * with the 14+ callers that already use it.
+     * @param {string} id
+     * @param {(mutations: MutationRecord[]) => void} callback
+     * @param {SubscriptionOptions} [options]
+     * @returns {string | null}
+     */
+    subscribe(id, callback, options) {
+      return api.subscribeRoot(id, callback, options);
+    },
+
+    /**
+     * Remove a subscription.
+     * @param {string} id
+     */
+    unsubscribe(id) {
+      if (!id) return;
       rootSubscriptions.delete(id);
       refreshObserver();
     },
 
-    watchTarget(
-      /** @type {string} */ id,
-      /** @type {Node} */ target,
-      /** @type {(mutations: MutationRecord[]) => void} */ callback,
-      /** @type {SubscriptionOptions} */ options = {}
-    ) {
-      if (!id || !(target instanceof Node) || typeof callback !== 'function') return null;
+    /**
+     * Subscribe to mutations on a specific target node. Wraps
+     * `subscribeRoot` and filters the global mutation batch
+     * down to the records that touch `target`.
+     * @param {string} id
+     * @param {Node} target
+     * @param {(mutations: MutationRecord[]) => void} callback
+     * @param {SubscriptionOptions} [options]
+     * @returns {string | null}
+     */
+    watchTarget(id, target, callback, options = {}) {
+      if (!(id && target instanceof Node) || typeof callback !== 'function') return null;
       const normalized = {
         attributes: options.attributes !== false,
         childList: options.childList !== false,
@@ -295,17 +419,142 @@
       );
     },
 
-    unwatch(/** @type {string} */ id) {
+    /**
+     * Alias for `watchTarget` — shorter name for the desired
+     * API direction. `watchTarget` is kept for back-compat
+     * with the 4 modules (zoom, timecode, performance, playall)
+     * that already use it.
+     * @param {string} id
+     * @param {Node} target
+     * @param {(mutations: MutationRecord[]) => void} callback
+     * @param {SubscriptionOptions} [options]
+     * @returns {string | null}
+     */
+    watch(id, target, callback, options) {
+      return api.watchTarget(id, target, callback, options);
+    },
+
+    /**
+     * Remove a watch subscription. Equivalent to `unsubscribe`.
+     * @param {string} id
+     */
+    unwatch(id) {
       api.unsubscribe(id);
     },
 
+    /**
+     * Create a retry scheduler that polls a check function
+     * until it returns true or `maxAttempts` is reached. Uses
+     * the coordinator's private managed timers as a backing
+     * store so a single `dispose()` cleans up all in-flight
+     * retries.
+     *
+     * @param {{
+     *   check: () => boolean,
+     *   maxAttempts?: number,
+     *   interval?: number,
+     *   onGiveUp?: (() => void) | undefined,
+     *   label?: string | undefined
+     * }} opts
+     * @returns {{ stop: () => void }}
+     */
+    createRetryScheduler(opts) {
+      const { check, maxAttempts = 20, interval = 250, onGiveUp, label = 'retry' } = opts || {};
+      let attempts = 0;
+      /** @type {string | null} */
+      let timeoutId = null;
+      let stopped = false;
+
+      const tick = () => {
+        if (stopped) return;
+        attempts += 1;
+
+        try {
+          if (check()) {
+            stopped = true;
+            return;
+          }
+        } catch (e) {
+          mcLogger?.error?.('MutationCoordinator', 'retry check failed', e);
+        }
+
+        if (attempts >= maxAttempts) {
+          stopped = true;
+          if (typeof onGiveUp === 'function') {
+            try {
+              onGiveUp();
+            } catch (e) {
+              mcLogger?.error?.('MutationCoordinator', 'retry give-up callback failed', e);
+            }
+          }
+          return;
+        }
+
+        timeoutId = setManagedTimeout(tick, interval, label);
+      };
+
+      timeoutId = setManagedTimeout(tick, 0, label);
+
+      return {
+        stop() {
+          stopped = true;
+          if (timeoutId) clearManagedTimeout(timeoutId);
+          timeoutId = null;
+        },
+      };
+    },
+
+    /**
+     * Diagnostics.
+     * @returns {{ rootSubscribers: number, rootObserverActive: boolean, managedTimers: number }}
+     */
     getStats() {
       return {
         rootSubscribers: rootSubscriptions.size,
         rootObserverActive: !!rootObserver,
+        managedTimers: managedTimers.size,
       };
+    },
+
+    /**
+     * Explicit teardown for SPA navigation. Disconnects the
+     * shared observer, clears all subscriptions, and clears
+     * any in-flight managed timers. Safe to call multiple
+     * times; safe to call when nothing is subscribed.
+     */
+    dispose() {
+      if (rootObserver) {
+        rootObserver.disconnect();
+        rootObserver = null;
+      }
+      currentObserveConfig = null;
+      pendingMutations = [];
+      rafScheduled = false;
+      rootSubscriptions.clear();
+      for (const [id, timer] of managedTimers) {
+        clearTimeout(timer.handle);
+        managedTimers.delete(id);
+      }
     },
   };
 
-  window.YouTubeMutationCoordinator = api;
+  // ---------------------------------------------------------------------------
+  // SPA safety
+  //
+  // On full page unload, the shared observer is torn down so
+  // the underlying MutationObserver cannot outlive the page.
+  // `yt-navigate-finish` is left to per-module unsubscribe
+  // calls (zoom, timecode, comment, endscreen, playall, music,
+  // playlist-search all unsubscribe their own ids on teardown).
+  // ---------------------------------------------------------------------------
+  if (typeof window !== 'undefined' && window.addEventListener) {
+    window.addEventListener('pagehide', () => api.dispose());
+  }
+
+  if (typeof window !== 'undefined') {
+    window.YouTubePlusMutationCoordinator = api;
+    if (typeof unsafeWindow !== 'undefined') {
+      unsafeWindow.YouTubePlusMutationCoordinator = api;
+    }
+  }
 })();

@@ -1,0 +1,54 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Show and Tell
+        Share your YouTube+ configuration, customizations, or creative uses.
+  - type: dropdown
+    id: type
+    attributes:
+      label: What are you sharing?
+      options:
+        - Custom Configuration
+        - Theme/Style Customization
+        - Workflow/Setup
+        - Integration with Other Tools
+        - Creative Use Case
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: "Describe what you're sharing"
+      placeholder: "I've configured YouTube+ to..."
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup Details
+      description: "How did you set this up?"
+      placeholder: |
+        1. Settings used: ...
+        2. Custom CSS: ...
+        3. Hotkey config: ...
+    validations:
+      required: false
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots/Demo
+      description: "Show off your setup!"
+      placeholder: "Add screenshots or screen recordings..."
+    validations:
+      required: false
+  - type: textarea
+    id: tips
+    attributes:
+      label: Tips for Others
+      description: "Any advice for people who want to try this?"
+      placeholder: "Here are some tips..."
+    validations:
+      required: false

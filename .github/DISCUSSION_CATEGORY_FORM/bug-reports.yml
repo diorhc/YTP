@@ -1,0 +1,88 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Bug Report
+        Report a bug or unexpected behavior in YouTube+.
+        
+        **Note:** For security vulnerabilities, please see [SECURITY.md](https://github.com/diorhc/YTP/blob/main/SECURITY.md).
+  - type: textarea
+    id: description
+    attributes:
+      label: Bug Description
+      description: "Clear and concise description of the bug"
+      placeholder: "When I do X, Y happens instead of Z..."
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to Reproduce
+      description: "How can we reproduce this issue?"
+      placeholder: |
+        1. Go to '...'
+        2. Click on '...'
+        3. See error
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: "What should happen?"
+      placeholder: "I expected YouTube+ to..."
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual Behavior
+      description: "What actually happens?"
+      placeholder: "Instead, YouTube+..."
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: "Browser, userscript manager, and YouTube+ version"
+      placeholder: "e.g. Chrome 120, Tampermonkey 4.20, YouTube+ 2.5.2"
+    validations:
+      required: true
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      description: "How often does this bug occur?"
+      options:
+        - Every time
+        - Sometimes (intermittent)
+        - Once
+        - Only with specific conditions
+    validations:
+      required: true
+  - type: textarea
+    id: console
+    attributes:
+      label: Console Errors
+      description: "Any errors in browser console (F12 → Console)"
+      placeholder: "Paste any error messages here..."
+      render: text
+    validations:
+      required: false
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: "Add screenshots if applicable"
+      placeholder: "Drag and drop images here..."
+    validations:
+      required: false
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional Context
+      description: "Any other information that might help"
+      placeholder: "Related issues, workarounds, etc."
+    validations:
+      required: false

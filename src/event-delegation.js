@@ -1,201 +1,123 @@
-// Event Delegation System - Performance Optimization
+// Event Delegation - canonical delegated event service.
+//
+// Canonical responsibility:
+//   - own delegated handler registration (on / delegate)
+//   - own delegated handler removal (off / undelegate)
+//   - own selector matching and bookkeeping for registered delegations
+//
+// Public API on `window.YouTubePlusEventDelegation`:
+//   - on(root, type, selector, handler, options?)
+//   - off(root, type, selector, handler)
+//   - delegate(...) / undelegate(...)  // legacy aliases, kept for compatibility
+//   - clear()                          // teardown helper
+//   - getStats()                       // diagnostics
+//
+// This module is intentionally narrow. It does not own
+// listener/observer/interval cleanup (see cleanup-manager.js)
+// and does not own mutation lifecycle (see mutation-coordinator.js).
+//
 // @ts-check
 (function () {
-  'use strict';
+  if (typeof window === 'undefined') return;
+  if (window.YouTubePlusEventDelegation) return;
+
+  const edLogger = window.YouTubeUtils?.logger || null;
+
+  // ---------------------------------------------------------------------------
+  // Internal implementation
+  // ---------------------------------------------------------------------------
 
   /**
-   * Event delegation manager for performance optimization
-   * Reduces number of event listeners by delegating to common ancestors
+   * @typedef {Element | Document | Window} DelegationRoot
    */
+
+  /**
+   * @typedef {{
+   *   totalDelegations: number,
+   *   totalHandlers: number
+   * }} DelegationStats
+   */
+
   class EventDelegator {
     constructor() {
       /** @type {Map<string, Map<string, Set<Function>>>} */
       this.delegatedHandlers = new Map();
       /** @type {Map<Element, Map<string, Function>>} */
       this.registeredDelegators = new Map();
+      /** @type {WeakMap<Element, string>} */
+      this._elementKeyMap = new WeakMap();
+      /** @type {number} */
+      this._elementKeyCounter = 0;
+      /** @type {DelegationStats} */
       this.stats = { totalDelegations: 0, totalHandlers: 0 };
     }
 
     /**
-     * Delegate event handler to a parent element
-     * @param {Element} parent - Parent element to attach delegated listener
-     * @param {string} eventType - Event type (click, input, etc.)
-     * @param {string} selector - CSS selector to match target elements
-     * @param {Function} handler - Handler function(event, matchedElement)
-     * @param {Object} [options] - Event listener options
+     * Register a delegated handler on `root` for events matching `selector`.
+     * Multiple handlers for the same (root, type, selector) are supported and
+     * all are invoked in insertion order.
+     * @param {DelegationRoot} root
+     * @param {string} eventType
+     * @param {string} selector
+     * @param {Function} handler
+     * @param {boolean | AddEventListenerOptions} [options]
      */
-    delegate(parent, eventType, selector, handler, options = {}) {
-      if (!parent || !eventType || !selector || !handler) {
-        window.console.warn('[EventDelegator] Invalid parameters');
+    on(root, eventType, selector, handler, options) {
+      if (!(root && eventType && selector && handler)) {
+        edLogger?.warn?.('EventDelegator', 'Invalid parameters');
         return;
       }
+      const parent = /** @type {Element} */ (root);
 
-      // Create cache key
-      const parentKey = this._getElementKey(parent);
-      const delegationKey = `${parentKey}:${eventType}`;
+      const delegationKey = `${this._getElementKey(parent)}:${eventType}`;
 
-      // Initialize structures
-      if (!this.delegatedHandlers.has(delegationKey)) {
-        this.delegatedHandlers.set(delegationKey, new Map());
+      let handlersForSelector = this.delegatedHandlers.get(delegationKey);
+      if (!handlersForSelector) {
+        handlersForSelector = new Map();
+        this.delegatedHandlers.set(delegationKey, handlersForSelector);
       }
-
-      const handlersForSelector = this.delegatedHandlers.get(delegationKey);
-      if (!handlersForSelector) return;
-      if (!handlersForSelector.has(selector)) {
-        handlersForSelector.set(selector, new Set());
+      let handlers = handlersForSelector.get(selector);
+      if (!handlers) {
+        handlers = new Set();
+        handlersForSelector.set(selector, handlers);
       }
-
-      // Add handler
-      handlersForSelector.get(selector)?.add(handler);
+      handlers.add(handler);
       this.stats.totalHandlers++;
 
-      // Create or get delegated listener
-      if (!this.registeredDelegators.has(parent)) {
-        this.registeredDelegators.set(parent, new Map());
-      }
-
-      const parentDelegators = this.registeredDelegators.get(parent);
-      if (!parentDelegators) return;
-      if (!parentDelegators.has(eventType)) {
-        /** @param {Event} event */
-        const delegatedListener = event => {
-          this._handleDelegatedEvent(parent, eventType, event);
-        };
-
-        parent.addEventListener(
-          eventType,
-          /** @type {EventListener} */ (delegatedListener),
-          /** @type {boolean|AddEventListenerOptions} */ (options)
-        );
-        parentDelegators.set(eventType, delegatedListener);
-        this.stats.totalDelegations++;
-
-        window.YouTubeUtils?.logger?.debug?.(
-          `[EventDelegator] Created delegation on ${parentKey} for ${eventType}`
-        );
-      }
+      this._ensureRootListener(parent, eventType, options);
     }
 
     /**
-     * Remove delegated event handler
-     * @param {Element} parent - Parent element
-     * @param {string} eventType - Event type
-     * @param {string} selector - CSS selector
-     * @param {Function} handler - Handler function to remove
+     * Remove a delegated handler previously registered with `on`.
+     * Silently no-ops if the handler is not registered.
+     * @param {DelegationRoot} root
+     * @param {string} eventType
+     * @param {string} selector
+     * @param {Function} handler
      */
-    undelegate(parent, eventType, selector, handler) {
-      const parentKey = this._getElementKey(parent);
-      const delegationKey = `${parentKey}:${eventType}`;
+    off(root, eventType, selector, handler) {
+      if (!(root && eventType && selector && handler)) return;
+      const parent = /** @type {Element} */ (root);
 
+      const delegationKey = `${this._getElementKey(parent)}:${eventType}`;
       const handlersForSelector = this.delegatedHandlers.get(delegationKey);
       if (!handlersForSelector) return;
 
       const handlers = handlersForSelector.get(selector);
-      if (!handlers) return;
-
-      handlers.delete(handler);
+      if (!handlers?.delete(handler)) return;
       this.stats.totalHandlers--;
 
-      // Clean up if no handlers left
       if (handlers.size === 0) {
         handlersForSelector.delete(selector);
       }
-
       if (handlersForSelector.size === 0) {
-        this._removeParentListener(parent, eventType);
+        this._removeRootListener(parent, eventType);
         this.delegatedHandlers.delete(delegationKey);
       }
     }
 
     /**
-     * Handle delegated event and dispatch to matching handlers
-     * @private
-     */
-    /**
-     * @param {Element} parent
-     * @param {string} eventType
-     * @param {Event} event
-     */
-    _handleDelegatedEvent(parent, eventType, event) {
-      const parentKey = this._getElementKey(parent);
-      const delegationKey = `${parentKey}:${eventType}`;
-      const handlersForSelector = this.delegatedHandlers.get(delegationKey);
-
-      if (!handlersForSelector) return;
-
-      // Check each selector for matches
-      for (const [selector, handlers] of handlersForSelector.entries()) {
-        // Find closest matching element
-        const evtTarget = /** @type {HTMLElement|null} */ (event.target);
-        const target = evtTarget?.closest(selector);
-
-        if (target && parent.contains(target)) {
-          // Execute all handlers for this selector
-          for (const handler of handlers) {
-            try {
-              handler.call(target, event, target);
-            } catch (error) {
-              window.console.error('[EventDelegator] Handler error:', error);
-              window.YouTubeUtils?.logger?.error?.('[EventDelegator] Handler error', error);
-            }
-          }
-        }
-      }
-    }
-
-    /**
-     * Remove parent listener
-     * @private
-     */
-    /**
-     * @param {Element} parent
-     * @param {string} eventType
-     */
-    _removeParentListener(parent, eventType) {
-      const parentDelegators = this.registeredDelegators.get(parent);
-      if (!parentDelegators) return;
-
-      const listener = parentDelegators.get(eventType);
-      if (listener) {
-        parent.removeEventListener(eventType, /** @type {EventListener} */ (listener));
-        parentDelegators.delete(eventType);
-        this.stats.totalDelegations--;
-      }
-
-      if (parentDelegators.size === 0) {
-        this.registeredDelegators.delete(parent);
-      }
-    }
-
-    /**
-     * Get unique key for element
-     * @private
-     */
-    /**
-     * @param {Element|Document} element
-     * @returns {string}
-     */
-    _getElementKey(element) {
-      if (element === document) return 'document';
-      if (element === /** @type {any} */ (window)) return 'window';
-      if (element === document.body) return 'body';
-
-      // Use a WeakMap for stable, deterministic element keys
-      if (!this._elementKeyMap) {
-        this._elementKeyMap = new WeakMap();
-        this._elementKeyCounter = 0;
-      }
-      const htmlEl = /** @type {Element} */ (element);
-      if (htmlEl.id) return htmlEl.id;
-      const existing = this._elementKeyMap.get(htmlEl);
-      if (existing) return existing;
-      const newKey = `${htmlEl.tagName || 'ELEM'}_${(this._elementKeyCounter = (this._elementKeyCounter || 0) + 1)}`;
-      this._elementKeyMap.set(htmlEl, newKey);
-      return newKey;
-    }
-
-    /**
-     * Get statistics
+     * @returns {DelegationStats & { uniqueDelegations: number, delegationKeys: number }}
      */
     getStats() {
       return {
@@ -205,78 +127,142 @@
       };
     }
 
-    /**
-     * Clear all delegations
-     */
+    /** Tear down all delegations. Safe to call multiple times. */
     clear() {
-      for (const [parent, delegators] of this.registeredDelegators.entries()) {
-        for (const eventType of delegators.keys()) {
+      for (const [parent, byType] of this.registeredDelegators.entries()) {
+        for (const eventType of byType.keys()) {
           try {
-            parent.removeEventListener(
-              eventType,
-              /** @type {EventListener} */ (delegators.get(eventType))
-            );
-          } catch (e) {
-            // Element may have been GC'd — safe to ignore
+            const listener = byType.get(eventType);
+            if (listener) {
+              parent.removeEventListener(eventType, /** @type {EventListener} */ (listener));
+            }
+          } catch (_e) {
+            // Element may have been GC'd or detached; safe to ignore.
           }
         }
       }
-
       this.delegatedHandlers.clear();
       this.registeredDelegators.clear();
-      if (this._elementKeyMap) {
-        this._elementKeyMap = new WeakMap();
-        this._elementKeyCounter = 0;
-      }
+      this._elementKeyMap = new WeakMap();
+      this._elementKeyCounter = 0;
       this.stats = { totalDelegations: 0, totalHandlers: 0 };
+    }
+
+    // -- internal ------------------------------------------------------------
+
+    /**
+     * @param {Element} parent
+     * @param {string} eventType
+     * @param {boolean | AddEventListenerOptions | undefined} options
+     */
+    _ensureRootListener(parent, eventType, options) {
+      let byType = this.registeredDelegators.get(parent);
+      if (!byType) {
+        byType = new Map();
+        this.registeredDelegators.set(parent, byType);
+      }
+      if (byType.has(eventType)) return;
+
+      const listener = /** @param {Event} event */ event => {
+        this._dispatch(parent, eventType, event);
+      };
+      parent.addEventListener(
+        eventType,
+        /** @type {EventListener} */ (listener),
+        /** @type {boolean | AddEventListenerOptions | undefined} */ (options)
+      );
+      byType.set(eventType, listener);
+      this.stats.totalDelegations++;
+      edLogger?.debug?.(
+        `[EventDelegator] Created delegation on ${this._getElementKey(parent)} for ${eventType}`
+      );
+    }
+
+    /**
+     * @param {Element} parent
+     * @param {string} eventType
+     * @param {Event} event
+     */
+    _dispatch(parent, eventType, event) {
+      const delegationKey = `${this._getElementKey(parent)}:${eventType}`;
+      const handlersForSelector = this.delegatedHandlers.get(delegationKey);
+      if (!handlersForSelector) return;
+
+      const evtTarget = /** @type {HTMLElement | null} */ (event.target);
+      for (const [selector, handlers] of handlersForSelector.entries()) {
+        const target = evtTarget?.closest(selector);
+        if (!(target && parent.contains(target))) continue;
+        for (const handler of handlers) {
+          try {
+            handler.call(target, event, target);
+          } catch (error) {
+            edLogger?.error?.('EventDelegator', 'Handler error', error);
+          }
+        }
+      }
+    }
+
+    /**
+     * @param {Element} parent
+     * @param {string} eventType
+     */
+    _removeRootListener(parent, eventType) {
+      const byType = this.registeredDelegators.get(parent);
+      if (!byType) return;
+      const listener = byType.get(eventType);
+      if (listener) {
+        parent.removeEventListener(eventType, /** @type {EventListener} */ (listener));
+        this.stats.totalDelegations--;
+      }
+      byType.delete(eventType);
+      if (byType.size === 0) {
+        this.registeredDelegators.delete(parent);
+      }
+    }
+
+    /**
+     * Stable per-element key used for map indexing.
+     * @param {Element | Document | Window} element
+     * @returns {string}
+     */
+    _getElementKey(element) {
+      if (element === document) return 'document';
+      if (element === /** @type {any} */ (window)) return 'window';
+      if (element === document.body) return 'body';
+      const el = /** @type {Element} */ (element);
+      if (el.id) return el.id;
+      const existing = this._elementKeyMap.get(el);
+      if (existing) return existing;
+      this._elementKeyCounter += 1;
+      const key = `${el.tagName || 'ELEM'}_${this._elementKeyCounter}`;
+      this._elementKeyMap.set(el, key);
+      return key;
     }
   }
 
-  // Create global instance
-  const eventDelegator = new EventDelegator();
+  // ---------------------------------------------------------------------------
+  // Public surface
+  // ---------------------------------------------------------------------------
 
-  /**
-   * Convenience wrapper for delegation
-   * @param {Element} parent - Parent element
-   * @param {string} eventType - Event type
-   * @param {string} selector - CSS selector
-   * @param {Function} handler - Handler function
-   * @param {Object} [options] - Event listener options
-   */
-  const on = (parent, eventType, selector, handler, options) => {
-    eventDelegator.delegate(parent, eventType, selector, handler, options);
-  };
+  const delegator = new EventDelegator();
 
-  /**
-   * Remove delegated handler
-   * @param {Element} parent - Parent element
-   * @param {string} eventType - Event type
-   * @param {string} selector - CSS selector
-   * @param {Function} handler - Handler function
-   */
-  const off = (parent, eventType, selector, handler) => {
-    eventDelegator.undelegate(parent, eventType, selector, handler);
-  };
+  const surface =
+    /** @type {YouTubePlusEventDelegation & { EventDelegator: any, clear: Function }} */ ({
+      EventDelegator,
+      on: (root, eventType, selector, handler, options) =>
+        delegator.on(/** @type {Element} */ (root), eventType, selector, handler, options),
+      off: (root, eventType, selector, handler) =>
+        delegator.off(/** @type {Element} */ (root), eventType, selector, handler),
+      delegate: (root, eventType, selector, handler, options) =>
+        delegator.on(/** @type {Element} */ (root), eventType, selector, handler, options),
+      undelegate: (root, eventType, selector, handler) =>
+        delegator.off(/** @type {Element} */ (root), eventType, selector, handler),
+      getStats: () => delegator.getStats(),
+      clear: () => delegator.clear(),
+    });
 
-  // Export to window
-  if (typeof window !== 'undefined') {
-    window.YouTubePlusEventDelegation =
-      /** @type {YouTubePlusEventDelegation & {EventDelegator: any, on: Function, off: Function, clear: Function}} */ ({
-        EventDelegator,
-        on,
-        off,
-        delegate: (parent, eventType, selector, handler, options) =>
-          eventDelegator.delegate(
-            /** @type {Element} */ (parent),
-            eventType,
-            selector,
-            handler,
-            options
-          ),
-        undelegate: (parent, eventType, selector, handler) =>
-          eventDelegator.undelegate(/** @type {Element} */ (parent), eventType, selector, handler),
-        getStats: () => eventDelegator.getStats(),
-        clear: () => eventDelegator.clear(),
-      });
+  window.YouTubePlusEventDelegation = surface;
+  if (typeof unsafeWindow !== 'undefined') {
+    unsafeWindow.YouTubePlusEventDelegation = surface;
   }
 })();

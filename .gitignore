@@ -10,7 +10,6 @@ youtube.user.js
 youtube.user.unoptimized.js
 youtube.user.js.map
 bundle-size-report.json
-eslint-report.json
 innerHTML-usage.txt
 
 # IDE and editors
@@ -67,7 +66,6 @@ GREASYFORK_PUBLISH en.md
 youtube.user.js
 
 # Linting/analysis outputs
-eslint-output.json
 *.sarif
 audit*.json
 audit*.txt
@@ -77,6 +75,7 @@ final_summary.txt
 tests_output.txt
 innerHTML-usage.txt
 AUDIT_REPORT.md
+biome-results.json
 
 # Backup files
 *.bak

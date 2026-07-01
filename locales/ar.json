@@ -289,8 +289,6 @@
   "zenStylePlayerBlurDesc": "إضافة تأثير ضبابي لعناصر التحكم في المشغل",
   "zenStyleTheaterEnhancementsLabel": "تحسينات وضع المسرح",
   "zenStyleTheaterEnhancementsDesc": "لوحة تعليقات عائمة ووضع مسرح محسّن",
-  "zenStyleMiscLabel": "تحسينات متنوعة",
-  "zenStyleMiscDesc": "خلاصة مدمجة وقوائم عند التمرير وتحسينات بسيطة أخرى",
   "playlistDeleteMode": "وضع الحذف",
   "playlistDeleteModeExit": "الخروج من وضع الحذف",
   "playlistSelectVideo": "تحديد الفيديو",
@@ -345,5 +343,11 @@
   "themeVariantGlass": "مظهر زجاجي",
   "themeVariantSolid": "مظهر صلب",
   "zenStyleCompactFeedLabel": "خلاصة مدمجة",
-  "zenStyleCompactFeedDesc": "تقليل تباعد الخلاصة وعرض الإجراءات السريعة داخل السطر عند التمرير فوقها"
+  "zenStyleCompactFeedDesc": "تقليل تباعد الخلاصة وعرض الإجراءات السريعة داخل السطر عند التمرير فوقها",
+  "playAllMode": "وضع تشغيل الكل",
+  "noCommentsYet": "لا توجد تعليقات بعد",
+  "togglePipSubmenu": "تبديل القائمة الفرعية لـ PiP",
+  "openGitHubButton": "GitHub",
+  "openDiscussionsButton": "المناقشات",
+  "openGreasyForkButton": "GreasyFork"
 }

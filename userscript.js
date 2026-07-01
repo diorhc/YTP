@@ -25,7 +25,7 @@
 // @name:uz             YouTube +
 // @name:vi             YouTube +
 // @namespace           by
-// @version             2.5.1
+// @version             2.5.2
 // @author              diorhc
 // @description         Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:ar      Tabview YouTube and download and other features ↴
@@ -52,13 +52,8 @@
 // @description:uk      Перегляд вкладок YouTube, завантаження та інші функції ↴
 // @description:uz      YouTube uchun tabview va yuklab olish va boshqa xususiyatlar ↴
 // @description:vi      Chế độ tab cho YouTube, tải xuống và các tính năng khác ↴
-// @match               https://*.youtube.com/*
-// @match               https://music.youtube.com/*
-// @match               https://studio.youtube.com/*
+// @match               *://*.youtube.com/*
 // @match               *://myactivity.google.com/*
-// @include             *://www.youtube.com/feed/history/*
-// @include             https://www.youtube.com
-// @include             *://*.youtube.com/**
 // @exclude             *://accounts.youtube.com/*
 // @exclude             *://www.youtube.com/live_chat_replay*
 // @exclude             *://www.youtube.com/persist_identity*
@@ -66,12 +61,8 @@
 // @exclude             /^https?://\S+\.(txt|png|jpg|jpeg|gif|xml|svg|manifest|log|ini)[^\/]*$/
 // @icon                https://www.google.com/s2/favicons?sz=64&domain=youtube.com
 // @license             MIT
-// @require             https://cdn.jsdelivr.net/npm/@preact/signals-core@1.12.1/dist/signals-core.min.js
-// @require             https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/dist/browser-id3-writer.min.js
-// @require             https://cdn.jsdelivr.net/npm/preact@10.27.2/dist/preact.min.js
-// @require             https://cdn.jsdelivr.net/npm/preact@10.27.2/hooks/dist/hooks.umd.js
-// @require             https://cdn.jsdelivr.net/npm/@preact/signals@2.5.0/dist/signals.min.js
-// @require             https://cdn.jsdelivr.net/npm/dayjs@1.11.19/dayjs.min.js
+// @require             https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/dist/browser-id3-writer.min.js#sha256=c8870af850bb4a06059f0eb8318f80fab2e78015c0723114a656bf92c613d2f5
+// @require             https://cdn.jsdelivr.net/npm/dayjs@1.11.19/dayjs.min.js#sha256=9cfdb93f38afcf2d076abecd66d32bfd3383cdf1967654ebc26a26605daf4173
 // @grant               GM_addStyle
 // @grant               GM_getValue
 // @grant               GM_setValue
@@ -93,13 +84,10 @@
 // @connect             youtube.com
 // @connect             www.youtube.com
 // @connect             m.youtube.com
-// @connect             googlevideo.com
 // @connect             i.ytimg.com
 // @connect             ytimg.com
 // @connect             yt3.ggpht.com
-// @connect             yt3.googleusercontent.com
 // @connect             fonts.googleapis.com
-// @connect             www.gstatic.com
 // @connect             self
 // @run-at              document-start
 // @noframes

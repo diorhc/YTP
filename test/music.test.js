@@ -25,7 +25,7 @@ describe('Music Module', () => {
         SETTINGS_KEY: 'youtube_plus_settings',
       },
     });
-    Object.defineProperty(window, 'YouTubeDOMCache', {
+    Object.defineProperty(window, 'YouTubePlusDOMCache', {
       configurable: true,
       writable: true,
       value: {

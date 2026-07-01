@@ -289,8 +289,6 @@
   "zenStylePlayerBlurDesc": "为播放器控件添加模糊效果",
   "zenStyleTheaterEnhancementsLabel": "影院模式增强",
   "zenStyleTheaterEnhancementsDesc": "浮动评论面板和改进的影院模式",
-  "zenStyleMiscLabel": "其他增强",
-  "zenStyleMiscDesc": "紧凑订阅源、悬停菜单和其他小改进",
   "playlistDeleteMode": "删除模式",
   "playlistDeleteModeExit": "退出删除模式",
   "playlistSelectVideo": "选择视频",
@@ -345,5 +343,11 @@
   "themeVariantGlass": "玻璃拟态",
   "themeVariantSolid": "纯色",
   "zenStyleCompactFeedLabel": "紧凑信息流",
-  "zenStyleCompactFeedDesc": "减少信息流间距，并在悬停时内联显示快速操作"
+  "zenStyleCompactFeedDesc": "减少信息流间距，并在悬停时内联显示快速操作",
+  "playAllMode": "全部播放模式",
+  "noCommentsYet": "暂无评论",
+  "togglePipSubmenu": "切换画中画子菜单",
+  "openGitHubButton": "GitHub",
+  "openDiscussionsButton": "讨论",
+  "openGreasyForkButton": "GreasyFork"
 }

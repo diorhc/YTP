@@ -1,14 +1,17 @@
 {
   "$schema": "https://unpkg.com/knip@latest/schema.json",
   "entry": [
-    "src/shared-defaults.js",
+    "src/error-boundary.js",
     "src/logger.js",
-    "src/module-registry.js",
+    "src/registry.js",
     "src/utils.js",
+    "src/cleanup-manager.js",
     "src/design-system.js",
     "src/safe-dom.js",
     "src/basic.js",
     "src/performance.js",
+    "src/speedcontrol.js",
+    "src/screenshot.js",
     "src/dom-cache.js",
     "src/mutation-coordinator.js",
     "src/event-delegation.js",
@@ -38,16 +41,12 @@
     ".github/scripts/**/*.js",
     "test/**/*.js"
   ],
-  "project": ["scripts/**/*.js", ".github/scripts/**/*.js", "test/**/*.js", "src/**/*.js"],
-  "ignore": [".github/workflows/**"],
-  "ignoreDependencies": [
-    "@eslint/js",
-    "@microsoft/eslint-formatter-sarif",
-    "cloakbrowser",
-    "eslint-plugin-sonarjs",
-    "playwright-extra",
-    "puppeteer-extra-plugin-stealth",
-    "stylelint-config-standard"
+  "project": [
+    "scripts/**/*.js",
+    ".github/scripts/**/*.js",
+    "test/**/*.js",
+    "src/**/*.js"
   ],
-  "ignoreBinaries": ["dot", "semgrep"]
+  "ignoreDependencies": [],
+  "ignoreBinaries": []
 }

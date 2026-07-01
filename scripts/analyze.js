@@ -299,9 +299,31 @@ function analyzeJSDoc() {
 
   for (const file of files) {
     const content = readSource(file);
-    const functions = content.match(
-      /function\s+\w+\s*\(|const\s+\w+\s*=\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>)/g
+    // Match a wider range of function declarations so the coverage
+    // metric reflects JSDoc discipline across styles:
+    //   - function name(...)
+    //   - const name = (...), const name = function, const name = async (...) =>
+    //   - class methods (shorthand `name(...)` and key `name: function`).
+    // We exclude common control-flow openers (if/for/while/...) and
+    // built-in constructors (new MutationObserver(function (e) { ... })
+    // where the trailing `function` is a value, not a declaration.
+    const functionDeclRegex = new RegExp(
+      [
+        // 1. `function name(...)` declaration.
+        'function\\s+\\w+\\s*\\(',
+        // 2. `const name = (...), const name = function, const name = async (...) =>`.
+        'const\\s+\\w+\\s*=\\s*(?:async\\s+)?(?:function|\\([^)]*\\)\\s*=>)',
+        // 3. Class/object shorthand: a name followed by `(...) {` that is
+        //    NOT a control-flow opener AND has a non-`new`/`return`/etc.
+        //    prefix. We anchor on the line so the name appears as a
+        //    statement start (indent or `,` or `=` or `{`).
+        '(?:^\\s*(?:[\\w$]+\\s*[,{=;]\\s*|[,;{]\\s*))(?:async\\s+)?(?!(?:if|for|while|switch|catch|do|return|throw|new|typeof|void|delete|in|of|yield|await|function|class|const|let|var|return)\\b)(\\w+)\\s*\\([^)]*\\)\\s*\\{',
+        // 4. Object key + function: `name: function (...)` or `name: (...) =>`.
+        '\\b\\w+\\s*:\\s*(?:async\\s+)?(?:function|\\([^)]*\\)\\s*=>)',
+      ].join('|'),
+      'gm'
     );
+    const functions = content.match(functionDeclRegex);
     const functionCount = functions ? functions.length : 0;
 
     const jsdocComments = content.match(/\/\*\*[\s\S]*?\*\//g);

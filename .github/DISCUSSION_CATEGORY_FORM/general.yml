@@ -1,0 +1,28 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## General Discussion
+        Talk about anything related to YouTube+.
+        
+        **Other categories may be more appropriate:**
+        - **Bug Reports** — for reporting issues
+        - **Ideas** — for feature requests
+        - **Q&A** — for questions
+        - **Show and tell** — for sharing configurations
+  - type: textarea
+    id: topic
+    attributes:
+      label: Discussion Topic
+      description: "What would you like to discuss?"
+      placeholder: "I'd like to talk about..."
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: "Provide more context about your topic"
+      placeholder: "Here's what I think..."
+    validations:
+      required: false

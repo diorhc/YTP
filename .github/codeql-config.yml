@@ -22,8 +22,8 @@ packs:
 query-filters:
   - exclude:
       id: js/useless-expression
-      
-  # Allow console.warn and console.error (as per ESLint config)
+
+  # Allow console.warn and console.error (as per Biome config)
   - exclude:
       id: js/use-of-console-log
 

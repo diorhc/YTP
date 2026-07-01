@@ -1,34 +1,13 @@
-// YouTube Picture-in-Picture settings
+// YouTube Picture-in-Picture — LazyLoader registered as 'pip'.
+//
+// Responsibility: PiP toggle button, keyboard shortcut, Firefox
+//   bridge script injection, and PiP session state persistence.
+//   Uses nonce-based inline script injection for CSP compatibility.
+// Public surface: none (self-contained IIFE, registered via LazyLoader).
 (function () {
-  'use strict';
-  const setTimeout_ = setTimeout.bind(window);
-  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
-  /**
-   * @param {Element} container
-   * @param {string} html
-   */
-  const renderTemplateClone = (container, html) => {
-    if (!(container instanceof Element)) return;
-    const template = document.createElement('template');
-    const range = document.createRange();
-    const root = document.body || document.documentElement;
-    if (root) range.selectNode(root);
-    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
-    template.content.append(range.createContextualFragment(_createHTML(html)));
-    container.replaceChildren(template.content.cloneNode(true));
-  };
-
-  // Translation helper from centralized i18n
-  const t = window.YouTubeUtils.t;
-  const logger = window.YouTubeUtils?.logger || console;
-  const qs =
-    window.YouTubeUtils?.$ ||
-    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
-      (root || document).querySelector(selector));
-  const byId =
-    window.YouTubeUtils?.byId ||
-    ((/** @type {string} */ id) =>
-      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
+  // Shared helpers from YouTubeUtils (canonical boot shorthand)
+  const U = window.YouTubeUtils;
+  const { logger, $: qs, byId, setTimeout_ } = U?.helpers ?? {};
 
   /**
    * @typedef {{
@@ -72,8 +51,8 @@
         if (unwrapped && typeof unwrapped === 'object') return unwrapped;
         return /** @type {any} */ (unsafeWindow);
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Pip');
     }
     return /** @type {any} */ (window);
   };
@@ -92,8 +71,8 @@
         if (sharedPolicy && typeof sharedPolicy.createScript === 'function') {
           return sharedPolicy.createScript(normalized);
         }
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Pip');
       }
       return normalized;
     });
@@ -114,7 +93,7 @@
       const now = Date.now();
       if (_cachedVideoRef && now - _cachedVideoTs < _VIDEO_CACHE_TTL) {
         const cached = _cachedVideoRef.deref?.();
-        if (cached && cached.isConnected) {
+        if (cached?.isConnected) {
           return cached;
         }
         _cachedVideoRef = null;
@@ -130,13 +109,13 @@
           YouTubeUtils.querySelector('video')) ||
         qs('video');
 
-      if (candidate && candidate.tagName && candidate.tagName.toLowerCase() === 'video') {
+      if (candidate?.tagName && candidate.tagName.toLowerCase() === 'video') {
         const video = /** @type {HTMLVideoElement} */ (candidate);
         // P9: Cache the result
         try {
           _cachedVideoRef = new WeakRef(video);
           _cachedVideoTs = now;
-        } catch (e) {
+        } catch (_e) {
           // WeakRef not supported — no caching
         }
         return video;
@@ -144,7 +123,7 @@
 
       return null;
     } catch (error) {
-      window.console.error('[PiP] Error getting video element:', error);
+      logger?.error?.('PiP', 'Error getting video element', error);
       return null;
     }
   };
@@ -285,11 +264,13 @@
       const gmAddElement = /** @type {any} */ (globalThis).GM_addElement;
       if (typeof gmAddElement === 'function') {
         gmAddElement('script', {
-          textContent: /** @type {any} */ (createTrustedInlineScript(bridgeScript)),
+          // GM_addElement options cross the extension bridge and must stay
+          // structured-clone-safe in Firefox userscript environments.
+          textContent: String(bridgeScript),
         });
         return true;
       }
-    } catch (e) {
+    } catch (_e) {
       // GM_addElement not available — fall through
     }
 
@@ -311,14 +292,15 @@
         script.remove();
         if (pageGlobal[FIREFOX_PIP_BRIDGE_FLAG]) return true;
       }
-    } catch (e) {
+    } catch (_e) {
       // Nonce injection failed — fall through
     }
 
     // Bridge installation failed — the postMessage path won't work,
     // but clickNativeYouTubePipButton() and unsafeWindow paths are still tried.
-    window.console.warn(
-      '[PiP] Firefox PiP bridge could not be installed (CSP). Using button fallback.'
+    logger?.warn?.(
+      'PiP',
+      'Firefox PiP bridge could not be installed (CSP). Using button fallback.'
     );
     return false;
   };
@@ -338,8 +320,8 @@
           enabled: pipSettings.enabled,
         };
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Pip');
     }
   };
 
@@ -458,10 +440,11 @@
     if (typeof gmAddEl === 'function') {
       try {
         gmAddEl('script', {
-          textContent: /** @type {any} */ (createTrustedInlineScript(bridgeScript)),
+          // Keep payload strictly serializable for VM/TM Firefox bridge.
+          textContent: String(bridgeScript),
         });
         if (pageGlobal[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]) return true;
-      } catch (e) {
+      } catch (_e) {
         // Fall through to script tag injection
       }
     }
@@ -479,7 +462,7 @@
       (document.head || document.documentElement).appendChild(script);
       script.remove();
       if (pageGlobal[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]) return true;
-    } catch (e) {
+    } catch (_e) {
       // Non-critical
     }
 
@@ -526,7 +509,7 @@
         setTimeout_(function () {
           finish(false);
         }, 1200);
-      } catch (e) {
+      } catch (_e) {
         resolve(false);
       }
     });
@@ -554,8 +537,8 @@
               clientY,
             })
           );
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Pip');
         }
       });
     };
@@ -572,8 +555,8 @@
       if (typeof unsafeWindow !== 'undefined' && unsafeWindow?.document) {
         contexts.push(/** @type {Document} */ (unsafeWindow.document));
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Pip');
     }
 
     revealPlayerControls();
@@ -603,15 +586,15 @@
       } else {
         sessionStorage.removeItem(PIP_SESSION_KEY);
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Pip');
     }
   };
 
   const wasSessionActive = () => {
     try {
       return sessionStorage.getItem(PIP_SESSION_KEY) === 'true';
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   };
@@ -627,7 +610,7 @@
 
       const parsed = JSON.parse(saved);
       if (typeof parsed !== 'object' || parsed === null) {
-        window.console.warn('[PiP] Invalid settings format');
+        logger?.warn?.('PiP', 'Invalid settings format');
         return;
       }
 
@@ -652,7 +635,7 @@
         }
       }
     } catch (e) {
-      window.console.error('[PiP] Error loading settings:', e);
+      logger?.error?.('PiP', 'Error loading settings', e);
     }
   };
 
@@ -668,7 +651,7 @@
       };
       localStorage.setItem(pipSettings.storageKey, JSON.stringify(settingsToSave));
     } catch (e) {
-      window.console.error('[PiP] Error saving settings:', e);
+      logger?.error?.('PiP', 'Error saving settings', e);
     }
     // Keep page-context keydown bridge in sync with updated shortcut/enabled state.
     syncPipShortcutToPageGlobal();
@@ -714,7 +697,7 @@
    * @returns {Promise<void>}
    */
   const togglePictureInPicture = async video => {
-    if (!pipSettings.enabled || !video) return;
+    if (!(pipSettings.enabled && video)) return;
 
     try {
       const isFirefox = /firefox/i.test(navigator.userAgent || '');
@@ -733,8 +716,8 @@
             await document.exitPictureInPicture();
             setSessionActive(false);
             return;
-          } catch (e) {
-            void e; /* fall through */
+          } catch {
+            /* no-op */
           }
         }
 
@@ -763,8 +746,8 @@
             setSessionActive(true);
             return;
           }
-        } catch (e) {
-          void e; /* fall through */
+        } catch {
+          /* no-op */
         }
 
         // Final Firefox fallback: use postMessage to trigger PiP from page context
@@ -787,8 +770,8 @@
               setSessionActive(true);
             }
           }
-        } catch (e) {
-          logger.warn('[PiP] All Firefox PiP fallbacks exhausted');
+        } catch (_e) {
+          logger?.warn?.('PiP', 'All Firefox PiP fallbacks exhausted');
         }
         return;
       }
@@ -815,9 +798,7 @@
       if (hadDisablePiP) {
         try {
           video.disablePictureInPicture = false;
-        } catch (e) {
-          /* ignore */
-          void e; // Non-critical, suppressed
+        } catch {
           /* ignore */
         }
       }
@@ -825,11 +806,11 @@
       // Keep user activation path short, but retry once after metadata for API timing quirks.
       try {
         await requestPictureInPictureCompat(video);
-      } catch (e) {
+      } catch (_e) {
         await waitForMetadataOnce(video);
         try {
           await requestPictureInPictureCompat(video);
-        } catch (e) {
+        } catch (_e) {
           const toggledByButton = clickNativeYouTubePipButton();
           if (!toggledByButton) {
             throw new Error('requestPictureInPicture is not available on video element');
@@ -840,16 +821,14 @@
       if (hadDisablePiP) {
         try {
           video.disablePictureInPicture = true;
-        } catch (e) {
-          /* ignore */
-          void e; // Non-critical, suppressed
+        } catch {
           /* ignore */
         }
       }
 
       setSessionActive(true);
     } catch (error) {
-      window.console.error('[YouTube+][PiP] Failed to toggle Picture-in-Picture:', error);
+      logger?.error?.('PiP', 'Failed to toggle Picture-in-Picture', error);
     }
   };
 
@@ -899,8 +878,8 @@
       if (video.disablePictureInPicture === true) {
         video.disablePictureInPicture = false;
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Pip');
     }
 
     // Firefox hotkey path: preserve user gesture by trying native button first.
@@ -928,7 +907,7 @@
       handled = !allowBrowserFallback;
     }
 
-    if (!handled && !document.pictureInPictureElement) {
+    if (!(handled || document.pictureInPictureElement)) {
       setTimeout(() => {
         if (!document.pictureInPictureElement) {
           const toggledByButton = clickNativeYouTubePipButton();
@@ -943,7 +922,7 @@
       }, 70);
     }
 
-    if (!handled && !allowBrowserFallback) {
+    if (!(handled || allowBrowserFallback)) {
       // Custom shortcuts in Firefox should not fall through to browser defaults (e.g. Ctrl+P print).
       void togglePictureInPicture(video);
       handled = true;
@@ -963,357 +942,103 @@
   };
 
   /**
-   * Add PiP settings UI to advanced settings modal
-   * @returns {boolean}
+   * Inject PiP settings styles via the canonical style system.
+   * Uses design-system.js getStyle(...) + StyleManager.add so the CSS is
+   * owned by the shared host (`#youtube-plus-styles`) and stays in sync
+   * with other modules. The byId('pip-styles') guard preserves
+   * compatibility with users upgrading from a pre-canonical version of
+   * this module that injected a raw `<style id="pip-styles">` element.
+   * @returns {void}
    */
-  const addPipSettingsToModal = () => {
-    const advancedSection = qs('.ytp-plus-settings-section[data-section="advanced"]');
-    if (!advancedSection || advancedSection.querySelector('.pip-settings-item')) return false;
+  const addPipStyles = () => {
+    if (byId('pip-styles')) return;
+    const styles = window.YouTubePlusDesignSystem?.getStyle?.('pip-styles') || '';
+    YouTubeUtils.StyleManager.add('pip-styles', styles);
+  };
 
+  /**
+   * Attach event handlers to the static PiP settings UI.
+   * The HTML is generated by settings-helpers.js — this function only
+   * wires up the change/input handlers and initializes glass dropdowns.
+   */
+  const attachPipHandlers = () => {
+    const advancedSection = qs('.ytp-plus-settings-section[data-section="advanced"]');
+    if (!advancedSection) return;
+    const enableItem = advancedSection.querySelector('.pip-settings-item');
+    if (!enableItem || /** @type {HTMLElement} */ (enableItem).dataset.handlerAttached) return;
+    /** @type {HTMLElement} */ (enableItem).dataset.handlerAttached = '1';
+
+    addPipStyles();
+
+    const submenuWrap = qs('.pip-submenu[data-submenu="pip"]');
     const getSubmenuExpanded = () => {
       try {
         const raw = localStorage.getItem('ytp-plus-submenu-states');
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.pip === 'boolean') return parsed.pip;
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Pip');
       }
       return null;
     };
-    const storedExpanded = getSubmenuExpanded();
-    const initialExpanded = typeof storedExpanded === 'boolean' ? storedExpanded : true;
 
-    // Add styles if they don't exist
-    if (!byId('pip-styles')) {
-      const styles = `
-          .pip-shortcut-editor { display: flex; align-items: center; gap: 8px; }
-          .pip-shortcut-editor select, #pip-key {background: rgba(34, 34, 34, var(--yt-header-bg-opacity)); color: var(--yt-spec-text-primary); border: 1px solid var(--yt-spec-10-percent-layer); border-radius: var(--yt-radius-sm); padding: 4px;}
-        `;
-      YouTubeUtils.StyleManager.add('pip-styles', styles);
+    window.YouTubePlusDesignSystem?.initGlassDropdown?.({
+      dropdown: byId('pip-modifier-dropdown'),
+      hiddenSelect: byId('pip-modifier-combo'),
+    });
+
+    const enableCheckbox = byId('pip-enable-checkbox');
+    if (enableCheckbox instanceof HTMLInputElement) {
+      enableCheckbox.addEventListener('change', (/** @type {Event} */ e) => {
+        const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+        pipSettings.enabled = target.checked;
+        const submenuToggle = enableItem.querySelector(
+          '.ytp-plus-submenu-toggle[data-submenu="pip"]'
+        );
+        if (submenuToggle instanceof HTMLElement) {
+          if (pipSettings.enabled) {
+            const stored = getSubmenuExpanded();
+            const nextExpanded = typeof stored === 'boolean' ? stored : true;
+            submenuToggle.removeAttribute('disabled');
+            submenuToggle.classList.remove('pip-submenu-toggle-hidden');
+            submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+            if (submenuWrap instanceof HTMLElement)
+              submenuWrap.classList.toggle('is-hidden', !nextExpanded);
+          } else {
+            submenuToggle.setAttribute('disabled', '');
+            submenuToggle.classList.add('pip-submenu-toggle-hidden');
+            if (submenuWrap instanceof HTMLElement) submenuWrap.classList.add('is-hidden');
+          }
+        }
+        saveSettings();
+      });
     }
 
-    // Enable/disable toggle
-    const enableItem = document.createElement('div');
-    enableItem.className =
-      'ytp-plus-settings-item pip-settings-item ytp-plus-settings-item--with-submenu';
-    renderTemplateClone(
-      enableItem,
-      `
-        <div>
-          <label class="ytp-plus-settings-item-label" for="pip-enable-checkbox">${t(
-            'pipTitle'
-          )}</label>
-          <div class="ytp-plus-settings-item-description">${t('pipDescription')}</div>
-        </div>
-        <div class="ytp-plus-settings-item-actions">
-          <button
-            type="button"
-            class="ytp-plus-submenu-toggle"
-            data-submenu="pip"
-            aria-label="Toggle PiP submenu"
-            aria-expanded="${initialExpanded ? 'true' : 'false'}"
-            ${pipSettings.enabled ? '' : 'disabled'}
-            style="display:${pipSettings.enabled ? 'inline-flex' : 'none'};"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-          <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enablePiP" id="pip-enable-checkbox" ${pipSettings.enabled ? 'checked' : ''}>
-        </div>
-      `
-    );
-    advancedSection.appendChild(enableItem);
-
-    // Shortcut settings
-    const submenuWrap = document.createElement('div');
-    submenuWrap.className = 'pip-submenu';
-    /** @type {any} */ (submenuWrap).dataset.submenu = 'pip';
-    /** @type {any} */ (submenuWrap).style.display =
-      pipSettings.enabled && initialExpanded ? 'block' : 'none';
-    /** @type {any} */ (submenuWrap).style.marginLeft = '12px';
-    /** @type {any} */ (submenuWrap).style.marginBottom = '12px';
-
-    const submenuCard = document.createElement('div');
-    submenuCard.className = 'glass-card';
-    /** @type {any} */ (submenuCard).style.display = 'flex';
-    /** @type {any} */ (submenuCard).style.flexDirection = 'column';
-    /** @type {any} */ (submenuCard).style.gap = '8px';
-
-    const shortcutItem = document.createElement('div');
-    shortcutItem.className = 'ytp-plus-settings-item pip-shortcut-item';
-    /** @type {any} */ (shortcutItem).style.display = 'flex';
-
-    const { ctrlKey, altKey, shiftKey } = pipSettings.shortcut;
-    const modifierValue =
-      ctrlKey && altKey && shiftKey
-        ? 'ctrl+alt+shift'
-        : ctrlKey && altKey
-          ? 'ctrl+alt'
-          : ctrlKey && shiftKey
-            ? 'ctrl+shift'
-            : altKey && shiftKey
-              ? 'alt+shift'
-              : ctrlKey
-                ? 'ctrl'
-                : altKey
-                  ? 'alt'
-                  : shiftKey
-                    ? 'shift'
-                    : 'none';
-
-    renderTemplateClone(
-      shortcutItem,
-      `
-        <div>
-          <label class="ytp-plus-settings-item-label">${t('pipShortcutTitle')}</label>
-          <div class="ytp-plus-settings-item-description">${t('pipShortcutDescription')}</div>
-        </div>
-        <div class="pip-shortcut-editor">
-          <!-- hidden native select kept for compatibility -->
-          <select id="pip-modifier-combo" style="display:none;">
-            ${[
-              'none',
-              'ctrl',
-              'alt',
-              'shift',
-              'ctrl+alt',
-              'ctrl+shift',
-              'alt+shift',
-              'ctrl+alt+shift',
-            ]
-              .map(
-                v =>
-                  `<option value="${v}" ${v === modifierValue ? 'selected' : ''}>${
-                    v === 'none'
-                      ? t('none')
-                      : v
-                          .replace(/\+/g, '+')
-                          .split('+')
-                          .map(k => t(k.toLowerCase()))
-                          .join('+')
-                          .split('+')
-                          .map(k => k.charAt(0).toUpperCase() + k.slice(1))
-                          .join('+')
-                  }</option>`
-              )
-              .join('')}
-          </select>
-
-          <div class="glass-dropdown" id="pip-modifier-dropdown" tabindex="0" role="listbox" aria-expanded="false">
-            <button class="glass-dropdown__toggle" type="button" aria-haspopup="listbox">
-              <span class="glass-dropdown__label">${
-                modifierValue === 'none'
-                  ? t('none')
-                  : modifierValue
-                      .replace(/\+/g, '+')
-                      .split('+')
-                      .map(k => t(k.toLowerCase()))
-                      .map(k => k.charAt(0).toUpperCase() + k.slice(1))
-                      .join('+')
-              }</span>
-              <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <ul class="glass-dropdown__list" role="presentation">
-              ${[
-                'none',
-                'ctrl',
-                'alt',
-                'shift',
-                'ctrl+alt',
-                'ctrl+shift',
-                'alt+shift',
-                'ctrl+alt+shift',
-              ]
-                .map(v => {
-                  const label =
-                    v === 'none'
-                      ? t('none')
-                      : v
-                          .replace(/\+/g, '+')
-                          .split('+')
-                          .map(k => t(k.toLowerCase()))
-                          .map(k => k.charAt(0).toUpperCase() + k.slice(1))
-                          .join('+');
-                  const sel = v === modifierValue ? ' aria-selected="true"' : '';
-                  return `<li class="glass-dropdown__item" data-value="${v}" role="option"${sel}>${label}</li>`;
-                })
-                .join('')}
-            </ul>
-          </div>
-
-          <span>+</span>
-          <input type="text" id="pip-key" value="${pipSettings.shortcut.key}" maxlength="1" style="width: 30px; text-align: center;">
-        </div>
-      `
-    );
-    submenuCard.appendChild(shortcutItem);
-    submenuWrap.appendChild(submenuCard);
-    advancedSection.appendChild(submenuWrap);
-
-    // Initialize glass dropdown interactions for PiP selector
-    const initPipDropdown = () => {
-      const hidden = byId('pip-modifier-combo');
-      const dropdown = byId('pip-modifier-dropdown');
-      if (!(hidden instanceof HTMLSelectElement) || !(dropdown instanceof HTMLElement)) return;
-
-      const toggle = dropdown.querySelector('.glass-dropdown__toggle');
-      const list = dropdown.querySelector('.glass-dropdown__list');
-      const label = dropdown.querySelector('.glass-dropdown__label');
-      if (
-        !(toggle instanceof HTMLElement) ||
-        !(list instanceof HTMLElement) ||
-        !(label instanceof HTMLElement)
-      ) {
-        return;
-      }
-      let items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
-      let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
-      if (idx < 0) idx = 0;
-
-      const openList = () => {
-        dropdown.setAttribute('aria-expanded', 'true');
-        /** @type {any} */ (list).style.display = 'block';
-        items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
-      };
-      const closeList = () => {
-        dropdown.setAttribute('aria-expanded', 'false');
-        /** @type {any} */ (list).style.display = 'none';
-      };
-
-      toggle.addEventListener('click', () => {
-        const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-        if (expanded) closeList();
-        else openList();
-      });
-
-      const outsideClickHandler = (/** @type {Event} */ e) => {
-        const target = e.target instanceof Node ? e.target : null;
-        if (!target || !dropdown.contains(target)) closeList();
-      };
-      if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-        YouTubeUtils.cleanupManager.registerListener(document, 'click', outsideClickHandler);
-      } else {
-        document.addEventListener('click', outsideClickHandler);
-      }
-
-      // Arrow-key navigation and selection
-      dropdown.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
-        const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-        if (e.key === 'ArrowDown') {
-          e.preventDefault();
-          if (!expanded) openList();
-          idx = Math.min(idx + 1, items.length - 1);
-          items.forEach(it => it.removeAttribute('aria-selected'));
-          items[idx].setAttribute('aria-selected', 'true');
-          items[idx].scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'ArrowUp') {
-          e.preventDefault();
-          if (!expanded) openList();
-          idx = Math.max(idx - 1, 0);
-          items.forEach(it => it.removeAttribute('aria-selected'));
-          items[idx].setAttribute('aria-selected', 'true');
-          items[idx].scrollIntoView({ block: 'nearest' });
-        } else if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
-          if (!expanded) {
-            openList();
-            return;
-          }
-          const it = items[idx];
-          if (it) {
-            hidden.value = /** @type {any} */ (it).dataset.value;
-            hidden.dispatchEvent(new Event('change', { bubbles: true }));
-            label.textContent = it.textContent;
-            closeList();
-          }
-        } else if (e.key === 'Escape') {
-          closeList();
-        }
-      });
-
-      list.addEventListener('click', (/** @type {MouseEvent} */ e) => {
-        const target = e.target instanceof HTMLElement ? e.target : null;
-        const it = target ? target.closest('.glass-dropdown__item') : null;
-        if (!it) return;
-        const val = /** @type {any} */ (it).dataset.value;
-        hidden.value = val;
-        list
-          .querySelectorAll('.glass-dropdown__item')
-          .forEach(li => li.removeAttribute('aria-selected'));
-        it.setAttribute('aria-selected', 'true');
-        label.textContent = it.textContent;
-        hidden.dispatchEvent(new Event('change', { bubbles: true }));
-        closeList();
-      });
-    };
-
-    setTimeout(initPipDropdown, 0);
-
-    // Event listeners
-    const enableCheckbox = byId('pip-enable-checkbox');
-    if (!(enableCheckbox instanceof HTMLInputElement)) return true;
-    enableCheckbox.addEventListener('change', (/** @type {Event} */ e) => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      pipSettings.enabled = target.checked;
-      const submenuToggle = enableItem.querySelector(
-        '.ytp-plus-submenu-toggle[data-submenu="pip"]'
-      );
-      if (submenuToggle instanceof HTMLElement) {
-        if (pipSettings.enabled) {
-          const stored = getSubmenuExpanded();
-          const nextExpanded = typeof stored === 'boolean' ? stored : true;
-          submenuToggle.removeAttribute('disabled');
-          /** @type {any} */ (submenuToggle).style.display = 'inline-flex';
-          submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
-          /** @type {any} */ (submenuWrap).style.display = nextExpanded ? 'block' : 'none';
-        } else {
-          submenuToggle.setAttribute('disabled', '');
-          /** @type {any} */ (submenuToggle).style.display = 'none';
-          /** @type {any} */ (submenuWrap).style.display = 'none';
-        }
-      }
-      saveSettings();
-    });
-
     const modifierCombo = byId('pip-modifier-combo');
-    if (!(modifierCombo instanceof HTMLSelectElement)) return true;
-    modifierCombo.addEventListener('change', (/** @type {Event} */ e) => {
-      const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
-      const value = target.value;
-      pipSettings.shortcut.ctrlKey = value.includes('ctrl');
-      pipSettings.shortcut.altKey = value.includes('alt');
-      pipSettings.shortcut.shiftKey = value.includes('shift');
-      saveSettings();
-    });
+    if (modifierCombo instanceof HTMLSelectElement) {
+      modifierCombo.addEventListener('change', (/** @type {Event} */ e) => {
+        const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
+        const value = target.value;
+        pipSettings.shortcut.ctrlKey = value.includes('ctrl');
+        pipSettings.shortcut.altKey = value.includes('alt');
+        pipSettings.shortcut.shiftKey = value.includes('shift');
+        saveSettings();
+      });
+    }
 
     const pipKeyInput = byId('pip-key');
-    if (!(pipKeyInput instanceof HTMLInputElement)) return true;
-    pipKeyInput.addEventListener('input', (/** @type {Event} */ e) => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      if (target.value) {
-        pipSettings.shortcut.key = target.value.toUpperCase();
-        saveSettings();
-      }
-    });
-
-    pipKeyInput.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) =>
-      e.stopPropagation()
-    );
-    return true;
-  };
-
-  const isWatchOrShortsRoute = () => {
-    const path = location.pathname || '';
-    return path === '/watch' || path.startsWith('/shorts');
-  };
-
-  const isSettingsModalOpen = () => {
-    try {
-      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
-    } catch (e) {
-      return false;
+    if (pipKeyInput instanceof HTMLInputElement) {
+      pipKeyInput.addEventListener('input', (/** @type {Event} */ e) => {
+        const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+        if (target.value) {
+          pipSettings.shortcut.key = target.value.toUpperCase();
+          saveSettings();
+        }
+      });
+      pipKeyInput.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) =>
+        e.stopPropagation()
+      );
     }
   };
 
@@ -1368,7 +1093,7 @@
         '/': 'Slash',
         '?': 'Slash',
       };
-      if (Object.prototype.hasOwnProperty.call(symbolCodeMap, normalized)) {
+      if (Object.hasOwn(symbolCodeMap, normalized)) {
         return /** @type {Record<string, string>} */ (symbolCodeMap)[normalized];
       }
 
@@ -1427,7 +1152,7 @@
           // bridge is present, do nothing and let it handle the shortcut natively.
           const pageGlobal = getPageGlobal();
           const bridgeInstalled = Boolean(pageGlobal?.[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]);
-          const pageHandledTs = Number(pageGlobal?.['__ytplusPipPageHandled'] || 0);
+          const pageHandledTs = Number(pageGlobal?.__ytplusPipPageHandled || 0);
           if (now - pageHandledTs < 300) {
             // Bridge already handled this key event.
             return;
@@ -1446,16 +1171,12 @@
           if (video) {
             void togglePictureInPicture(video);
           } else if (!clickNativeYouTubePipButton()) {
-            window.console.warn(
-              '[PiP] Picture-in-Picture API is unavailable in this browser/context'
-            );
+            logger?.warn?.('PiP', 'Picture-in-Picture API is unavailable in this browser/context');
           }
         }
 
-        if (!isFirefox && !document.pictureInPictureElement && !getVideoElement()) {
-          window.console.warn(
-            '[PiP] Picture-in-Picture API is unavailable in this browser/context'
-          );
+        if (!(isFirefox || document.pictureInPictureElement || getVideoElement())) {
+          logger?.warn?.('PiP', 'Picture-in-Picture API is unavailable in this browser/context');
         }
         e.stopPropagation();
         if (typeof e.stopImmediatePropagation === 'function') {
@@ -1486,14 +1207,18 @@
       const pageDocument = pageGlobal?.document;
       const pageWindow = pageGlobal;
       if (pageDocument && pageDocument !== document && pageDocument.addEventListener) {
-        pageDocument.addEventListener('keydown', pipKeydownHandler, { capture: true });
+        pageDocument.addEventListener('keydown', pipKeydownHandler, {
+          capture: true,
+        });
       }
       if (pageWindow && pageWindow !== window && pageWindow.addEventListener) {
-        pageWindow.addEventListener('keydown', pipKeydownHandler, { capture: true });
+        pageWindow.addEventListener('keydown', pipKeydownHandler, {
+          capture: true,
+        });
       }
-    } catch (e) {
+    } catch (_e) {
       // Firefox sandbox may throw Security Exceptions here — continue without page-level listener
-      logger.warn('[PiP] Could not register page-context keydown listener (Firefox sandbox)');
+      logger?.warn?.('PiP', 'Could not register page-context keydown listener (Firefox sandbox)');
     }
 
     const storageHandler = (/** @type {Event} */ e) => {
@@ -1505,7 +1230,7 @@
     YouTubeUtils.cleanupManager.registerListener(window, 'storage', storageHandler);
 
     window.addEventListener('load', () => {
-      if (!pipSettings.enabled || !wasSessionActive() || document.pictureInPictureElement) {
+      if (!(pipSettings.enabled && wasSessionActive()) || document.pictureInPictureElement) {
         return;
       }
 
@@ -1523,8 +1248,8 @@
         if (!handler) return;
         try {
           document.removeEventListener('pointerdown', handler, true);
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Pip');
         }
       };
 
@@ -1543,27 +1268,19 @@
         resumePiP();
       };
 
-      document.addEventListener('pointerdown', pointerListener, { once: true, capture: true });
-      document.addEventListener('keydown', keyListener, { once: true, capture: true });
+      document.addEventListener('pointerdown', pointerListener, {
+        once: true,
+        capture: true,
+      });
+      document.addEventListener('keydown', keyListener, {
+        once: true,
+        capture: true,
+      });
     });
 
     // Settings modal integration — use event instead of MutationObserver
     const ensurePipSettings = () => {
-      if (window.YouTubeUtils?.createRetryScheduler) {
-        window.YouTubeUtils.createRetryScheduler({
-          check: () => addPipSettingsToModal() === true,
-          maxAttempts: 20,
-          interval: 120,
-        });
-        return;
-      }
-      let attempts = 0;
-      const retry = () => {
-        attempts += 1;
-        if (addPipSettingsToModal() || attempts >= 20) return;
-        setTimeout(retry, 120);
-      };
-      retry();
+      attachPipHandlers();
     };
 
     const settingsModalHandler = () => {
@@ -1587,22 +1304,65 @@
     const clickHandler = (/** @type {Event} */ e) => {
       if (!(e instanceof MouseEvent)) return;
       const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      if (target.classList && target.classList.contains('ytp-plus-settings-nav-item')) {
-        if (target.dataset?.section === 'advanced') {
-          setTimeout(ensurePipSettings, 25);
-        }
+      const navItem = target.closest('.ytp-plus-settings-nav-item');
+      if (navItem?.dataset?.section === 'advanced') {
+        setTimeout(ensurePipSettings, 25);
       }
     };
     YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
   };
 
-  if (window.YouTubePlusLazyLoader?.register) {
-    window.YouTubePlusLazyLoader.register('pip', startPipRuntime, {
-      priority: 60,
-      delay: 0,
-      shouldLoad: () => isWatchOrShortsRoute() || isSettingsModalOpen(),
+  // Register settings modal listener at module scope so it fires
+  // regardless of route. Without this, the listener inside
+  // startPipRuntime() would only be registered after whenRelevant
+  // decides the route is relevant, causing a race condition where
+  // opening the modal on a non-/watch page would miss the event.
+  document.addEventListener('youtube-plus-settings-modal-opened', () => {
+    // Ensure settings handlers are attached even on non-/watch pages.
+    // attachPipHandlers is idempotent (checks for existing DOM).
+    setTimeout(() => {
+      attachPipHandlers();
+    }, 50);
+  });
+
+  // PiP has two distinct lifecycles:
+  //
+  //   1. Runtime on /watch — attaches the PiP keyboard shortcut
+  //      and the player listeners. Only relevant on /watch, NOT
+  //      on /shorts (PiP UX is meaningless inside the fullscreen
+  //      shorts player) and only when the feature is enabled.
+  //   2. Settings UI on the "Advanced" tab — the shortcut editor
+  //      is injected when the user opens that section of the
+  //      settings modal. The previous design folded both into one
+  //      LazyLoader registration; splitting them lets each
+  //      lifecycle start exactly when it is relevant.
+
+  if (window.YouTubeUtils?.whenRelevant) {
+    window.YouTubeUtils.whenRelevant({
+      name: 'pip.runtime',
+      isRelevant: () => {
+        if (typeof window.location !== 'object') return false;
+        // /watch only — /shorts intentionally excluded (PiP UX is
+        // meaningless inside the fullscreen shorts player).
+        return /^\/watch/.test(window.location.pathname);
+      },
+      onEnter: startPipRuntime,
     });
-  } else {
+  } else if (typeof window.location === 'object' && /^\/watch/.test(window.location.pathname)) {
     startPipRuntime();
+  }
+
+  if (window.YouTubeUtils?.onSectionActive) {
+    window.YouTubeUtils.onSectionActive('advanced', () => {
+      // Attach handlers on every activation. attachPipHandlers is
+      // idempotent and short-circuits when handlers are already attached.
+      try {
+        setTimeout(() => {
+          attachPipHandlers();
+        }, 25);
+      } catch (_e) {
+        /* non-critical */
+      }
+    });
   }
 })();

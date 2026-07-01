@@ -1,0 +1,48 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Release Notes
+        Official release announcements for YouTube+ updates.
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "Release version number"
+      placeholder: "e.g. 2.5.2"
+    validations:
+      required: true
+  - type: textarea
+    id: changes
+    attributes:
+      label: What's New
+      description: "List of changes in this release"
+      placeholder: |
+        ### Added
+        - Feature X
+        
+        ### Fixed
+        - Bug Y
+        
+        ### Changed
+        - Improvement Z
+    validations:
+      required: true
+  - type: textarea
+    id: breaking
+    attributes:
+      label: Breaking Changes
+      description: "Any breaking changes (leave empty if none)"
+      placeholder: "None"
+    validations:
+      required: false
+  - type: textarea
+    id: download
+    attributes:
+      label: Installation
+      value: |
+        **Install from GreasyFork:** [YouTube+](https://greasyfork.org/ru/scripts/537017-youtube)
+        
+        **Install from GitHub:** [Latest Release](https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js)
+    validations:
+      required: false

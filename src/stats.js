@@ -19,7 +19,11 @@
  */
 // Stats button and menu
 (function () {
-  'use strict';
+  const U = window.YouTubeUtils;
+  U?.StyleManager?.add?.(
+    'ytp-stats-styles',
+    window.YouTubePlusDesignSystem?.getStyle?.('ytp-stats-styles') || ''
+  );
   if (window.__ytpVideoStatsModuleInit) return;
 
   const isVideoStatsTriggerRoute = () => {
@@ -32,33 +36,103 @@
         path.startsWith('/channel/') ||
         path.startsWith('/c/')
       );
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   };
 
-  const isSettingsModalOpen = () => {
-    try {
-      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
-    } catch (e) {
-      return false;
-    }
-  };
+  const isSettingsModalOpen = () => U.isSettingsModalOpen();
 
   const initVideoStats = () => {
     if (window.__ytpVideoStatsModuleInit) return;
     window.__ytpVideoStatsModuleInit = true;
-    const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
+    const _setSafeHTML = U.setSafeHTML;
     const setTimeout_ = setTimeout.bind(window);
 
     // Shared helpers from YouTubeUtils
-    const utils = window.YouTubeUtils;
+    const utils = U;
     const $ = utils.$;
     const $$ = utils.$$;
     const byId = utils.byId;
 
-    // Do not run this module inside YouTube Studio
-    if (window.YouTubeUtils?.isStudioPage?.()) return;
+    // Shared translation helper — must be declared before "inject now"
+    // so addSettingsUI() doesn't hit TDZ on `t`.
+    const t = U.t;
+
+    // Settings state — needed by addSettingsUI() which runs via retry
+    // scheduler even on Studio (before isStudioPage guard returns).
+    const SETTINGS_KEY = 'youtube_stats_button_enabled';
+    const STATS_ICON_ID = 'ytp-stats-universal-icon';
+    const STATS_ICON_SELECTOR = `#${STATS_ICON_ID}, .videoStats[data-ytp-stats-icon="true"], .videoStats`;
+
+    // Safe localStorage wrapper — guards against SecurityError in restricted contexts
+    const _safeLS = window.YouTubeUtils?.safeLS || {
+      /** @param {string} k @param {string|null} [def] @returns {string|null} */
+      getItem: (k, def = null) => {
+        try {
+          return localStorage.getItem(k) ?? def;
+        } catch (_e) {
+          return def;
+        }
+      },
+      /** @param {string} k @param {string} v @returns {boolean} */
+      setItem: (k, v) => {
+        try {
+          localStorage.setItem(k, v);
+          return true;
+        } catch (_e) {
+          return false;
+        }
+      },
+      /** @param {string} k */
+      removeItem: k => {
+        try {
+          localStorage.removeItem(k);
+        } catch (_e) {
+          /* non-critical */
+        }
+      },
+    };
+
+    let statsButtonEnabled = _safeLS.getItem(SETTINGS_KEY) !== 'false';
+
+    // Attach change handler to the static checkbox in settings modal
+    const attachSettingsHandler = () => {
+      try {
+        const checkbox = document.getElementById('ytp-plus-setting-enableStatsButton');
+        if (!(checkbox instanceof HTMLInputElement)) return;
+        if (checkbox.dataset.handlerAttached) return;
+        checkbox.dataset.handlerAttached = 'true';
+        checkbox.checked = statsButtonEnabled;
+        checkbox.addEventListener('change', e => {
+          const input = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+          statsButtonEnabled = input.checked;
+          _safeLS.setItem(SETTINGS_KEY, statsButtonEnabled ? 'true' : 'false');
+          $$(`${STATS_ICON_SELECTOR}, .stats-menu-container`).forEach(el => el.remove());
+          if (statsButtonEnabled) {
+            checkAndInsertIcon();
+            checkAndAddMenu();
+          }
+        });
+      } catch (_e) {
+        // non-critical
+      }
+    };
+
+    if (isSettingsModalOpen()) {
+      attachSettingsHandler();
+    }
+
+    // Register settings modal listener for SUBSEQUENT opens.
+    if (U?.cleanupManager?.registerListener) {
+      U.cleanupManager.registerListener(document, 'youtube-plus-settings-modal-opened', () => {
+        attachSettingsHandler();
+      });
+    } else {
+      document.addEventListener('youtube-plus-settings-modal-opened', () => {
+        attachSettingsHandler();
+      });
+    }
 
     let statsInitialized = false;
 
@@ -66,8 +140,8 @@
       try {
         const path = location.pathname || '';
         if (path === '/watch' || path.startsWith('/shorts')) return true;
-        return window.YouTubeUtils?.isChannelPage?.(location.href) ?? false;
-      } catch (e) {
+        return U?.isChannelPage?.(location.href) ?? false;
+      } catch (_e) {
         return false;
       }
     };
@@ -81,7 +155,6 @@
     };
 
     // Shared translation helper from YouTubeUtils
-    const t = window.YouTubeUtils.t;
     const escapeHtml =
       window.YouTubeSafeDOM?.escapeHTML ||
       window.YouTubeSecurityUtils?.escapeHtml ||
@@ -108,10 +181,10 @@
         /* Modal body */
         .stats-modal-body{position:relative;padding:24px 16px 16px;overflow:visible;flex:1;display:flex;flex-direction:column}
         /* Thumbnail preview */
-        .stats-thumb-title-centered{position:absolute;top:-44px;left:50%;transform:translateX(-50%);z-index:3;display:block;width:fit-content;max-width:min(90%,760px);margin:0;padding:8px 16px;border-radius:18px;border:1px solid var(--yt-glass-border);background:var(--yt-glass-bg);font-size:14px;font-weight:500;color:var(--yt-text-primary);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;transition:all .25s cubic-bezier(.4,0,.2,1)}
+        .stats-thumb-title-centered{position:absolute;top:-44px;left:50%;transform:translateX(-50%);z-index:3;display:block;width:fit-content;max-width:min(90%,760px);margin:0;padding:8px 16px;border-radius:18px;border:1px solid var(--yt-glass-border);background:var(--yt-glass-bg);font-size:14px;font-weight:500;color:var(--yt-text-primary);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;transition:transform .25s cubic-bezier(.4,0,.2,1), background-color .25s cubic-bezier(.4,0,.2,1), border-color .25s cubic-bezier(.4,0,.2,1), color .25s cubic-bezier(.4,0,.2,1)}
         .stats-thumb-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
-        .stats-thumb-img{width:36vw;max-width:420px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;border:1px solid var(--yt-stats-img-border-dark);max-height:44vh}
-        html:not([dark]) .stats-thumb-img{border:1px solid var(--yt-stats-img-border-light)}
+        .stats-thumb-img{width:36vw;max-width:420px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;outline:1px solid rgba(255,255,255,0.1);outline-offset:-1px;max-height:44vh;border:none;}
+        html:not([dark]) .stats-thumb-img{outline:1px solid rgba(0,0,0,0.1);outline-offset:-1px;}
         /* ensure the grid takes remaining horizontal space */
         .stats-thumb-row .stats-grid{flex:1;min-width:0}
         .stats-side-column{flex:1;min-width:280px;display:flex;flex-direction:column}
@@ -173,42 +246,6 @@
         html:not([dark]) .stats-author-handle-big:hover{color:var(--yt-stats-link-hover-dark)}
         `;
 
-    // Settings state
-    const SETTINGS_KEY = 'youtube_stats_button_enabled';
-    const STATS_ICON_ID = 'ytp-stats-universal-icon';
-    const STATS_ICON_SELECTOR = `#${STATS_ICON_ID}, .videoStats[data-ytp-stats-icon="true"], .videoStats`;
-
-    // Safe localStorage wrapper — guards against SecurityError in restricted contexts
-    const _safeLS = {
-      /** @param {string} k @param {string|null} [def] @returns {string|null} */
-      getItem: (k, def = null) => {
-        try {
-          return localStorage.getItem(k) ?? def;
-        } catch (e) {
-          return def;
-        }
-      },
-      /** @param {string} k @param {string} v @returns {boolean} */
-      setItem: (k, v) => {
-        try {
-          localStorage.setItem(k, v);
-          return true;
-        } catch (e) {
-          return false;
-        }
-      },
-      /** @param {string} k */
-      removeItem: k => {
-        try {
-          localStorage.removeItem(k);
-        } catch (e) {
-          /* non-critical */
-        }
-      },
-    };
-
-    let statsButtonEnabled = _safeLS.getItem(SETTINGS_KEY) !== 'false';
-
     let previousUrl = location.href;
     let isChecking = false;
     let experimentalNavListenerKey = null;
@@ -239,8 +276,9 @@
         );
 
         if (recentRequests.length >= rateLimiter.maxRequests) {
-          window.console.warn(
-            `[YouTube+][Stats] Rate limit exceeded for ${key}. Max ${rateLimiter.maxRequests} requests per minute.`
+          window.YouTubePlusLogger?.warn?.(
+            'Stats',
+            `Rate limit exceeded for ${key}. Max ${rateLimiter.maxRequests} requests per minute.`
           );
           return false;
         }
@@ -266,9 +304,14 @@
       },
     };
 
+    /**
+     * Inject video stats CSS once
+     * @returns {void}
+     * @private
+     */
     function addStyles() {
       if (!byId('youtube-enhancer-styles')) {
-        YouTubeUtils.StyleManager.add('youtube-enhancer-styles', styles);
+        U.StyleManager.add('youtube-enhancer-styles', styles);
       }
     }
 
@@ -308,6 +351,10 @@
       return null;
     }
 
+    /**
+     * Determine the current YouTube video URL from query params or shorts path
+     * @returns {string|null} Full YouTube video/shorts URL or null
+     */
     function getCurrentVideoUrl() {
       try {
         const url = window.location.href;
@@ -324,7 +371,7 @@
         // Try to get from shorts URL
         return getVideoIdFromShorts(url);
       } catch (error) {
-        YouTubeUtils?.logError?.('Stats', 'Failed to get video URL', /** @type {any} */ (error));
+        U?.logError?.('Stats', 'Failed to get video URL', /** @type {any} */ (error));
         return null;
       }
     }
@@ -351,11 +398,7 @@
 
         return '';
       } catch (error) {
-        YouTubeUtils?.logError?.(
-          'Stats',
-          'Failed to get channel identifier',
-          /** @type {any} */ (error)
-        );
+        U?.logError?.('Stats', 'Failed to get channel identifier', /** @type {any} */ (error));
         return '';
       }
     }
@@ -373,16 +416,12 @@
       try {
         const parsedUrl = new URL(url);
         if (parsedUrl.hostname !== 'www.youtube.com' && parsedUrl.hostname !== 'youtube.com') {
-          window.console.warn('[YouTube+][Stats] Invalid domain for channel check');
+          window.YouTubePlusLogger?.warn?.('Stats', 'Invalid domain for channel check');
           return false;
         }
         return true;
       } catch (error) {
-        YouTubeUtils?.logError?.(
-          'Stats',
-          'Invalid URL for channel check',
-          /** @type {any} */ (error)
-        );
+        U?.logError?.('Stats', 'Invalid URL for channel check', /** @type {any} */ (error));
         return false;
       }
     }
@@ -402,10 +441,10 @@
           hostname !== 'youtube.com' &&
           hostname !== 'm.youtube.com'
         ) {
-          window.console.warn('[YouTube+][Stats] Blocked fetch to non-YouTube URL:', hostname);
+          window.YouTubePlusLogger?.warn?.('Stats', 'Blocked fetch to non-YouTube URL:', hostname);
           return null;
         }
-      } catch (e) {
+      } catch (_e) {
         return null;
       }
 
@@ -424,8 +463,9 @@
         clearTimeout(timeoutId);
 
         if (!response.ok) {
-          window.console.warn(
-            `[YouTube+][Stats] HTTP ${response.status} when checking channel tabs`
+          window.YouTubePlusLogger?.warn?.(
+            'Stats',
+            `HTTP ${response.status} when checking channel tabs`
           );
           return null;
         }
@@ -435,14 +475,14 @@
         // Limit response size to prevent memory issues
         if (html.length > 5000000) {
           // 5MB limit
-          window.console.warn('[YouTube+][Stats] Response too large, skipping parse');
+          window.YouTubePlusLogger?.warn?.('Stats', 'Response too large, skipping parse');
           return null;
         }
 
         return html;
       } catch (error) {
         if (/** @type {any} */ (error).name === 'AbortError') {
-          window.console.warn('[YouTube+][Stats] Channel check timed out');
+          window.YouTubePlusLogger?.warn?.('Stats', 'Channel check timed out');
         }
         throw error;
       }
@@ -456,18 +496,14 @@
     function extractYouTubeData(html) {
       const match = html.match(/var ytInitialData = (.+?);<\/script>/);
 
-      if (!match || !match[1]) {
+      if (!match?.[1]) {
         return null;
       }
 
       try {
         return JSON.parse(match[1]);
       } catch (parseError) {
-        YouTubeUtils?.logError?.(
-          'Stats',
-          'Failed to parse ytInitialData',
-          /** @type {any} */ (parseError)
-        );
+        U?.logError?.('Stats', 'Failed to parse ytInitialData', /** @type {any} */ (parseError));
         return null;
       }
     }
@@ -602,7 +638,7 @@
 
         const flags = analyzeChannelTabs(data);
         if (flags.hasStreams || flags.hasShorts) {
-          window.console.info('[YouTube+][Stats] Channel tabs:', {
+          window.YouTubePlusLogger?.info?.('Stats', 'Channel tabs:', {
             hasStreams: flags.hasStreams,
             hasShorts: flags.hasShorts,
           });
@@ -610,7 +646,7 @@
 
         refreshStatsMenu();
       } catch (error) {
-        YouTubeUtils?.logError?.('Stats', 'Channel tab check failed', /** @type {any} */ (error));
+        U?.logError?.('Stats', 'Channel tab check failed', /** @type {any} */ (error));
       } finally {
         isChecking = false;
       }
@@ -620,17 +656,17 @@
      * Check for URL changes with debouncing
      */
     const checkUrlChange =
-      YouTubeUtils?.debounce?.(() => {
+      U?.debounce?.(() => {
         try {
           const currentUrl = location.href;
           if (currentUrl !== previousUrl) {
             previousUrl = currentUrl;
-            if (window.YouTubeUtils?.isChannelPage?.(currentUrl) ?? false) {
+            if (U?.isChannelPage?.(currentUrl) ?? false) {
               setTimeout(() => checkChannelTabs(currentUrl), 500);
             }
           }
         } catch (error) {
-          YouTubeUtils?.logError?.('Stats', 'URL change check failed', /** @type {any} */ (error));
+          U?.logError?.('Stats', 'URL change check failed', /** @type {any} */ (error));
         }
       }, 300) ||
       function () {
@@ -638,12 +674,12 @@
           const currentUrl = location.href;
           if (currentUrl !== previousUrl) {
             previousUrl = currentUrl;
-            if (window.YouTubeUtils?.isChannelPage?.(currentUrl) ?? false) {
+            if (U?.isChannelPage?.(currentUrl) ?? false) {
               setTimeout(() => checkChannelTabs(currentUrl), 500);
             }
           }
         } catch (error) {
-          window.console.error('[YouTube+][Stats] URL change check failed:', error);
+          window.YouTubePlusLogger?.error?.('Stats', 'URL change check failed:', error);
         }
       };
 
@@ -674,6 +710,10 @@
       return icon;
     }
 
+    /**
+     * Insert the universal stats icon into the masthead #end container
+     * @returns {void}
+     */
     function insertUniversalIcon() {
       if (!statsButtonEnabled) return;
 
@@ -700,7 +740,7 @@
           if (icon !== statsIcon) {
             try {
               icon.remove();
-            } catch (e) {
+            } catch (_e) {
               /* ignore detached node errors */
             }
           }
@@ -728,6 +768,15 @@
       }
     }
 
+    /**
+     * Build a YouTube-style outline button with SVG icon and text
+     * @param {string} text - Button label
+     * @param {string} svgPath - SVG path data
+     * @param {string} viewBox - SVG viewBox
+     * @param {string} className - Base CSS class name
+     * @param {() => void} onClick - Click handler
+     * @returns {HTMLElement} button-view-model element
+     */
     function createButton(
       /** @type {string} */ text,
       /** @type {string} */ svgPath,
@@ -742,12 +791,7 @@
       button.className = `yt-spec-button-shape-next yt-spec-button-shape-next--outline yt-spec-button-shape-next--mono yt-spec-button-shape-next--size-m yt-spec-button-shape-next--enable-backdrop-filter-experiment ${className}-button`;
       button.setAttribute('aria-disabled', 'false');
       button.setAttribute('aria-label', text);
-      if (button.style) {
-        button.style.display = 'flex';
-        button.style.alignItems = 'center';
-        button.style.justifyContent = 'center';
-        button.style.gap = '8px';
-      }
+      button.classList.add('ytp-stats-btn');
 
       button.addEventListener('click', (/** @type {MouseEvent} */ e) => {
         e.preventDefault();
@@ -757,11 +801,7 @@
 
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('viewBox', viewBox);
-      if (svg.style) {
-        svg.style.width = '20px';
-        svg.style.height = '20px';
-        svg.style.fill = 'currentColor';
-      }
+      svg.classList.add('ytp-stats-icon');
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', svgPath);
@@ -770,13 +810,10 @@
       const buttonText = document.createElement('div');
       buttonText.className = `yt-spec-button-shape-next__button-text-content ${className}-text`;
       buttonText.textContent = text;
-      if (buttonText.style) {
-        buttonText.style.display = 'flex';
-        buttonText.style.alignItems = 'center';
-      }
+      buttonText.classList.add('ytp-stats-btn-text');
 
       const touchFeedback = document.createElement('yt-touch-feedback-shape');
-      if (touchFeedback.style) touchFeedback.style.borderRadius = 'inherit';
+      touchFeedback.classList.add('ytp-stats-touch-feedback');
 
       const touchFeedbackDiv = document.createElement('div');
       touchFeedbackDiv.className =
@@ -829,12 +866,12 @@
         if (window.yt?.config_?.INNERTUBE_API_KEY) {
           return window.yt.config_.INNERTUBE_API_KEY;
         }
-      } catch (e) {
+      } catch (_e) {
         // Non-critical, fall through to decoded fallback
       }
       try {
         return window.atob(INNERTUBE_API_KEY_FALLBACK_B64);
-      } catch (e) {
+      } catch (_e) {
         return '';
       }
     }
@@ -861,7 +898,7 @@
         if (window.yt?.config_?.INNERTUBE_CLIENT_VERSION) {
           return window.yt.config_.INNERTUBE_CLIENT_VERSION;
         }
-      } catch (e) {
+      } catch (_e) {
         // Extraction failed, use fallback
       }
       return INNERTUBE_CLIENT_VERSION_FALLBACK;
@@ -997,7 +1034,7 @@
             return null;
           })();
         return country || null;
-      } catch (e) {
+      } catch (_e) {
         return null;
       }
     }
@@ -1015,7 +1052,7 @@
         const response = await fetch(url, createInnerTubeFetchOptions(videoId));
 
         if (!response.ok) {
-          window.console.warn(`[YouTube+][Stats] InnerTube API failed:`, response.status);
+          window.YouTubePlusLogger?.warn?.('Stats', `InnerTube API failed:`, response.status);
           return null;
         }
 
@@ -1029,7 +1066,7 @@
 
         return stats;
       } catch (error) {
-        window.console.error('[YouTube+][Stats] InnerTube fetch error:', error);
+        window.YouTubePlusLogger?.error?.('Stats', 'InnerTube fetch error:', error);
         return null;
       }
     }
@@ -1063,7 +1100,7 @@
           rating: data.rating || null,
         };
       } catch (error) {
-        window.console.error('[YouTube+][Stats] Failed to fetch dislikes:', error);
+        window.YouTubePlusLogger?.error?.('Stats', 'Failed to fetch dislikes:', error);
         return null;
       }
     }
@@ -1106,18 +1143,18 @@
         });
 
         if (!response.ok) {
-          window.console.warn(`[YouTube+][Stats] Failed to fetch ${type} stats:`, response.status);
+          window.YouTubePlusLogger?.warn?.(
+            'Stats',
+            `Failed to fetch ${type} stats:`,
+            response.status
+          );
           return { ok: false, status: response.status, data: null, url: endpoint };
         }
 
         const data = await response.json();
         return { ok: true, status: response.status, data, url: endpoint };
       } catch (error) {
-        YouTubeUtils?.logError?.(
-          'Stats',
-          `Failed to fetch ${type} stats`,
-          /** @type {any} */ (error)
-        );
+        U?.logError?.('Stats', `Failed to fetch ${type} stats`, /** @type {any} */ (error));
         return { ok: false, status: 0, data: null };
       }
     }
@@ -1136,16 +1173,16 @@
         // Use centralized helpers from YouTubeStatsHelpers when available.
         // If not present (some runtime environments), provide a lightweight
         // DOM-based fallback to avoid noisy errors and still surface basic stats.
-        const helpers = window.YouTubeStatsHelpers || {};
+        const helpers = /** @type {YouTubeStatsHelpers} */ (window.YouTubeStatsHelpers || {});
 
         const fallbackHelpers = {
           extractViews() {
             try {
               const el = $('yt-view-count-renderer, #count .view-count');
-              const text = el && el.textContent ? el.textContent.trim() : '';
-              const match = text.replace(/[^0-9,\.]/g, '').replace(/,/g, '');
+              const text = el?.textContent ? el.textContent.trim() : '';
+              const match = text.replace(/[^0-9,.]/g, '').replace(/,/g, '');
               return match ? { views: Number(match) || null } : {};
-            } catch (e) {
+            } catch (_e) {
               return {};
             }
           },
@@ -1156,10 +1193,10 @@
                 $(
                   '#top-level-buttons-computed ytd-toggle-button-renderer:first-child yt-formatted-string'
                 );
-              const text = btn && btn.textContent ? btn.textContent.trim() : '';
-              const match = text.replace(/[^0-9,\.]/g, '').replace(/,/g, '');
+              const text = btn?.textContent ? btn.textContent.trim() : '';
+              const match = text.replace(/[^0-9,.]/g, '').replace(/,/g, '');
               return match ? { likes: Number(match) || null } : {};
-            } catch (e) {
+            } catch (_e) {
               return {};
             }
           },
@@ -1172,19 +1209,19 @@
               const el = $(
                 '#count > ytd-comment-thread-renderer, ytd-comments-header-renderer #count'
               );
-              const text = el && el.textContent ? el.textContent.trim() : '';
-              const match = text.replace(/[^0-9,\.]/g, '').replace(/,/g, '');
+              const text = el?.textContent ? el.textContent.trim() : '';
+              const match = text.replace(/[^0-9,.]/g, '').replace(/,/g, '');
               return match ? { comments: Number(match) || null } : {};
-            } catch (e) {
+            } catch (_e) {
               return {};
             }
           },
           extractSubscribers() {
             try {
               const el = $('#owner-sub-count, #subscriber-count');
-              const text = el && el.textContent ? el.textContent.trim() : '';
+              const text = el?.textContent ? el.textContent.trim() : '';
               return text ? { subscribers: text } : {};
-            } catch (e) {
+            } catch (_e) {
               return {};
             }
           },
@@ -1193,16 +1230,16 @@
               const meta = $('link[rel="image_src"]') || $('meta[property="og:image"]');
               const url = meta && (meta.href || meta.content) ? meta.href || meta.content : null;
               return url ? { thumbnail: url } : {};
-            } catch (e) {
+            } catch (_e) {
               return {};
             }
           },
           extractTitle() {
             try {
               const el = $('h1.title yt-formatted-string') || $('h1');
-              const text = el && el.textContent ? el.textContent.trim() : '';
+              const text = el?.textContent ? el.textContent.trim() : '';
               return text ? { title: text } : {};
-            } catch (e) {
+            } catch (_e) {
               return {};
             }
           },
@@ -1225,13 +1262,15 @@
                 return { authorHandle: handle, author: authorName };
               }
               return {};
-            } catch (e) {
+            } catch (_e) {
               return {};
             }
           },
         };
 
-        const use = helpers && helpers.extractViews ? helpers : fallbackHelpers;
+        const use = /** @type {YouTubeStatsHelpers} */ (
+          helpers?.extractViews ? helpers : fallbackHelpers
+        );
 
         // Merge all extracted stats (helpers may return partial objects)
         const result = Object.assign(
@@ -1248,12 +1287,20 @@
 
         return Object.keys(result).length > 0 ? result : null;
       } catch (e) {
-        YouTubeUtils?.logError?.('Stats', 'Failed to read page stats', /** @type {any} */ (e));
+        U?.logError?.('Stats', 'Failed to read page stats', /** @type {any} */ (e));
         return null;
       }
     }
 
-    // Helper to create a stats card HTML when value exists
+    /**
+     * Build a single stats card HTML fragment for a page fallback metric
+     * @param {number | string | null | undefined} value - Metric value
+     * @param {string} labelKey - Translation key for the label
+     * @param {string} iconClass - CSS class for the icon background
+     * @param {string} iconSvg - SVG markup for the icon
+     * @returns {string} HTML fragment or empty string when value missing
+     * @private
+     */
     function buildPageStatCard(
       /** @type {number | string | null | undefined} */ value,
       /** @type {string} */ labelKey,
@@ -1275,8 +1322,14 @@
       `;
     }
 
-    // Helper to create a stats-card that shows only a value (no label)
-    // iconOrClass can be either an HTML string (SVG) or a class name like 'stats-icon-views'
+    /**
+     * Build a minimal stats card that displays only a value and/or icon
+     * @param {any} value - Value to display
+     * @param {string} [iconOrClass=''] - SVG markup or a CSS class name
+     * @param {{showValue: boolean, showIcon: boolean}} [options] - Display options
+     * @returns {string} HTML fragment or empty string
+     * @private
+     */
     function buildValueOnlyCard(
       /** @type {any} */ value,
       /** @type {string} */ iconOrClass = '',
@@ -1286,7 +1339,7 @@
       }
     ) {
       const { showValue, showIcon } = options;
-      if (!showValue && !showIcon) return '';
+      if (!(showValue || showIcon)) return '';
 
       // If value is null/undefined and we are to show value, treat as unknown
       let displayVal = '';
@@ -1424,7 +1477,7 @@
       const gridHtml = `<div class="stats-grid">${cards.join('')}</div>`;
 
       // Get title and escape for XSS prevention
-      const title = (pageStats && pageStats.title) || document.title || '';
+      const title = pageStats?.title || document.title || '';
       const safeTitle = escapeHtml(title);
       const titleHtml = safeTitle
         ? `<div class="stats-thumb-title-centered">${safeTitle}</div>`
@@ -1449,7 +1502,7 @@
      * @returns {string} Formatted number
      */
     function formatNumber(num) {
-      if (!num || isNaN(num)) return '0';
+      if (!num || Number.isNaN(num)) return '0';
       const absNum = Math.abs(num);
 
       if (absNum >= 1e9) {
@@ -1480,7 +1533,7 @@
       let exactText = '—';
       if (exact !== null && exact !== undefined) {
         const numExact = Number(exact);
-        exactText = !isNaN(numExact) ? Math.floor(numExact).toLocaleString() : String(exact);
+        exactText = !Number.isNaN(numExact) ? Math.floor(numExact).toLocaleString() : String(exact);
       }
       return `
         <div class="stats-card">
@@ -1547,7 +1600,7 @@
           ) {
             return raw;
           }
-        } catch (e) {
+        } catch (_e) {
           // Invalid URL - fall through to constructed URL
         }
       }
@@ -1622,7 +1675,7 @@
      * @returns {{duration: string|null, monetization: string|null, country: string|null}} Metadata
      */
     function getVideoExtras(/** @type {any} */ apiStats, /** @type {any} */ pageStats) {
-      const helpers = window.YouTubeStatsHelpers || {};
+      const helpers = /** @type {YouTubeStatsHelpers} */ (window.YouTubeStatsHelpers || {});
       // Prefer explicit fields on the stats objects first, then fall back to helper functions
       const duration =
         apiStats?.duration ??
@@ -1748,8 +1801,8 @@
           overlay.remove();
           try {
             if (previouslyFocused) /** @type {HTMLElement} */ (previouslyFocused).focus();
-          } catch (e) {
-            // Non-critical, suppressed
+          } catch (_e) {
+            U.logSuppressed(_e, 'Stats');
           }
         }
       });
@@ -1761,8 +1814,8 @@
           window.removeEventListener('keydown', escHandler, true);
           try {
             if (previouslyFocused) /** @type {HTMLElement} */ (previouslyFocused).focus();
-          } catch (e) {
-            // Non-critical, suppressed
+          } catch (_e) {
+            U.logSuppressed(_e, 'Stats');
           }
         }
       }
@@ -1775,10 +1828,10 @@
       });
 
       // Apply focus trap if available
-      if (window.YouTubePlusModalHandlers && window.YouTubePlusModalHandlers.createFocusTrap) {
+      if (window.YouTubePlusModalHandlers?.createFocusTrap) {
         const removeTrap = window.YouTubePlusModalHandlers.createFocusTrap(overlay);
         // Clean up trap when overlay is removed
-        const coordinator = window.YouTubeMutationCoordinator;
+        const coordinator = window.YouTubePlusMutationCoordinator;
         if (coordinator?.subscribeRoot) {
           const trapSubId = `stats::overlayTrap::${Date.now()}::${Math.random()
             .toString(36)
@@ -1854,7 +1907,7 @@
           const pageStats = getPageVideoStats();
           const merged = mergeVideoStats(stats, pageStats);
           displayVideoStats(body, merged, id);
-        } catch (e) {
+        } catch (_e) {
           displayVideoStats(body, stats, id);
         }
       } else {
@@ -1869,8 +1922,8 @@
      * @returns {Promise<void>}
      */
     async function openStatsModal(type, id) {
-      if (!type || !id) {
-        window.console.error('[YouTube+][Stats] Invalid parameters for modal');
+      if (!(type && id)) {
+        window.YouTubePlusLogger?.error?.('Stats', 'Invalid parameters for modal');
         return;
       }
 
@@ -1879,7 +1932,7 @@
       for (let i = 0; i < existingOverlays.length; i++) {
         try {
           existingOverlays[i].remove();
-        } catch (e) {
+        } catch (_e) {
           /* ignore individual failures */
         }
       }
@@ -2313,6 +2366,10 @@
       );
     }
 
+    /**
+     * Create and insert the stats horizontal menu below the video owner actions
+     * @returns {HTMLElement|undefined} The inserted menu container or undefined
+     */
     function createStatsMenu() {
       if (!statsButtonEnabled) return undefined;
       if ($('.stats-menu-container')) {
@@ -2465,6 +2522,10 @@
       return containerDiv;
     }
 
+    /**
+     * Insert the stats menu if the owner action container exists and no menu is present
+     * @returns {void}
+     */
     function checkAndAddMenu() {
       if (!statsButtonEnabled) return;
       const actionContainer = $(
@@ -2477,152 +2538,14 @@
       }
     }
 
+    /**
+     * Ensure the universal stats icon is present in the masthead
+     * @returns {void}
+     */
     function checkAndInsertIcon() {
       if (!statsButtonEnabled) return;
       // Always ensure universal icon is present in the masthead
       insertUniversalIcon();
-    }
-
-    function addSettingsUI() {
-      const section = $$('.ytp-plus-settings-section[data-section="experimental"]').find(
-        candidate => candidate.isConnected
-      );
-      if (!section) return false;
-
-      const duplicateItems = Array.from(section.querySelectorAll('.stats-button-settings-item'));
-      if (duplicateItems.length > 1) {
-        // Keep the first item and drop accidental duplicates caused by racey retries.
-        duplicateItems.slice(1).forEach(node => node.remove());
-      }
-
-      const existingItem =
-        duplicateItems[0] || $('.stats-button-settings-item', /** @type {any} */ (section));
-      if (existingItem) {
-        const label = existingItem.querySelector('.ytp-plus-settings-item-label');
-        const description = existingItem.querySelector('.ytp-plus-settings-item-description');
-        if (label) label.textContent = t('statisticsButton');
-        if (description) description.textContent = t('statisticsButtonDescription');
-        return true;
-      }
-
-      const item = document.createElement('div');
-      item.className = 'ytp-plus-settings-item stats-button-settings-item';
-      _setSafeHTML(
-        item,
-        `
-        <div>
-          <label class="ytp-plus-settings-item-label">${t('statisticsButton')}</label>
-          <div class="ytp-plus-settings-item-description">${t('statisticsButtonDescription')}</div>
-        </div>
-        <input type="checkbox" class="ytp-plus-settings-checkbox" ${statsButtonEnabled ? 'checked' : ''}>
-      `
-      );
-      section.appendChild(item);
-
-      item.querySelector('input')?.addEventListener('change', e => {
-        const { target } = e;
-        const input = /** @type {EventTarget & HTMLInputElement} */ (target);
-        statsButtonEnabled = input.checked;
-        _safeLS.setItem(SETTINGS_KEY, statsButtonEnabled ? 'true' : 'false');
-        // Remove all stats buttons and menus
-        $$(`${STATS_ICON_SELECTOR}, .stats-menu-container`).forEach(el => el.remove());
-        if (statsButtonEnabled) {
-          checkAndInsertIcon();
-          checkAndAddMenu();
-        }
-      });
-
-      return true;
-    }
-
-    /**
-     * @param {{check?: (() => boolean), maxAttempts?: number, interval?: number}} opts
-     * @returns {{ stop: () => void } | null}
-     */
-    function createSafeRetryScheduler(
-      /** @type {{check?: (() => boolean), maxAttempts?: number, interval?: number}} */ opts
-    ) {
-      const factory = window.YouTubeUtils?.createRetryScheduler;
-      if (typeof factory === 'function') {
-        try {
-          return /** @type {{ stop: () => void } | null} */ (
-            /** @type {unknown} */ (factory(opts))
-          );
-        } catch (error) {
-          YouTubeUtils?.logError?.(
-            'Stats',
-            'Retry scheduler factory failed',
-            /** @type {any} */ (error)
-          );
-        }
-      }
-
-      const { check, maxAttempts = 20, interval = 100 } = opts || {};
-      let attempts = 0;
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let timerId = null;
-      let stopped = false;
-
-      const tick = () => {
-        if (stopped) return;
-        attempts += 1;
-
-        try {
-          if (typeof check === 'function' && check()) {
-            stopped = true;
-            return;
-          }
-        } catch (error) {
-          YouTubeUtils?.logError?.(
-            'Stats',
-            'Fallback retry check failed',
-            /** @type {any} */ (error)
-          );
-        }
-
-        if (attempts >= maxAttempts) {
-          stopped = true;
-          return;
-        }
-
-        timerId = setTimeout(tick, interval);
-      };
-
-      timerId = setTimeout(tick, 0);
-
-      return {
-        stop() {
-          stopped = true;
-          if (timerId) clearTimeout(timerId);
-          timerId = null;
-        },
-      };
-    }
-
-    /** @type {{ stop: () => void } | null} */
-    let ensureSettingsScheduler = null;
-    function ensureSettingsUI() {
-      if (ensureSettingsScheduler) ensureSettingsScheduler.stop();
-      ensureSettingsScheduler = createSafeRetryScheduler({
-        check: () => addSettingsUI(),
-        maxAttempts: 50,
-        interval: 100,
-      });
-    }
-
-    // Settings modal integration — use event instead of MutationObserver
-    if (YouTubeUtils?.cleanupManager?.registerListener) {
-      YouTubeUtils.cleanupManager.registerListener(
-        document,
-        'youtube-plus-settings-modal-opened',
-        () => {
-          ensureSettingsUI();
-        }
-      );
-    } else {
-      document.addEventListener('youtube-plus-settings-modal-opened', () => {
-        ensureSettingsUI();
-      });
     }
 
     const handleExperimentalNavClick = (/** @type {Event} */ e) => {
@@ -2630,27 +2553,23 @@
       const el = /** @type {EventTarget & HTMLElement} */ (target);
       const navItem = el?.closest?.('.ytp-plus-settings-nav-item');
       if (navItem?.dataset?.section === 'experimental') {
-        ensureSettingsUI();
+        attachSettingsHandler();
       }
     };
 
-    if (YouTubeUtils?.cleanupManager?.registerListener) {
-      YouTubeUtils.cleanupManager.registerListener(
-        document,
-        'youtube-plus-language-changed',
-        () => {
-          ensureSettingsUI();
-        }
-      );
+    if (U?.cleanupManager?.registerListener) {
+      U.cleanupManager.registerListener(document, 'youtube-plus-language-changed', () => {
+        attachSettingsHandler();
+      });
     } else {
       document.addEventListener('youtube-plus-language-changed', () => {
-        ensureSettingsUI();
+        attachSettingsHandler();
       });
     }
 
     if (!experimentalNavListenerKey) {
-      if (YouTubeUtils?.cleanupManager?.registerListener) {
-        experimentalNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
+      if (U?.cleanupManager?.registerListener) {
+        experimentalNavListenerKey = U.cleanupManager.registerListener(
           document,
           'click',
           handleExperimentalNavClick,
@@ -2662,7 +2581,12 @@
       }
     }
 
+    /**
+     * Initialize the video stats module: inject styles, icon, menu, and listeners
+     * @returns {void}
+     */
     function init() {
+      if (U?.isStudioPage?.()) return;
       addStyles();
       if (statsButtonEnabled) {
         checkAndInsertIcon();
@@ -2670,19 +2594,15 @@
       }
 
       // Use centralized pushState/replaceState event from utils.js instead of wrapping independently
-      if (YouTubeUtils?.cleanupManager?.registerListener) {
-        YouTubeUtils.cleanupManager.registerListener(
-          window,
-          'ytp-history-navigate',
-          checkUrlChange
-        );
-        YouTubeUtils.cleanupManager.registerListener(window, 'popstate', checkUrlChange);
+      if (U?.cleanupManager?.registerListener) {
+        U.cleanupManager.registerListener(window, 'ytp-history-navigate', checkUrlChange);
+        U.cleanupManager.registerListener(window, 'popstate', checkUrlChange);
       } else {
         window.addEventListener('ytp-history-navigate', checkUrlChange);
         window.addEventListener('popstate', checkUrlChange);
       }
 
-      if (window.YouTubeUtils?.isChannelPage?.(location.href) ?? false) {
+      if (U?.isChannelPage?.(location.href) ?? false) {
         checkChannelTabs(location.href);
       }
     }
@@ -2711,21 +2631,21 @@
 
     const handleNavigate = () => {
       scheduleInit();
-      if (!statsInitialized || !statsButtonEnabled) return;
+      if (!(statsInitialized && statsButtonEnabled)) return;
       checkAndInsertIcon();
       checkAndAddMenu();
-      if (window.YouTubeUtils?.isChannelPage?.(location.href) ?? false) {
+      if (U?.isChannelPage?.(location.href) ?? false) {
         checkChannelTabs(location.href);
       }
     };
 
-    const _cleanupManager = window.YouTubeUtils?.cleanupManager;
+    const _cleanupManager = U?.cleanupManager;
     if (_cleanupManager) {
       _cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
         passive: true,
       });
     } else {
-      window.addEventListener('yt-navigate-finish', handleNavigate);
+      document.addEventListener('yt-navigate-finish', handleNavigate);
     }
 
     // Safety net: LazyLoader dispatches ytp:nav-refresh after every SPA nav.
@@ -2751,7 +2671,7 @@
 
     const handleAction = (/** @type {Event} */ event) => {
       scheduleInit();
-      if (!statsInitialized || !statsButtonEnabled) return;
+      if (!(statsInitialized && statsButtonEnabled)) return;
       const ev = /** @type {CustomEvent<any>} */ (event);
       if (ev.detail && ev.detail.actionName === 'yt-reload-continuation-items-command') {
         checkAndInsertIcon();
@@ -2768,16 +2688,24 @@
     }
   }; // end initVideoStats
 
-  // Defer video stats init and only load module code on relevant routes.
-  if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register(
-      'video-stats',
-      initVideoStats,
-      /** @type {any} */ ({
-        priority: 2,
-        shouldLoad: () => isVideoStatsTriggerRoute() || isSettingsModalOpen(),
-      })
-    );
+  // Register settings modal listener at module scope so it fires
+  // regardless of route. Without this, the listener inside
+  // initVideoStats() would only be registered after whenRelevant
+  // decides the route is relevant, causing a race condition where
+  // opening the modal on the homepage would miss the event.
+  document.addEventListener('youtube-plus-settings-modal-opened', initVideoStats, {
+    once: false,
+  });
+
+  // Defer video stats init and only load module code on relevant routes
+  // or when the settings modal is open (so the experimental tab can
+  // populate the "Statistics button" toggle regardless of route).
+  if (U?.whenRelevant) {
+    U.whenRelevant({
+      name: 'stats.video',
+      isRelevant: () => isVideoStatsTriggerRoute() || isSettingsModalOpen(),
+      onEnter: initVideoStats,
+    });
   } else {
     initVideoStats();
   }
@@ -2787,33 +2715,27 @@
 // Channel Stats IIFE — separate scope for channel-level statistics
 // ═══════════════════════════════════════════════════════════════════
 (function () {
-  'use strict';
+  const U = window.YouTubeUtils;
   if (window.__ytpChannelStatsModuleInit) return;
 
   const isChannelStatsTriggerRoute = () => {
     try {
       const path = location.pathname || '';
       return path.startsWith('/@') || path.startsWith('/channel/') || path.startsWith('/c/');
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   };
 
-  const isSettingsModalOpen = () => {
-    try {
-      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
-    } catch (e) {
-      return false;
-    }
-  };
+  const isSettingsModalOpen = () => U.isSettingsModalOpen();
 
   const initChannelStats = () => {
     if (window.__ytpChannelStatsModuleInit) return;
     window.__ytpChannelStatsModuleInit = true;
 
-    const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
+    const _setSafeHTML = U.setSafeHTML;
     const createVisibilityAwareInterval =
-      /** @type {any} */ (window.YouTubeUtils)?.createVisibilityAwareInterval ||
+      /** @type {any} */ (U)?.createVisibilityAwareInterval ||
       /**
        * @type {(callback: () => void, delay: number) => { stop: () => void; pause: () => void; resume: () => void; active: boolean }}
        */
@@ -2839,23 +2761,20 @@
       );
     const setTimeout_ = setTimeout.bind(window);
     // Shared helpers from YouTubeUtils (separate IIFE scope requires local aliases)
-    const $ = window.YouTubeUtils.$;
-    const $$ = window.YouTubeUtils.$$;
-    const byId = window.YouTubeUtils.byId;
+    const $ = U.$;
+    const byId = U.byId;
 
-    // Do not run this module inside YouTube Studio
-    if (window.YouTubeUtils?.isStudioPage?.()) return;
-
-    // Shared translation helper from YouTubeUtils
-    const t = window.YouTubeUtils.t;
+    // Shared translation helper — must be declared before "inject now"
+    // so addSettingsUI() doesn't hit TDZ on `t`.
+    const t = U.t;
 
     // Safe localStorage wrapper — guards against SecurityError in restricted contexts
-    const _safeLS = {
+    const _safeLS = window.YouTubeUtils?.safeLS || {
       /** @param {string} k @param {string|null} [def] @returns {string|null} */
       getItem: (k, def = null) => {
         try {
           return localStorage.getItem(k) ?? def;
-        } catch (e) {
+        } catch (_e) {
           return def;
         }
       },
@@ -2864,7 +2783,7 @@
         try {
           localStorage.setItem(k, v);
           return true;
-        } catch (e) {
+        } catch (_e) {
           return false;
         }
       },
@@ -2872,7 +2791,7 @@
       removeItem: k => {
         try {
           localStorage.removeItem(k);
-        } catch (e) {
+        } catch (_e) {
           /* non-critical */
         }
       },
@@ -2917,6 +2836,51 @@
       navigationListenerAttached: false,
     });
 
+    // Attach change handler to the static checkbox in settings modal
+    const attachSettingsHandler = () => {
+      try {
+        const checkbox = document.getElementById('ytp-plus-setting-enableChannelStats');
+        if (!(checkbox instanceof HTMLInputElement)) return;
+        if (checkbox.dataset.handlerAttached) return;
+        checkbox.dataset.handlerAttached = 'true';
+        checkbox.checked = state.enabled;
+        checkbox.addEventListener('change', e => {
+          const input = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+          state.enabled = input.checked;
+          _safeLS.setItem(CONFIG.STORAGE_KEY, state.enabled ? 'true' : 'false');
+          if (state.enabled) {
+            observePageChanges();
+            addNavigationListener();
+            setTimeout_(() => {
+              const bannerElement = byId('page-header-banner-sizer');
+              if (bannerElement instanceof HTMLElement && (U?.isChannelPage?.() ?? false)) {
+                addOverlay(bannerElement);
+              }
+            }, 100);
+          } else {
+            clearExistingOverlay();
+          }
+        });
+      } catch (_e) {
+        // non-critical
+      }
+    };
+
+    if (isSettingsModalOpen()) {
+      attachSettingsHandler();
+    }
+
+    // Register settings modal listener for SUBSEQUENT opens.
+    if (U?.cleanupManager?.registerListener) {
+      U.cleanupManager.registerListener(document, 'youtube-plus-settings-modal-opened', () => {
+        attachSettingsHandler();
+      });
+    } else {
+      document.addEventListener('youtube-plus-settings-modal-opened', () => {
+        attachSettingsHandler();
+      });
+    }
+
     // LRU-evicting set helper for bounded Maps (max 50 entries)
     const MAX_CACHE_ENTRIES = 50;
     const boundedCacheSet = (
@@ -2935,11 +2899,8 @@
     const utils = {
       /** @param {string} message @param {...any} args */
       log: (message, ...args) => {
-        const yt = /** @type {any} */ (window.YouTubeUtils);
-        yt &&
-          yt.logger &&
-          yt.logger.debug &&
-          yt.logger.debug('[YouTube+][Stats]', message, ...args);
+        const yt = /** @type {any} */ (U);
+        yt?.logger?.debug?.('[YouTube+][Stats]', message, ...args);
       },
 
       /** @param {string} message @param {...any} args */
@@ -2953,7 +2914,7 @@
       },
 
       // Use shared debounce from YouTubeUtils
-      debounce: window.YouTubeUtils.debounce,
+      debounce: U.debounce,
     };
 
     const { OPTIONS } = CONFIG;
@@ -2978,7 +2939,7 @@
 
         const html = await response.text();
         const match = html.match(/var ytInitialData = (.+?);<\/script>/);
-        return match && match[1] ? JSON.parse(match[1]) : null;
+        return match?.[1] ? JSON.parse(match[1]) : null;
       } catch (error) {
         utils.warn('Failed to fetch channel data:', /** @type {any} */ (error));
         return null;
@@ -2987,6 +2948,11 @@
       }
     }
 
+    /**
+     * Fetch basic channel metadata (name and ID) from a channel page
+     * @param {string} url - Channel page URL
+     * @returns {Promise<{channelName: string, channelId: string}|null>} Channel info or null
+     */
     async function getChannelInfo(/** @type {string} */ url) {
       const data = await fetchChannel(url);
       if (!data) return null;
@@ -2996,16 +2962,20 @@
         const channelId = data?.metadata?.channelMetadataRenderer?.externalId || null;
 
         return { channelName, channelId };
-      } catch (e) {
+      } catch (_e) {
         return null;
       }
     }
 
+    /**
+     * Detect SPA navigation to a channel page and fetch channel info
+     * @returns {void}
+     */
     function checkUrlChange() {
       const currentUrl = location.href;
       if (currentUrl !== state.previousUrl) {
         state.previousUrl = currentUrl;
-        if (window.YouTubeUtils?.isChannelPage?.(currentUrl) ?? false) {
+        if (U?.isChannelPage?.(currentUrl) ?? false) {
           setTimeout(() => getChannelInfo(currentUrl), 500);
         }
       }
@@ -3014,16 +2984,21 @@
     // YouTube SPA navigation — yt-navigate-finish fires for all pushState/replaceState
     // transitions on youtube.com, so wrapping history APIs is redundant and creates
     // an ever-growing wrapper chain when multiple modules do the same thing.
-    const _cm2 = window.YouTubeUtils?.cleanupManager;
+    const _cm2 = U?.cleanupManager;
     if (_cm2?.registerListener) {
-      _cm2.registerListener(window, 'yt-navigate-finish', checkUrlChange, { passive: true });
+      _cm2.registerListener(document, 'yt-navigate-finish', checkUrlChange, { passive: true });
       _cm2.registerListener(window, 'popstate', checkUrlChange, { passive: true });
     } else {
-      window.addEventListener('yt-navigate-finish', checkUrlChange, { passive: true });
+      document.addEventListener('yt-navigate-finish', checkUrlChange, { passive: true });
       window.addEventListener('popstate', checkUrlChange, { passive: true });
     }
 
+    /**
+     * Initialize the channel stats overlay, fonts, and listeners
+     * @returns {void}
+     */
     function init() {
+      if (U?.isStudioPage?.()) return;
       try {
         utils.log('Initializing YouTube Enhancer v1.6');
 
@@ -3034,7 +3009,7 @@
           observePageChanges();
           addNavigationListener();
 
-          if (window.YouTubeUtils?.isChannelPage?.(location.href) ?? false) {
+          if (U?.isChannelPage?.(location.href) ?? false) {
             getChannelInfo(location.href);
             // Kick off an overlay attempt immediately on initial load.
             // Without this, the banner overlay only renders after the first
@@ -3048,12 +3023,15 @@
         }
 
         utils.log('YouTube Enhancer initialized successfully');
-        ensureSettingsUI();
       } catch (error) {
         utils.error('Failed to initialize YouTube Enhancer:', error);
       }
     }
 
+    /**
+     * Inject the channel stats Google Font stylesheet
+     * @returns {void}
+     */
     function loadFonts() {
       const fontLink = document.createElement('link');
       fontLink.rel = 'stylesheet';
@@ -3061,6 +3039,10 @@
       (document.head || document.documentElement).appendChild(fontLink);
     }
 
+    /**
+     * Initialize default localStorage display flags
+     * @returns {void}
+     */
     function initializeLocalStorage() {
       OPTIONS.forEach(option => {
         if (_safeLS.getItem(`show-${option}`) === null) {
@@ -3069,14 +3051,19 @@
       });
     }
 
+    /**
+     * Inject channel stats overlay CSS
+     * @returns {void}
+     */
     function addStyles() {
       const styles = `
       .channel-banner-overlay{position:absolute;top:0;left:0;width:100%;height:100%;border-radius:12px;z-index:9;display:flex;justify-content:space-around;align-items:center;color:var(--yt-text-primary);font-family:var(--yt-stats-font-family,'Rubik',sans-serif);font-size:var(--yt-stats-font-size,24px);box-sizing:border-box;transition:background-color .3s ease;backdrop-filter:blur(2px)}        
-      .settings-button{position:absolute;top:12px;right:12px;width:32px;height:32px;border-radius:50%;cursor:pointer;z-index:11;transition:all .2s ease;display:flex;align-items:center;justify-content:center;background:var(--yt-stats-channel-button-bg);backdrop-filter:blur(4px);border:1px solid var(--yt-stats-channel-button-border);opacity:0.7}
+      .settings-button{position:absolute;top:12px;right:12px;width:32px;height:32px;border-radius:50%;cursor:pointer;z-index:11;transition:transform 0.2s cubic-bezier(0.2,0,0,1), opacity 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;display:flex;align-items:center;justify-content:center;background:var(--yt-stats-channel-button-bg);backdrop-filter:blur(4px);border:1px solid var(--yt-stats-channel-button-border);opacity:0.7}
       .channel-banner-overlay:hover .settings-button{opacity:1}
       .settings-button:hover{transform:rotate(30deg) scale(1.1);opacity:1;background:var(--yt-stats-channel-button-hover);border-color:var(--yt-stats-channel-button-hover-border)}
+      .settings-button:active{transform:rotate(30deg) scale(0.96) !important;}
       .settings-button svg{width:18px;height:18px;fill:var(--yt-text-primary);filter:drop-shadow(0 1px 2px var(--yt-stats-channel-filter-shadow))}        
-      .settings-menu{position:absolute;top:52px;right:12px;background:var(--yt-stats-channel-menu-bg);padding:16px;border-radius:16px;z-index:12;display:flex;flex-direction:column;gap:12px;backdrop-filter:blur(16px) saturate(180%);border:1px solid var(--yt-stats-channel-menu-border);box-shadow:0 8px 32px rgba(0,0,0,0.6);min-width:320px;opacity:0;visibility:hidden;transform:translateY(-10px) scale(0.98);transition:all 0.2s cubic-bezier(0.2,0,0.2,1);pointer-events:none}
+      .settings-menu{position:absolute;top:52px;right:12px;background:var(--yt-stats-channel-menu-bg);padding:16px;border-radius:16px;z-index:12;display:flex;flex-direction:column;gap:12px;backdrop-filter:blur(16px) saturate(180%);border:1px solid var(--yt-stats-channel-menu-border);box-shadow:0 8px 32px rgba(0,0,0,0.6);min-width:320px;opacity:0;visibility:hidden;transform:translateY(-10px) scale(0.98);transition:opacity 0.2s cubic-bezier(0.2,0,0.2,1), transform 0.2s cubic-bezier(0.2,0,0.2,1), visibility 0.2s cubic-bezier(0.2,0,0.2,1);pointer-events:none}
       .settings-menu.show{opacity:1;visibility:visible;transform:translateY(0) scale(1);pointer-events:auto}        
       .settings-menu .ytp-plus-settings-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:8px;background:var(--yt-stats-channel-menu-item-bg);}
       .settings-menu .ytp-plus-settings-item + .ytp-plus-settings-item{margin-top:6px}
@@ -3089,7 +3076,8 @@
       .settings-menu select:hover{background:var(--yt-stats-channel-input-hover)!important}
       .settings-menu select option{background:var(--yt-stats-channel-select-option-bg);color:var(--yt-text-primary)}        
       /* Don't override the shared settings checkbox styling; only target non-shared inputs */
-      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox){appearance:none;width:18px!important;height:18px!important;border:2px solid var(--yt-stats-channel-checkbox-border)!important;border-radius:4px!important;background:transparent!important;cursor:pointer;position:relative;margin-right:12px!important;vertical-align:middle;transition:all .2s}
+      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox){appearance:none;width:18px!important;height:18px!important;border:2px solid var(--yt-stats-channel-checkbox-border)!important;border-radius:4px!important;background:transparent!important;cursor:pointer;position:relative;margin-right:12px!important;vertical-align:middle;transition:background-color .2s ease, border-color .2s ease, transform .1s cubic-bezier(0.2,0,0,1)}
+      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox):active{transform:scale(0.96) !important;}
       .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox):checked{background:var(--yt-stats-channel-range-thumb)!important;border-color:var(--yt-stats-channel-range-thumb)!important}
       .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox):checked::after{content:'';position:absolute;left:5px;top:1px;width:4px;height:10px;border:solid var(--yt-text-primary);border-width:0 2px 2px 0;transform:rotate(45deg)}
       .stat-container{display:flex;flex-direction:column;align-items:center;justify-content:center;visibility:hidden;width:33%;height:100%;padding:0 1rem;text-shadow:0 2px 4px var(--yt-stats-channel-text-shadow)}
@@ -3106,9 +3094,13 @@
       .setting-group:last-child{margin-bottom:0}
       .setting-value{color:var(--yt-stats-channel-text-value);font-size:12px;margin-top:4px}
       `;
-      YouTubeUtils.StyleManager.add('channel-stats-overlay', styles);
+      U.StyleManager.add('channel-stats-overlay', styles);
     }
 
+    /**
+     * Create the settings gear button for the overlay
+     * @returns {HTMLElement} Settings button element
+     */
     function createSettingsButton() {
       const button = document.createElement('div');
       button.className = 'settings-button';
@@ -3120,13 +3112,14 @@
       return button;
     }
 
+    /**
+     * Create the channel stats settings menu
+     * @returns {HTMLElement} Settings menu element
+     */
     function createSettingsMenu() {
       const menu = document.createElement('div');
       menu.className = 'settings-menu';
-      if (menu.style) {
-        menu.style.gap = '15px';
-        menu.style.width = '360px';
-      }
+      menu.classList.add('ytp-stats-channel-menu');
       menu.setAttribute('tabindex', '-1');
       menu.setAttribute('aria-modal', 'true');
 
@@ -3139,18 +3132,17 @@
       return menu;
     }
 
+    /**
+     * Build the display options section of the settings menu
+     * @returns {HTMLElement} Display section element
+     */
     function createDisplaySection() {
       const displaySection = document.createElement('div');
       if (displaySection.style) displaySection.style.flex = '1';
 
       const displayLabel = document.createElement('label');
       displayLabel.textContent = t('displayOptions');
-      if (displayLabel.style) {
-        displayLabel.style.marginBottom = '10px';
-        displayLabel.style.display = 'block';
-        displayLabel.style.fontSize = '16px';
-        displayLabel.style.fontWeight = 'bold';
-      }
+      displayLabel.classList.add('ytp-stats-display-label');
       displaySection.appendChild(displayLabel);
 
       // Use event delegation for all checkboxes
@@ -3193,6 +3185,10 @@
       return displaySection;
     }
 
+    /**
+     * Build the controls section (font, interval, opacity) of the settings menu
+     * @returns {HTMLElement} Controls section element
+     */
     function createControlsSection() {
       const controlsSection = document.createElement('div');
       if (controlsSection.style) controlsSection.style.flex = '1';
@@ -3253,10 +3249,7 @@
       // Font family selector - using glass-dropdown style
       const fontLabel = /** @type {any} */ (document.createElement('label'));
       fontLabel.textContent = t('fontFamily');
-      fontLabel.style.display = 'block';
-      fontLabel.style.marginBottom = '5px';
-      fontLabel.style.fontSize = '16px';
-      fontLabel.style.fontWeight = 'bold';
+      fontLabel.classList.add('ytp-stats-font-label');
 
       const fonts = [
         { name: 'Rubik', value: 'Rubik, sans-serif' },
@@ -3334,10 +3327,10 @@
 
         const _docClickHandler = (/** @type {Event} */ e) => {
           const target = e.target;
-          if (!(target instanceof Node) || !fontDropdown.contains(target)) closeList();
+          if (!(target instanceof Node && fontDropdown.contains(target))) closeList();
         };
-        if (window.YouTubeUtils?.cleanupManager?.registerListener) {
-          window.YouTubeUtils.cleanupManager.registerListener(document, 'click', _docClickHandler);
+        if (U?.cleanupManager?.registerListener) {
+          U.cleanupManager.registerListener(document, 'click', _docClickHandler);
         } else {
           document.addEventListener('click', _docClickHandler);
           // Store ref for potential manual cleanup
@@ -3382,10 +3375,7 @@
       // Font size slider
       const fontSizeLabel = /** @type {any} */ (document.createElement('label'));
       fontSizeLabel.textContent = t('fontSize');
-      fontSizeLabel.style.display = 'block';
-      fontSizeLabel.style.marginBottom = '5px';
-      fontSizeLabel.style.fontSize = '16px';
-      fontSizeLabel.style.fontWeight = 'bold';
+      fontSizeLabel.classList.add('ytp-stats-font-label');
 
       const fontSizeSlider = document.createElement('input');
       fontSizeSlider.type = 'range';
@@ -3398,16 +3388,12 @@
       const fontSizeValue = /** @type {any} */ (document.createElement('div'));
       fontSizeValue.className = 'font-size-value';
       fontSizeValue.textContent = `${fontSizeSlider.value}px`;
-      fontSizeValue.style.fontSize = '14px';
-      fontSizeValue.style.marginBottom = '15px';
+      fontSizeValue.classList.add('ytp-stats-font-value');
 
       // Update interval slider
       const intervalLabel = /** @type {any} */ (document.createElement('label'));
       intervalLabel.textContent = t('updateInterval');
-      intervalLabel.style.display = 'block';
-      intervalLabel.style.marginBottom = '5px';
-      intervalLabel.style.fontSize = '16px';
-      intervalLabel.style.fontWeight = 'bold';
+      intervalLabel.classList.add('ytp-stats-font-label');
 
       const intervalSlider = document.createElement('input');
       intervalSlider.type = 'range';
@@ -3420,16 +3406,12 @@
       const intervalValue = /** @type {any} */ (document.createElement('div'));
       intervalValue.className = 'interval-value';
       intervalValue.textContent = `${intervalSlider.value}s`;
-      intervalValue.style.marginBottom = '15px';
-      intervalValue.style.fontSize = '14px';
+      intervalValue.classList.add('ytp-stats-font-value');
 
       // Opacity slider
       const opacityLabel = /** @type {any} */ (document.createElement('label'));
       opacityLabel.textContent = t('backgroundOpacity');
-      opacityLabel.style.display = 'block';
-      opacityLabel.style.marginBottom = '5px';
-      opacityLabel.style.fontSize = '16px';
-      opacityLabel.style.fontWeight = 'bold';
+      opacityLabel.classList.add('ytp-stats-font-label');
 
       const opacitySlider = document.createElement('input');
       opacitySlider.type = 'range';
@@ -3442,7 +3424,7 @@
       const opacityValue = /** @type {any} */ (document.createElement('div'));
       opacityValue.className = 'opacity-value';
       opacityValue.textContent = `${opacitySlider.value}%`;
-      opacityValue.style.fontSize = '14px';
+      opacityValue.classList.add('ytp-stats-font-value');
 
       controlsSection.appendChild(fontLabel);
       controlsSection.appendChild(fontSelect);
@@ -3460,16 +3442,13 @@
       return controlsSection;
     }
 
+    /**
+     * Create a loading spinner element for the overlay
+     * @returns {HTMLElement} Spinner container element
+     */
     function createSpinner() {
       const spinnerContainer = /** @type {any} */ (document.createElement('div'));
-      spinnerContainer.style.position = 'absolute';
-      spinnerContainer.style.top = '0';
-      spinnerContainer.style.left = '0';
-      spinnerContainer.style.width = '100%';
-      spinnerContainer.style.height = '100%';
-      spinnerContainer.style.display = 'flex';
-      spinnerContainer.style.justifyContent = 'center';
-      spinnerContainer.style.alignItems = 'center';
+      spinnerContainer.classList.add('ytp-stats-spinner');
       spinnerContainer.classList.add('spinner-container');
 
       _setSafeHTML(
@@ -3479,6 +3458,11 @@
       return spinnerContainer;
     }
 
+    /**
+     * Create a white SVG icon from a path definition
+     * @param {string} path - SVG path data
+     * @returns {SVGSVGElement} SVG icon element
+     */
     function createSVGIcon(/** @type {string} */ path) {
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('viewBox', '0 0 640 512');
@@ -3497,6 +3481,12 @@
       return svg;
     }
 
+    /**
+     * Build a stat container with icon, difference label, and number display
+     * @param {string} className - Base CSS class name for the stat type
+     * @param {string} iconPath - SVG path data for the stat icon
+     * @returns {HTMLElement} Stat container element
+     */
     function createStatContainer(/** @type {string} */ className, /** @type {string} */ iconPath) {
       const container = document.createElement('div');
       Object.assign(/** @type {any} */ (container).style || {}, {
@@ -3667,7 +3657,7 @@
       // Register document-level event handlers
       const clickHandler = (/** @type {Event} */ e) => {
         const node = /** @type {EventTarget & Node} */ (e.target);
-        if (!settingsMenu.contains(node) && !settingsButton.contains(node)) {
+        if (!(settingsMenu.contains(node) || settingsButton.contains(node))) {
           toggleMenu(false);
         }
       };
@@ -3680,12 +3670,8 @@
         }
       };
 
-      const clickKey = YouTubeUtils.cleanupManager.registerListener(
-        document,
-        'click',
-        clickHandler
-      );
-      const keyKey = YouTubeUtils.cleanupManager.registerListener(document, 'keydown', keyHandler);
+      const clickKey = U.cleanupManager.registerListener(document, 'click', clickHandler);
+      const keyKey = U.cleanupManager.registerListener(document, 'keydown', keyHandler);
       state.documentListenerKeys.add(clickKey);
       state.documentListenerKeys.add(keyKey);
     }
@@ -3713,6 +3699,11 @@
       overlay.appendChild(videosElement);
     }
 
+    /**
+     * Create and mount the full overlay on a channel banner
+     * @param {HTMLElement | null} bannerElement - Banner element to host the overlay
+     * @returns {HTMLElement | null} The created overlay or null
+     */
     function createOverlay(/** @type {HTMLElement | null} */ bannerElement) {
       clearExistingOverlay();
       if (!bannerElement) return null;
@@ -3739,6 +3730,12 @@
       return overlay;
     }
 
+    /**
+     * Fetch JSON from a URL using GM_xmlhttpRequest with a fetch fallback
+     * @param {string} url - URL to fetch
+     * @param {Record<string, string>} [headers={}] - Extra request headers
+     * @returns {Promise<any>} Parsed JSON response
+     */
     function fetchWithGM(
       /** @type {string} */ url,
       /** @type {Record<string, string>} */ headers = {}
@@ -3794,6 +3791,13 @@
         });
     }
 
+    /**
+     * Resolve the YouTube channel ID for the current page, using cache and fallbacks.
+     * Retries DOM sources briefly to handle SPA transitions where ytInitialData
+     * and meta tags are not yet updated when yt-navigate-finish fires.
+     * @param {string | null | undefined} channelName - Channel display name or handle
+     * @returns {Promise<string | null>} Channel ID or null
+     */
     async function fetchChannelId(/** @type {string | null | undefined} */ channelName) {
       const cacheKey = channelName || state.currentChannelName || window.location.pathname;
 
@@ -3811,25 +3815,54 @@
         return channelName;
       }
 
-      // Try meta tag first
-      const metaTag = $('meta[itemprop="channelId"]');
-      if (metaTag && metaTag.content) {
-        state.currentChannelId = metaTag.content;
-        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, metaTag.content);
-        return metaTag.content;
+      const resolveFromDom = () => {
+        const metaTag = $('meta[itemprop="channelId"]');
+        if (metaTag?.content) return metaTag.content;
+
+        const urlMatch = window.location.href.match(/channel\/(UC[\w-]+)/);
+        if (urlMatch?.[1]) return urlMatch[1];
+
+        const initialData = window.ytInitialData;
+        const id =
+          initialData?.metadata?.channelMetadataRenderer?.externalId ||
+          initialData?.header?.c4TabbedHeaderRenderer?.channelId;
+        if (id && /^UC[\w-]{22}$/.test(id)) return id;
+
+        if (window.ytcfg?.get) {
+          const cfgId = window.ytcfg.get('CHANNEL_ID');
+          if (cfgId && /^UC[\w-]{22}$/.test(cfgId)) return cfgId;
+        }
+
+        return null;
+      };
+
+      let channelId = resolveFromDom();
+      if (!channelId) {
+        // Retry a few times while the SPA page data is settling.
+        channelId = await new Promise(resolve => {
+          let attempts = 0;
+          const maxAttempts = 10;
+          const interval = 100;
+          const tick = () => {
+            attempts += 1;
+            const id = resolveFromDom();
+            if (id) return resolve(id);
+            if (attempts >= maxAttempts) return resolve(null);
+            setTimeout(tick, interval);
+          };
+          tick();
+        });
       }
 
-      // Try URL pattern
-      const urlMatch = window.location.href.match(/channel\/(UC[\w-]+)/);
-      if (urlMatch && urlMatch[1]) {
-        state.currentChannelId = urlMatch[1];
-        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, urlMatch[1]);
-        return urlMatch[1];
+      if (channelId) {
+        state.currentChannelId = channelId;
+        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, channelId);
+        return channelId;
       }
 
-      // Try ytInitialData
+      // Last resort: fetch the channel page HTML and parse ytInitialData.
       const channelInfo = await getChannelInfo(window.location.href);
-      if (channelInfo && channelInfo.channelId) {
+      if (channelInfo?.channelId) {
         state.currentChannelId = channelInfo.channelId;
         if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, channelInfo.channelId);
         return channelInfo.channelId;
@@ -3840,90 +3873,103 @@
 
     /**
      * Fetch channel statistics with retry logic and fallback
-     * Refactored to use channel-stats-helpers module
      * @param {string} channelId - Channel ID
      * @returns {Promise<any>} Channel stats
      */
     async function fetchChannelStats(channelId) {
-      const helpers =
-        typeof window !== 'undefined' && window.YouTubePlusChannelStatsHelpers
-          ? window.YouTubePlusChannelStatsHelpers
-          : null;
+      const fetchFn = () =>
+        fetchWithGM(`${STATS_API_URL}${channelId}`, {
+          origin: 'https://livecounts.io',
+          referer: 'https://livecounts.io/',
+        });
 
-      if (!helpers) {
-        utils.error('Channel stats helpers not loaded');
-        return {
-          followerCount: 0,
-          bottomOdos: [0, 0],
-          error: true,
-          timestamp: Date.now(),
-        };
+      // Retry with exponential backoff
+      let lastError = null;
+      for (let attempt = 0; attempt <= CONFIG.MAX_RETRIES; attempt++) {
+        try {
+          const stats = await fetchFn();
+          if (stats) {
+            // Cache successful stats
+            state.lastSuccessfulStats.set(channelId, {
+              stats,
+              timestamp: Date.now(),
+            });
+            return stats;
+          }
+        } catch (err) {
+          lastError = err;
+          if (attempt < CONFIG.MAX_RETRIES) {
+            const delay = Math.min(1000 * 2 ** attempt, 10000);
+            await new Promise(r => setTimeout(r, delay));
+          }
+        }
       }
 
+      // Try cached data
+      const cached = state.lastSuccessfulStats.get(channelId);
+      if (cached && Date.now() - cached.timestamp < CONFIG.CACHE_DURATION) {
+        return cached.stats;
+      }
+
+      // Fallback: extract subscriber count from page DOM
+      let fallbackCount = 0;
       try {
-        // Attempt to fetch with retry logic
-        const fetchFn = () =>
-          fetchWithGM(`${STATS_API_URL}${channelId}`, {
-            origin: 'https://livecounts.io',
-            referer: 'https://livecounts.io/',
-          });
-
-        const stats = await helpers.fetchWithRetry(fetchFn, CONFIG.MAX_RETRIES, utils);
-
-        // If fetch succeeded, cache and return
-        if (stats) {
-          helpers.cacheStats(state.lastSuccessfulStats, channelId, stats);
-          return stats;
+        const subEl =
+          document.querySelector('#subscriber-count') ||
+          document.querySelector('yt-formatted-string#subscriber-count');
+        if (subEl?.textContent) {
+          const raw = subEl.textContent.replace(/[^0-9.KkMmBb]/g, '');
+          if (raw) {
+            const num = parseFloat(raw);
+            if (!Number.isNaN(num)) {
+              const suffix = raw.slice(-1).toLowerCase();
+              const mult = suffix === 'k' ? 1e3 : suffix === 'm' ? 1e6 : suffix === 'b' ? 1e9 : 1;
+              fallbackCount = Math.round(num * mult);
+            }
+          }
         }
-
-        // Try to use cached data if fetch failed
-        const cachedStats = helpers.getCachedStats(
-          state.lastSuccessfulStats,
-          channelId,
-          CONFIG.CACHE_DURATION,
-          utils
-        );
-
-        if (cachedStats) {
-          return cachedStats;
-        }
-
-        // Fallback: try to extract subscriber count from page
-        const fallbackCount = helpers.extractSubscriberCountFromPage();
-        if (fallbackCount > 0) {
-          utils.log('Extracted fallback subscriber count:', fallbackCount);
-        }
-
-        return helpers.createFallbackStats(fallbackCount);
-      } catch (error) {
-        utils.error('Failed to fetch channel stats:', /** @type {any} */ (error));
-        return helpers.createFallbackStats(0);
+      } catch (_e) {
+        /* DOM extraction is best-effort */
       }
+
+      if (lastError) {
+        utils.error('Failed to fetch channel stats:', /** @type {any} */ (lastError));
+      }
+      return {
+        followerCount: fallbackCount,
+        bottomOdos: [0, 0],
+        error: true,
+        timestamp: Date.now(),
+      };
     }
 
+    /**
+     * Remove the existing overlay, interval, and registered document listeners
+     * @returns {void}
+     */
     function clearExistingOverlay() {
       const existingOverlay = $('.channel-banner-overlay');
       if (existingOverlay) {
         try {
           existingOverlay.remove();
-        } catch (e) {
-          window.console.warn('[YouTube+] Failed to remove overlay');
+        } catch (_e) {
+          window.YouTubePlusLogger?.warn?.('Stats', 'Failed to remove overlay');
         }
       }
       if (state.intervalId) {
         try {
           state.intervalId.stop();
-        } catch (e) {
-          window.console.warn('[YouTube+] Failed to clear interval');
+        } catch (_e) {
+          window.YouTubePlusLogger?.warn?.('Stats', 'Failed to clear interval');
         }
         state.intervalId = null;
       }
-      if (state.documentListenerKeys && state.documentListenerKeys.size) {
+      if (state.documentListenerKeys?.size) {
         state.documentListenerKeys.forEach((/** @type {any} */ key) => {
           try {
-            YouTubeUtils.cleanupManager.unregisterListener(key);
-          } catch (e) {
-            window.console.warn('[YouTube+] Failed to unregister listener');
+            U.cleanupManager.unregisterListener?.(key);
+          } catch (_e) {
+            window.YouTubePlusLogger?.warn?.('Stats', 'Failed to unregister listener');
           }
         });
         state.documentListenerKeys.clear();
@@ -3936,6 +3982,10 @@
       utils.log('Cleared existing overlay');
     }
 
+    /**
+     * Create a single digit span element
+     * @returns {HTMLSpanElement} Digit element
+     */
     function createDigitElement() {
       const digit = document.createElement('span');
       Object.assign(/** @type {any} */ (digit).style || {}, {
@@ -3948,6 +3998,10 @@
       return digit;
     }
 
+    /**
+     * Create a comma separator span element
+     * @returns {HTMLSpanElement} Comma element
+     */
     function createCommaElement() {
       const comma = document.createElement('span');
       comma.textContent = ',';
@@ -3959,6 +4013,10 @@
       return comma;
     }
 
+    /**
+     * Create the flex number container for digit groups
+     * @returns {HTMLDivElement} Number container
+     */
     function createNumberContainer() {
       const container = document.createElement('div');
       Object.assign(/** @type {any} */ (container).style || {}, {
@@ -4038,6 +4096,12 @@
       }
     }
 
+    /**
+     * Update the digit container to show a new numeric value
+     * @param {HTMLElement} container - Digit container element
+     * @param {number} newValue - New value to render
+     * @returns {void}
+     */
     function updateDigits(/** @type {HTMLElement} */ container, /** @type {number} */ newValue) {
       const newValueStr = newValue.toString();
       const digitGroups = splitIntoDigitGroups(newValueStr);
@@ -4047,6 +4111,13 @@
       animateDigitChanges(container, digitGroups);
     }
 
+    /**
+     * Animate a single digit from start to end value
+     * @param {Element} element - Digit element to animate
+     * @param {number} start - Starting digit
+     * @param {number} end - Ending digit
+     * @returns {void}
+     */
     function animateDigit(
       /** @type {Element} */ element,
       /** @type {number} */ start,
@@ -4058,7 +4129,7 @@
       function update(/** @type {number} */ currentTime) {
         const elapsed = currentTime - startTime;
         const progress = Math.min(elapsed / duration, 1);
-        const easeOutQuart = 1 - Math.pow(1 - progress, 4);
+        const easeOutQuart = 1 - (1 - progress) ** 4;
         const current = Math.round(start + (end - start) * easeOutQuart);
         element.textContent = String(current);
 
@@ -4070,6 +4141,11 @@
       requestAnimationFrame(update);
     }
 
+    /**
+     * Hide spinner and reveal overlay stat containers/icons
+     * @param {HTMLElement} overlay - Overlay element
+     * @returns {void}
+     */
     function showContent(/** @type {HTMLElement} */ overlay) {
       const spinnerContainer = overlay.querySelector('.spinner-container');
       if (spinnerContainer) {
@@ -4092,6 +4168,13 @@
       });
     }
 
+    /**
+     * Render the numeric difference between current and previous stat values
+     * @param {HTMLElement} element - Difference element
+     * @param {number} currentValue - Current stat value
+     * @param {number} previousValue - Previous stat value
+     * @returns {void}
+     */
     function updateDifferenceElement(
       /** @type {HTMLElement} */ element,
       /** @type {number} */ currentValue,
@@ -4109,13 +4192,19 @@
       element.textContent = `${sign}${difference.toLocaleString()}`;
       // Maps to design tokens: #1ed760 = --yt-stats-positive-indicator, #f3727f = --yt-stats-negative-indicator
       // (element.style computed inline styles don't support CSS var() at runtime)
-      if (element.style) element.style.color = difference > 0 ? '#1ed760' : '#f3727f';
+      element.classList.add(
+        difference > 0 ? 'ytp-stats-change-positive' : 'ytp-stats-change-negative'
+      );
 
       setTimeout_(() => {
         element.textContent = '';
       }, 1000);
     }
 
+    /**
+     * Recalculate overlay layout based on visible stat options
+     * @returns {void}
+     */
     function updateDisplayState() {
       const overlay = $('.channel-banner-overlay');
       if (!overlay) return;
@@ -4147,7 +4236,7 @@
       });
 
       visibleContainers.forEach((/** @type {Element} */ container) => {
-        if (!(container instanceof HTMLElement) || !container.style) return;
+        if (!(container instanceof HTMLElement && container.style)) return;
         container.style.width = '';
         container.style.margin = '';
 
@@ -4292,7 +4381,7 @@
      */
     async function updateOverlayContent(overlay, channelName) {
       if (!shouldUpdateOverlay(channelName)) return;
-      if (!overlay || !overlay.isConnected) return;
+      if (!overlay?.isConnected) return;
       if (document.visibilityState === 'hidden') return;
       state.isUpdating = true;
 
@@ -4304,6 +4393,13 @@
             state.lastChannelIdWarnAt = now;
             utils.warn('Skipping overlay update: channel ID is not available yet');
           }
+          // Schedule a one-off retry so the overlay populates as soon as the
+          // channel ID becomes available, instead of waiting for the next interval.
+          setTimeout(() => {
+            if (overlay?.isConnected && channelName === state.currentChannelName) {
+              updateOverlayContent(overlay, channelName);
+            }
+          }, 500);
           return;
         }
         state.currentChannelId = channelId;
@@ -4336,75 +4432,21 @@
     }
 
     // Add settings UI to experimental section
-    function addSettingsUI() {
-      const section = $$('.ytp-plus-settings-section[data-section="experimental"]').find(
-        candidate => candidate.isConnected
-      );
-      if (!section) return false;
-
-      const existingItem = section.querySelector('.count-settings-item');
-      if (existingItem) {
-        const label = existingItem.querySelector('.ytp-plus-settings-item-label');
-        const description = existingItem.querySelector('.ytp-plus-settings-item-description');
-        if (label) label.textContent = t('channelStatsTitle');
-        if (description) description.textContent = t('channelStatsDescription');
-        return true;
-      }
-
-      const item = document.createElement('div');
-      item.className = 'ytp-plus-settings-item count-settings-item';
-      _setSafeHTML(
-        item,
-        `
-        <div>
-          <label class="ytp-plus-settings-item-label">${t('channelStatsTitle')}</label>
-          <div class="ytp-plus-settings-item-description">${t('channelStatsDescription')}</div>
-        </div>
-        <input type="checkbox" class="ytp-plus-settings-checkbox" ${state.enabled ? 'checked' : ''}>
-      `
-      );
-      section.appendChild(item);
-
-      item.querySelector('input')?.addEventListener('change', e => {
-        const { target } = e;
-        const input = /** @type {EventTarget & HTMLInputElement} */ (target);
-        state.enabled = input.checked;
-        _safeLS.setItem(CONFIG.STORAGE_KEY, state.enabled ? 'true' : 'false');
-        if (state.enabled) {
-          observePageChanges();
-          addNavigationListener();
-          setTimeout_(() => {
-            const bannerElement = byId('page-header-banner-sizer');
-            if (
-              bannerElement instanceof HTMLElement &&
-              (window.YouTubeUtils?.isChannelPage?.() ?? false)
-            ) {
-              addOverlay(bannerElement);
-            }
-          }, 100);
-        } else {
-          clearExistingOverlay();
-        }
-      });
-
-      return true;
-    }
-
     /**
      * @param {{check?: (() => boolean), maxAttempts?: number, interval?: number}} opts
      * @returns {{ stop: () => void } | null}
      */
     function createSafeRetryScheduler(
-      /** @type {{check?: (() => boolean), maxAttempts?: number, interval?: number}} */ opts
+      /** @type {{check: () => boolean, maxAttempts?: number, interval?: number}} */ opts
     ) {
-      const factory = window.YouTubeUtils?.createRetryScheduler;
+      const factory = U?.createRetryScheduler;
       if (typeof factory === 'function') {
         try {
           return /** @type {{ stop: () => void } | null} */ (
             /** @type {unknown} */ (factory(opts))
           );
         } catch (error) {
-          window.YouTubeUtils?.logError?.(
+          U?.logError?.(
             'ChannelStats',
             'Retry scheduler factory failed',
             /** @type {any} */ (error)
@@ -4428,11 +4470,7 @@
             return;
           }
         } catch (error) {
-          window.YouTubeUtils?.logError?.(
-            'ChannelStats',
-            'Fallback retry check failed',
-            /** @type {any} */ (error)
-          );
+          U?.logError?.('ChannelStats', 'Fallback retry check failed', /** @type {any} */ (error));
         }
 
         if (attempts >= maxAttempts) {
@@ -4454,61 +4492,30 @@
       };
     }
 
-    /** @type {{ stop: () => void } | null} */
-    let ensureSettingsScheduler = null;
-    function ensureSettingsUI() {
-      if (ensureSettingsScheduler) ensureSettingsScheduler.stop();
-      ensureSettingsScheduler = createSafeRetryScheduler({
-        check: () => addSettingsUI(),
-        maxAttempts: 50,
-        interval: 100,
-      });
-    }
-
-    // Settings modal integration — use event instead of MutationObserver
-    if (_cm2?.registerListener) {
-      _cm2.registerListener(document, 'youtube-plus-settings-modal-opened', () => {
-        ensureSettingsUI();
-      });
-    } else {
-      const _handler = () => {
-        ensureSettingsUI();
-      };
-      document.addEventListener('youtube-plus-settings-modal-opened', _handler);
-      // Register for future cleanup if cleanupManager becomes available
-      try {
-        window.YouTubeUtils?.cleanupManager?.register?.(() =>
-          document.removeEventListener('youtube-plus-settings-modal-opened', _handler)
-        );
-      } catch (e) {
-        // Non-critical, suppressed
-      }
-    }
-
     const experimentalNavClickHandler = (/** @type {Event} */ e) => {
       const { target } = e;
       const el = /** @type {EventTarget & HTMLElement} */ (target);
       const navItem = el?.closest?.('.ytp-plus-settings-nav-item');
       if (navItem?.dataset?.section === 'experimental') {
-        ensureSettingsUI();
+        attachSettingsHandler();
       }
     };
 
     if (_cm2?.registerListener) {
       _cm2.registerListener(document, 'youtube-plus-language-changed', () => {
-        ensureSettingsUI();
+        attachSettingsHandler();
       });
     } else {
       const _langHandler = () => {
-        ensureSettingsUI();
+        attachSettingsHandler();
       };
       document.addEventListener('youtube-plus-language-changed', _langHandler);
       try {
-        window.YouTubeUtils?.cleanupManager?.register?.(() =>
+        U?.cleanupManager?.register?.(() =>
           document.removeEventListener('youtube-plus-language-changed', _langHandler)
         );
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Stats');
       }
     }
 
@@ -4523,11 +4530,11 @@
     } else {
       document.addEventListener('click', experimentalNavClickHandler, true);
       try {
-        window.YouTubeUtils?.cleanupManager?.register?.(() =>
+        U?.cleanupManager?.register?.(() =>
           document.removeEventListener('click', experimentalNavClickHandler, true)
         );
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Stats');
       }
     }
 
@@ -4572,7 +4579,7 @@
      * @param {HTMLElement} bannerElement - Banner element
      */
     function ensureBannerPosition(bannerElement) {
-      if (bannerElement && bannerElement.style && !bannerElement.style.position) {
+      if (bannerElement?.style && !bannerElement.style.position) {
         bannerElement.style.position = 'relative';
       }
     }
@@ -4596,7 +4603,7 @@
     function createDebouncedUpdate(overlay, channelName) {
       let lastUpdateTime = 0;
       return () => {
-        if (!overlay || !overlay.isConnected) return;
+        if (!overlay?.isConnected) return;
         if (document.visibilityState === 'hidden') return;
         const now = Date.now();
         if (now - lastUpdateTime >= state.updateInterval - 100) {
@@ -4630,7 +4637,7 @@
         return;
       }
 
-      if (state.overlay && (!state.overlay.isConnected || !bannerElement.contains(state.overlay))) {
+      if (state.overlay && !(state.overlay.isConnected && bannerElement.contains(state.overlay))) {
         clearExistingOverlay();
       }
 
@@ -4672,6 +4679,10 @@
       return bannerElement;
     }
 
+    /**
+     * Stop the overlay ensure retry scheduler
+     * @returns {void}
+     */
     function stopOverlayEnsureScheduler() {
       if (state.overlayEnsureScheduler?.stop) {
         state.overlayEnsureScheduler.stop();
@@ -4679,13 +4690,18 @@
       state.overlayEnsureScheduler = null;
     }
 
+    /**
+     * Retry adding the overlay until the banner element is available and attached
+     * @param {boolean} [reset=true] - Whether to stop the existing scheduler first
+     * @returns {void}
+     */
     function ensureOverlayForCurrentPage(reset = true) {
       if (reset) stopOverlayEnsureScheduler();
 
       state.overlayEnsureScheduler = createSafeRetryScheduler({
         check: () => {
           if (!state.enabled) return true;
-          if (!(window.YouTubeUtils?.isChannelPage?.() ?? false)) {
+          if (!(U?.isChannelPage?.() ?? false)) {
             clearExistingOverlay();
             state.currentChannelName = null;
             return true;
@@ -4696,7 +4712,7 @@
 
           ensureBannerPositioning(bannerElement);
           addOverlay(bannerElement);
-          return !!(state.overlay && state.overlay.isConnected);
+          return !!state.overlay?.isConnected;
         },
         maxAttempts: 40,
         interval: 150,
@@ -4719,7 +4735,7 @@
      * @returns {void}
      */
     function handleBannerUpdate() {
-      if (!(window.YouTubeUtils?.isChannelPage?.() ?? false)) {
+      if (!(U?.isChannelPage?.() ?? false)) {
         clearExistingOverlay();
         state.currentChannelName = null;
         stopOverlayEnsureScheduler();
@@ -4743,8 +4759,8 @@
       if (!state.enabled || state.pageObserversAttached) return undefined;
       state.pageObserversAttached = true;
 
-      const debouncedBannerUpdate = YouTubeUtils.debounce
-        ? YouTubeUtils.debounce(handleBannerUpdate, 150)
+      const debouncedBannerUpdate = U.debounce
+        ? U.debounce(handleBannerUpdate, 150)
         : handleBannerUpdate;
 
       if (_cm2?.registerListener) {
@@ -4758,12 +4774,16 @@
       return undefined;
     }
 
+    /**
+     * Register SPA navigation listeners for channel page overlay lifecycle
+     * @returns {void}
+     */
     function addNavigationListener() {
       if (!state.enabled || state.navigationListenerAttached) return;
       state.navigationListenerAttached = true;
 
       const _navHandler = () => {
-        if (window.YouTubeUtils?.isChannelPage?.() ?? false) {
+        if (U?.isChannelPage?.() ?? false) {
           ensureOverlayForCurrentPage();
           utils.log('Navigated to channel page');
         } else {
@@ -4774,9 +4794,9 @@
         }
       };
       if (_cm2?.registerListener) {
-        _cm2.registerListener(window, 'yt-navigate-finish', _navHandler);
+        _cm2.registerListener(document, 'yt-navigate-finish', _navHandler);
       } else {
-        window.addEventListener('yt-navigate-finish', _navHandler);
+        document.addEventListener('yt-navigate-finish', _navHandler);
       }
 
       // Safety net: LazyLoader dispatches ytp:nav-refresh after every SPA nav.
@@ -4796,6 +4816,10 @@
     }
 
     // Cleanup function for page unload
+    /**
+     * Clean up overlay, intervals, and listeners on page unload
+     * @returns {void}
+     */
     function cleanup() {
       // Clear overlay and intervals
       clearExistingOverlay();
@@ -4820,11 +4844,9 @@
       };
     }
 
-    // If settings modal was already open when init ran, add UI immediately
-    if ($('.ytp-plus-settings-modal')) {
-      ensureSettingsUI();
-    }
-
+    // Run initialization on first entry to the channel route. The IIFE guard
+    // (window.__ytpChannelStatsModuleInit) only ensures this closure runs once;
+    // the actual overlay creation and listener registration happen here.
     init();
   }; // end initChannelStats
 
@@ -4833,16 +4855,15 @@
     once: false,
   });
 
-  // Defer channel stats init and only load module code on channel routes.
-  if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register(
-      'channel-stats',
-      initChannelStats,
-      /** @type {any} */ ({
-        priority: 1,
-        shouldLoad: () => isChannelStatsTriggerRoute() || isSettingsModalOpen(),
-      })
-    );
+  // Defer channel stats init and only load module code on channel routes
+  // or when the settings modal is open (so the experimental tab can
+  // populate the "Channel statistics" toggle regardless of route).
+  if (U?.whenRelevant) {
+    U.whenRelevant({
+      name: 'stats.channel',
+      isRelevant: () => isChannelStatsTriggerRoute() || isSettingsModalOpen(),
+      onEnter: initChannelStats,
+    });
   } else {
     if (typeof requestIdleCallback === 'function') {
       requestIdleCallback(initChannelStats, { timeout: 2000 });

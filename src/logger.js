@@ -1,22 +1,66 @@
 /**
- * Centralized Logging System for YouTube+
+ * YouTube+ Logger — canonical owner of structured, level-based logging.
  *
- * Provides structured, level-based logging with configurable verbosity.
- * Replaces scattered window.console.* calls with a unified interface.
+ * Responsibilities:
+ *   - Buffer recent log entries (with rate limiting per module).
+ *   - Filter log output by configurable level.
+ *   - Format and forward log lines to window.console.
+ *   - Provide scoped loggers via `createLogger(moduleName)`.
+ *   - Provide child loggers via `createChild(context)` for nested scopes.
+ *   - Provide stats / export / clear / setLevel / getLevel.
  *
- * Log levels: error (0), warn (1), info (2), debug (3)
- * Default: 'warn' in production, 'debug' in development.
+ * Non-responsibilities (moved to error-boundary.js):
+ *   - Severity categorization of errors.
+ *   - Error recovery, notification, persistence.
+ *   - Global `error` / `unhandledrejection` listeners.
+ *   - `withErrorBoundary` / `withAsyncErrorBoundary` wrappers.
  *
- * Usage:
- *   const log = window.YouTubePlusLogger;
- *   log.error('module', 'message', errorObj);
- *   log.warn('module', 'message');
- *   log.info('module', 'message');
- *   log.debug('module', 'message', data);
+ * Public surface:
+ *   window.YouTubePlusLogger
+ *     - error(module, message, data?)
+ *     - warn(module, message, data?)
+ *     - info(module, message, data?)
+ *     - debug(module, message, data?)
+ *     - setLevel(level)
+ *     - getLevel()
+ *     - getRecent(count?, filterLevel?)
+ *     - export()
+ *     - clear()
+ *     - getStats()
+ *     - createLogger(moduleName)
+ *     - createChild(context)
+ *     - logError(error, context?)            [back-compat bridge → YouTubePlusErrorBoundary]
+ *     - withErrorBoundary(fn, context?)     [back-compat bridge → YouTubePlusErrorBoundary]
+ *     - withAsyncErrorBoundary(fn, context?) [back-compat bridge → YouTubePlusErrorBoundary]
+ *     - getErrorStats()                     [back-compat bridge → YouTubePlusErrorBoundary]
+ *     - clearErrors()                       [back-compat bridge → YouTubePlusErrorBoundary]
+ *     - getErrorRate()                      [back-compat bridge → YouTubePlusErrorBoundary]
+ *
+ *   window.YouTubePlusErrorBoundary             [re-exposed for back-compat with existing
+ *                                            callers; canonical owner is error-boundary.js]
  */
 (function () {
-  'use strict';
-  const setTimeout_ = setTimeout;
+  // Allow Node-based tests to load error-boundary.js via this module so that
+  // requiring logger.js still surfaces both `YouTubePlusLogger` and
+  // `YouTubePlusErrorBoundary` globals (matches the previous single-file behavior).
+  // In the bundled userscript, build order loads error-boundary.js first.
+  /** @type {((id: string) => unknown) | null} */
+  const nodeRequire =
+    typeof module !== 'undefined' && module && typeof require === 'function' ? require : null;
+  const __loadBoundary =
+    nodeRequire && !window.YouTubePlusErrorBoundary
+      ? () => {
+          try {
+            nodeRequire('./error-boundary.js');
+          } catch (_e) {
+            // error-boundary.js is expected to be loaded by build order in the
+            // bundled userscript. Swallow in case of misconfiguration.
+          }
+        }
+      : null;
+  if (__loadBoundary) __loadBoundary();
+
+  const U = window.YouTubeUtils;
 
   /** @typedef {'error'|'warn'|'info'|'debug'} LogLevel */
 
@@ -30,30 +74,37 @@
   const MAX_LOGS_PER_MINUTE = 60;
 
   /**
-   * @type {Array<{timestamp: number, level: LogLevel, module: string, message: string, data?: any}>}
+   * @typedef {{timestamp: number, level: LogLevel, module: string, message: string, data?: any}} LogEntry
    */
+
+  /** @type {LogEntry[]} */
   const logBuffer = [];
 
   /** @type {Map<string, {count: number, resetTime: number}>} */
   const rateLimitMap = new Map();
 
   /**
-   * Determine if we're in development mode
+   * Determine if we're in development mode.
+   * Kept side-effect free — reads window flags / localStorage defensively.
    * @returns {boolean}
    */
   function isDevMode() {
     try {
-      // Check common dev indicators
       if (typeof window !== 'undefined') {
         if (window.__ytpDevMode) return true;
-        const settings = localStorage.getItem('youtube_plus_settings');
-        if (settings) {
-          const parsed = JSON.parse(settings);
-          if (parsed.debugMode) return true;
+        const store = /** @type {any} */ (window).YouTubePlusSettingsStore;
+        if (store && typeof store.get === 'function') {
+          if (store.get('debugMode')) return true;
+        } else {
+          const settings = localStorage.getItem('youtube_plus_settings');
+          if (settings) {
+            const parsed = JSON.parse(settings);
+            if (parsed?.debugMode) return true;
+          }
         }
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U?.logSuppressed?.(_e, 'Logger');
     }
     return false;
   }
@@ -90,53 +141,72 @@
   }
 
   /**
-   * Core logging function
+   * Core logging function. Safe to call with any data shape; non-Error
+   * payloads are stored as-is and Error payloads have `name/message/stack`
+   * extracted for cross-realm safety.
    * @param {LogLevel} level
    * @param {string} module
    * @param {string} message
    * @param {any} [data]
    */
   function log(level, module, message, data) {
-    // Check level threshold
     if (LOG_LEVELS[level] > LOG_LEVELS[currentLevel]) return;
-
-    // Rate limit per module
     if (!checkRateLimit(module)) return;
 
     const formatted = formatMessage(level, module, message);
 
-    // Store in buffer
+    const safeData = data !== undefined ? serializeData(data) : undefined;
+
+    /** @type {LogEntry} */
     const entry = {
       timestamp: Date.now(),
       level,
       module,
       message,
-      data: data !== undefined ? data : undefined,
+      data: safeData,
     };
     logBuffer.push(entry);
     if (logBuffer.length > MAX_LOG_ENTRIES) {
       logBuffer.splice(0, logBuffer.length - MAX_LOG_ENTRIES);
     }
 
-    // Output to console (respect ESLint no-console rule: only warn/error)
+    // Forward to console for real-browser diagnostics. Info/debug stay gated by
+    // currentLevel, so production users only see warn/error by default.
     if (level === 'error') {
-      if (data !== undefined) {
-        window.console.error(formatted, data);
-      } else {
-        window.console.error(formatted);
-      }
+      if (safeData !== undefined) console.error(formatted, safeData);
+      else console.error(formatted);
     } else if (level === 'warn') {
-      if (data !== undefined) {
-        window.console.warn(formatted, data);
-      } else {
-        window.console.warn(formatted);
-      }
+      if (safeData !== undefined) console.warn(formatted, safeData);
+      else console.warn(formatted);
     } else if (currentLevel === 'debug') {
-      if (data !== undefined) {
-        window.console.warn(formatted, data);
-      } else {
-        window.console.warn(formatted);
-      }
+      if (safeData !== undefined) console.log(formatted, safeData);
+      else console.log(formatted);
+    }
+  }
+
+  /**
+   * Normalize log payloads so stored entries and console output are
+   * consistent and never carry non-serializable values.
+   * @param {any} data
+   * @returns {any}
+   */
+  function serializeData(data) {
+    if (data instanceof Error) {
+      return {
+        __ytpError: true,
+        name: data.name,
+        message: data.message,
+        stack: data.stack,
+      };
+    }
+    if (data === null || typeof data !== 'object') {
+      return data;
+    }
+    try {
+      JSON.stringify(data);
+      return data;
+    } catch (_e) {
+      return String(data);
     }
   }
 
@@ -204,14 +274,15 @@
      * Get recent log entries
      * @param {number} [count=50] - Number of entries to return
      * @param {LogLevel} [filterLevel] - Optional level filter
-     * @returns {any[]}
+     * @returns {LogEntry[]}
      */
-    getRecent(count = 50, filterLevel) {
+    getRecent(count, filterLevel) {
       let entries = logBuffer;
       if (filterLevel) {
         entries = entries.filter(e => e.level === filterLevel);
       }
-      return entries.slice(-count);
+      const limit = typeof count === 'number' ? count : 50;
+      return entries.slice(-limit);
     },
 
     /**
@@ -232,7 +303,7 @@
 
     /**
      * Get logging statistics
-     * @returns {Object}
+     * @returns {{ totalEntries: number; byLevel: Record<LogLevel, number>; byModule: Record<string, number>; currentLevel: LogLevel }}
      */
     getStats() {
       const byLevel = { error: 0, warn: 0, info: 0, debug: 0 };
@@ -241,7 +312,12 @@
         byLevel[entry.level]++;
         byModule[entry.module] = (byModule[entry.module] || 0) + 1;
       }
-      return { totalEntries: logBuffer.length, byLevel, byModule, currentLevel };
+      return {
+        totalEntries: logBuffer.length,
+        byLevel,
+        byModule,
+        currentLevel,
+      };
     },
 
     /**
@@ -283,16 +359,68 @@
         },
       };
     },
+
+    /**
+     * Create a child logger that prepends a sub-scope to the module name.
+     * Useful for nested contexts (e.g. `Download:Thumbnails`).
+     * @param {string} context - Sub-scope name
+     * @returns {{error: (message: string, data?: any) => void, warn: (message: string, data?: any) => void, info: (message: string, data?: any) => void, debug: (message: string, data?: any) => void}}
+     */
+    createChild(context) {
+      return {
+        /**
+         * @param {string} module
+         * @param {string} message
+         * @param {any} [data]
+         */
+        error(module, message, data) {
+          log('error', `${context}:${module}`, message, data);
+        },
+        /**
+         * @param {string} module
+         * @param {string} message
+         * @param {any} [data]
+         */
+        warn(module, message, data) {
+          log('warn', `${context}:${module}`, message, data);
+        },
+        /**
+         * @param {string} module
+         * @param {string} message
+         * @param {any} [data]
+         */
+        info(module, message, data) {
+          log('info', `${context}:${module}`, message, data);
+        },
+        /**
+         * @param {string} module
+         * @param {string} message
+         * @param {any} [data]
+         */
+        debug(module, message, data) {
+          log('debug', `${context}:${module}`, message, data);
+        },
+      };
+    },
   };
 
-  const ErrorSeverity = {
-    LOW: 'low',
-    MEDIUM: 'medium',
-    HIGH: 'high',
-    CRITICAL: 'critical',
-  };
-
-  const errorBoundaryConfig = {
+  // ---------------------------------------------------------------------------
+  // Back-compat bridge for error-boundary methods.
+  // These existed on the legacy YouTubePlusLogger surface. They now delegate
+  // to window.YouTubePlusErrorBoundary (canonical owner: error-boundary.js).
+  // If error-boundary.js has not been loaded for any reason, methods become
+  // safe no-ops so callers do not crash.
+  // ---------------------------------------------------------------------------
+  /** @type {(...args: any[]) => void} */
+  const NOOP = () => {};
+  const NOOP_STATS = () => ({
+    totalErrors: 0,
+    recentErrors: 0,
+    lastErrorTime: 0,
+    isRecovering: false,
+    errorsByType: {},
+  });
+  const NOOP_CONFIG = {
     maxErrors: 10,
     errorWindow: 60000,
     enableLogging: true,
@@ -300,289 +428,70 @@
     storageKey: 'youtube_plus_errors',
   };
 
+  function getBoundary() {
+    return /** @type {any} */ (window).YouTubePlusErrorBoundary || null;
+  }
+
   /**
-   * @typedef {{ timestamp: string; message: string; stack: string | undefined; severity: string; context: Record<string, unknown> }} BoundaryErrorInfo
+   * @param {Error | unknown} error
+   * @param {Record<string, unknown>} [context]
    */
-
-  /** @type {{ errors: BoundaryErrorInfo[]; errorCount: number; lastErrorTime: number; isRecovering: boolean }} */
-  const errorState = {
-    errors: [],
-    errorCount: 0,
-    lastErrorTime: 0,
-    isRecovering: false,
+  logger.logError = (error, context) => {
+    const b = getBoundary();
+    return b && typeof b.logError === 'function'
+      ? b.logError(error, context)
+      : NOOP(error, context);
+  };
+  /**
+   * @template {(...args: any[]) => any} T
+   * @param {T} fn
+   * @param {string} [context]
+   * @returns {T}
+   */
+  logger.withErrorBoundary = (fn, context) => {
+    const b = getBoundary();
+    return b && typeof b.withErrorBoundary === 'function' ? b.withErrorBoundary(fn, context) : fn;
+  };
+  /**
+   * @template {(...args: any[]) => Promise<any>} T
+   * @param {T} fn
+   * @param {string} [context]
+   * @returns {T}
+   */
+  logger.withAsyncErrorBoundary = (fn, context) => {
+    const b = getBoundary();
+    return b && typeof b.withAsyncErrorBoundary === 'function'
+      ? b.withAsyncErrorBoundary(fn, context)
+      : fn;
+  };
+  logger.getErrorStats = () => {
+    const b = getBoundary();
+    return b && typeof b.getErrorStats === 'function' ? b.getErrorStats() : NOOP_STATS();
+  };
+  logger.clearErrors = () => {
+    const b = getBoundary();
+    if (b && typeof b.clearErrors === 'function') b.clearErrors();
+  };
+  logger.getErrorRate = () => {
+    const b = getBoundary();
+    return b && typeof b.getErrorRate === 'function' ? b.getErrorRate() : 0;
+  };
+  logger.config = () => {
+    const b = getBoundary();
+    return b?.config ? b.config : NOOP_CONFIG;
   };
 
-  /** @param {Error} error */
-  const categorizeSeverity = error => {
-    const message = error.message?.toLowerCase() || '';
-    if (
-      message.includes('cannot read') ||
-      message.includes('undefined') ||
-      message.includes('null')
-    ) {
-      return ErrorSeverity.MEDIUM;
-    }
-    if (message.includes('network') || message.includes('fetch') || message.includes('timeout')) {
-      return ErrorSeverity.LOW;
-    }
-    if (message.includes('syntax') || message.includes('reference') || message.includes('type')) {
-      return ErrorSeverity.HIGH;
-    }
-    if (message.includes('security') || message.includes('csp')) {
-      return ErrorSeverity.CRITICAL;
-    }
-    return ErrorSeverity.MEDIUM;
-  };
-
-  const getErrorRate = () => {
-    const now = Date.now();
-    const oneMinuteAgo = now - 60000;
-    return errorState.errors.filter(e => new Date(e.timestamp).getTime() > oneMinuteAgo).length;
-  };
-
-  const isErrorRateExceeded = () => {
-    const now = Date.now();
-    const windowStart = now - errorBoundaryConfig.errorWindow;
-    const recentErrors = errorState.errors.filter(
-      e => new Date(e.timestamp).getTime() > windowStart
-    );
-    return recentErrors.length >= errorBoundaryConfig.maxErrors;
-  };
-
-  /** @param {Error} error */
-  const showErrorNotification = error => {
-    try {
-      const Y = window.YouTubeUtils;
-      if (!Y || !Y.NotificationManager || typeof Y.NotificationManager.show !== 'function') {
-        return;
-      }
-
-      const severity = categorizeSeverity(error);
-      let message = 'An error occurred';
-      let duration = 3000;
-
-      if (severity === ErrorSeverity.LOW) {
-        message = 'A minor issue occurred. Functionality should continue normally.';
-        duration = 2000;
-      } else if (severity === ErrorSeverity.MEDIUM) {
-        message = 'An error occurred. Some features may not work correctly.';
-        duration = 3000;
-      } else if (severity === ErrorSeverity.HIGH) {
-        message = 'A serious error occurred. Please refresh the page if issues persist.';
-        duration = 5000;
-      } else if (severity === ErrorSeverity.CRITICAL) {
-        message =
-          'A critical error occurred. YouTube+ may not function properly. Please report this issue.';
-        duration = 7000;
-      }
-
-      Y.NotificationManager.show(message, { duration, type: 'error' });
-    } catch (notificationError) {
-      window.console.error(
-        '[YouTube+][ErrorBoundary] Failed to show error notification',
-        notificationError
-      );
-    }
-  };
-
-  /** @param {Error} error @param {Record<string, unknown>} context */
-  const attemptRecovery = (error, context) => {
-    if (!errorBoundaryConfig.enableRecovery || errorState.isRecovering) return;
-
-    const severity = categorizeSeverity(error);
-    if (severity === ErrorSeverity.CRITICAL) {
-      showErrorNotification(error);
-      return;
-    }
-
-    errorState.isRecovering = true;
-    try {
-      if (severity !== ErrorSeverity.LOW && getErrorRate() <= 5) {
-        showErrorNotification(error);
-      }
-
-      if (window.YouTubePlusErrorRecovery?.attemptRecovery) {
-        window.YouTubePlusErrorRecovery.attemptRecovery(error, context);
-      }
-
-      setTimeout_(() => {
-        errorState.isRecovering = false;
-      }, 5000);
-    } catch (recoveryError) {
-      window.console.error('[YouTube+][ErrorBoundary] Recovery attempt failed', recoveryError);
-      errorState.isRecovering = false;
-    }
-  };
-
-  /** @param {Error} error @param {{ filename?: string; lineno?: number; [key: string]: unknown }} [context] */
-  const logBoundaryError = (error, context = {}) => {
-    if (!errorBoundaryConfig.enableLogging) return;
-
-    const normalizedError = error instanceof Error ? error : new Error(String(error));
-    const fallbackMessage = normalizedError.message?.trim() || '';
-
-    if (!fallbackMessage && !normalizedError.stack && !context.filename) {
-      return;
-    }
-
-    const displayMessage =
-      fallbackMessage ||
-      (context.filename ? `Error in ${context.filename}:${context.lineno}` : 'Unknown error');
-
-    const errorInfo = {
-      timestamp: new Date().toISOString(),
-      message: displayMessage,
-      stack: normalizedError.stack,
-      severity: categorizeSeverity(normalizedError),
-      context: {
-        url: window.location.href,
-        userAgent: navigator.userAgent,
-        ...context,
-      },
-    };
-
-    logger.error('ErrorBoundary', displayMessage, errorInfo);
-
-    errorState.errors.push(errorInfo);
-    if (errorState.errors.length > 50) {
-      errorState.errors.shift();
-    }
-
-    try {
-      const stored = JSON.parse(localStorage.getItem(errorBoundaryConfig.storageKey) || '[]');
-      stored.push(errorInfo);
-      if (stored.length > 20) stored.shift();
-      localStorage.setItem(errorBoundaryConfig.storageKey, JSON.stringify(stored));
-    } catch (e) {
-      void e;
-    }
-  };
-
-  /** @param {(...args: any[]) => unknown} fn @param {string} [context] */
-  const withErrorBoundary = (fn, context = 'unknown') => {
-    /** @this {any} */
-    return function (/** @type {any[]} */ ...args) {
-      try {
-        return fn.call(this, ...args);
-      } catch (error) {
-        const normalizedError = error instanceof Error ? error : new Error(String(error));
-        logBoundaryError(normalizedError, { module: context, args });
-        attemptRecovery(normalizedError, { module: context });
-        return null;
-      }
-    };
-  };
-
-  /** @param {(...args: any[]) => Promise<unknown>} fn @param {string} [context] */
-  const withAsyncErrorBoundary = (fn, context = 'unknown') => {
-    /** @this {any} */
-    return async function (/** @type {any[]} */ ...args) {
-      try {
-        return await fn.call(this, ...args);
-      } catch (error) {
-        const normalizedError = error instanceof Error ? error : new Error(String(error));
-        logBoundaryError(normalizedError, { module: context, args });
-        attemptRecovery(normalizedError, { module: context });
-        return null;
-      }
-    };
-  };
-
-  const getErrorStats = () => ({
-    totalErrors: errorState.errorCount,
-    recentErrors: errorState.errors.length,
-    lastErrorTime: errorState.lastErrorTime,
-    isRecovering: errorState.isRecovering,
-    errorsByType: errorState.errors.reduce((/** @type {Record<string, number>} */ acc, e) => {
-      acc[e.severity] = (acc[e.severity] || 0) + 1;
-      return acc;
-    }, /** @type {Record<string, number>} */ ({})),
-  });
-
-  const clearErrors = () => {
-    errorState.errors = [];
-    errorState.errorCount = 0;
-    errorState.lastErrorTime = 0;
-    try {
-      localStorage.removeItem(errorBoundaryConfig.storageKey);
-    } catch (e) {
-      void e;
-    }
-  };
-
-  /** @param {ErrorEvent} event */
-  const handleError = event => {
-    const error = event.error || new Error(event.message);
-    const message = (error.message || event.message || '').trim();
-
-    if (message.includes('ResizeObserver loop')) return false;
-
-    const source = event.filename || '';
-    const isCrossOriginSource =
-      source && !source.startsWith(window.location.origin) && !/YouTube\+/.test(source);
-    if (!message && isCrossOriginSource) return false;
-    if (!message || (message === '(no message)' && isCrossOriginSource)) return false;
-
-    errorState.errorCount++;
-    errorState.lastErrorTime = Date.now();
-
-    logBoundaryError(error, {
-      type: 'uncaught',
-      filename: event.filename,
-      lineno: event.lineno,
-      colno: event.colno,
-    });
-
-    if (isErrorRateExceeded()) {
-      logger.error('ErrorBoundary', 'Error rate exceeded');
-      return false;
-    }
-
-    attemptRecovery(error, { type: 'uncaught' });
-    return false;
-  };
-
-  /** @param {PromiseRejectionEvent} event */
-  const handleUnhandledRejection = event => {
-    const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
-    errorState.errorCount++;
-    errorState.lastErrorTime = Date.now();
-
-    logBoundaryError(error, {
-      type: 'unhandledRejection',
-      promise: event.promise,
-    });
-
-    if (isErrorRateExceeded()) {
-      logger.error('ErrorBoundary', 'Promise rejection rate exceeded');
-      return;
-    }
-
-    attemptRecovery(error, { type: 'unhandledRejection' });
-  };
-
-  logger.withErrorBoundary = withErrorBoundary;
-  logger.withAsyncErrorBoundary = withAsyncErrorBoundary;
-  logger.getErrorStats = getErrorStats;
-  logger.clearErrors = clearErrors;
-  logger.logError = logBoundaryError;
-  logger.getErrorRate = getErrorRate;
-  logger.config = errorBoundaryConfig;
-
-  // Export to window
   if (typeof window !== 'undefined') {
-    window.addEventListener('error', handleError, true);
-    window.addEventListener('unhandledrejection', handleUnhandledRejection, true);
-
     window.YouTubePlusLogger = /** @type {any} */ (logger);
-    window.YouTubeErrorBoundary = {
-      withErrorBoundary,
-      withAsyncErrorBoundary,
-      getErrorStats,
-      clearErrors,
-      logError: logBoundaryError,
-      getErrorRate,
-      config: errorBoundaryConfig,
-    };
+    if (typeof unsafeWindow !== 'undefined') {
+      unsafeWindow.YouTubePlusLogger = /** @type {any} */ (logger);
+    }
+
+    // Re-expose the error-boundary global for callers that looked it up
+    // through logger.js (e.g. legacy tests). Canonical owner is
+    // error-boundary.js; this line is a no-op once it has run there.
+    if (!window.YouTubePlusErrorBoundary) {
+      window.YouTubePlusErrorBoundary = /** @type {any} */ (getBoundary());
+    }
   }
 })();

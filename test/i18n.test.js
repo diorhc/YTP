@@ -224,7 +224,7 @@ describe('i18n Module', () => {
       delete require.cache[require.resolve('../src/i18n.js')];
       require('../src/i18n.js');
 
-      const languages = ['en', 'ru', 'kr', 'fr', 'du', 'cn', 'tw', 'jp', 'tr'];
+      const languages = ['en', 'ru', 'ko', 'fr', 'nl', 'zh-CN', 'zh-TW', 'ja', 'tr'];
       languages.forEach(lang => {
         expect(typeof lang).toBe('string');
         expect(lang.length).toBeGreaterThan(0);

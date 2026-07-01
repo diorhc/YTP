@@ -78,7 +78,65 @@ if (typeof global.fetch !== 'function') {
 
 // Ensure structuredClone is available (Node < 17 / old jsdom)
 if (typeof global.structuredClone !== 'function') {
-  global.structuredClone = /** @param {unknown} obj */ obj => JSON.parse(JSON.stringify(obj));
+  /**
+   * @param {unknown} obj
+   * @param {{ transfer?: unknown[] }} [options]
+   * @returns {unknown}
+   */
+  global.structuredClone = (obj, options) => {
+    // Handle primitives and null
+    if (obj === null || typeof obj !== 'object') return obj;
+
+    // Handle Date
+    if (obj instanceof Date) return new Date(obj.getTime());
+
+    // Handle RegExp
+    if (obj instanceof RegExp) return new RegExp(obj.source, obj.flags);
+
+    // Handle Map
+    if (obj instanceof Map) {
+      const clone = new Map();
+      for (const [k, v] of obj) clone.set(global.structuredClone(k), global.structuredClone(v));
+      return clone;
+    }
+
+    // Handle Set
+    if (obj instanceof Set) {
+      const clone = new Set();
+      for (const v of obj) clone.add(global.structuredClone(v));
+      return clone;
+    }
+
+    // Handle ArrayBuffer
+    if (obj instanceof ArrayBuffer) {
+      const clone = obj.slice(0);
+      return clone;
+    }
+
+    // Handle TypedArrays
+    if (ArrayBuffer.isView(obj) && !(obj instanceof DataView)) {
+      const clone = new /** @type {typeof obj.constructor} */ (obj.constructor)(
+        global.structuredClone(obj.buffer)
+      );
+      return clone;
+    }
+
+    // Handle DataView
+    if (obj instanceof DataView) {
+      const clone = new DataView(global.structuredClone(obj.buffer), obj.byteOffset, obj.byteLength);
+      return clone;
+    }
+
+    // Handle plain objects and arrays
+    if (Array.isArray(obj)) return obj.map(v => global.structuredClone(v));
+
+    /** @type {Record<string, unknown>} */
+    const clone = {};
+    for (const key of Object.keys(obj)) {
+      clone[key] = global.structuredClone(/** @type {Record<string, unknown>} */ (obj)[key]);
+    }
+    return clone;
+  };
 }
 
 // Polyfill performance.mark/getEntriesByType/clearMarks for jsdom

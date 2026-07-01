@@ -1,33 +1,13 @@
-// Shorts Keyboard controls
+// Shorts Keyboard Controls — LazyLoader registered as 'shorts'.
+//
+// Responsibility: keyboard shortcuts for YouTube Shorts (next/previous
+//   like/dislike/share, speed control). Persists key bindings in
+//   localStorage under `youtube_shorts_keyboard_settings`.
+// Public surface: none (self-contained IIFE, registered via LazyLoader).
 (function () {
-  'use strict';
-  const setTimeout_ = setTimeout.bind(window);
-  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
-  /**
-   * @param {Element} container
-   * @param {string} html
-   */
-  const renderTemplateClone = (container, html) => {
-    if (!(container instanceof Element)) return;
-    const template = document.createElement('template');
-    const range = document.createRange();
-    const root = document.body || document.documentElement;
-    if (root) range.selectNode(root);
-    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
-    template.content.append(range.createContextualFragment(_createHTML(html)));
-    container.replaceChildren(template.content.cloneNode(true));
-  };
-
-  // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils.t;
-  const qs =
-    window.YouTubeUtils?.$ ||
-    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
-      (root || document).querySelector(selector));
-  const byId =
-    window.YouTubeUtils?.byId ||
-    ((/** @type {string} */ id) =>
-      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
+  // Shared helpers from YouTubeUtils (canonical boot shorthand)
+  const U = window.YouTubeUtils;
+  const { t, logger: shortsLogger, $: qs, setTimeout_ } = U?.helpers ?? {};
 
   // Configuration - Using lazy getters for translations to avoid early loading
   const config = {
@@ -117,7 +97,9 @@
       }
 
       for (const selector of selectors) {
-        const video = YouTubeUtils.querySelector(selector);
+        const video = YouTubeUtils.querySelector
+          ? YouTubeUtils.querySelector(selector)
+          : qs(selector);
         if (video) {
           state.cachedVideo = /** @type {HTMLVideoElement} */ (/** @type {unknown} */ (video));
           state.lastVideoCheck = now;
@@ -160,7 +142,7 @@
 
         const parsed = JSON.parse(saved);
         if (typeof parsed !== 'object' || parsed === null) {
-          window.console.warn('[YouTube+][Shorts]', 'Invalid settings format');
+          shortsLogger?.warn?.('Shorts', 'Invalid settings format');
           return;
         }
 
@@ -191,7 +173,7 @@
           }
         }
       } catch (error) {
-        window.console.error('[YouTube+][Shorts]', 'Error loading settings:', error);
+        shortsLogger?.error?.('Shorts', 'Error loading settings', error);
       }
     },
 
@@ -207,7 +189,7 @@
         };
         localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
       } catch (error) {
-        window.console.error('[YouTube+][Shorts]', 'Error saving settings:', error);
+        shortsLogger?.error?.('Shorts', 'Error saving settings', error);
       }
     },
 
@@ -388,12 +370,12 @@
             }
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // Continue to fallback
       }
 
       const video = getCurrentVideo();
-      if (video && video.textTracks && video.textTracks.length) {
+      if (video?.textTracks?.length) {
         const tracks = Array.from(video.textTracks).filter(
           tr => tr.kind === 'subtitles' || tr.kind === 'captions' || !tr.kind
         );
@@ -469,7 +451,7 @@
             }
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // ignore and fallback
       }
 
@@ -512,6 +494,8 @@
       let dragging = false;
       let offsetX = 0;
       let offsetY = 0;
+      let cachedWidth = 0;
+      let cachedHeight = 0;
 
       const stopDragging = () => {
         if (!dragging) return;
@@ -521,8 +505,8 @@
 
       const onPointerMove = /** @param {PointerEvent} ev */ ev => {
         if (!dragging) return;
-        const maxLeft = Math.max(0, window.innerWidth - panelEl.offsetWidth);
-        const maxTop = Math.max(0, window.innerHeight - panelEl.offsetHeight);
+        const maxLeft = Math.max(0, window.innerWidth - cachedWidth);
+        const maxTop = Math.max(0, window.innerHeight - cachedHeight);
         const nextLeft = Math.min(Math.max(0, ev.clientX - offsetX), maxLeft);
         const nextTop = Math.min(Math.max(0, ev.clientY - offsetY), maxTop);
         panelEl.style.left = `${nextLeft}px`;
@@ -541,6 +525,8 @@
 
         offsetX = ev.clientX - rect.left;
         offsetY = ev.clientY - rect.top;
+        cachedWidth = panelEl.offsetWidth;
+        cachedHeight = panelEl.offsetHeight;
         dragging = true;
         panelEl.classList.add('is-dragging');
       };
@@ -569,7 +555,7 @@
       const render = () => {
         if (!panel) return;
         const p = /** @type {HTMLElement} */ (panel);
-        renderTemplateClone(
+        U.renderTemplateClone(
           p,
           `
             <div class="help-topbar">
@@ -585,9 +571,10 @@
                 ${Object.entries(config.shortcuts)
                   .map(([action, shortcut]) => {
                     const sc = /** @type {Record<string,any>} */ (shortcut);
+                    const keyVal = shortcut.key === ' ' ? 'Space' : shortcut.key;
                     return `<div class="help-item">
-                    <kbd data-action="${action}" ${sc.editable === false ? 'class="non-editable"' : ''}>${shortcut.key === ' ' ? 'Space' : shortcut.key}</kbd>
-                    <span>${shortcut.description}</span>
+                    <kbd data-action="${window.YouTubeSafeDOM.escapeHTML(action)}" ${sc.editable === false ? 'class="non-editable"' : ''}>${window.YouTubeSafeDOM.escapeHTML(keyVal)}</kbd>
+                    <span>${window.YouTubeSafeDOM.escapeHTML(shortcut.description)}</span>
                   </div>`;
                   })
                   .join('')}
@@ -686,14 +673,14 @@
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
     const sc = /** @type {Record<string,any>} */ (config.shortcuts);
-    renderTemplateClone(
+    U.renderTemplateClone(
       dialog,
       `
         <div class="glass-panel shortcut-edit-content">
-          <h4>${t('editShortcut')}: ${sc[actionKey]?.description || actionKey}</h4>
-          <p>${t('pressAnyKey')}</p>
-          <div class="current-shortcut">${t('current')}: <kbd>${currentKey === ' ' ? 'Space' : currentKey}</kbd></div>
-          <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">${t('cancel')}</button>
+          <h4>${window.YouTubeSafeDOM.escapeHTML(t('editShortcut'))}: ${window.YouTubeSafeDOM.escapeHTML(sc[actionKey]?.description || actionKey)}</h4>
+          <p>${window.YouTubeSafeDOM.escapeHTML(t('pressAnyKey'))}</p>
+          <div class="current-shortcut">${window.YouTubeSafeDOM.escapeHTML(t('current'))}: <kbd>${window.YouTubeSafeDOM.escapeHTML(currentKey === ' ' ? 'Space' : currentKey)}</kbd></div>
+          <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">${window.YouTubeSafeDOM.escapeHTML(t('cancel'))}</button>
         </div>
       `
     );
@@ -744,61 +731,28 @@
   };
 
   /**
-   * Add glassmorphism styles for Shorts keyboard controls
-   * Uses CSS custom properties for theme support
+   * Register Shorts keyboard-control styles via the canonical style system.
+   * Uses design-system.js getStyle(...) + StyleManager.add so the CSS is
+   * owned by the shared host (`#youtube-plus-styles`) and stays in sync
+   * with other modules. The byId('shorts-keyboard-styles') guard preserves
+   * compatibility with users upgrading from a pre-canonical version of
+   * this module that injected a raw `<style id="shorts-keyboard-styles">`
+   * element.
    * @returns {void}
    */
   const addStyles = () => {
-    if (byId('shorts-keyboard-styles')) return;
-
-    const styles = `
-                  .shorts-help-panel{position:fixed;top:50%;left:25%;transform:translate(-50%,-50%) scale(.9);z-index:10001;opacity:0;visibility:hidden;transition:opacity .3s ease,visibility .3s ease,transform .3s ease;width:340px;max-width:95vw;max-height:80vh;overflow:hidden;outline:none;color:var(--yt-text-primary,#fff);padding:14px;display:flex;flex-direction:column;gap:12px;}
-                .shorts-help-panel.visible{opacity:1;visibility:visible;transform:translate(-50%,-50%) scale(1);}
-                  .help-topbar{display:flex;align-items:center;justify-content:space-between;gap:10px;}
-                  .help-header{margin:0;line-height:1.2;}
-                  .help-close{position:static;display:flex;align-items:center;justify-content:center;padding:4px;flex-shrink:0;}
-                  .help-body{display:flex;flex-direction:column;gap:12px;min-height:0;}
-                  .help-content{padding:8px 10px;max-height:400px;overflow-y:auto;cursor:grab;user-select:none;-webkit-user-select:none;touch-action:none;border-radius:12px;background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);}
-                .shorts-help-panel.is-dragging .help-content,.help-content:active{cursor:grabbing;}
-                .help-item{display:flex;align-items:center;margin-bottom:14px;gap:18px;}
-                .help-item kbd{background:var(--yt-shorts-kbd-bg);color:inherit;padding:7px 14px;border-radius:8px;font-family:monospace;font-size:15px;font-weight:700;min-width:60px;text-align:center;border:1.5px solid var(--yt-shorts-kbd-border);cursor:pointer;transition:all .2s;position:relative;}
-                html:not([dark]) .help-item kbd{background:var(--yt-shorts-kbd-bg-light);color:#222;border:1.5px solid var(--yt-shorts-border-dark);}
-                .help-item kbd:hover{background:var(--yt-shorts-kbd-hover);transform:scale(1.07);}
-                .help-item kbd:after{content:"✎";position:absolute;top:-7px;right:-7px;font-size:11px;opacity:0;transition:opacity .2s;}
-                .help-item kbd:hover:after{opacity:.7;}
-                .help-item kbd.non-editable{cursor:default;opacity:.7;}
-                .help-item kbd.non-editable:hover{background:var(--yt-shorts-kbd-bg);transform:none;}
-                .help-item kbd.non-editable:after{display:none;}
-                .help-item span{font-size:15px;color:var(--yt-shorts-text-secondary);}
-                html:not([dark]) .help-item span{color:#222;}
-                html:not([dark]) .shorts-help-panel{color:var(--yt-text-dark-primary,#222);}
-                .help-actions{display:flex;justify-content:flex-end;align-items:center;}
-                .reset-all-shortcuts{display:inline-flex;align-items:center;justify-content:center;gap:var(--yt-space-sm);}
-                .ytp-plus-shorts-download{width:48px;height:48px;border-radius:999px;display:flex;align-items:center;justify-content:center;z-index:1;cursor:pointer;box-shadow:var(--yt-glass-shadow);background:var(--yt-glass-bg);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);margin:0 auto 10px;align-self:center;color:var(--yt-text-primary);transition:all .3s;}
-                .ytp-plus-shorts-download svg{width:22px;height:22px;display:block;pointer-events:none;}
-                .ytp-plus-shorts-download:hover{background:var(--yt-glass-border);}
-                .shortcut-edit-dialog{z-index:10002;}
-                .shortcut-edit-content{padding:28px 32px;min-width:320px;text-align:center;display:flex;flex-direction:column;gap:var(--yt-space-md);color:inherit;}
-                html:not([dark]) .shortcut-edit-content{color:#222;}
-                .shortcut-edit-content h4{margin:0 0 14px;font-size:17px;font-weight:700;}
-                .shortcut-edit-content p{margin:0 0 18px;font-size:15px;color:rgba(255,255,255,.85);}
-                html:not([dark]) .shortcut-edit-content p{color:#222;}
-                .current-shortcut{margin:18px 0;font-size:15px;}
-                .current-shortcut kbd{background:var(--yt-shorts-kbd-bg);padding:5px 12px;border-radius:6px;font-family:monospace;border:1.5px solid var(--yt-shorts-kbd-border);}
-                html:not([dark]) .current-shortcut kbd{background:var(--yt-shorts-kbd-bg-light);color:#222;border:1.5px solid var(--yt-shorts-border-dark);}
-                .shortcut-cancel{display:inline-flex;align-items:center;justify-content:center;gap:var(--yt-space-sm);}
-                @media(max-width:480px){.shorts-help-panel{width:98vw;max-height:85vh;padding:10px}.help-content{padding:10px 8px}.help-item{gap:10px}.help-item kbd{min-width:44px;font-size:13px;padding:5px 7px}.ytp-plus-shorts-download{width:44px;height:44px;margin-bottom:8px}.shortcut-edit-content{margin:20px;min-width:auto}}
-                #shorts-keyboard-feedback{background:var(--yt-shorts-feedback-bg-dark);color:var(--yt-text-primary,#fff);border:1.5px solid var(--yt-shorts-feedback-bg);border-radius:20px;box-shadow:0 8px 32px 0 var(--yt-shorts-shadow-blue);backdrop-filter:blur(12px) saturate(180%);-webkit-backdrop-filter:blur(12px) saturate(180%);}
-                html:not([dark]) #shorts-keyboard-feedback{background:var(--yt-shorts-feedback-bg-light);color:var(--yt-text-dark-primary,#222);border:1.5px solid var(--yt-shorts-border-dark);}
-            `;
-    YouTubeUtils.StyleManager.add('shorts-keyboard-styles', styles);
+    const styles = window.YouTubePlusDesignSystem?.getStyle?.('shorts-keyboard-styles') || '';
+    const SM = YouTubeUtils?.StyleManager;
+    if (SM && typeof SM.add === 'function') {
+      SM.add('shorts-keyboard-styles', styles);
+    }
   };
 
   /**
    * Remove Shorts download button if it exists
    */
   const removeShortsDownloadButton = () => {
-    if (state.downloadButton && state.downloadButton.isConnected) {
+    if (state.downloadButton?.isConnected) {
       state.downloadButton.remove();
     }
     state.downloadButton = null;
@@ -914,12 +868,10 @@
     const actionBar = findActionBar();
     const likeButton = actionBar ? findLikeButton(actionBar) : findLikeButtonFallback();
     const likeAnchor =
-      (likeButton &&
-        likeButton.closest(
-          'like-button-view-model, #like-button, reel-action-view-model, ytw-reel-action-view-model, [class*="ReelActionViewModel"]'
-        )) ||
-      likeButton;
-    if (!actionBar && !likeAnchor) return;
+      likeButton?.closest(
+        'like-button-view-model, #like-button, reel-action-view-model, ytw-reel-action-view-model, [class*="ReelActionViewModel"]'
+      ) || likeButton;
+    if (!(actionBar || likeAnchor)) return;
 
     if (
       state.downloadButton?.isConnected &&
@@ -939,7 +891,7 @@
     btn.type = 'button';
     btn.setAttribute('aria-label', t('download'));
     btn.setAttribute('title', t('downloadOptions') || t('download'));
-    renderTemplateClone(
+    U.renderTemplateClone(
       btn,
       '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
     );
@@ -974,8 +926,7 @@
    */
   const handleKeydown = e => {
     if (
-      !config.enabled ||
-      !utils.isInShortsPage() ||
+      !(config.enabled && utils.isInShortsPage()) ||
       utils.isInputFocused() ||
       state.editingShortcut
     ) {
@@ -1059,7 +1010,10 @@
         });
       });
 
-      state.downloadObserver.observe(document.body, { childList: true, subtree: true });
+      state.downloadObserver.observe(document.body, {
+        childList: true,
+        subtree: true,
+      });
       if (YouTubeUtils.cleanupManager?.registerObserver) {
         YouTubeUtils.cleanupManager.registerObserver(state.downloadObserver);
       }
@@ -1163,13 +1117,13 @@
     }
   };
 
-  if (window.YouTubePlusLazyLoader?.register) {
-    window.YouTubePlusLazyLoader.register('shorts', startShortsRuntime, {
-      priority: 50,
-      delay: 0,
-      shouldLoad: isOnShortsPage,
+  if (U?.whenRelevant) {
+    U.whenRelevant({
+      name: 'shorts',
+      isRelevant: isOnShortsPage,
+      onEnter: startShortsRuntime,
     });
   } else {
-    startShortsRuntime();
+    if (isOnShortsPage()) startShortsRuntime();
   }
 })();

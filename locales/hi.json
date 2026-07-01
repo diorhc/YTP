@@ -289,8 +289,6 @@
   "zenStylePlayerBlurDesc": "प्लेयर कंट्रोल में ब्लर इफेक्ट जोड़ें",
   "zenStyleTheaterEnhancementsLabel": "थियेटर मोड सुधार",
   "zenStyleTheaterEnhancementsDesc": "फ्लोटिंग टिप्पणी पैनल और बेहतर थियेटर मोड",
-  "zenStyleMiscLabel": "विविध सुधार",
-  "zenStyleMiscDesc": "कॉम्पैक्ट फ़ीड, होवर मेनू और अन्य छोटे सुधार",
   "playlistDeleteMode": "हटाने का मोड",
   "playlistDeleteModeExit": "हटाने के मोड से बाहर निकलें",
   "playlistSelectVideo": "वीडियो चुनें",
@@ -345,5 +343,11 @@
   "themeVariantGlass": "ग्लासमॉर्फ़िज़्म",
   "themeVariantSolid": "ठोस",
   "zenStyleCompactFeedLabel": "कम्पैक्ट फ़ीड",
-  "zenStyleCompactFeedDesc": "फ़ीड के अंतर घटाएँ और होवर करने पर त्वरित क्रियाएँ इनलाइन दिखाएं"
+  "zenStyleCompactFeedDesc": "फ़ीड के अंतर घटाएँ और होवर करने पर त्वरित क्रियाएँ इनलाइन दिखाएं",
+  "playAllMode": "सभी चलाएँ मोड",
+  "noCommentsYet": "अभी तक कोई टिप्पणी नहीं",
+  "togglePipSubmenu": "PiP सबमेन्यू टॉगल करें",
+  "openGitHubButton": "GitHub",
+  "openDiscussionsButton": "चर्चाएँ",
+  "openGreasyForkButton": "GreasyFork"
 }

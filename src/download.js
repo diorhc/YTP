@@ -5,34 +5,47 @@
  */
 
 (function () {
-  'use strict';
-  const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
-  const createVisibilityAwareInterval =
-    window.YouTubeUtils?.createVisibilityAwareInterval ||
-    /**
-     * @type {(callback: () => void, delay: number) => { stop: () => void; pause: () => void; resume: () => void; active: boolean }}
-     */
-    (
-      (callback, delay) => {
-        // Interval fallback is used only when shared visibility-aware scheduler is unavailable.
-        const id = setInterval(() => {
-          if (!document.hidden) callback();
-        }, delay);
-        return {
-          stop() {
-            clearInterval(id);
-          },
-          pause() {
-            clearInterval(id);
-          },
-          resume() {},
-          get active() {
-            return true;
-          },
-        };
-      }
-    );
+  const U = window.YouTubeUtils;
+  const _setSafeHTML = U.setSafeHTML;
+  const createVisibilityAwareInterval = /** @type {any} */ (U?.createVisibilityAwareInterval);
   const setTimeout_ = setTimeout.bind(window);
+  const DOWNLOAD_STYLE_ID = 'ytp-download-styles';
+
+  // Initialize logger early (logger.js loads before this module in build order)
+  const _YouTubePlusLogger = /** @type {any} */ (window).YouTubePlusLogger;
+  const logger =
+    typeof _YouTubePlusLogger !== 'undefined' && _YouTubePlusLogger
+      ? _YouTubePlusLogger.createLogger('Download')
+      : {
+          debug: () => {},
+          info: () => {},
+          warn: () => {},
+          error: () => {},
+        };
+
+  const injectDownloadStyles = () => {
+    try {
+      const css = window.YouTubePlusDesignSystem?.getStyle(DOWNLOAD_STYLE_ID) || '';
+      if (!css) return;
+      const SM = YouTubeUtils?.StyleManager;
+      if (SM && typeof SM.add === 'function') {
+        SM.add(DOWNLOAD_STYLE_ID, css);
+      }
+    } catch (e) {
+      logger?.warn?.('[YouTube+ Download] style injection failed:', e);
+    }
+  };
+
+  /** @param {boolean} enabled */
+  const refreshDownloadVisibility = enabled => {
+    const btn = /** @type {HTMLElement | null} */ (document.querySelector('.ytp-download-button'));
+    const dd = /** @type {HTMLElement | null} */ (document.querySelector('.download-options'));
+    if (btn) btn.style.setProperty('display', enabled ? '' : 'none', 'important');
+    if (dd) {
+      dd.style.setProperty('display', enabled ? '' : 'none', 'important');
+      if (!enabled) dd.classList.remove('visible');
+    }
+  };
 
   // -------------------------------------------------------------------------
   // PoT (Proof-of-Origin Token) collector
@@ -50,6 +63,7 @@
   // vtt/ttml) and translations return valid content (53-458 KB).
   /** @type {Map<string, Record<string, string>>} */
   const _potParamsByVideoId = new Map();
+  const _POT_PARAMS_MAX = 50;
   /** Params copied from a player request to forge our own. */
   const _potCarriedParamNames = [
     'pot',
@@ -68,6 +82,10 @@
   ];
   let _potHooksInstalled = false;
   let _potElicitInflight = false;
+  /** @type {Function|null} */
+  let _origFetch = null;
+  /** @type {Function|null} */
+  let _origXhrOpen = null;
 
   function _pageGlobal() {
     return typeof unsafeWindow !== 'undefined' ? unsafeWindow : window;
@@ -79,7 +97,7 @@
       const u = new URL(rawUrl, 'https://www.youtube.com');
       const videoId = u.searchParams.get('v');
       const pot = u.searchParams.get('pot');
-      if (!videoId || !pot) return;
+      if (!(videoId && pot)) return;
       /** @type {Record<string, string>} */
       const collected = {};
       for (const name of _potCarriedParamNames) {
@@ -87,7 +105,11 @@
         if (value != null && value !== '') collected[name] = value;
       }
       _potParamsByVideoId.set(videoId, collected);
-    } catch (e) {
+      if (_potParamsByVideoId.size > _POT_PARAMS_MAX) {
+        const firstKey = _potParamsByVideoId.keys().next().value;
+        if (firstKey !== undefined) _potParamsByVideoId.delete(firstKey);
+      }
+    } catch (_e) {
       // Ignore parse failures — never break the page over a hook side-effect.
     }
   }
@@ -97,8 +119,8 @@
     const pg = _pageGlobal();
     if (!pg || typeof pg !== 'object') return;
     try {
-      const origFetch = pg.fetch;
-      if (typeof origFetch === 'function') {
+      _origFetch = pg.fetch;
+      if (typeof _origFetch === 'function') {
         pg.fetch = function patchedFetch(input, _init) {
           try {
             const inputWithUrl = /** @type {{ url?: unknown }} */ (
@@ -113,35 +135,58 @@
                     ? inputWithUrl.url
                     : '';
             if (url) _rememberPotFromTimedtextUrl(url);
-          } catch (e) {
+          } catch (_e) {
             // Never block the player's network requests
           }
-          return origFetch.call(this, input, _init);
+          return /** @type {Function} */ (_origFetch).call(this, input, _init);
         };
       }
-      const xhrProto = pg.XMLHttpRequest && pg.XMLHttpRequest.prototype;
+      const xhrProto = pg.XMLHttpRequest?.prototype;
       if (xhrProto && typeof xhrProto.open === 'function') {
-        const origOpen = /** @type {(...args: unknown[]) => void} */ (xhrProto.open);
+        _origXhrOpen = /** @type {(...args: unknown[]) => void} */ (xhrProto.open);
         const patchedOpen = /** @this {XMLHttpRequest} */ function (
           /** @type {unknown[]} */ ...args
         ) {
           try {
             const url = args[1];
             if (typeof url === 'string') _rememberPotFromTimedtextUrl(url);
-          } catch (e) {
+          } catch (_e) {
             // Ignore
           }
-          return origOpen.apply(this, args);
+          return /** @type {Function} */ (_origXhrOpen).apply(this, args);
         };
         xhrProto.open = /** @type {typeof xhrProto.open} */ (patchedOpen);
       }
       _potHooksInstalled = true;
-    } catch (e) {
+    } catch (_e) {
       // If we cannot patch (sandboxed window), we silently degrade.
+    }
+  }
+
+  function _uninstallPotHooks() {
+    if (!_potHooksInstalled) return;
+    const pg = _pageGlobal();
+    if (!pg || typeof pg !== 'object') return;
+    try {
+      if (_origFetch && typeof _origFetch === 'function') {
+        pg.fetch = /** @type {typeof fetch} */ (_origFetch);
+        _origFetch = null;
+      }
+      const xhrProto = pg.XMLHttpRequest?.prototype;
+      if (_origXhrOpen && xhrProto && typeof _origXhrOpen === 'function') {
+        xhrProto.open = /** @type {typeof xhrProto.open} */ (_origXhrOpen);
+        _origXhrOpen = null;
+      }
+      _potHooksInstalled = false;
+    } catch (_e) {
+      // Best-effort restore
     }
   }
   // Install ASAP so we capture the very first caption request the player makes.
   _installPotHooksOnce();
+  if (typeof U?.cleanupManager?.register === 'function') {
+    U.cleanupManager.register(_uninstallPotHooks);
+  }
 
   /**
    * Try to elicit a PoT for the currently playing video by briefly toggling
@@ -158,7 +203,7 @@
         try {
           const params = new URLSearchParams(pg.location?.search || '');
           return params.get('v') || '';
-        } catch (e) {
+        } catch (_e) {
           return '';
         }
       })();
@@ -173,7 +218,7 @@
       try {
         priorTrack =
           typeof playerEl.getOption === 'function' ? playerEl.getOption('captions', 'track') : null;
-      } catch (e) {
+      } catch (_e) {
         priorTrack = null;
       }
 
@@ -182,19 +227,21 @@
       try {
         const list =
           typeof playerEl.getOption === 'function'
-            ? playerEl.getOption('captions', 'tracklist', { includeAsr: true }) || []
+            ? playerEl.getOption('captions', 'tracklist', {
+                includeAsr: true,
+              }) || []
             : [];
         if (Array.isArray(list) && list.length) {
           trackToLoad = list.find(t => t && t.languageCode === 'ru' && t.kind === 'asr') || list[0];
         }
-      } catch (e) {
+      } catch (_e) {
         trackToLoad = null;
       }
 
       if (trackToLoad && typeof playerEl.setOption === 'function') {
         try {
           playerEl.setOption('captions', 'track', trackToLoad);
-        } catch (e) {
+        } catch (_e) {
           // Ignore — fall through to button-click fallback
         }
       } else {
@@ -202,7 +249,7 @@
         try {
           const ccBtn = pg.document?.querySelector?.('.ytp-subtitles-button');
           if (ccBtn && ccBtn.getAttribute('aria-pressed') !== 'true') ccBtn.click();
-        } catch (e) {
+        } catch (_e) {
           // Ignore
         }
       }
@@ -223,12 +270,12 @@
           const ccBtn = pg.document?.querySelector?.('.ytp-subtitles-button');
           if (ccBtn && ccBtn.getAttribute('aria-pressed') === 'true') ccBtn.click();
         }
-      } catch (e) {
+      } catch (_e) {
         // Ignore restore failures
       }
 
       return _potParamsByVideoId.has(videoId);
-    } catch (e) {
+    } catch (_e) {
       return false;
     } finally {
       _potElicitInflight = false;
@@ -239,7 +286,7 @@
     try {
       const u = new URL(url, 'https://www.youtube.com');
       return u.searchParams.get('v') || '';
-    } catch (e) {
+    } catch (_e) {
       return '';
     }
   }
@@ -262,7 +309,7 @@
         const u = new URL(candidate, 'https://www.youtube.com');
         for (const [k, v] of Object.entries(params)) u.searchParams.set(k, v);
         augmented.push(u.toString());
-      } catch (e) {
+      } catch (_e) {
         // Skip malformed candidate
       }
     }
@@ -272,29 +319,23 @@
   }
 
   const isRelevantRoute = () => {
-    try {
-      const path = location.pathname || '';
-      return path === '/watch' || path.startsWith('/shorts');
-    } catch (e) {
-      return false;
-    }
+    return U.isWatchRoute() || U.isShortsRoute();
   };
 
-  const onDomReady = (/** @type {() => void} */ cb) => {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', cb, { once: true });
-    } else {
-      cb();
-    }
-  };
+  const onDomReady =
+    U?.onDomReady ||
+    (cb => {
+      if (document.readyState === 'loading')
+        document.addEventListener('DOMContentLoaded', cb, { once: true });
+      else cb();
+    });
 
   // Shared DOM helpers from YouTubeUtils
-  const $ = (/** @type {string} */ sel) =>
-    window.YouTubeUtils?.$(sel) || document['querySelector'](sel);
+  const $ = (/** @type {string} */ sel) => U.$(sel);
 
   // Check dependencies
   if (typeof YouTubeUtils === 'undefined') {
-    window.console.error('[YouTube+ Download] YouTubeUtils not found!');
+    window.YouTubePlusLogger?.error?.('Download', 'YouTubeUtils not found!');
     return;
   }
 
@@ -365,7 +406,7 @@
       const target = e.target;
       if (!(target instanceof HTMLElement)) return;
       const item = target.closest('[data-value]');
-      if (!item || !_ssList.contains(item)) return;
+      if (!(item && _ssList.contains(item))) return;
       subtitleSelect.value = /** @type {any} */ (item).dataset?.value || '';
       if (_ssList.style) _ssList.style.display = 'none';
     });
@@ -374,9 +415,9 @@
       const target = e.target;
       if (!(target instanceof HTMLElement)) return;
       const item = target.closest('[data-value]');
-      if (!item || !_ssList.contains(item)) return;
-      if (/** @type {any} */ (item).style) /** @type {any} */ {
-        item.style.background = 'var(--yt-surface-overlay-faint)';
+      if (!(item && _ssList.contains(item))) return;
+      if (/** @type {any} */ (item).style) {
+        /** @type {any} */ item.style.background = 'var(--yt-surface-overlay-faint)';
       }
     });
 
@@ -384,11 +425,11 @@
       const target = e.target;
       if (!(target instanceof HTMLElement)) return;
       const item = target.closest('[data-value]');
-      if (!item || !_ssList.contains(item)) return;
+      if (!(item && _ssList.contains(item))) return;
       const related = e.relatedTarget;
       if (related && item.contains(/** @type {Node} */ (related))) return;
-      if (/** @type {any} */ (item).style) /** @type {any} */ {
-        item.style.background = 'transparent';
+      if (/** @type {any} */ (item).style) {
+        /** @type {any} */ item.style.background = 'transparent';
       }
     });
 
@@ -495,7 +536,7 @@
       'click',
       (/** @type {Event} */ e) => {
         const target = e.target;
-        if (!(target instanceof Node) || !subtitleSelect.contains(target)) {
+        if (!(target instanceof Node && subtitleSelect.contains(target))) {
           if (_ssList.style) _ssList.style.display = 'none';
           subtitleSelect.setAttribute('aria-expanded', 'false');
         }
@@ -512,25 +553,13 @@
 
   // Translation helper: resolve from centralized i18n with fallback
   const t = (/** @type {string} */ key, /** @type {Record<string, any>} */ params = {}) => {
-    if (window.YouTubeUtils?.t) return window.YouTubeUtils.t(key, params);
+    if (U?.t) return U.t(key, params);
     const str = String(key || '');
     if (!params || Object.keys(params).length === 0) return str;
     let result = str;
     for (const [k, v] of Object.entries(params)) result = result.split(`{${k}}`).join(String(v));
     return result;
   };
-
-  // Initialize logger (logger is defined in build order before this module)
-  const _YouTubePlusLogger = /** @type {any} */ (window).YouTubePlusLogger;
-  const logger =
-    typeof _YouTubePlusLogger !== 'undefined' && _YouTubePlusLogger
-      ? _YouTubePlusLogger.createLogger('Download')
-      : {
-          debug: () => {},
-          info: () => {},
-          warn: window.console.warn.bind(console),
-          error: window.console.error.bind(console),
-        };
 
   /**
    * Download Configuration
@@ -570,22 +599,20 @@
    * @returns {string|null} Video ID or null
    */
   function getVideoId() {
+    if (U?.getVideoIdFromLocation) return U.getVideoIdFromLocation();
     try {
       const params = new URLSearchParams(window.location.search || '');
       const fromQuery = params.get('v');
       if (fromQuery) return fromQuery;
-
       const path = window.location.pathname || '';
       const shortsMatch = path.match(/^\/shorts\/([a-zA-Z0-9_-]{11})/);
-      if (shortsMatch && shortsMatch[1]) return shortsMatch[1];
-
+      if (shortsMatch?.[1]) return shortsMatch[1];
       const liveMatch = path.match(/^\/live\/([a-zA-Z0-9_-]{11})/);
-      if (liveMatch && liveMatch[1]) return liveMatch[1];
-
+      if (liveMatch?.[1]) return liveMatch[1];
       const youtuBeMatch = (window.location.href || '').match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
-      if (youtuBeMatch && youtuBeMatch[1]) return youtuBeMatch[1];
-    } catch (e) {
-      // Non-critical, suppressed
+      if (youtuBeMatch?.[1]) return youtuBeMatch[1];
+    } catch (_e) {
+      U?.logSuppressed?.(_e, 'Download');
     }
     return null;
   }
@@ -627,7 +654,7 @@
         }
       }
       return `${u.origin}${u.pathname}`;
-    } catch (e) {
+    } catch (_e) {
       return '<redacted-url>';
     }
   }
@@ -643,7 +670,7 @@
         $('h1.title yt-formatted-string') ||
         $('ytd-watch-metadata h1');
       return titleElement ? titleElement.textContent.trim() : 'video';
-    } catch (e) {
+    } catch (_e) {
       return 'video';
     }
   }
@@ -672,7 +699,7 @@
     const k = 1024;
     const sizes = ['B', 'KB', 'MB', 'GB'];
     const i = Math.floor(Math.log(bytes) / Math.log(k));
-    return `${parseFloat((bytes / Math.pow(k, i)).toFixed(2))} ${sizes[i]}`;
+    return `${parseFloat((bytes / k ** i).toFixed(2))} ${sizes[i]}`;
   }
 
   /**
@@ -724,7 +751,7 @@
   async function extractResponseText(resp, responseLike) {
     try {
       responseLike.responseText = await resp.text();
-    } catch (e) {
+    } catch (_e) {
       responseLike.responseText = null;
     }
   }
@@ -739,7 +766,7 @@
     if (responseType === 'blob') {
       try {
         responseLike.response = await resp.blob();
-      } catch (e) {
+      } catch (_e) {
         responseLike.response = null;
       }
     }
@@ -798,7 +825,7 @@
           const parsed = new URL(url);
           host = parsed.hostname;
           pathname = parsed.pathname;
-        } catch (e) {
+        } catch (_e) {
           /* keep 'unknown' */
         }
 
@@ -812,8 +839,8 @@
         // S7: Check backoff
         const backoff = backoffUntil.get(host) || 0;
         if (now < backoff) {
-          window.console.warn(
-            `[YouTube+ Download] Rate limit backoff: ${host} blocked for ${Math.ceil((backoff - now) / 1000)}s more`
+          logger.warn(
+            `Rate limit backoff: ${host} blocked for ${Math.ceil((backoff - now) / 1000)}s more`
           );
           return false;
         }
@@ -822,10 +849,10 @@
         if (recent.length >= maxRequests) {
           // S7: Apply exponential backoff (2s, 4s, 8s, 16s, max 60s)
           const consecutiveHits = Math.min(5, Math.floor(recent.length / maxRequests));
-          const backoffMs = Math.min(60000, 2000 * Math.pow(2, consecutiveHits));
+          const backoffMs = Math.min(60000, 2000 * 2 ** consecutiveHits);
           backoffUntil.set(host, now + backoffMs);
-          window.console.warn(
-            `[YouTube+ Download] Rate limit: ${recent.length}/${maxRequests} requests to ${host}, backing off ${backoffMs}ms`
+          logger.warn(
+            `Rate limit: ${recent.length}/${maxRequests} requests to ${host}, backing off ${backoffMs}ms`
           );
           return false;
         }
@@ -1190,7 +1217,7 @@
         if (!jsonText) continue;
         try {
           return JSON.parse(jsonText);
-        } catch (e) {
+        } catch (_e) {
           // Try the next occurrence (rare: multiple assignments)
         }
       }
@@ -1215,18 +1242,23 @@
       const initial = globalContext.ytInitialPlayerResponse;
       const initialCaps = initial?.captions?.playerCaptionsTracklistRenderer;
       if (initialCaps) {
-        return { captions: initialCaps, videoTitle: initial?.videoDetails?.title || title };
+        return {
+          captions: initialCaps,
+          videoTitle: initial?.videoDetails?.title || title,
+        };
       }
 
-      const playerEl =
-        window.YouTubeUtils?.byId?.('movie_player') || document['getElementById']('movie_player');
+      const playerEl = U.byId('movie_player');
       /** @type {(HTMLElement & { getPlayerResponse?: () => PlayerResponse | null }) | null} */
       const player = playerEl instanceof HTMLElement ? playerEl : null;
       const response =
         (typeof player?.getPlayerResponse === 'function' && player.getPlayerResponse()) || null;
       const respCaps = response?.captions?.playerCaptionsTracklistRenderer;
       if (respCaps) {
-        return { captions: respCaps, videoTitle: response?.videoDetails?.title || title };
+        return {
+          captions: respCaps,
+          videoTitle: response?.videoDetails?.title || title,
+        };
       }
 
       const ytPlayerResponse = globalContext?.ytplayer?.config?.args?.player_response;
@@ -1235,10 +1267,13 @@
           const parsed = JSON.parse(ytPlayerResponse);
           const parsedCaps = parsed?.captions?.playerCaptionsTracklistRenderer;
           if (parsedCaps) {
-            return { captions: parsedCaps, videoTitle: parsed?.videoDetails?.title || title };
+            return {
+              captions: parsedCaps,
+              videoTitle: parsed?.videoDetails?.title || title,
+            };
           }
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Download');
         }
       }
     } catch (error) {
@@ -1297,7 +1332,7 @@
       try {
         const serialized = new window.XMLSerializer().serializeToString(xmlDoc).trim();
         if (serialized) return serialized;
-      } catch (e) {
+      } catch (_e) {
         // Non-critical
       }
     }
@@ -1309,7 +1344,7 @@
         try {
           const serialized = new window.XMLSerializer().serializeToString(rawDocument).trim();
           if (serialized) return serialized;
-        } catch (e) {
+        } catch (_e) {
           // Non-critical
         }
       }
@@ -1322,7 +1357,7 @@
           return new window.TextDecoder('utf-8').decode(rawResponse).trim();
         }
         return '';
-      } catch (e) {
+      } catch (_e) {
         return '';
       }
     }
@@ -1335,7 +1370,7 @@
         if (window.TextDecoder) {
           return new window.TextDecoder('utf-8').decode(sliced).trim();
         }
-      } catch (e) {
+      } catch (_e) {
         // Non-critical
       }
     }
@@ -1344,7 +1379,7 @@
     if (typeof Blob !== 'undefined' && rawResponse instanceof Blob) {
       try {
         return (await rawResponse.text()).trim();
-      } catch (e) {
+      } catch (_e) {
         // Non-critical
       }
     }
@@ -1365,7 +1400,7 @@
           if (typeof extracted === 'string' && extracted.trim()) {
             return extracted.trim();
           }
-        } catch (e) {
+        } catch (_e) {
           // Non-critical
         }
       }
@@ -1599,7 +1634,7 @@
             cues.push({ start, duration, text });
           });
         }
-      } catch (e) {
+      } catch (_e) {
         /* empty */
       }
     }
@@ -1776,7 +1811,7 @@
       });
 
       return cues;
-    } catch (e) {
+    } catch (_e) {
       return [];
     }
   }
@@ -1832,10 +1867,7 @@
       const ms = frac ? Number(frac.padEnd(3, '0').slice(0, 3)) : 0;
 
       if (
-        !Number.isFinite(h) ||
-        !Number.isFinite(m) ||
-        !Number.isFinite(sec) ||
-        !Number.isFinite(ms)
+        !(Number.isFinite(h) && Number.isFinite(m) && Number.isFinite(sec) && Number.isFinite(ms))
       ) {
         return 0;
       }
@@ -1929,10 +1961,7 @@
       const frac = dot >= 0 ? secPart.slice(dot + 1) : '';
       const ms = frac ? Number(frac.padEnd(3, '0').slice(0, 3)) : 0;
       if (
-        !Number.isFinite(h) ||
-        !Number.isFinite(m) ||
-        !Number.isFinite(s) ||
-        !Number.isFinite(ms)
+        !(Number.isFinite(h) && Number.isFinite(m) && Number.isFinite(s) && Number.isFinite(ms))
       ) {
         return 0;
       }
@@ -1965,7 +1994,7 @@
             cues.push({ start, duration, text });
           });
         }
-      } catch (e) {
+      } catch (_e) {
         /* empty */
       }
     }
@@ -2043,7 +2072,7 @@
       const url = new URL(inputUrl);
       url.searchParams.set(key, value);
       return url.toString();
-    } catch (e) {
+    } catch (_e) {
       const encoded = `${encodeURIComponent(key)}=${encodeURIComponent(value)}`;
       const str = String(inputUrl || '');
       const qPos = str.indexOf('?');
@@ -2082,7 +2111,7 @@
       const url = new URL(inputUrl);
       url.searchParams.delete(key);
       return url.toString();
-    } catch (e) {
+    } catch (_e) {
       const str = String(inputUrl || '');
       const qPos = str.indexOf('?');
       if (qPos < 0) return str;
@@ -2112,7 +2141,7 @@
     try {
       const parsed = new URL(String(inputUrl || ''));
       return parsed.protocol === 'http:' || parsed.protocol === 'https:';
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   }
@@ -2172,7 +2201,7 @@
       url.searchParams.delete('tlang');
       url.searchParams.delete('fmt');
       resolved = url.toString();
-    } catch (e) {
+    } catch (_e) {
       // Fallback: strip via regex if URL is malformed
       resolved = resolved.replace(/[&?]tlang=[^&]*/g, '').replace(/[&?]fmt=[^&]*/g, '');
       // Fix dangling ? or &
@@ -2204,7 +2233,7 @@
    * @returns {string[]} Candidate URLs
    */
   function buildDirectSubtitleCandidates(videoId, languageCode, isAutoGenerated, translateTo) {
-    if (!videoId || !languageCode) return [];
+    if (!(videoId && languageCode)) return [];
 
     const base = 'https://www.youtube.com/api/timedtext';
     const common = new URLSearchParams({
@@ -2300,15 +2329,15 @@
             cache: 'no-store',
             headers: { Accept: '*/*' },
           });
-          if (!response || !response.ok) continue;
+          if (!response?.ok) continue;
           const raw = await response.text();
           const detected = classifySubtitlePayload(raw);
           if (detected) return detected;
-        } catch (e) {
+        } catch (_e) {
           // Try next candidate
         }
       }
-    } catch (e) {
+    } catch (_e) {
       // Ignore and let caller handle final failure
     }
     return null;
@@ -2338,7 +2367,7 @@
         if (candidateVideoId && !_potParamsByVideoId.has(candidateVideoId)) {
           await _tryElicitPotForCurrentVideo();
         }
-      } catch (e) {
+      } catch (_e) {
         // Non-critical
       }
     }
@@ -2361,7 +2390,7 @@
           return { payload: earlyPageFetched, hadRateLimit };
         }
         if (earlyPageFetched && !firstNonEmpty) firstNonEmpty = earlyPageFetched;
-      } catch (e) {
+      } catch (_e) {
         // Non-critical — fall through to GM_xmlhttpRequest loop.
       }
     }
@@ -2391,7 +2420,7 @@
             return { payload: detected, hadRateLimit };
           }
           if (!firstNonEmpty && detected) firstNonEmpty = detected;
-        } catch (e) {
+        } catch (_e) {
           // Try next request profile/candidate.
         }
       }
@@ -2462,7 +2491,7 @@
       trackId = '',
     } = options;
 
-    if (!videoId || (!baseUrl && !languageCode)) {
+    if (!(videoId && (baseUrl || languageCode))) {
       throw new Error('Video ID and subtitle source are required');
     }
 
@@ -2525,7 +2554,9 @@
         const rateLimitCandidates = buildMinimalRateLimitCandidates(
           translateTo ? [...translatedCandidates] : [...sourceNoAsrCandidates, ...sourceCandidates]
         );
-        const finalAttempt = await fetchSubtitlePayload(rateLimitCandidates, { minimalMode: true });
+        const finalAttempt = await fetchSubtitlePayload(rateLimitCandidates, {
+          minimalMode: true,
+        });
         payload = finalAttempt.payload;
         sawRateLimit = sawRateLimit || finalAttempt.hadRateLimit;
       }
@@ -2566,7 +2597,7 @@
             payload = freshAttempt.payload;
             sawRateLimit = sawRateLimit || freshAttempt.hadRateLimit;
           }
-        } catch (e) {
+        } catch (_e) {
           // Non-critical — fall through to error below
         }
       }
@@ -2713,7 +2744,7 @@
       }
 
       const keyData = JSON.parse(keyResponse.responseText);
-      if (!keyData || !keyData.key) {
+      if (!keyData?.key) {
         throw new Error('API key not found in response');
       }
 
@@ -2809,9 +2840,8 @@
                 return;
               }
 
-              window.YouTubeUtils &&
-                /** @type {any} */ (YouTubeUtils).logger?.debug &&
-                /** @type {any} */ (YouTubeUtils).logger.debug(
+              U &&
+                /** @type {any} */ (YouTubeUtils).logger?.debug?.(
                   `[Download] File downloaded: ${formatBytes(blob.size)}`
                 );
 
@@ -2900,7 +2930,8 @@
         cursor: 'pointer',
         fontSize: '13px',
         fontWeight: '600',
-        transition: 'all 0.18s ease',
+        transition:
+          'background-color 0.18s ease, color 0.18s ease, border-color 0.18s ease, transform 0.1s cubic-bezier(0.2,0,0,1), box-shadow 0.18s ease',
         color: 'var(--yt-muted-text)',
         borderRadius: '999px',
       });
@@ -2934,7 +2965,7 @@
       // Notify consumer about tab change (guarded to avoid throwing during early render)
       try {
         onTabChange(btn.dataset.format);
-      } catch (e) {
+      } catch (_e) {
         // ignore - avoids visual glitches if consumer manipulates DOM before it's fully appended
       }
     }
@@ -2945,12 +2976,18 @@
         setActive(btn);
         try {
           btn.blur();
-        } catch (e) {
-          /* ignore */
-          void e; // Non-critical, suppressed
+        } catch {
           /* ignore */
         }
       });
+      btn.addEventListener('mousedown', () => {
+        btn.style.transform = 'scale(0.96)';
+      });
+      const resetScale = () => {
+        btn.style.transform = '';
+      };
+      btn.addEventListener('mouseup', resetScale);
+      btn.addEventListener('mouseleave', resetScale);
     });
 
     tabContainer.appendChild(videoTab);
@@ -3160,7 +3197,7 @@
       }
       if (formParts.cancelBtn) formParts.cancelBtn.disabled = true;
     } catch (e) {
-      window.console.error('Error disabling form controls:', e);
+      logger.error('Error disabling form controls', e);
     }
   }
 
@@ -3181,7 +3218,7 @@
         formParts.downloadBtn.style.pointerEvents = 'auto';
       }
     } catch (e) {
-      window.console.error('Error enabling form controls:', e);
+      logger.error('Error enabling form controls', e);
     }
   }
 
@@ -3291,7 +3328,7 @@
       try {
         enableFormControls(formParts);
       } catch (e) {
-        window.console.error('Failed to re-enable controls:', e);
+        logger.error('Failed to re-enable controls', e);
       }
     }, 500);
 
@@ -3325,7 +3362,7 @@
         }
         completeDownload(formParts);
       } catch (err) {
-        window.console.error('[Download Error]:', err);
+        logger.error('Download error', err);
         handleDownloadError(formParts, /** @type {any} */ (err));
       } finally {
         // Extra safety: ensure controls are re-enabled
@@ -3444,7 +3481,7 @@
 
         btn.addEventListener('click', () => {
           Array.from(formParts.qualitySelect.children).forEach((/** @type {any} */ c) => {
-            if (c.dataset && c.dataset.value) {
+            if (c.dataset?.value) {
               c.style.background = 'transparent';
               c.style.color = 'var(--yt-text-primary)';
               c.style.border = '1px solid var(--yt-surface-soft)';
@@ -3593,7 +3630,7 @@
     Object.assign(box.style || {}, {
       width: '420px',
       maxWidth: '94%',
-      background: 'var(--yt-modal-surface)',
+      background: 'var(--yt-glass-bg)',
       color: 'var(--yt-text-primary)',
       borderRadius: '12px',
       boxShadow: '0 8px 40px var(--yt-shadow-flyout)',
@@ -3646,9 +3683,7 @@
     if (!els) return;
     try {
       if (!document.body.contains(els.overlay)) document.body.appendChild(els.overlay);
-    } catch (e) {
-      /* ignore */
-      void e; // Non-critical, suppressed
+    } catch {
       /* ignore */
     }
   }
@@ -3659,12 +3694,10 @@
       // Clean up subtitle select listener to prevent document click leak
       const ss = _modalElements.overlay?.querySelector('[role="listbox"]');
       if (ss && typeof ss.destroy === 'function') ss.destroy();
-      if (_modalElements.overlay && _modalElements.overlay.parentNode) {
+      if (_modalElements.overlay?.parentNode) {
         _modalElements.overlay.parentNode.removeChild(_modalElements.overlay);
       }
-    } catch (e) {
-      /* ignore */
-      void e; // Non-critical, suppressed
+    } catch {
       /* ignore */
     }
     _modalElements = null;
@@ -3701,11 +3734,11 @@
       }, interval);
       // Register with cleanupManager for safe SPA cleanup
       try {
-        if (window.YouTubeUtils?.cleanupManager?.register) {
-          window.YouTubeUtils.cleanupManager.register(() => id.stop());
+        if (U?.cleanupManager?.register) {
+          U.cleanupManager.register(() => id.stop());
         }
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Download');
       }
     });
 
@@ -3745,7 +3778,7 @@
       try {
         // execCommand is deprecated but still the only sync fallback
         copied = document.execCommand('copy');
-      } catch (e) {
+      } catch (_e) {
         logger.warn('[Download] execCommand copy not supported');
       }
       document.body.removeChild(ta);
@@ -3798,7 +3831,7 @@
     _setSafeHTML(
       button,
       `
-      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="--darkreader-inline-stroke: var(--darkreader-text-ffffff, #cad3f5);" data-darkreader-inline-stroke=""></path> <path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="#ffffff" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" style="--darkreader-inline-stroke: var(--darkreader-text-ffffff, #cad3f5);" data-darkreader-inline-stroke=""></path></svg>
+      <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path> <path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>
     `
     );
     return button;
@@ -3815,7 +3848,7 @@
     /** @type {any} */ let pendingDropdown = null;
 
     const applyPosition = () => {
-      if (!pendingButton || !pendingDropdown) return;
+      if (!(pendingButton && pendingDropdown)) return;
 
       const rect = pendingButton.getBoundingClientRect();
       const left = Math.max(8, rect.left + rect.width / 2 - 75);
@@ -3847,7 +3880,7 @@
     const handleDirectDownload = async () => {
       const api = await waitForDownloadAPI(2000);
       if (!api) {
-        window.console.error('[YouTube+] Direct download module not loaded');
+        logger.error('Direct download module not loaded');
         ytUtils.NotificationManager.show(tFn('directDownloadModuleNotAvailable'), {
           duration: 3000,
           type: 'error',
@@ -3861,11 +3894,14 @@
           return;
         }
         if (typeof (/** @type {any} */ (api).downloadVideo) === 'function') {
-          await /** @type {any} */ (api).downloadVideo({ format: 'video', quality: '1080' });
+          await /** @type {any} */ (api).downloadVideo({
+            format: 'video',
+            quality: '1080',
+          });
           return;
         }
       } catch (err) {
-        window.console.error('[YouTube+] Direct download invocation failed:', err);
+        logger.error('Direct download invocation failed', err);
       }
 
       ytUtils.NotificationManager.show(tFn('directDownloadModuleNotAvailable'), {
@@ -4014,13 +4050,13 @@
 
     list.addEventListener('click', (/** @type {any} */ e) => {
       const item = e.target?.closest?.('.download-option-item');
-      if (!item || !list.contains(item)) return;
+      if (!(item && list.contains(item))) return;
       handleOptionActivate(item);
     });
 
     list.addEventListener('keydown', (/** @type {any} */ e) => {
       const item = e.target?.closest?.('.download-option-item');
-      if (!item || !list.contains(item)) return;
+      if (!(item && list.contains(item))) return;
       if (e.key === 'Enter' || e.key === ' ') {
         handleOptionActivate(item);
       }
@@ -4173,11 +4209,12 @@
      */
     const addDownloadButton = controls => {
       if (!settings.enableDownload) return;
+      injectDownloadStyles();
 
       try {
         const existingBtn = controls.querySelector('.ytp-download-button');
         if (existingBtn) existingBtn.remove();
-      } catch (e) {
+      } catch (_e) {
         // ignore
       }
 
@@ -4185,7 +4222,10 @@
       const videoUrl = videoId ? `https://www.youtube.com/watch?v=${videoId}` : location.href;
 
       const customization = settings.downloadSiteCustomization || {
-        externalDownloader: { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
+        externalDownloader: {
+          name: 'SSYouTube',
+          url: 'https://ssyoutube.com/watch?v={videoId}',
+        },
       };
 
       const enabledSites = settings.downloadSites || {
@@ -4196,6 +4236,61 @@
       const { downloadSites } = buildDownloadSites(customization, enabledSites, videoId, videoUrl);
 
       const button = /** @type {any} */ (createButtonElement(tFn));
+
+      const existingDownload = $('.download-options');
+      if (existingDownload) existingDownload.remove();
+
+      try {
+        if (typeof window !== 'undefined') {
+          /** @type {any} */ (window).youtubePlus = /** @type {any} */ (window).youtubePlus || {};
+          /** @type {any} */ (window).youtubePlus.downloadButtonManager =
+            /** @type {any} */ (window).youtubePlus.downloadButtonManager || {};
+
+          /** @type {any} */ (window).youtubePlus.downloadButtonManager.addDownloadButton = (
+            /** @type {any} */ controlsArg
+          ) => addDownloadButton(controlsArg);
+          /** @type {any} */ (window).youtubePlus.downloadButtonManager.refreshDownloadButton =
+            () => {
+              try {
+                const btn = $('.ytp-download-button');
+                const dd = $('.download-options');
+
+                // If we should show downloads but the elements are missing, attempt to recreate
+                if (settings.enableDownload && !(btn && dd)) {
+                  try {
+                    const controlsEl = $('.ytp-right-controls');
+                    if (controlsEl) {
+                      // recreate button + dropdown
+                      addDownloadButton(/** @type {HTMLElement} */ (controlsEl));
+                    }
+                  } catch (_e) {
+                    /* ignore recreation errors */
+                  }
+                }
+
+                refreshDownloadVisibility(!!settings.enableDownload);
+              } catch {
+                /* ignore */
+              }
+            };
+
+          /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown = () => {
+            try {
+              const controlsEl = $('.ytp-right-controls');
+              if (!controlsEl) return;
+              /** @type {any} */ (window).youtubePlus.downloadButtonManager.addDownloadButton(
+                /** @type {HTMLElement} */ (controlsEl)
+              );
+              /** @type {any} */ (window).youtubePlus.settings =
+                /** @type {any} */ (window).youtubePlus.settings || settings;
+            } catch (e) {
+              logger.warn('rebuildDownloadDropdown failed', e);
+            }
+          };
+        }
+      } catch (e) {
+        logger.warn('expose rebuildDownloadDropdown failed', e);
+      }
 
       if (downloadSites.length === 1) {
         const singleSite = downloadSites[0];
@@ -4216,84 +4311,13 @@
 
       const dropdown = createDropdownOptions(downloadSites, button, actions.openDownloadSite);
 
-      const existingDownload = $('.download-options');
-      if (existingDownload) existingDownload.remove();
-
       try {
         document.body.appendChild(dropdown);
-      } catch (e) {
+      } catch (_e) {
         button.appendChild(dropdown);
       }
 
       setupDropdownHoverBehavior(button, dropdown);
-
-      try {
-        if (typeof window !== 'undefined') {
-          /** @type {any} */ (window).youtubePlus = /** @type {any} */ (window).youtubePlus || {};
-          /** @type {any} */ (window).youtubePlus.downloadButtonManager =
-            /** @type {any} */ (window).youtubePlus.downloadButtonManager || {};
-
-          /** @type {any} */ (window).youtubePlus.downloadButtonManager.addDownloadButton = (
-            /** @type {any} */ controlsArg
-          ) => addDownloadButton(controlsArg);
-          /** @type {any} */ (window).youtubePlus.downloadButtonManager.refreshDownloadButton =
-            () => {
-              try {
-                const btn = $('.ytp-download-button');
-                const dd = $('.download-options');
-
-                // If we should show downloads but the elements are missing, attempt to recreate
-                if (settings.enableDownload && (!btn || !dd)) {
-                  try {
-                    const controlsEl = $('.ytp-right-controls');
-                    if (controlsEl) {
-                      // recreate button + dropdown
-                      addDownloadButton(/** @type {HTMLElement} */ (controlsEl));
-                    }
-                  } catch (e) {
-                    /* ignore recreation errors */
-                  }
-                }
-
-                if (settings.enableDownload) {
-                  if (btn && /** @type {any} */ (btn).style) /** @type {any} */ {
-                    btn.style.display = '';
-                  }
-                  if (dd && /** @type {any} */ (dd).style) /** @type {any} */ {
-                    dd.style.display = '';
-                  }
-                } else {
-                  if (btn && /** @type {any} */ (btn).style) /** @type {any} */ {
-                    btn.style.display = 'none';
-                  }
-                  if (dd && /** @type {any} */ (dd).style) /** @type {any} */ {
-                    dd.style.display = 'none';
-                  }
-                }
-              } catch (e) {
-                /* ignore */
-                void e; // Non-critical, suppressed
-                /* ignore */
-              }
-            };
-
-          /** @type {any} */ (window).youtubePlus.rebuildDownloadDropdown = () => {
-            try {
-              const controlsEl = $('.ytp-right-controls');
-              if (!controlsEl) return;
-              /** @type {any} */ (window).youtubePlus.downloadButtonManager.addDownloadButton(
-                /** @type {HTMLElement} */ (controlsEl)
-              );
-              /** @type {any} */ (window).youtubePlus.settings =
-                /** @type {any} */ (window).youtubePlus.settings || settings;
-            } catch (e) {
-              window.console.warn('[YouTube+] rebuildDownloadDropdown failed:', e);
-            }
-          };
-        }
-      } catch (e) {
-        window.console.warn('[YouTube+] expose rebuildDownloadDropdown failed:', e);
-      }
 
       controls.insertBefore(button, controls.firstChild);
     };
@@ -4306,7 +4330,7 @@
       let dropdown = $('.download-options');
 
       // If downloads are enabled but the dropdown/button are missing, recreate them
-      if (settings.enableDownload && (!button || !dropdown)) {
+      if (settings.enableDownload && !(button && dropdown)) {
         try {
           const controlsEl = $('.ytp-right-controls');
           if (controlsEl) {
@@ -4315,25 +4339,11 @@
             dropdown = $('.download-options');
           }
         } catch (e) {
-          logger && logger.warn && logger.warn('[YouTube+] recreate download button failed:', e);
+          logger?.warn?.('[YouTube+] recreate download button failed:', e);
         }
       }
 
-      if (settings.enableDownload) {
-        if (button && /** @type {any} */ (button).style) /** @type {any} */ {
-          button.style.display = '';
-        }
-        if (dropdown && /** @type {any} */ (dropdown).style) /** @type {any} */ {
-          dropdown.style.display = '';
-        }
-      } else {
-        if (button && /** @type {any} */ (button).style) /** @type {any} */ {
-          button.style.display = 'none';
-        }
-        if (dropdown && /** @type {any} */ (dropdown).style) /** @type {any} */ {
-          dropdown.style.display = 'none';
-        }
-      }
+      refreshDownloadVisibility(!!settings.enableDownload);
     };
 
     return {
@@ -4351,25 +4361,22 @@
   function init() {
     if (initialized) return;
     initialized = true;
+    injectDownloadStyles();
     try {
-      window.YouTubeUtils &&
-        /** @type {any} */ (YouTubeUtils).logger &&
-        /** @type {any} */ (YouTubeUtils).logger.debug &&
-        /** @type {any} */ (YouTubeUtils).logger.debug('[YouTube+ Download] Unified module loaded');
-      window.YouTubeUtils &&
-        /** @type {any} */ (YouTubeUtils).logger &&
-        /** @type {any} */ (YouTubeUtils).logger.debug &&
-        /** @type {any} */ (YouTubeUtils).logger.debug(
+      U &&
+        /** @type {any} */ (YouTubeUtils).logger?.debug?.(
+          '[YouTube+ Download] Unified module loaded'
+        );
+      U &&
+        /** @type {any} */ (YouTubeUtils).logger?.debug?.(
           '[YouTube+ Download] Use window.YouTubePlusDownload.downloadVideo() to download'
         );
-      window.YouTubeUtils &&
-        /** @type {any} */ (YouTubeUtils).logger &&
-        /** @type {any} */ (YouTubeUtils).logger.debug &&
-        /** @type {any} */ (YouTubeUtils).logger.debug(
+      U &&
+        /** @type {any} */ (YouTubeUtils).logger?.debug?.(
           '[YouTube+ Download] Button manager available'
         );
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Download');
     }
   }
 
@@ -4398,6 +4405,9 @@
       // Initialize (called automatically)
       init,
     };
+    if (typeof unsafeWindow !== 'undefined') {
+      unsafeWindow.YouTubePlusDownload = window.YouTubePlusDownload;
+    }
 
     // Export button manager for basic.js
     window.YouTubePlusDownloadButton = {
@@ -4405,18 +4415,12 @@
         /** @type {(config: Record<string, unknown>) => { refreshDownloadButton(): void; addDownloadButton(): void; [key: string]: unknown }} */ (
           /** @type {unknown} */ (createDownloadButtonManager)
         ),
+      refreshVisibility: refreshDownloadVisibility,
+      injectStyles: injectDownloadStyles,
     };
-  }
-
-  // Export module to global scope for module loader
-  if (typeof window !== 'undefined') {
-    window.YouTubeDownload = {
-      init,
-      openModal,
-      getVideoId,
-      getVideoTitle,
-      version: '3.0',
-    };
+    if (typeof unsafeWindow !== 'undefined') {
+      unsafeWindow.YouTubePlusDownloadButton = window.YouTubePlusDownloadButton;
+    }
   }
 
   const ensureInit = () => {
@@ -4428,26 +4432,28 @@
     }
   };
 
-  // Register with LazyLoader for deferred initialization
-  if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register(
-      'download',
-      ensureInit,
-      /** @type {any} */ ({
-        priority: 2,
-        shouldLoad: isRelevantRoute,
-      })
-    );
+  // Download runtime: /watch and /shorts only — the button is
+  // shown exclusively on video pages, and the click handler is
+  // wired into the runtime so it can guard against clicks that
+  // happen during SPA transitions where the route is mid-swap.
+  if (U?.whenRelevant) {
+    U.whenRelevant({
+      name: 'download',
+      isRelevant: isRelevantRoute,
+      onEnter: ensureInit,
+    });
   } else {
     // Fallback: direct initialization
     onDomReady(ensureInit);
   }
 
-  if (typeof window.YouTubeUtils?.cleanupManager?.registerListener === 'function') {
+  if (typeof U?.cleanupManager?.registerListener === 'function') {
     YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', ensureInit, {
       passive: true,
     });
   } else {
-    document.addEventListener('yt-navigate-finish', ensureInit, { passive: true });
+    document.addEventListener('yt-navigate-finish', ensureInit, {
+      passive: true,
+    });
   }
 })();

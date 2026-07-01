@@ -1,13 +1,11 @@
-/* Report module: populates the settings 'report' section and provides report submission helpers.
- * Features:
- * - Small reporting form (type, title, description, email optional)
- * - Prepares debug info (version, UA, page URL, settings snapshot)
- * - Opens a prefilled GitHub issue in a new tab or copies the report to clipboard
- * - Designed to work in a userscript (no server required)
- */
+// Report — canonical report submission module.
+//
+// Responsibility: populates the settings 'report' section and provides
+//   report submission helpers. Prepares debug info (version, UA, page URL,
+//   settings snapshot) and opens a prefilled GitHub issue or copies to
+//   clipboard.
+// Public surface: window.youtubePlusReport (settings section provider).
 (function () {
-  'use strict';
-
   const setTimeout_ = setTimeout;
 
   // Minimal guards for shared utils
@@ -33,7 +31,7 @@
       if (k === 'class') {
         el.className = /** @type {string} */ (v);
       } else if (k === 'html') {
-        window.YouTubeUtils.setSafeHTML(el, /** @type {string} */ (v), true);
+        window.YouTubeUtils?.setSafeHTML?.(el, /** @type {string} */ (v), true);
       } else if (k.startsWith('on') && typeof v === 'function') {
         el.addEventListener(k.substring(2).toLowerCase(), /** @type {EventListener} */ (v));
       } else {
@@ -47,7 +45,13 @@
   }
 
   /**
-   * Sanitize HTML to prevent XSS attacks
+   * Sanitize HTML to prevent XSS attacks.
+   *
+   * Delegates to the canonical `YouTubeSafeDOM.sanitizeHTML`. There is
+   * intentionally NO fallback to `textContent → innerHTML` because that
+   * would be an escape, not a sanitization — if the safe-DOM canonical
+   * is unavailable here, that's a load-order bug worth surfacing rather
+   * than silently masking.
    * @param {string} html - HTML string to sanitize
    * @returns {string} Sanitized HTML
    */
@@ -59,9 +63,9 @@
       return Y.sanitizeHTML(html);
     }
     if (typeof html !== 'string') return '';
-    const div = document.createElement('div');
-    div.textContent = html;
-    return div.innerHTML;
+    // No safe-DOM canonical is available — refuse rather than silently
+    // fall through to a no-op escape that would change semantics.
+    throw new Error('[report] sanitizeHTML called before YouTubeSafeDOM was ready');
   }
 
   /**
@@ -167,7 +171,7 @@
         };
         try {
           lines.push(JSON.stringify(minimalDebug, null, 2));
-        } catch (e) {
+        } catch (_e) {
           lines.push('{ "error": "Failed to stringify debug info" }');
         }
       }
@@ -216,7 +220,7 @@
    */
   function copyToClipboard(text) {
     // Modern clipboard API
-    if (navigator.clipboard && navigator.clipboard.writeText) {
+    if (navigator.clipboard?.writeText) {
       return navigator.clipboard.writeText(text);
     }
     // Fallback for older browsers
@@ -249,7 +253,7 @@
    * @param {HTMLElement} modal - Settings modal element
    */
   function renderReportSection(modal) {
-    if (!modal || !modal.querySelector) return;
+    if (!modal?.querySelector) return;
 
     const section = modal.querySelector('.ytp-plus-settings-section[data-section="report"]');
     if (!section) return;
@@ -334,7 +338,7 @@
     const descInput = mk('textarea', {
       placeholder: t('descriptionPlaceholder'),
       rows: 6,
-      style: inputStyle + 'resize:vertical;font-family:inherit;',
+      style: `${inputStyle}resize:vertical;font-family:inherit;`,
     });
 
     // checkbox input is created separately so we can listen to changes and show a preview
@@ -348,7 +352,7 @@
         style:
           'font-size:13px;display:flex;gap:var(--yt-space-sm);align-items:center;color:var(--yt-text-primary);cursor:pointer;align-self:center;',
       },
-      [debugCheckboxInput, ' ' + t('includeDebug')]
+      [debugCheckboxInput, ` ${t('includeDebug')}`]
     );
 
     const actions = mk('div', {
@@ -560,7 +564,7 @@
           if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
             Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
           } else {
-            window.console.warn('[Report] Validation errors:', data.errors);
+            window.YouTubeUtils?.logger?.warn?.('Report', 'Validation errors', data.errors);
           }
           return;
         }
@@ -614,7 +618,7 @@
           if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
             Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
           } else {
-            window.console.warn('[Report] Validation errors:', data.errors);
+            window.YouTubeUtils?.logger?.warn?.('Report', 'Validation errors', data.errors);
           }
           return;
         }
@@ -642,13 +646,17 @@
           })
           .catch(err => {
             if (Y && typeof Y.logError === 'function') Y.logError('Report', 'copy failed', err);
-            if (Y && Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
+            if (Y?.NotificationManager && typeof Y.NotificationManager.show === 'function') {
               Y.NotificationManager.show(t('copyFailed'), {
                 duration: 3000,
                 type: 'error',
               });
             } else {
-              window.console.warn('Copy failed; please copy manually', err);
+              window.YouTubeUtils?.logger?.warn?.(
+                'Report',
+                'Copy failed; please copy manually',
+                err
+              );
             }
             copyBtn.disabled = false;
             copyBtn.textContent = originalText;
@@ -675,7 +683,7 @@
           if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
             Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
           } else {
-            window.console.warn('[Report] Validation errors:', data.errors);
+            window.YouTubeUtils?.logger?.warn?.('Report', 'Validation errors', data.errors);
           }
           return;
         }

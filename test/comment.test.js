@@ -21,7 +21,7 @@ describe('Comment Manager Module', () => {
    */
   let mockYouTubeUtils;
   /** @type {{ withErrorBoundary: jest.Mock<Function, [Function, string?]>, logError: jest.Mock<void, [Error, object?]> }} */
-  let mockYouTubeErrorBoundary;
+  let mockYouTubePlusErrorBoundary;
 
   beforeEach(() => {
     // Mock localStorage
@@ -63,15 +63,15 @@ describe('Comment Manager Module', () => {
       value: mockYouTubeUtils,
     });
 
-    // Mock window.YouTubeErrorBoundary
-    mockYouTubeErrorBoundary = {
+    // Mock window.YouTubePlusErrorBoundary
+    mockYouTubePlusErrorBoundary = {
       withErrorBoundary: jest.fn(fn => fn),
       logError: jest.fn(),
     };
-    Object.defineProperty(window, 'YouTubeErrorBoundary', {
+    Object.defineProperty(window, 'YouTubePlusErrorBoundary', {
       configurable: true,
       writable: true,
-      value: mockYouTubeErrorBoundary,
+      value: mockYouTubePlusErrorBoundary,
     });
 
     // Reset DOM
@@ -161,10 +161,10 @@ describe('Comment Manager Module', () => {
   describe('Error Handling', () => {
     test('should wrap functions with error boundary', () => {
       const testFn = () => 'test';
-      const wrapped = mockYouTubeErrorBoundary.withErrorBoundary(testFn, 'CommentManager');
+      const wrapped = mockYouTubePlusErrorBoundary.withErrorBoundary(testFn, 'CommentManager');
 
       expect(wrapped).toBe(testFn); // In our mock, it returns the same function
-      expect(mockYouTubeErrorBoundary.withErrorBoundary).toHaveBeenCalledWith(
+      expect(mockYouTubePlusErrorBoundary.withErrorBoundary).toHaveBeenCalledWith(
         testFn,
         'CommentManager'
       );
@@ -187,9 +187,9 @@ describe('Comment Manager Module', () => {
 
     test('should log errors with context', () => {
       const error = new Error('Test error');
-      mockYouTubeErrorBoundary.logError(error, { context: 'test' });
+      mockYouTubePlusErrorBoundary.logError(error, { context: 'test' });
 
-      expect(mockYouTubeErrorBoundary.logError).toHaveBeenCalledWith(error, { context: 'test' });
+      expect(mockYouTubePlusErrorBoundary.logError).toHaveBeenCalledWith(error, { context: 'test' });
     });
   });
 
@@ -260,7 +260,7 @@ describe('Comment Manager Module', () => {
   describe('Integration', () => {
     test('should work with all dependencies available', () => {
       expect(window.YouTubeUtils).toBeDefined();
-      expect(window.YouTubeErrorBoundary).toBeDefined();
+      expect(window.YouTubePlusErrorBoundary).toBeDefined();
       expect(localStorage).toBeDefined();
     });
 

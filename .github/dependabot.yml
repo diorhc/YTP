@@ -34,7 +34,7 @@ updates:
     # Игнорировать определенные зависимости (если необходимо)
     ignore: []
       # Example: игнорировать мажорные обновления для стабильных пакетов
-      # - dependency-name: "eslint"
+      # - dependency-name: "@biomejs/biome"
       #   update-types: ["version-update:semver-major"]
 
   # GitHub Actions

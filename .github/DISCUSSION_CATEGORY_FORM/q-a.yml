@@ -1,0 +1,60 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Question
+        Ask a question about YouTube+ usage, setup, or configuration.
+        
+        **Before asking:**
+        - Check [README](https://github.com/diorhc/YTP#readme) for documentation
+        - Search existing discussions for similar questions
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Question Topic
+      description: "What is your question about?"
+      options:
+        - Installation/Setup
+        - Configuration/Settings
+        - Hotkeys/Shortcuts
+        - Download Issues
+        - Player Features
+        - YouTube Music
+        - Compatibility
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: question
+    attributes:
+      label: Your Question
+      description: "Describe your question in detail"
+      placeholder: "How do I..."
+    validations:
+      required: true
+  - type: textarea
+    id: tried
+    attributes:
+      label: What You've Tried
+      description: "Steps you've already taken"
+      placeholder: |
+        1. Tried X
+        2. Checked Y
+    validations:
+      required: false
+  - type: input
+    id: environment
+    attributes:
+      label: Environment
+      description: "Browser, userscript manager, and YouTube+ version"
+      placeholder: "e.g. Chrome 120, Tampermonkey 4.20, YouTube+ 2.5.2"
+    validations:
+      required: true
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots
+      description: "If applicable, add screenshots to help explain"
+      placeholder: "Drag and drop images here..."
+    validations:
+      required: false

@@ -1,52 +1,390 @@
-// Shared utilities for YouTube+ modules
-(function () {
-  'use strict';
+// YouTube+ utils.js - compatibility facade only.
+//
+// This file is a THIN compatibility layer. It exposes the canonical
+// YouTube+ modules and a small set of compat shims under
+// `window.YouTubeUtils`, and runs the cross-cutting side effects that
+// have no better canonical home.
+//
+// Canonical owners live in their own modules. New shared logic MUST
+// be added to the correct canonical module, NOT here:
+//
+//   - logger.js                 -> canonical logging
+//   - design-system.js          -> canonical styles / StyleManager
+//   - i18n.js                   -> canonical translation
+//   - safe-dom.js               -> canonical safe HTML
+//   - settings-helpers.js       -> canonical settings store
+//   - dom-cache.js              -> canonical DOM query / wait / cache
+//   - mutation-coordinator.js   -> canonical mutation lifecycle
+//   - event-delegation.js       -> canonical delegated events
+//   - cleanup-manager.js        -> canonical SPA-resource cleanup
+//   - performance.js            -> diagnostics / profiling
+//
+// utils.js (this file) is allowed to:
+//   1. Proxy to canonical owners (preferred).
+//   2. Expose back-compat aliases for properties that were historically
+//      on `window.YouTubeUtils` and may be captured by reference at
+//      module load time, before the canonical module is defined.
+//   3. Define local compat shims for utilities that have no canonical
+//      owner yet (debounce, throttle, safeMerge, storage, etc.).
+//   4. Run cross-cutting side effects (history / timer wrapping, SPA
+//      nav cleanup, dev diagnostics) that no single canonical owns.
+//
+// It is NOT allowed to:
+//   - Implement shared logic that belongs in a canonical module.
+//   - Add new utilities here to avoid touching the canonical owners.
 
-  // --- Shared DOM helpers (canonical, used by all modules) ---
+// @ts-check
+(function () {
+  if (typeof window === 'undefined') return;
+
+  // ---------------------------------------------------------------------------
+  // User configuration — YouTubePlusConfig
+  // ---------------------------------------------------------------------------
+  // Provides a stable, frozen config object that users can override by
+  // setting window.YouTubePlusConfig before the script loads. Read by
+  // performance.js, zoom.js, and createLogger below.
+  if (!window.YouTubePlusConfig) {
+    window.YouTubePlusConfig = Object.freeze({
+      enabled: true,
+      downloaders: { y2mate: true, xbbuddy: true },
+      debug: false,
+      performance: { sampleRate: 0.01 },
+    });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Scroll Manager — centralized debounced scroll listener registry
+  // ---------------------------------------------------------------------------
+  // Provides addScrollListener / removeAllListeners so modules don't
+  // each create their own debounced scroll handlers on the same element.
+  if (!window.YouTubePlusScrollManager) {
+    /** @type {Map<Element, { handler: EventListener, cleanup: Function }[]>} */
+    const scrollListeners = new Map();
+    /**
+     * @typedef {Object} ScrollManagerAPI
+     * @property {(target: Element, callback: Function, opts?: { debounce?: number, runInitial?: boolean }) => () => void} addScrollListener - Add a debounced scroll listener
+     * @property {(target: Element) => void} removeAllListeners - Remove all scroll listeners for a target
+     */
+    /** @type {ScrollManagerAPI} */
+    window.YouTubePlusScrollManager = {
+      /**
+       * Add a debounced scroll listener to an element.
+       * @param {Element} target - DOM element to listen on
+       * @param {Function} callback - Scroll handler
+       * @param {{ debounce?: number, runInitial?: boolean }} [opts={}] - Options
+       * @returns {() => void} Cleanup function to remove the listener
+       */
+      addScrollListener(
+        /** @type {Element} */ target,
+        /** @type {Function} */ callback,
+        /** @type {Record<string, any>} */ opts = {}
+      ) {
+        const debounceMs = /** @type {number} */ (opts.debounce) || 100;
+        /** @type {ReturnType<typeof setTimeout>|null} */
+        let timer = null;
+        const handler = () => {
+          if (timer) clearTimeout(timer);
+          timer = setTimeout(() => callback(), debounceMs);
+        };
+        target.addEventListener('scroll', handler, { passive: true });
+        if (!scrollListeners.has(target)) scrollListeners.set(target, []);
+        const entry = {
+          handler,
+          cleanup: () => {
+            target.removeEventListener('scroll', handler);
+            if (timer) clearTimeout(timer);
+          },
+        };
+        /** @type {{ handler: EventListener, cleanup: Function }[]} */ (
+          scrollListeners.get(target)
+        ).push(entry);
+        if (opts.runInitial) callback();
+        return entry.cleanup;
+      },
+      /**
+       * Remove all scroll listeners for a given element.
+       * @param {Element} target - DOM element to clean up
+       */
+      removeAllListeners(/** @type {Element} */ target) {
+        const entries = scrollListeners.get(target);
+        if (!entries) return;
+        for (const e of entries) e.cleanup();
+        scrollListeners.delete(target);
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Storage — unified localStorage wrapper with JSON parse/stringify
+  // ---------------------------------------------------------------------------
+  // Provides a stable storage API that basic.js and other modules can
+  // use as a fallback when YouTubePlusSettingsStore is unavailable.
+  if (!window.YouTubePlusStorage) {
+    /**
+     * @typedef {Object} StorageAPI
+     * @property {(key: string, defaultValue?: any) => any} get - Get a value from localStorage (JSON-parsed)
+     * @property {(key: string, value: any) => boolean} set - Set a value in localStorage (JSON-stringified)
+     * @property {(key: string) => boolean} remove - Remove a key from localStorage
+     */
+    /** @type {StorageAPI} */
+    window.YouTubePlusStorage = {
+      /**
+       * Get a value from localStorage by key.
+       * @param {string} key - Storage key
+       * @param {any} [defaultValue=null] - Default if key is missing or unparseable
+       * @returns {any} Parsed value or defaultValue
+       */
+      get(/** @type {string} */ key, /** @type {any} */ defaultValue = null) {
+        try {
+          const raw = localStorage.getItem(key);
+          return raw ? JSON.parse(raw) : defaultValue;
+        } catch (_e) {
+          return defaultValue;
+        }
+      },
+      set(/** @type {string} */ key, /** @type {any} */ value) {
+        try {
+          localStorage.setItem(key, JSON.stringify(value));
+          return true;
+        } catch (_e) {
+          return false;
+        }
+      },
+      /**
+       * Remove a key from localStorage.
+       * @param {string} key - Storage key
+       * @returns {boolean} True on success
+       */
+      remove(/** @type {string} */ key) {
+        try {
+          localStorage.removeItem(key);
+          return true;
+        } catch (_e) {
+          return false;
+        }
+      },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Settings modal detection — shared across modules
+  // ---------------------------------------------------------------------------
+  if (typeof window.YouTubeUtils === 'undefined')
+    window.YouTubeUtils = /** @type {YouTubeUtils} */ ({});
+  const _U = window.YouTubeUtils;
+  if (!_U.isSettingsModalOpen) {
+    _U.isSettingsModalOpen = () => {
+      try {
+        return Boolean(document.querySelector('.ytp-plus-settings-modal'));
+      } catch (_e) {
+        return false;
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Route-matching primitives — shared across modules
+  // ---------------------------------------------------------------------------
+  if (!_U.isYouTubeDomain) {
+    _U.isYouTubeDomain = () => {
+      try {
+        const host = window.location.hostname || '';
+        return host.endsWith('youtube.com') && host !== 'music.youtube.com';
+      } catch (_e) {
+        return false;
+      }
+    };
+  }
+  if (!_U.isWatchRoute) {
+    _U.isWatchRoute = () => {
+      try {
+        return window.location.pathname === '/watch';
+      } catch (_e) {
+        return false;
+      }
+    };
+  }
+  if (!_U.isShortsRoute) {
+    _U.isShortsRoute = () => {
+      try {
+        return window.location.pathname.startsWith('/shorts');
+      } catch (_e) {
+        return false;
+      }
+    };
+  }
+  if (!_U.isChannelRoute) {
+    _U.isChannelRoute = () => {
+      try {
+        const p = window.location.pathname || '';
+        return p.startsWith('/channel/') || p.startsWith('/@') || p.startsWith('/c/');
+      } catch (_e) {
+        return false;
+      }
+    };
+  }
+  if (!_U.getHostname) {
+    _U.getHostname = () => {
+      try {
+        return window.location.hostname || '';
+      } catch (_e) {
+        return '';
+      }
+    };
+  }
+  if (!_U.isMusicDomain) {
+    _U.isMusicDomain = () => _U.getHostname() === 'music.youtube.com';
+  }
+  if (!_U.isStudioDomain) {
+    _U.isStudioDomain = () => _U.getHostname() === 'studio.youtube.com';
+  }
+
+  // ---------------------------------------------------------------------------
+  // Non-critical error logging — replaces bare "Non-critical, suppressed" catches
+  // ---------------------------------------------------------------------------
+  if (!_U.logSuppressed) {
+    /**
+     * Logs a non-critical error to the error boundary. Use in catch blocks
+     * that intentionally swallow errors but should still be tracked.
+     * @param {unknown} error
+     * @param {string} module
+     * @param {string} [message]
+     */
+    _U.logSuppressed = (error, module, message) => {
+      try {
+        const eb = window.YouTubePlusErrorBoundary;
+        if (eb?.logError) {
+          const err = error instanceof Error ? error : new Error(String(error));
+          eb.logError(err, { module, message: message || 'Non-critical, suppressed' });
+        }
+      } catch (_e) {
+        /* never break error reporting */
+      }
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // youtubePlus — early stub for legacy cross-module settings bridge
+  // ---------------------------------------------------------------------------
+  // modal-handlers.js and shorts.js read window.youtubePlus.settings
+  // and window.youtubePlus.rebuildDownloadDropdown. basic.js and
+  // download.js lazily populate this object later; defining an empty
+  // stub early prevents ReferenceError and avoids boot-order coupling.
+  if (typeof window !== 'undefined' && !window.youtubePlus) {
+    /** @type {any} */ (window).youtubePlus = {};
+  }
+
+  // ---------------------------------------------------------------------------
+  // Log / error routing — canonical: logger.js
+  // ---------------------------------------------------------------------------
+  // All log calls go through YouTubePlusLogger. utils.js does not own
+  // any logging policy of its own.
+
   /**
-   * Query a single element via DOMCache with context support
-   * @param {string} sel - CSS selector
-   * @param {Element|Document} [ctx] - Optional context element
-   * @returns {Element|null}
+   * @param {'debug'|'info'|'warn'|'error'} level
+   * @param {string} module
+   * @param {string} message
+   * @param {any} [data]
    */
+  const emitCoreLog = (level, module, message, data) => {
+    const sink = window.YouTubePlusLogger;
+    if (!sink || typeof sink[level] !== 'function') return;
+    try {
+      if (data === undefined) sink[level](module, message);
+      else sink[level](module, message, data);
+    } catch {}
+  };
+
+  /**
+   * Logs an error with structured context. Convention used by every
+   * module: YouTubeUtils.logError(module, message, error).
+   * @param {string} module
+   * @param {string} message
+   * @param {Error|*|null|undefined} error
+   */
+  const logError = (module, message, error) => {
+    try {
+      const errorDetails = {
+        module,
+        message,
+        error:
+          error instanceof Error
+            ? { name: error.name, message: error.message, stack: error.stack }
+            : error,
+        timestamp: new Date().toISOString(),
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
+        url: typeof window !== 'undefined' ? window.location.href : 'unknown',
+      };
+      emitCoreLog('error', module, message, error);
+      emitCoreLog('warn', module, 'Error details', errorDetails);
+    } catch (loggingError) {
+      emitCoreLog('error', 'Utils', 'Error logging failed', loggingError);
+    }
+  };
+
+  // ---------------------------------------------------------------------------
+  // Thin proxies to canonical owners
+  // ---------------------------------------------------------------------------
+  // Each proxy below is a small wrapper that defers to the canonical
+  // module. The wrapper exists so the global is defined even if the
+  // canonical module is not yet loaded (utils.js loads first in build
+  // order); the wrapper falls through to a tiny built-in fallback if
+  // the canonical is missing.
+
+  // -- DOM (canonical: dom-cache.js) -----------------------------------------
+  /** @param {string} sel @param {Element|Document} [ctx] */
   const $ = (sel, ctx) => {
-    const cache = window.YouTubeDOMCache;
+    const cache = window.YouTubePlusDOMCache;
     if (cache && typeof cache.querySelector === 'function') return cache.querySelector(sel, ctx);
     if (cache && typeof cache.get === 'function' && !ctx) return cache.get(sel);
     return (ctx || document).querySelector(sel);
   };
-
-  /**
-   * Query all matching elements via DOMCache with context support
-   * @param {string} sel - CSS selector
-   * @param {Element|Document} [ctx] - Optional context element
-   * @returns {Element[]}
-   */
+  /** @param {string} sel @param {Element|Document} [ctx] */
   const $$ = (sel, ctx) => {
-    const cache = window.YouTubeDOMCache;
+    const cache = window.YouTubePlusDOMCache;
     if (cache && typeof cache.querySelectorAll === 'function') {
       return cache.querySelectorAll(sel, ctx);
     }
     if (cache && typeof cache.getAll === 'function' && !ctx) return cache.getAll(sel);
     return Array.from((ctx || document).querySelectorAll(sel));
   };
-
-  /**
-   * Get element by ID via DOMCache
-   * @param {string} id - Element ID
-   * @returns {Element|null}
-   */
+  /** @param {string} id */
   const byId = id => {
-    const cache = window.YouTubeDOMCache;
+    const cache = window.YouTubePlusDOMCache;
     if (cache && typeof cache.getElementById === 'function') return cache.getElementById(id);
     return /** @type {Element|null} */ (document.getElementById(id));
   };
-
-  // --- Shared translation helper (canonical) ---
   /**
-   * Translation helper with fallback interpolation
-   * @param {string} key - Translation key
-   * @param {Object<string, string|number>} [params] - Interpolation parameters
+   * Canonical DOMContentLoaded wrapper. Runs the callback
+   * synchronously when the document is already past `loading`, so
+   * module init can call it unconditionally.
+   * @param {() => void} cb
+   * @returns {void}
+   */
+  const onDomReady = cb => {
+    if (document.readyState === 'loading') {
+      document.addEventListener('DOMContentLoaded', cb, { once: true });
+    } else {
+      cb();
+    }
+  };
+  /**
+   * @param {string} selector
+   * @param {number} [timeout=5000]
+   * @param {Element|Document} [parent=document]
+   * @returns {Promise<Element|null>}
+   */
+  const waitForElement = (selector, timeout = 5000, parent = document) => {
+    const cache = /** @type {any} */ (window).YouTubePlusDOMCache;
+    return cache?.waitForElement
+      ? cache.waitForElement(selector, timeout, parent)
+      : Promise.resolve(parent?.querySelector(selector) ?? null);
+  };
+
+  // -- i18n (canonical: i18n.js) ----------------------------------------------
+  /**
+   * @param {string} key
+   * @param {Record<string, string|number>} [params]
    * @returns {string}
    */
   const t = (key, params = {}) => {
@@ -59,23 +397,20 @@
     }
     return result;
   };
-
-  /**
-   * Unified language getter for modules that rely on YouTubeUtils.
-   * @returns {string}
-   */
+  /** @returns {string} */
   const getLanguage = () => {
-    if (window.YouTubePlusI18n?.getLanguage) {
-      return window.YouTubePlusI18n.getLanguage();
-    }
+    if (window.YouTubePlusI18n?.getLanguage) return window.YouTubePlusI18n.getLanguage();
     const htmlLang = document.documentElement?.lang || navigator.language || 'en';
     return String(htmlLang || 'en').toLowerCase();
   };
 
+  // -- Safe HTML (canonical: safe-dom.js) -------------------------------------
+  /** @param {string} html */
+  const createHTML = html => {
+    if (typeof window._ytplusCreateHTML === 'function') return window._ytplusCreateHTML(html);
+    return typeof html === 'string' ? html : String(html ?? '');
+  };
   /**
-   * Unified safe HTML setter. Canonical impl: YouTubeSafeDOM.setHTML
-   * (Trusted Types-aware). Falls back to _ytpDefaults.setSafeHTML which in
-   * turn falls back to a textContent assignment when SafeDOM is not loaded.
    * @param {Element} element
    * @param {string} html
    * @param {boolean} [sanitize=true]
@@ -86,207 +421,106 @@
       window.YouTubeSafeDOM.setHTML(element, html, { sanitize });
       return;
     }
-    window._ytpDefaults?.setSafeHTML?.(element, html, sanitize);
+    element.replaceChildren(document.createTextNode(String(html || '')));
+  };
+  /** @param {string} html */
+  const sanitizeHTML = html => {
+    if (typeof html !== 'string') return '';
+    return window.YouTubeSafeDOM?.sanitizeHTML?.(html) ?? '';
   };
 
-  // --- Shared feature toggle loader ---
-  /**
-   * Shared constant for the settings localStorage key
-   * @type {string}
-   */
+  // -- Settings (canonical: settings-helpers.js) ------------------------------
+  // SETTINGS_KEY is the canonical storage key. It is exposed for the
+  // handful of modules that read the raw shape; new code should go
+  // through `YouTubePlusSettingsStore` instead.
+  /** @type {string} */
   const SETTINGS_KEY = 'youtube_plus_settings';
 
   /**
-   * Check if current page is YouTube Studio
-   * @returns {boolean}
-   */
-  const isStudioPage = () => {
-    try {
-      const host = String(location.hostname || '').toLowerCase();
-      return host === 'studio.youtube.com' || host.endsWith('.studio.youtube.com');
-    } catch (e) {
-      return false;
-    }
-  };
-
-  /**
-   * Load a feature enabled state from youtube_plus_settings
-   * @param {string} featureKey - The key name (e.g. 'enableZoom', 'enablePlayAll')
-   * @param {boolean} [defaultValue=true] - Default value if not found
+   * Thin compat wrapper around YouTubePlusSettingsStore that returns
+   * `true` unless the feature is explicitly set to `false`. Falls
+   * back to a direct localStorage read of the canonical key when the
+   * store has not yet installed itself (utils.js loads first).
+   * @param {string} featureKey
+   * @param {boolean} [defaultValue=true]
    * @returns {boolean}
    */
   const loadFeatureEnabled = (featureKey, defaultValue = true) => {
+    const store = /** @type {any} */ (window).YouTubePlusSettingsStore;
+    if (store && typeof store.get === 'function') {
+      const v = store.get(featureKey, defaultValue);
+      return v === undefined ? defaultValue : v !== false;
+    }
     try {
       const settings = localStorage.getItem(SETTINGS_KEY);
       if (settings) {
         const parsed = JSON.parse(settings);
         return parsed[featureKey] !== false;
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Utils');
     }
     return defaultValue;
   };
 
-  /**
-   * Resolve pathname from URL-like input or current location.
-   * @param {string} [urlLike]
-   * @returns {string}
-   */
-  const getPathname = urlLike => {
-    try {
-      if (urlLike) return new URL(urlLike, window.location.origin).pathname || '';
-      return window.location.pathname || '';
-    } catch (e) {
-      return '';
-    }
-  };
-
-  /**
-   * Check if a URL/current page is a watch page.
-   * @param {string} [urlLike]
-   * @returns {boolean}
-   */
-  const isWatchPage = urlLike => getPathname(urlLike) === '/watch';
-
-  /**
-   * Check if a URL/current page is a shorts page.
-   * @param {string} [urlLike]
-   * @returns {boolean}
-   */
-  const isShortsPage = urlLike => getPathname(urlLike).startsWith('/shorts');
-
-  /**
-   * Check if a URL/current page is a channel page.
-   * @param {string} [urlLike]
-   * @returns {boolean}
-   */
-  const isChannelPage = urlLike => {
-    const pathname = getPathname(urlLike);
-    return (
-      pathname.startsWith('/@') || pathname.startsWith('/channel/') || pathname.startsWith('/c/')
-    );
-  };
-
-  /**
-   * Format seconds to time string (H:MM:SS or M:SS).
-   * @param {number} seconds
-   * @returns {string}
-   */
-  const formatTime = seconds => {
-    if (!Number.isFinite(seconds) || seconds < 0) return '0:00';
-    const totalSeconds = Math.floor(seconds);
-    const h = Math.floor(totalSeconds / 3600);
-    const m = Math.floor((totalSeconds % 3600) / 60);
-    const s = totalSeconds % 60;
-    if (h > 0) return `${h}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-    return `${m}:${String(s).padStart(2, '0')}`;
-  };
-
-  /**
-   * Run callback when DOM is ready.
-   * @param {() => void} cb
-   * @returns {void}
-   */
-  const onDomReady = cb => {
-    if (typeof cb !== 'function') return;
-    if (document.readyState !== 'loading') {
-      cb();
-      return;
-    }
-    document.addEventListener('DOMContentLoaded', cb, { once: true });
-  };
-
-  /**
-   * Logs an error message with module context
-   * @param {string} module - The module name where the error occurred
-   * @param {string} message - Description of the error
-   * @param {Error|*} error - The error object or value
-   */
-  const logError = (module, message, error) => {
-    try {
-      const errorDetails = {
-        module,
-        message,
-        error:
-          error instanceof Error
-            ? {
-                name: error.name,
-                message: error.message,
-                stack: error.stack,
-              }
-            : error,
-        timestamp: new Date().toISOString(),
-        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'unknown',
-        url: typeof window !== 'undefined' ? window.location.href : 'unknown',
-      };
-
-      window.console.error(`[YouTube+][${module}] ${message}:`, error);
-      // Use window.console.warn for detailed debug-like information to satisfy lint rules
-      window.console.warn('[YouTube+] Error details:', errorDetails);
-    } catch (loggingError) {
-      // Fallback if logging itself fails
-      window.console.error('[YouTube+] Error logging failed:', loggingError);
-    }
-  };
-
-  /**
-   * Lightweight logger that respects a global debug flag.
-   * Use YouTubeUtils.logger.debug/info(...) in modules instead of window.console.log for
-   * controlled output in development.
-   */
+  // -- Logger facade (canonical: logger.js) -----------------------------------
+  // A small wrapper that respects a `YouTubePlusConfig.debug` /
+  // `window.YTP_DEBUG` flag for dev output. warn/error are always
+  // emitted through YouTubePlusLogger.
   const createLogger = () => {
     const isDebugEnabled = (() => {
       try {
-        if (typeof window === 'undefined') {
-          return false;
-        }
-        // Allow a global config object or a simple flag
+        if (typeof window === 'undefined') return false;
         const cfg = window.YouTubePlusConfig;
-        if (cfg && cfg.debug) {
-          return true;
-        }
+        if (cfg?.debug) return true;
         if (typeof (/** @type {any} */ (window).YTP_DEBUG) !== 'undefined') {
           return !!(/** @type {any} */ (window).YTP_DEBUG);
         }
         return false;
-      } catch (e) {
+      } catch (_e) {
         return false;
       }
     })();
-
     return {
       debug: function (/** @type {any[]} */ ...args) {
-        // Route debug/info level messages to window.console.warn to avoid eslint no-console warnings
-        if (isDebugEnabled && window.console?.warn) {
-          window.console.warn('[YouTube+][DEBUG]', ...args);
-        }
+        if (isDebugEnabled) /** @type {any} */ (emitCoreLog)('debug', ...args);
       },
       info: function (/** @type {any[]} */ ...args) {
-        if (isDebugEnabled && window.console?.warn) {
-          window.console.warn('[YouTube+][INFO]', ...args);
-        }
+        if (isDebugEnabled) /** @type {any} */ (emitCoreLog)('info', ...args);
       },
       warn: function (/** @type {any[]} */ ...args) {
-        if (window.console?.warn) {
-          window.console.warn('[YouTube+]', ...args);
-        }
+        /** @type {any} */ (emitCoreLog)('warn', ...args);
       },
       error: function (/** @type {any[]} */ ...args) {
-        if (window.console?.error) {
-          window.console.error('[YouTube+]', ...args);
-        }
+        /** @type {any} */ (emitCoreLog)('error', ...args);
       },
     };
   };
 
+  // -- Retry scheduler (canonical: mutation-coordinator.js) ------------------
   /**
-   * Creates a debounced function that delays invoking func until after wait milliseconds
+   * @param {{ check: () => boolean, maxAttempts?: number, interval?: number, onGiveUp?: () => void, label?: string }} opts
+   * @returns {{ stop: () => void } | null}
+   */
+  const createRetryScheduler = opts => {
+    const coordinator = window.YouTubePlusMutationCoordinator;
+    if (coordinator?.createRetryScheduler) return coordinator.createRetryScheduler(opts);
+    return null;
+  };
+
+  // ---------------------------------------------------------------------------
+  // Local compat shims (no canonical owner)
+  // ---------------------------------------------------------------------------
+  // Kept here because no canonical module owns them and existing modules
+  // capture references at load time. They are NOT a destination for new
+  // shared logic - promote them to a canonical module if they grow.
+
+  /**
    * @template {Function} T
-   * @param {T} fn - The function to debounce
-   * @param {number} ms - The number of milliseconds to delay
-   * @param {{leading?: boolean}} [options={}] - Options object
-   * @returns {T & {cancel: () => void}} The debounced function with a cancel method
+   * @param {T} fn
+   * @param {number} ms
+   * @param {{ leading?: boolean }} [options={}]
+   * @returns {T & { cancel: () => void, destroy: () => void }}
    */
   const debounce = (fn, ms, options = {}) => {
     /** @type {ReturnType<typeof setTimeout>|null} */
@@ -300,26 +534,22 @@
     /** @this {any} */
     const debounced = function (/** @type {any[]} */ ...args) {
       if (isDestroyed) return;
-
       lastArgs = args;
       lastThis = this;
-
       if (timeout !== null) clearTimeout(timeout);
-
       if (options.leading && timeout === null) {
         try {
           /** @type {Function} */ (fn).apply(this, args);
         } catch (e) {
-          window.console.error('[YouTube+] Debounced function error:', e);
+          emitCoreLog('error', 'Utils', 'Debounced function error', e);
         }
       }
-
       timeout = setTimeout(() => {
-        if (!isDestroyed && !options.leading) {
+        if (!(isDestroyed || options.leading)) {
           try {
             /** @type {Function} */ (fn).apply(lastThis, lastArgs);
           } catch (e) {
-            window.console.error('[YouTube+] Debounced function error:', e);
+            emitCoreLog('error', 'Utils', 'Debounced function error', e);
           }
         }
         timeout = null;
@@ -334,21 +564,18 @@
       lastArgs = null;
       lastThis = null;
     };
-
     debounced.destroy = () => {
       debounced.cancel();
       isDestroyed = true;
     };
-
     return /** @type {any} */ (debounced);
   };
 
   /**
-   * Creates a throttled function that only invokes func at most once per limit milliseconds
    * @template {Function} T
-   * @param {T} fn - The function to throttle
-   * @param {number} limit - The number of milliseconds to throttle invocations to
-   * @returns {T} The throttled function
+   * @param {T} fn
+   * @param {number} limit
+   * @returns {T}
    */
   const throttle = (fn, limit) => {
     let inThrottle = false;
@@ -366,490 +593,79 @@
     return /** @type {any} */ (throttled);
   };
 
-  const StyleManager = (function () {
-    const STYLE_HOST_ID = 'youtube-plus-styles';
-    const styles = new Map();
-    /** @type {HTMLStyleElement | null} */
-    let element = null;
-
-    const ensureElement = () => {
-      if (element?.isConnected) return element;
-      const existing = /** @type {HTMLStyleElement | null} */ (
-        document.getElementById(STYLE_HOST_ID)
-      );
-      if (existing) {
-        element = existing;
-        return element;
-      }
-      if (!document.head && !document.documentElement) return null;
-      const created = document.createElement('style');
-      created.id = STYLE_HOST_ID;
-      created.type = 'text/css';
-      (document.head || document.documentElement).appendChild(created);
-      element = created;
-      return element;
-    };
-
-    const render = () => {
-      try {
-        const host = ensureElement();
-        if (!host) {
-          document.addEventListener(
-            'DOMContentLoaded',
-            () => {
-              const lateHost = ensureElement();
-              if (lateHost) lateHost.textContent = Array.from(styles.values()).join('\n\n');
-            },
-            { once: true }
-          );
-          return;
-        }
-        host.textContent = Array.from(styles.values()).join('\n\n');
-      } catch (e) {
-        logError('StyleManager', 'render failed', e);
-      }
-    };
-
-    return {
-      styles,
-      add(/** @type {string} */ id, /** @type {string} */ css) {
-        try {
-          if (typeof id !== 'string' || !id) return;
-          if (typeof css !== 'string') return;
-          styles.set(id, css);
-          render();
-        } catch (e) {
-          logError('StyleManager', 'add failed', e);
-        }
-      },
-      remove(/** @type {string} */ id) {
-        try {
-          styles.delete(id);
-          render();
-        } catch (e) {
-          logError('StyleManager', 'remove failed', e);
-        }
-      },
-      clear() {
-        try {
-          styles.clear();
-          if (element) {
-            element.remove();
-            element = null;
-          }
-        } catch (e) {
-          logError('StyleManager', 'clear failed', e);
-        }
-      },
-    };
-  })();
-
   /**
-   * Efficient event delegation is owned by event-delegation.js
-   * (window.YouTubePlusEventDelegation). The legacy inline copy that used to
-   * live here was unused dead code and has been removed.
+   * @param {string} [urlLike]
+   * @returns {boolean}
    */
-
-  const cleanupManager = (function () {
-    const observers = new Set();
-    const listeners = new Map();
-    const listenerStats = { registeredTotal: 0 };
-    const intervals = new Set();
-    const timeouts = new Set();
-    const animationFrames = new Set();
-    const callbacks = new Set();
-    // Map elements -> Set of observers (WeakMap so entries are GC'd when element removed)
-    const elementObservers = new WeakMap();
-
-    return {
-      /**
-       * Register an observer for global cleanup and optionally associate it with an element.
-       * If an element is provided the observer will be tracked in a WeakMap so when
-       * the element is GC'd the mapping is removed automatically.
-       * @param {MutationObserver|IntersectionObserver|ResizeObserver} o
-       * @param {Element} [el]
-       */
-      registerObserver(o, el) {
-        try {
-          if (o) observers.add(o);
-          if (el && typeof el === 'object') {
-            try {
-              let set = elementObservers.get(el);
-              if (!set) {
-                set = new Set();
-                elementObservers.set(el, set);
-              }
-              set.add(o);
-            } catch (e) {
-              // Non-critical, suppressed
-            }
-          }
-        } catch (e) {
-          // Non-critical, suppressed
-        }
-        return o;
-      },
-      registerListener(
-        /** @type {EventTarget} */ target,
-        /** @type {string} */ ev,
-        /** @type {EventListenerOrEventListenerObject} */ fn,
-        /** @type {AddEventListenerOptions|boolean|undefined} */ opts
-      ) {
-        try {
-          target.addEventListener(ev, fn, opts);
-          const key = Symbol();
-          listeners.set(key, { target, ev, fn, opts });
-          listenerStats.registeredTotal++;
-          return key;
-        } catch (e) {
-          logError('cleanupManager', 'registerListener failed', e);
-          return null;
-        }
-      },
-      getListenerStats() {
-        try {
-          return {
-            active: listeners.size,
-            registeredTotal: listenerStats.registeredTotal,
-          };
-        } catch (e) {
-          return { active: 0, registeredTotal: 0 };
-        }
-      },
-      registerInterval(/** @type {ReturnType<typeof setInterval>} */ id) {
-        intervals.add(id);
-        return id;
-      },
-      registerTimeout(/** @type {ReturnType<typeof setTimeout>} */ id) {
-        timeouts.add(id);
-        return id;
-      },
-      registerAnimationFrame(/** @type {number} */ id) {
-        animationFrames.add(id);
-        return id;
-      },
-      register(/** @type {Function} */ cb) {
-        if (typeof cb === 'function') callbacks.add(cb);
-      },
-      cleanup() {
-        try {
-          for (const cb of callbacks) {
-            try {
-              cb();
-            } catch (e) {
-              logError('cleanupManager', 'callback failed', e);
-            }
-          }
-          callbacks.clear();
-
-          // Disconnect all registered observers
-          for (const o of observers) {
-            try {
-              if (o && typeof o.disconnect === 'function') o.disconnect();
-            } catch (e) {
-              // Non-critical, suppressed
-            }
-          }
-          observers.clear();
-
-          // Also attempt to disconnect observers associated with elements
-          try {
-            // We cannot iterate WeakMap keys; instead we iterate observers set already
-            // which covers all observers registered via registerObserver above.
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-          for (const keyEntry of listeners.values()) {
-            try {
-              keyEntry.target.removeEventListener(keyEntry.ev, keyEntry.fn, keyEntry.opts);
-            } catch (e) {
-              // Non-critical, suppressed
-            }
-          }
-          listeners.clear();
-          for (const id of intervals) clearInterval(id);
-          intervals.clear();
-          for (const id of timeouts) clearTimeout(id);
-          timeouts.clear();
-          for (const id of animationFrames) cancelAnimationFrame(id);
-          animationFrames.clear();
-        } catch (e) {
-          logError('cleanupManager', 'cleanup failed', e);
-        }
-      },
-      // expose for debug
-      observers,
-      elementObservers,
-      /**
-       * Disconnect and remove observers associated with a given element
-       * @param {Element} el
-       */
-      disconnectForElement(el) {
-        try {
-          const set = elementObservers.get(el);
-          if (!set) return;
-          for (const o of set) {
-            try {
-              if (o && typeof o.disconnect === 'function') o.disconnect();
-              observers.delete(o);
-            } catch (e) {
-              // Non-critical, suppressed
-            }
-          }
-          elementObservers.delete(el);
-        } catch (e) {
-          logError('cleanupManager', 'disconnectForElement failed', e);
-        }
-      },
-      /**
-       * Disconnect a single observer and remove it from tracking
-       * @param {MutationObserver|IntersectionObserver|ResizeObserver} o
-       */
-      disconnectObserver(o) {
-        try {
-          if (!o) return;
-          try {
-            if (typeof o.disconnect === 'function') o.disconnect();
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-          observers.delete(o);
-          // remove from any element sets
-          try {
-            // Can't iterate WeakMap directly; attempt best-effort sweep by checking
-            // known element keys via listeners map as a hint (not comprehensive).
-            // This is a noop if not found; primary removal is from observers set.
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-        } catch (e) {
-          logError('cleanupManager', 'disconnectObserver failed', e);
-        }
-      },
-      listeners,
-      intervals,
-      timeouts,
-      animationFrames,
-    };
-  })();
-
-  const createElement = (
-    /** @type {string} */ tag,
-    /** @type {Record<string, unknown>} */ props = {},
-    /** @type {(string | Node)[]} */ children = []
-  ) => {
+  const isWatchPage = urlLike => {
     try {
-      const element = document.createElement(tag);
-      Object.entries(props).forEach(([k, v]) => {
-        if (k === 'className') element.className = String(v);
-        else if (k === 'style' && typeof v === 'object') {
-          Object.assign(element.style, v);
-        } else if (k === 'dataset' && typeof v === 'object') {
-          Object.assign(element.dataset, v);
-        } else if (k.startsWith('on') && typeof v === 'function') {
-          element.addEventListener(k.slice(2), /** @type {EventListener} */ (v));
-        } else element.setAttribute(k, String(v));
-      });
-      children.forEach(c => {
-        if (typeof c === 'string') element.appendChild(document.createTextNode(c));
-        else if (c instanceof Node) element.appendChild(c);
-      });
-      return element;
-    } catch (e) {
-      logError('createElement', 'failed', e);
-      return document.createElement('div');
-    }
-  };
-
-  const waitForElement = (
-    /** @type {string} */ selector,
-    /** @type {number} */ timeout = 5000,
-    /** @type {Element|Document} */ parent = document
-  ) =>
-    new Promise((resolve, reject) => {
-      if (!selector || typeof selector !== 'string') return reject(new Error('Invalid selector'));
-      /** @type {string | null} */
-      let subId = null;
-      /** @type {ReturnType<typeof setInterval> | null} */
-      let fallbackTimer = null;
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let timeoutTimer = null;
-
-      const finalize = () => {
-        if (subId && window.YouTubeMutationCoordinator?.unsubscribe) {
-          try {
-            window.YouTubeMutationCoordinator.unsubscribe(subId);
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-        }
-        subId = null;
-        if (fallbackTimer) {
-          clearInterval(fallbackTimer);
-          fallbackTimer = null;
-        }
-        if (timeoutTimer) {
-          clearTimeout(timeoutTimer);
-          timeoutTimer = null;
-        }
-      };
-
-      const tryResolve = () => {
-        const el = parent.querySelector(selector);
-        if (!el) return false;
-        finalize();
-        resolve(el);
-        return true;
-      };
-
-      try {
-        if (tryResolve()) return;
-      } catch (e) {
-        return reject(e);
-      }
-
-      const coordinator = window.YouTubeMutationCoordinator;
-      if (coordinator?.watchTarget && parent instanceof Node) {
-        subId = `utils::waitForElement::${Date.now()}::${Math.random().toString(36).slice(2, 8)}`;
-        coordinator.watchTarget(
-          subId,
-          parent,
-          () => {
-            try {
-              tryResolve();
-            } catch (e) {
-              finalize();
-              reject(e);
-            }
-          },
-          { childList: true, attributes: false, subtree: true }
-        );
-      } else {
-        // Fallback for browsers/environments without the shared mutation coordinator.
-        fallbackTimer = setInterval(() => {
-          try {
-            tryResolve();
-          } catch (e) {
-            finalize();
-            reject(e);
-          }
-        }, 120);
-      }
-
-      timeoutTimer = setTimeout(() => {
-        finalize();
-        reject(new Error('timeout'));
-      }, timeout);
-      cleanupManager.registerTimeout(timeoutTimer);
-    });
-
-  /**
-   * Sanitize HTML string to prevent XSS attacks. Canonical impl:
-   * YouTubeSafeDOM.sanitizeHTML. This wrapper exists for callers that
-   * captured a reference to YouTubeUtils.sanitizeHTML before SafeDOM loaded;
-   * we delegate at call time so there is only one sanitizer in the system.
-   * @param {string} html
-   * @returns {string}
-   */
-  const sanitizeHTML = html => {
-    if (typeof html !== 'string') return '';
-    if (window.YouTubeSafeDOM?.sanitizeHTML) {
-      return window.YouTubeSafeDOM.sanitizeHTML(html);
-    }
-    // Conservative pre-SafeDOM fallback (only hit during very early boot).
-    if (html.length > 1000000) html = html.substring(0, 1000000);
-    /** @type {Record<string, string>} */
-    const map = {
-      '<': '&lt;',
-      '>': '&gt;',
-      '&': '&amp;',
-      '"': '&quot;',
-      "'": '&#39;',
-      '/': '&#x2F;',
-      '`': '&#x60;',
-      '=': '&#x3D;',
-    };
-    return html.replace(/[<>&"'\/`=]/g, char => map[char] || char);
-  };
-
-  /**
-   * Escape HTML for use in attributes (more strict than sanitizeHTML)
-   * Prevents XSS in HTML attributes like onclick, onerror, etc.
-   * @param {string} str - String to escape
-   * @returns {string} Escaped string safe for HTML attributes
-   */
-  const escapeHTMLAttribute = str => {
-    if (typeof str !== 'string') return '';
-
-    /** @type {Record<string, string>} */
-    const map = {
-      '<': '&lt;',
-      '>': '&gt;',
-      '&': '&amp;',
-      '"': '&quot;',
-      "'": '&#39;',
-      '/': '&#x2F;',
-      '`': '&#x60;',
-      '=': '&#x3D;',
-      '\n': '&#10;',
-      '\r': '&#13;',
-      '\t': '&#9;',
-    };
-
-    return str.replace(/[<>&"'\/`=\n\r\t]/g, char => map[char] || char);
-  };
-
-  /**
-   * Validate URL to prevent injection attacks
-   * @param {string} url - URL to validate
-   * @returns {boolean} Whether URL is safe
-   */
-  const isValidURL = url => {
-    if (typeof url !== 'string') return false;
-    if (url.length > 2048) return false; // RFC 2616
-    if (/^\s|\s$/.test(url)) return false; // No leading/trailing whitespace
-
-    try {
-      const parsed = new URL(url);
-      // Only allow http/https protocols
-      if (!['http:', 'https:'].includes(parsed.protocol)) return false;
-      return true;
-    } catch (e) {
+      const url = new URL(urlLike || window.location.href);
+      return url.pathname === '/watch' || url.pathname.startsWith('/watch/');
+    } catch (_e) {
       return false;
     }
   };
 
   /**
-   * Safely merge objects without prototype pollution
-   * Prevents __proto__, constructor, and prototype pollution attacks
-   * @param {Record<string, unknown>} target - Target object
-   * @param {Record<string, unknown>} source - Source object to merge
-   * @returns {Record<string, unknown>} Merged target object
+   * @param {string} [urlLike]
+   * @returns {boolean}
    */
-  const safeMerge = (
-    /** @type {Record<string, unknown>} */ target,
-    /** @type {Record<string, unknown>} */ source
-  ) => {
+  const isShortsPage = urlLike => {
+    try {
+      const url = new URL(urlLike || window.location.href);
+      return url.pathname.startsWith('/shorts/');
+    } catch (_e) {
+      return false;
+    }
+  };
+
+  /**
+   * @param {string} [urlLike]
+   * @returns {boolean}
+   */
+  const isChannelPage = urlLike => {
+    try {
+      const url = new URL(urlLike || window.location.href);
+      const path = url.pathname || '';
+      return (
+        path.startsWith('/@') ||
+        path.startsWith('/channel/') ||
+        path.startsWith('/c/') ||
+        path.startsWith('/user/')
+      );
+    } catch (_e) {
+      return false;
+    }
+  };
+
+  /**
+   * @returns {boolean}
+   */
+  const isStudioPage = () => {
+    try {
+      return _U.isStudioDomain?.() ?? false;
+    } catch (_e) {
+      return false;
+    }
+  };
+
+  /**
+   * Secure object merge - guards against prototype pollution.
+   * @param {Record<string, unknown>} target
+   * @param {Record<string, unknown>} source
+   * @returns {Record<string, unknown>}
+   */
+  const safeMerge = (target, source) => {
     if (!source || typeof source !== 'object') return target;
     if (!target || typeof target !== 'object') return target;
-
-    // List of dangerous keys that could lead to prototype pollution
     const dangerousKeys = ['__proto__', 'constructor', 'prototype'];
-
     for (const key in source) {
-      // Skip inherited properties
-      if (!Object.prototype.hasOwnProperty.call(source, key)) continue;
-
-      // Skip dangerous keys
+      if (!Object.hasOwn(source, key)) continue;
       if (dangerousKeys.includes(key)) {
-        window.console.warn(`[YouTube+][Security] Blocked attempt to set dangerous key: ${key}`);
+        emitCoreLog('warn', 'Security', `Blocked attempt to set dangerous key: ${key}`);
         continue;
       }
-
-      // Only copy own enumerable properties
       const value = source[key];
-
-      // Deep clone objects (one level deep for safety)
       if (value && typeof value === 'object' && !Array.isArray(value)) {
         target[key] = safeMerge(
           /** @type {Record<string, unknown>} */ (target[key] || {}),
@@ -859,143 +675,53 @@
         target[key] = value;
       }
     }
-
     return target;
   };
 
-  /**
-   * Validate and sanitize video ID
-   * @param {string} videoId - Video ID to validate
-   * @returns {string|null} Valid video ID or null
-   */
-  const validateVideoId = videoId => {
-    if (typeof videoId !== 'string') return null;
-    // YouTube video IDs are 11 characters, alphanumeric + dash and underscore
-    if (!/^[a-zA-Z0-9_-]{11}$/.test(videoId)) return null;
-    return videoId;
-  };
-
-  /**
-   * Validate and sanitize playlist ID
-   * @param {string} playlistId - Playlist ID to validate
-   * @returns {string|null} Valid playlist ID or null
-   */
-  const validatePlaylistId = playlistId => {
-    if (typeof playlistId !== 'string') return null;
-    // YouTube playlist IDs typically start with PL, UU, LL, RD, etc. and contain alphanumeric + dash and underscore
-    if (!/^[a-zA-Z0-9_-]+$/.test(playlistId) || playlistId.length < 2 || playlistId.length > 50) {
-      return null;
-    }
-    return playlistId;
-  };
-
-  /**
-   * Validate and sanitize channel ID
-   * @param {string} channelId - Channel ID to validate
-   * @returns {string|null} Valid channel ID or null
-   */
-  const validateChannelId = channelId => {
-    if (typeof channelId !== 'string') return null;
-    // YouTube channel IDs start with UC and are 24 characters long
-    if (!/^UC[a-zA-Z0-9_-]{22}$/.test(channelId) && !/^@[\w-]{3,30}$/.test(channelId)) {
-      return null;
-    }
-    return channelId;
-  };
-
-  /**
-   * Sanitize and validate numeric input
-   * @param {any} value - Value to validate
-   * @param {number} min - Minimum allowed value
-   * @param {number} max - Maximum allowed value
-   * @param {number} defaultValue - Default value if validation fails
-   * @returns {number} Validated number
-   */
-  const validateNumber = (value, min = -Infinity, max = Infinity, defaultValue = 0) => {
-    const num = Number(value);
-    if (Number.isNaN(num) || !Number.isFinite(num)) return defaultValue;
-    return Math.max(min, Math.min(max, num));
-  };
-
-  /**
-   * Retry an async operation with exponential backoff
-   * @template T
-   * @param {() => Promise<T>} fn - Async function to retry
-   * @param {number} maxRetries - Maximum number of retries
-   * @param {number} baseDelay - Base delay in milliseconds
-   * @returns {Promise<T>} Result of the async operation
-   */
-  const retryWithBackoff = async (fn, maxRetries = 3, baseDelay = 1000) => {
-    let lastError;
-    for (let i = 0; i < maxRetries; i++) {
-      try {
-        return await fn();
-      } catch (error) {
-        lastError = error;
-        if (i < maxRetries - 1) {
-          const delay = baseDelay * Math.pow(2, i);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
-    throw lastError;
-  };
-
-  // Enhanced storage wrapper with better validation
+  // Non-settings localStorage wrapper. NOT the settings store - that is
+  // `YouTubePlusSettingsStore` (settings-helpers.js). This helper validates
+  // keys and caps serialized value size, but does not coordinate with any
+  // other module.
   const storage = {
     /**
-     * Get value from localStorage with validation
-     * @param {string} key - Storage key
-     * @param {*} def - Default value
-     * @returns {*} Stored value or default
+     * @param {string} key
+     * @param {*} [def=null]
+     * @returns {*}
      */
     get(key, def = null) {
-      // Validate key format
-      if (typeof key !== 'string' || !/^[a-zA-Z0-9_\-\.]+$/.test(key)) {
+      if (typeof key !== 'string' || !/^[a-zA-Z0-9_\-.]+$/.test(key)) {
         logError('storage', 'Invalid key format', new Error(`Invalid key: ${key}`));
         return def;
       }
-
       try {
         const v = localStorage.getItem(key);
         if (v === null) return def;
-
-        // Check size before parsing
         if (v.length > 5 * 1024 * 1024) {
-          // 5MB limit
           logError('storage', 'Stored value too large', new Error(`Key: ${key}`));
           return def;
         }
-
         return JSON.parse(v);
       } catch (e) {
         logError('storage', 'Failed to parse stored value', e);
         return def;
       }
     },
-
     /**
-     * Set value in localStorage with validation
-     * @param {string} key - Storage key
-     * @param {*} val - Value to store
-     * @returns {boolean} Whether operation succeeded
+     * @param {string} key
+     * @param {*} val
+     * @returns {boolean}
      */
     set(key, val) {
-      // Validate key format
-      if (typeof key !== 'string' || !/^[a-zA-Z0-9_\-\.]+$/.test(key)) {
+      if (typeof key !== 'string' || !/^[a-zA-Z0-9_\-.]+$/.test(key)) {
         logError('storage', 'Invalid key format', new Error(`Invalid key: ${key}`));
         return false;
       }
-
       try {
         const serialized = JSON.stringify(val);
-
-        // Check size limit (5MB)
         if (serialized.length > 5 * 1024 * 1024) {
           logError('storage', 'Value too large to store', new Error(`Key: ${key}`));
           return false;
         }
-
         localStorage.setItem(key, serialized);
         return true;
       } catch (e) {
@@ -1003,11 +729,7 @@
         return false;
       }
     },
-
-    /**
-     * Remove value from localStorage
-     * @param {string} key - Storage key
-     */
+    /** @param {string} key */
     remove(key) {
       try {
         localStorage.removeItem(key);
@@ -1015,183 +737,124 @@
         logError('storage', 'Failed to remove value', e);
       }
     },
-
-    /**
-     * Clear all localStorage
-     */
     clear() {
       try {
-        localStorage.clear();
+        const ytpPrefixes = ['youtube_plus_', 'youtube_', 'ytp-', 'youtube-plus-'];
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (key && ytpPrefixes.some(p => key.startsWith(p))) {
+            keysToRemove.push(key);
+          }
+        }
+        keysToRemove.forEach(k => localStorage.removeItem(k));
       } catch (e) {
         logError('storage', 'Failed to clear storage', e);
       }
     },
-
-    /**
-     * Check if key exists
-     * @param {string} key - Storage key
-     * @returns {boolean} Whether key exists
-     */
+    /** @param {string} key @returns {boolean} */
     has(key) {
       try {
         return localStorage.getItem(key) !== null;
-      } catch (e) {
+      } catch (_e) {
         return false;
       }
     },
   };
 
-  /**
-   * Advanced ScrollManager for efficient scroll event handling
-   * Uses IntersectionObserver when possible for better performance
-   */
-  const ScrollManager = (() => {
-    const listeners = new WeakMap();
-
-    /**
-     * Add optimized scroll listener
-     * @param {Element} element - Element to listen to
-     * @param {Function} callback - Callback function
-     * @param {{debounce?: number, throttle?: number, runInitial?: boolean}} [options] - Options
-     * @returns {Function} Cleanup function
-     */
-    const addScrollListener = (
-      /** @type {Element} */ element,
-      /** @type {Function} */ callback,
-      /** @type {{debounce?: number, throttle?: number, runInitial?: boolean}} */ options = {}
-    ) => {
-      try {
-        const { debounce: debounceMs = 0, throttle: throttleMs = 0, runInitial = false } = options;
-
-        let handler = callback;
-
-        // Apply debounce if specified
-        if (debounceMs > 0) {
-          handler = debounce(handler, debounceMs);
-        }
-
-        // Apply throttle if specified
-        if (throttleMs > 0) {
-          handler = throttle(handler, throttleMs);
-        }
-
-        // Store handler for cleanup
-        if (!listeners.has(element)) {
-          listeners.set(element, new Set());
-        }
-        listeners.get(element).add(handler);
-
-        // Add event listener
-        element.addEventListener('scroll', /** @type {EventListener} */ (handler), {
-          passive: true,
-        });
-
-        // Run initial callback if requested
-        if (runInitial) {
-          try {
-            callback();
-          } catch (err) {
-            logError('ScrollManager', 'Initial callback error', err);
-          }
-        }
-
-        // Return cleanup function
-        return () => {
-          try {
-            element.removeEventListener('scroll', /** @type {EventListener} */ (handler));
-            const set = listeners.get(element);
-            if (set) {
-              set.delete(handler);
-              if (set.size === 0) {
-                listeners.delete(element);
-              }
-            }
-          } catch (err) {
-            logError('ScrollManager', 'Cleanup error', err);
-          }
-        };
-      } catch (err) {
-        logError('ScrollManager', 'addScrollListener error', err);
-        return () => {}; // Return no-op cleanup
-      }
-    };
-
-    /**
-     * Remove all listeners for an element
-     * @param {Element} element - Element to clean up
-     */
-    const removeAllListeners = (/** @type {Element} */ element) => {
-      try {
-        const set = listeners.get(element);
-        if (!set) return;
-
-        set.forEach((/** @type {any} */ handler) => {
-          try {
-            element.removeEventListener('scroll', /** @type {EventListener} */ (handler));
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-        });
-
-        listeners.delete(element);
-      } catch (err) {
-        logError('ScrollManager', 'removeAllListeners error', err);
-      }
-    };
-
-    /**
-     * Create scroll-to-top functionality with smooth animation
-     * @param {Element} element - Element to scroll
-     * @param {Object} options - Options {duration: number, easing: string}
-     */
-    const scrollToTop = (
-      /** @type {Element & {scrollTop: number, scrollTo: Function}} */ element,
-      /** @type {{duration?: number, easing?: string}} */ options = {}
-    ) => {
-      const { duration = 300, easing = 'ease-out' } = options;
-
-      try {
-        // Try native smooth scroll first
-        if ('scrollBehavior' in /** @type {any} */ (document.documentElement.style || {})) {
-          element.scrollTo({ top: 0, behavior: 'smooth' });
-          return;
-        }
-
-        // Fallback to manual animation
-        const start = element.scrollTop;
-        const startTime = performance.now();
-
-        const scroll = (/** @type {number} */ currentTime) => {
-          const elapsed = currentTime - startTime;
-          const progress = Math.min(elapsed / duration, 1);
-
-          // Easing function
-          const easeOutQuad = (/** @type {number} */ t) => t * (2 - t);
-          const easedProgress = easing === 'ease-out' ? easeOutQuad(progress) : progress;
-
-          element.scrollTop = start * (1 - easedProgress);
-
-          if (progress < 1) {
-            requestAnimationFrame(scroll);
-          }
-        };
-
-        requestAnimationFrame(scroll);
-      } catch (err) {
-        logError('ScrollManager', 'scrollToTop error', err);
-      }
-    };
-
+  // ---------------------------------------------------------------------------
+  // Diagnostics (no canonical owner; dev-only console helper)
+  // ---------------------------------------------------------------------------
+  // ObserverRegistry tracks active observer counts. Used by
+  // `window.__ytpDiagnostics()` and by zoom.js / enhanced.js.
+  const ObserverRegistry = (() => {
+    let _active = 0;
+    let _peak = 0;
+    let _created = 0;
+    let _disconnected = 0;
     return {
-      addScrollListener,
-      removeAllListeners,
-      scrollToTop,
+      track() {
+        _active++;
+        _created++;
+        if (_active > _peak) _peak = _active;
+      },
+      untrack() {
+        _active = Math.max(0, _active - 1);
+        _disconnected++;
+      },
+      getStats() {
+        return { active: _active, peak: _peak, created: _created, disconnected: _disconnected };
+      },
+      reset() {
+        _active = 0;
+        _peak = 0;
+        _created = 0;
+        _disconnected = 0;
+      },
+      dump() {
+        const stats = {
+          active: _active,
+          peak: _peak,
+          created: _created,
+          disconnected: _disconnected,
+        };
+        const cmStats = (() => {
+          const cm = window.YouTubePlusCleanupManager;
+          if (!cm) return null;
+          try {
+            return {
+              observers: cm.observers?.size ?? 'n/a',
+              intervals: cm.intervals?.size ?? 'n/a',
+              timeouts: cm.timeouts?.size ?? 'n/a',
+              listeners: typeof cm.getListenerStats === 'function' ? cm.getListenerStats() : 'n/a',
+            };
+          } catch (_e) {
+            return null;
+          }
+        })();
+        emitCoreLog('warn', 'Diagnostics', 'ObserverRegistry', stats);
+        if (cmStats) emitCoreLog('warn', 'Diagnostics', 'CleanupManager', cmStats);
+        return { observers: stats, cleanup: cmStats };
+      },
     };
   })();
 
-  // Centralized history.pushState/replaceState wrapping.
-  // Dispatches 'ytp-history-navigate' so modules can listen instead of each wrapping independently.
-  if (typeof window !== 'undefined' && !window.__ytp_history_wrapped) {
+  if (!window.__ytpDiagnostics) {
+    window.__ytpDiagnostics = function (/** @type {boolean|undefined} */ verbose) {
+      const obs = ObserverRegistry.getStats();
+      const cm = (() => {
+        const m = window.YouTubePlusCleanupManager;
+        if (!m) return null;
+        try {
+          return {
+            observers: m.observers?.size ?? 0,
+            listeners:
+              typeof m.getListenerStats === 'function'
+                ? m.getListenerStats()
+                : { active: 0, registeredTotal: 0 },
+            intervals: m.intervals?.size ?? 0,
+            timeouts: m.timeouts?.size ?? 0,
+            animationFrames: m.animationFrames?.size ?? 0,
+          };
+        } catch (_e) {
+          return null;
+        }
+      })();
+      const report = { observers: obs, cleanupManager: cm, timestamp: new Date().toISOString() };
+      emitCoreLog('warn', 'Diagnostics', 'Observers', obs);
+      if (cm) emitCoreLog('warn', 'Diagnostics', 'CleanupManager', cm);
+      if (verbose) emitCoreLog('warn', 'Diagnostics', JSON.stringify(report, null, 2));
+      return report;
+    };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Cross-cutting side effect: history.pushState / replaceState wrapping
+  // ---------------------------------------------------------------------------
+  // Wraps history so modules can subscribe to 'ytp-history-navigate'
+  // instead of each wrapping independently. Guarded to run once.
+
+  if (!window.__ytp_history_wrapped) {
     window.__ytp_history_wrapped = true;
     const _origPush = history.pushState;
     const _origReplace = history.replaceState;
@@ -1202,7 +865,7 @@
           new CustomEvent('ytp-history-navigate', { detail: { type: 'pushState' } })
         );
       } catch (e) {
-        window.console.warn('[YouTube+] pushState event error:', e);
+        emitCoreLog('warn', 'Utils', 'pushState event error', e);
       }
       return result;
     };
@@ -1213,527 +876,616 @@
           new CustomEvent('ytp-history-navigate', { detail: { type: 'replaceState' } })
         );
       } catch (e) {
-        window.console.warn('[YouTube+] replaceState event error:', e);
+        emitCoreLog('warn', 'Utils', 'replaceState event error', e);
       }
       return result;
     };
   }
 
-  // --- Shared Retry Scheduler ---
-  // Used by modules to retry DOM element detection without each implementing their own timer loops.
   /**
-   * Creates a retry scheduler that will invoke a check function until it succeeds or limits are hit.
-   * @param {Object} opts
-   * @param {() => boolean} opts.check - Return true to stop retrying
-   * @param {number} [opts.maxAttempts=20] - Maximum retry attempts
-   * @param {number} [opts.interval=250] - Delay between attempts (ms)
-   * @param {() => void} [opts.onGiveUp] - Called when max attempts reached
-   * @param {string} [opts.label] - Diagnostic label
-   * @returns {{ stop: () => void }} Control handle
+   * Format seconds as `H:MM:SS` / `M:SS` for display.
+   * @param {number} secs
+   * @returns {string}
    */
-  const createRetryScheduler = opts => {
-    const { check, maxAttempts = 20, interval = 250, onGiveUp, label } = opts;
-    let attempts = 0;
-    /** @type {ReturnType<typeof setTimeout>|null} */
-    let timerId = null;
-    let stopped = false;
-    const _label = label || 'retry';
-    const _hasPerfApi =
-      typeof performance !== 'undefined' && typeof performance.mark === 'function';
-
-    const tick = () => {
-      if (stopped) return;
-      attempts++;
-      if (_hasPerfApi) {
-        try {
-          performance.mark(`ytp:${_label}:attempt:${attempts}`);
-        } catch (e) {
-          // Non-critical, suppressed
-        }
-      }
-      try {
-        if (check()) {
-          stopped = true;
-          if (_hasPerfApi) {
-            try {
-              performance.mark(`ytp:${_label}:success`);
-            } catch (e) {
-              // Non-critical, suppressed
-            }
-          }
-          return;
-        }
-      } catch (e) {
-        logError('RetryScheduler', 'check error', e);
-      }
-      if (attempts >= maxAttempts) {
-        stopped = true;
-        if (_hasPerfApi) {
-          try {
-            performance.mark(`ytp:${_label}:giveup`);
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-        }
-        if (typeof onGiveUp === 'function') {
-          try {
-            onGiveUp();
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-        }
-        return;
-      }
-      timerId = setTimeout(tick, interval);
-    };
-
-    // Start on next microtask
-    timerId = setTimeout(tick, 0);
-
-    return {
-      stop() {
-        stopped = true;
-        if (timerId) clearTimeout(timerId);
-        timerId = null;
-      },
-    };
+  const formatTime = secs => {
+    const safe = Number.isFinite(secs) && secs > 0 ? secs : 0;
+    const s = Math.floor(safe % 60)
+      .toString()
+      .padStart(2, '0');
+    const m = Math.floor((safe / 60) % 60).toString();
+    const h = Math.floor(safe / 3600);
+    return h ? `${h}:${m.padStart(2, '0')}:${s}` : `${m}:${s}`;
   };
 
+  // ---------------------------------------------------------------------------
+  // YouTubeUtils surface
+  // ---------------------------------------------------------------------------
+  // Each property is set only if not already present so modules that
+  // captured a reference at load time keep working through re-evaluation.
+  if (!window.YouTubeUtils) window.YouTubeUtils = /** @type {any} */ ({});
+  const U = /** @type {any} */ (window.YouTubeUtils);
+
+  // -- Lazy getters (resolve at call time to current canonical state) ------
+  if (!Object.getOwnPropertyDescriptor(U, 'StyleManager')) {
+    Object.defineProperty(U, 'StyleManager', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return window.YouTubePlusDesignSystem?.StyleManager || null;
+      },
+    });
+  }
+  if (!Object.getOwnPropertyDescriptor(U, 'cleanupManager')) {
+    Object.defineProperty(U, 'cleanupManager', {
+      configurable: true,
+      enumerable: true,
+      get() {
+        return window.YouTubePlusCleanupManager || null;
+      },
+    });
+  }
+  if (!Object.getOwnPropertyDescriptor(U, 'throttle')) {
+    Object.defineProperty(U, 'throttle', {
+      configurable: false,
+      enumerable: true,
+      get() {
+        return throttle;
+      },
+      set() {},
+    });
+  }
+  if (!Object.getOwnPropertyDescriptor(U, 'safeLS')) {
+    U.safeLS = {
+      /** @param {string} k @param {string|null} [def] @returns {string|null} */
+      getItem: (k, def = null) => {
+        try {
+          return localStorage.getItem(k) ?? def;
+        } catch (_e) {
+          return def;
+        }
+      },
+      /** @param {string} k @param {string} v @returns {boolean} */
+      setItem: (k, v) => {
+        try {
+          localStorage.setItem(k, v);
+          return true;
+        } catch (_e) {
+          return false;
+        }
+      },
+      /** @param {string} k */
+      removeItem: k => {
+        try {
+          localStorage.removeItem(k);
+        } catch (_e) {
+          /* non-critical */
+        }
+      },
+    };
+  }
+
   /**
-   * Creates a visibility-aware interval that pauses while the tab is hidden.
+   * Visibility-aware interval: pauses when the tab is hidden,
+   * registers with cleanupManager for SPA navigation cleanup.
+   *
+   * `resume()` correctly re-creates the interval after `pause()`.
+   * The previous implementation had a no-op `resume()` which left
+   * background polling dead until page reload — see time.js for
+   * the regression history.
    * @param {() => void} callback
    * @param {number} delay
-   * @param {{ label?: string }} [options]
-   * @returns {{ stop: () => void, pause: () => void, resume: () => void, active: boolean }}
+   * @returns {{ stop: () => void; pause: () => void; resume: () => void; active: boolean }}
    */
-  const createVisibilityAwareInterval = (callback, delay, options = {}) => {
-    const label = options.label || 'visibility-interval';
-    /** @type {ReturnType<typeof setInterval>|null} */
-    let intervalId = null;
-    let stopped = false;
-
-    const tick = () => {
-      if (stopped || (typeof document !== 'undefined' && document.hidden)) return;
-      try {
-        callback();
-      } catch (e) {
-        logError('VisibilityInterval', `${label} tick failed`, e);
+  const createVisibilityAwareInterval = (callback, delay) => {
+    /** @type {ReturnType<typeof setInterval> | null} */
+    let id = null;
+    /** @type {ReturnType<typeof setInterval> | null} */
+    /** @type {ReturnType<typeof setInterval> | number | null} */
+    let cmHandle = null;
+    let paused = false;
+    const cm = window.YouTubeUtils?.cleanupManager || window.YouTubePlusCleanupManager;
+    const start = () => {
+      if (id !== null) return;
+      id = setInterval(() => {
+        if (!document.hidden) callback();
+      }, delay);
+      if (cm && typeof cm.registerInterval === 'function') {
+        cmHandle = cm.registerInterval(id);
       }
     };
-
-    const pause = () => {
-      if (intervalId !== null) {
-        clearInterval(intervalId);
-        intervalId = null;
-      }
-    };
-
-    const resume = () => {
-      if (stopped || intervalId !== null) return;
-      if (typeof document !== 'undefined' && document.hidden) return;
-      // setInterval is intentional here: we need pause/resume semantics across visibility changes.
-      intervalId = setInterval(tick, delay);
-      if (typeof cleanupManager?.registerInterval === 'function') {
-        cleanupManager.registerInterval(intervalId);
-      }
-    };
-
-    const visibilityHandler = () => {
-      if (typeof document === 'undefined') return;
-      if (document.hidden) pause();
-      else resume();
-    };
-
-    if (typeof cleanupManager?.registerListener === 'function' && typeof document !== 'undefined') {
-      cleanupManager.registerListener(document, 'visibilitychange', visibilityHandler, {
-        passive: true,
-      });
-    } else if (typeof document !== 'undefined') {
-      document.addEventListener('visibilitychange', visibilityHandler, { passive: true });
-    }
-
-    resume();
-
+    start();
     return {
       stop() {
-        stopped = true;
-        pause();
+        if (id !== null) {
+          clearInterval(id);
+          id = null;
+        }
+        if (cm && cmHandle !== null && typeof cm.unregisterInterval === 'function') {
+          try {
+            cm.unregisterInterval(cmHandle);
+          } catch (_e) {
+            /* non-critical */
+          }
+          cmHandle = null;
+        }
       },
-      pause,
-      resume,
+      pause() {
+        if (id !== null) {
+          clearInterval(id);
+          id = null;
+        }
+        paused = true;
+      },
+      resume() {
+        if (id === null && paused) {
+          paused = false;
+          start();
+        }
+      },
       get active() {
-        return intervalId !== null;
+        return id !== null;
       },
     };
   };
 
-  // --- Observer Registry (dev-only diagnostics) ---
-  // Tracks active observers/listeners to detect monotonic growth.
-  const ObserverRegistry = (() => {
-    let _active = 0;
-    let _peak = 0;
-    let _created = 0;
-    let _disconnected = 0;
+  // -- Plain property assignments (compat surface) --------------------------
+  U.logError = U.logError || logError;
+  U.debounce = U.debounce || debounce;
+  U.waitForElement = U.waitForElement || waitForElement;
+  U.storage = U.storage || storage;
+  U.sanitizeHTML = U.sanitizeHTML || sanitizeHTML;
+  U.safeMerge = U.safeMerge || safeMerge;
+  U.renderTemplateClone =
+    U.renderTemplateClone ||
+    ((/** @type {Element} */ el, /** @type {string} */ html) =>
+      window.YouTubeSafeDOM?.renderTemplateClone?.(el, html));
+  U.logger = U.logger || createLogger();
+  if (typeof U.createRetryScheduler !== 'function') {
+    U.createRetryScheduler = createRetryScheduler;
+  }
+  U.ObserverRegistry = U.ObserverRegistry || ObserverRegistry;
+  U.$ = U.$ || $;
+  U.$$ = U.$$ || $$;
+  U.byId = U.byId || byId;
+  U.t = U.t || t;
+  U.createHTML = U.createHTML || createHTML;
+  U.getLanguage = U.getLanguage || getLanguage;
+  U.setSafeHTML = U.setSafeHTML || setSafeHTML;
+  U.loadFeatureEnabled = U.loadFeatureEnabled || loadFeatureEnabled;
+  U.SETTINGS_KEY = U.SETTINGS_KEY || SETTINGS_KEY;
+  U.isWatchPage = U.isWatchPage || isWatchPage;
+  U.isShortsPage = U.isShortsPage || isShortsPage;
+  U.isChannelPage = U.isChannelPage || isChannelPage;
+  U.isStudioPage = U.isStudioPage || isStudioPage;
+  U.onDomReady = U.onDomReady || onDomReady;
+  U.formatTime = U.formatTime || formatTime;
+  U.createVisibilityAwareInterval =
+    U.createVisibilityAwareInterval || createVisibilityAwareInterval;
 
-    return {
-      /** Record observer creation */
-      track() {
-        _active++;
-        _created++;
-        if (_active > _peak) _peak = _active;
-      },
-      /** Record observer disconnection */
-      untrack() {
-        _active = Math.max(0, _active - 1);
-        _disconnected++;
-      },
-      /** Get snapshot of observer counts */
-      getStats() {
-        return { active: _active, peak: _peak, created: _created, disconnected: _disconnected };
-      },
-      /** Reset (for tests) */
-      reset() {
-        _active = 0;
-        _peak = 0;
-        _created = 0;
-        _disconnected = 0;
-      },
-      /** Dev-only: dump all diagnostics to console for field debugging */
-      dump() {
-        const stats = {
-          active: _active,
-          peak: _peak,
-          created: _created,
-          disconnected: _disconnected,
-        };
-        // Also include cleanupManager stats if available
-        const cmStats = cleanupManager
-          ? {
-              observers: cleanupManager.observers?.size ?? 'n/a',
-              intervals: cleanupManager.intervals?.size ?? 'n/a',
-              timeouts: cleanupManager.timeouts?.size ?? 'n/a',
-              listeners:
-                typeof cleanupManager.getListenerStats === 'function'
-                  ? cleanupManager.getListenerStats()
-                  : 'n/a',
-            }
-          : null;
-        window.console.warn('[YouTube+ Diagnostics] ObserverRegistry:', stats);
-        if (cmStats) window.console.warn('[YouTube+ Diagnostics] CleanupManager:', cmStats);
-        return { observers: stats, cleanup: cmStats };
-      },
+  // -- Cleanup-tracked timer helpers ---------------------------------------
+  // Explicit opt-in for modules that want their timers cleared on SPA
+  // navigation. We deliberately do NOT wrap `window.setTimeout` globally
+  // — see the SPA-navigation section below for the regression history.
+  // These helpers are no-ops when `YouTubePlusCleanupManager` is not yet
+  // available (e.g. during partial bootstrap or in tests).
+  if (typeof U.safeSetTimeout !== 'function') {
+    U.safeSetTimeout = function (
+      /** @type {any} */ fn,
+      /** @type {any} */ ms,
+      /** @type {any[]} */ ...args
+    ) {
+      const id = setTimeout(fn, ms, ...args);
+      try {
+        U.cleanupManager?.registerTimeout?.(id);
+      } catch (_e) {
+        U.logSuppressed(_e, 'Utils');
+      }
+      return id;
     };
-  })();
+  }
+  if (typeof U.safeSetInterval !== 'function') {
+    U.safeSetInterval = function (
+      /** @type {any} */ fn,
+      /** @type {any} */ ms,
+      /** @type {any[]} */ ...args
+    ) {
+      const id = setInterval(fn, ms, ...args);
+      try {
+        U.cleanupManager?.registerInterval?.(id);
+      } catch (_e) {
+        U.logSuppressed(_e, 'Utils');
+      }
+      return id;
+    };
+  }
+  if (typeof U.safeRequestAnimationFrame !== 'function') {
+    U.safeRequestAnimationFrame = function (/** @type {FrameRequestCallback} */ cb) {
+      const id = requestAnimationFrame(cb);
+      try {
+        U.cleanupManager?.registerAnimationFrame?.(id);
+      } catch (_e) {
+        U.logSuppressed(_e, 'Utils');
+      }
+      return id;
+    };
+  }
 
-  // --- FeatureToggle utility ---
-  // Unifies feature enable/disable patterns across modules.
-  // Provides a single source of truth for feature state with change event dispatch.
+  // -- Helpers shorthand ---------------------------------------------------
+  // Modules destructure this for the 6-line preamble. `setTimeout_`
+  // is intentionally the NATIVE `window.setTimeout` (no global wrap),
+  // so SPA navigation cleanup does not touch unrelated timers. Modules
+  // that want their timers tracked should call `YouTubeUtils.safeSetTimeout`
+  // explicitly.
+  U.helpers = U.helpers || {
+    $: U.$,
+    $$: U.$$,
+    byId: U.byId,
+    t: U.t,
+    logger: U.logger || null,
+    createHTML: U.createHTML,
+    debounce: U.debounce,
+    setTimeout_: setTimeout.bind(window),
+    onDomReady: U.onDomReady,
+  };
+
+  // -- Runtime activation helpers -----------------------------------------
+  // Small composable primitives that let a module activate and deactivate
+  // itself in response to changes in route, settings, or the open
+  // settings-modal section, without going through a central registry.
+  //
+  // Rationale: a userscript is a single concatenated file, so there is
+  // no code-splitting to defer. The only meaningful "lazy" axis is
+  // *when* a module's body actually runs. Doing that per-module, with
+  // a composable predicate, means a module pays zero cost while it is
+  // not relevant (wrong route, feature off, modal closed) instead of
+  // running a no-op init on every YouTube SPA navigation.
+
   /**
-   * @param {string} featureKey - localStorage key within youtube_plus_settings (e.g. 'enableZoom')
-   * @param {boolean} [defaultEnabled=true] - Default state when not configured
-   * @returns {{ isEnabled: () => boolean, setEnabled: (v: boolean) => void, onChange: (cb: (enabled: boolean) => void) => () => void, reload: () => void }}
+   * The default set of DOM events that should re-evaluate a
+   * module's `isRelevant` predicate. Covers YouTube SPA nav, the
+   * settings modal open/close cycle, and the settings-updated
+   * broadcast that fires when the user toggles a feature.
+   * @type {ReadonlyArray<string>}
    */
-  const createFeatureToggle = (featureKey, defaultEnabled = true) => {
-    let _enabled = loadFeatureEnabled(featureKey, defaultEnabled);
-    /** @type {Set<(enabled: boolean) => void>} */
-    const _listeners = new Set();
+  const DEFAULT_RELEVANCE_SIGNALS = Object.freeze([
+    'yt-navigate-finish',
+    'yt-page-data-updated',
+    'youtube-plus-settings-modal-opened',
+    'youtube-plus-settings-updated',
+  ]);
+
+  /**
+   * Invoke `fn` only while `predicate()` returns true. Re-evaluates
+   * the predicate whenever any of `signals` fires on `window` or
+   * `document`.
+   *
+   * `onEnter` is called every time the predicate flips false→true,
+   * and `onLeave` is called every time it flips true→false. The
+   * helper never calls `onLeave` automatically on `dispose()` — the
+   * caller is responsible for teardown; the browser will reclaim
+   * everything when the page unloads anyway, and double-cleanup is
+   * harder to debug than missing cleanup in test environments.
+   *
+   * If `onEnter` throws, the helper logs the error and stays in
+   * the inactive state. The next signal will re-attempt activation,
+   * which makes the helper self-healing across transient DOM
+   * conditions (e.g., `document.querySelector('video')` returning
+   * null mid-nav). `onLeave` errors are logged and swallowed: a
+   * cleanup failure must not put the module back into a
+   * half-initialised state.
+   *
+   * @param {{
+   *   isRelevant: () => boolean,
+   *   onEnter?: () => void,
+   *   onLeave?: () => void,
+   *   signals?: ReadonlyArray<string>,
+   *   name?: string
+   * }} config
+   * @returns {{
+   *   active: boolean,
+   *   check: () => void,
+   *   dispose: () => void
+   * }}
+   */
+  const whenRelevant = config => {
+    const signals = config.signals || DEFAULT_RELEVANCE_SIGNALS;
+    const label = config.name || 'whenRelevant';
+    let active = false;
+
+    const safeOnEnter = () => {
+      if (typeof config.onEnter !== 'function') {
+        active = true;
+        return;
+      }
+      try {
+        config.onEnter();
+        active = true;
+      } catch (err) {
+        U.logger?.error?.(label, 'onEnter failed; will retry on next signal', err);
+        active = false;
+      }
+    };
+
+    const safeOnLeave = () => {
+      if (typeof config.onLeave !== 'function') {
+        active = false;
+        return;
+      }
+      try {
+        config.onLeave();
+      } catch (err) {
+        U.logger?.error?.(label, 'onLeave failed; ignoring', err);
+      } finally {
+        active = false;
+      }
+    };
+
+    const check = () => {
+      let should = false;
+      try {
+        should = !!config.isRelevant();
+      } catch (err) {
+        U.logger?.error?.(label, 'isRelevant threw; treating as inactive', err);
+        should = false;
+      }
+      if (should && !active) safeOnEnter();
+      else if (!should && active) safeOnLeave();
+    };
+
+    const handlers = signals.map(name => {
+      const handler = () => check();
+      // YouTube SPA lifecycle events are dispatched on `document`. Most of them
+      // bubble, but some (e.g. yt-page-data-updated) may not in all contexts.
+      // Listening on `document` is the safer default; the settings-modal-opened
+      // event is also a document event.
+      // The modal-opened event is dispatched on `document` (see basic.js); the
+      // settings-updated event is dispatched on `window` (see settings-helpers.js);
+      // YouTube SPA lifecycle events are dispatched on `document`.
+      const target = name === 'youtube-plus-settings-updated' ? window : document;
+      target.addEventListener(name, handler);
+      return { target, name, handler };
+    });
+
+    // Initial evaluation. Synchronous: the caller has finished
+    // wiring up state by the time they call `whenRelevant`, and
+    // making the first check async would race with subsequent
+    // sync code that reads `.active`.
+    check();
 
     return {
-      /** Current state */
-      isEnabled() {
-        return _enabled;
+      get active() {
+        return active;
       },
-      /** Update state, persist, and notify listeners */
-      setEnabled(value) {
-        const next = value !== false;
-        if (next === _enabled) return;
-        _enabled = next;
-        // Persist back to settings
-        try {
-          const raw = localStorage.getItem(SETTINGS_KEY);
-          const settings = raw ? JSON.parse(raw) : {};
-          settings[featureKey] = _enabled;
-          localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
-        } catch (e) {
-          // Storage write failure — state still updated in memory
-        }
-        // Notify listeners
-        for (const cb of _listeners) {
-          try {
-            cb(_enabled);
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-        }
-      },
-      /** Subscribe to changes. Returns unsubscribe function */
-      onChange(cb) {
-        _listeners.add(cb);
-        return () => _listeners.delete(cb);
-      },
-      /** Re-read state from localStorage (e.g. after external change) */
-      reload() {
-        _enabled = loadFeatureEnabled(featureKey, defaultEnabled);
+      check,
+      dispose: () => {
+        for (const h of handlers) h.target.removeEventListener(h.name, h.handler);
+        handlers.length = 0;
       },
     };
   };
 
-  // Expose a global YouTubeUtils if not present (non-destructive)
-  if (typeof window !== 'undefined') {
-    const winGlobal = /** @type {any} */ (window);
-    if (!winGlobal.YouTubeUtils) winGlobal.YouTubeUtils = {};
-    const U = /** @type {any} */ (winGlobal.YouTubeUtils);
-    U.logError = U.logError || logError;
-    U.debounce = U.debounce || debounce;
-    U.throttle = U.throttle || throttle;
-    U.StyleManager = U.StyleManager || StyleManager;
-    U.cleanupManager = U.cleanupManager || cleanupManager;
-    U.ScrollManager = U.ScrollManager || ScrollManager;
-    U.createElement = U.createElement || createElement;
-    U.waitForElement = U.waitForElement || waitForElement;
-    U.storage = U.storage || storage;
-    U.sanitizeHTML = U.sanitizeHTML || sanitizeHTML;
-    U.escapeHTMLAttribute = U.escapeHTMLAttribute || escapeHTMLAttribute;
-    U.safeMerge = U.safeMerge || safeMerge;
-    U.validateVideoId = U.validateVideoId || validateVideoId;
-    U.validatePlaylistId = U.validatePlaylistId || validatePlaylistId;
-    U.validateChannelId = U.validateChannelId || validateChannelId;
-    U.validateNumber = U.validateNumber || validateNumber;
-    U.isValidURL = U.isValidURL || isValidURL;
-    U.logger = U.logger || createLogger();
-    U.retryWithBackoff = U.retryWithBackoff || retryWithBackoff;
-    if (typeof U.createRetryScheduler !== 'function') {
-      U.createRetryScheduler = createRetryScheduler;
-    }
-    if (typeof U.createVisibilityAwareInterval !== 'function') {
-      U.createVisibilityAwareInterval = createVisibilityAwareInterval;
-    }
-    U.ObserverRegistry = U.ObserverRegistry || ObserverRegistry;
-    // Shared DOM helpers — modules can use YouTubeUtils.$ instead of local copies
-    U.$ = U.$ || $;
-    U.$$ = U.$$ || $$;
-    U.byId = U.byId || byId;
-    U.t = U.t || t;
-    U.getLanguage = U.getLanguage || getLanguage;
-    U.setSafeHTML = U.setSafeHTML || setSafeHTML;
-    U.onDomReady = U.onDomReady || onDomReady;
-    U.loadFeatureEnabled = U.loadFeatureEnabled || loadFeatureEnabled;
-    U.isWatchPage = U.isWatchPage || isWatchPage;
-    U.isShortsPage = U.isShortsPage || isShortsPage;
-    U.isChannelPage = U.isChannelPage || isChannelPage;
-    U.formatTime = U.formatTime || formatTime;
-    U.createFeatureToggle = U.createFeatureToggle || createFeatureToggle;
-    U.SETTINGS_KEY = U.SETTINGS_KEY || SETTINGS_KEY;
-    U.isStudioPage = U.isStudioPage || isStudioPage;
+  /**
+   * Subscribe to a single DOM event and return a disposer. The
+   * disposer removes the listener even if the listener throws
+   * (it doesn't, but the call is wrapped defensively).
+   *
+   * @param {EventTarget} target
+   * @param {string} event
+   * @param {(e: any) => void} handler
+   * @param {AddEventListenerOptions | boolean} [options]
+   * @returns {() => void} disposer
+   */
+  const on = (target, event, handler, options) => {
+    /** @type {any} */
+    const h = handler;
+    target.addEventListener(event, h, options);
+    return () => {
+      try {
+        target.removeEventListener(event, h, options);
+      } catch (_e) {
+        /* non-critical */
+      }
+    };
+  };
 
-    // Dev-only diagnostics — call window.__ytpDiagnostics() in browser console
-    if (!window.__ytpDiagnostics) {
-      window.__ytpDiagnostics = function (/** @type {boolean|undefined} */ verbose) {
-        const obs = ObserverRegistry.getStats();
-        const cm = {
-          observers: cleanupManager.observers.size,
-          listeners: cleanupManager.getListenerStats(),
-          intervals: cleanupManager.intervals.size,
-          timeouts: cleanupManager.timeouts.size,
-          animationFrames: cleanupManager.animationFrames.size,
-        };
-
-        // Retry scheduler performance metrics (dev-only)
-        let retryMetrics = null;
+  /**
+   * Combine multiple disposers into one. Useful when a module
+   * accumulates several `on()` subscriptions and wants a single
+   * cleanup point.
+   * @param  {...(() => void)} disposers
+   * @returns {() => void}
+   */
+  const group =
+    (...disposers) =>
+    () => {
+      for (const dispose of disposers) {
         try {
-          if (
-            typeof performance !== 'undefined' &&
-            typeof performance.getEntriesByType === 'function'
-          ) {
-            const marks = performance
-              .getEntriesByType('mark')
-              .filter(m => m.name.startsWith('ytp:'));
-            const retryLabels = new Set();
-            /** @type {Record<string, {attempts: number, success: boolean, giveup: boolean}>} */
-            const retryData = {};
-            for (const m of marks) {
-              const parts = m.name.split(':');
-              if (parts.length >= 3) {
-                const label = parts[1];
-                retryLabels.add(label);
-                if (!retryData[label]) {
-                  retryData[label] = { attempts: 0, success: false, giveup: false };
-                }
-                if (parts[2] === 'attempt') retryData[label].attempts++;
-                else if (parts[2] === 'success') retryData[label].success = true;
-                else if (parts[2] === 'giveup') retryData[label].giveup = true;
-              }
-            }
-            retryMetrics = { totalMarks: marks.length, schedulers: retryData };
-          }
-        } catch (e) {
-          // Non-critical, suppressed
+          dispose();
+        } catch (_e) {
+          /* non-critical */
         }
-
-        const report = {
-          observers: obs,
-          cleanupManager: cm,
-          retrySchedulers: retryMetrics,
-          timestamp: new Date().toISOString(),
-        };
-        window.console.warn('[YouTube+ Diagnostics] Observers:', obs);
-        window.console.warn('[YouTube+ Diagnostics] CleanupManager:', cm);
-        if (retryMetrics) {
-          window.console.warn('[YouTube+ Diagnostics] RetrySchedulers:', retryMetrics);
-        }
-        if (verbose) window.console.warn('[YouTube+ Diagnostics]', JSON.stringify(report, null, 2));
-        return report;
-      };
-    }
-
-    // Provide lightweight channel stats helpers if not defined by other modules.
-    U.channelStatsHelpers = U.channelStatsHelpers || null;
-    // Wrap global timer functions to auto-register with cleanupManager for safe cleanup.
-    try {
-      const w = /** @type {any} */ (window);
-      if (w && !w.__ytp_timers_wrapped) {
-        const origSetTimeout = w.setTimeout.bind(w);
-        const origSetInterval = w.setInterval.bind(w);
-        const origRaf = w.requestAnimationFrame ? w.requestAnimationFrame.bind(w) : null;
-
-        w.setTimeout = function (
-          /** @type {any} */ fn,
-          /** @type {any} */ ms,
-          /** @type {any[]} */ ...args
-        ) {
-          const id = origSetTimeout(fn, ms, ...args);
-          try {
-            U.cleanupManager.registerTimeout(id);
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-          return id;
-        };
-
-        // Keep a global setInterval wrapper so every timer is auto-registered for SPA cleanup.
-        w.setInterval = function (
-          /** @type {any} */ fn,
-          /** @type {any} */ ms,
-          /** @type {any[]} */ ...args
-        ) {
-          const id = origSetInterval(fn, ms, ...args);
-          try {
-            U.cleanupManager.registerInterval(id);
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-          return id;
-        };
-
-        if (origRaf) {
-          w.requestAnimationFrame = function (/** @type {FrameRequestCallback} */ cb) {
-            const id = origRaf(cb);
-            try {
-              U.cleanupManager.registerAnimationFrame(id);
-            } catch (e) {
-              // Non-critical, suppressed
-            }
-            return id;
-          };
-        }
-
-        w.__ytp_timers_wrapped = true;
       }
-    } catch (e) {
-      logError('utils', 'timer wrapper failed', e);
-    }
+    };
 
-    // Auto-cleanup on SPA navigation — prevents listener and timer leaks between pages
-    try {
-      const navCleanupHost = /** @type {any} */ (window);
-      if (!navCleanupHost.__ytp_nav_cleanup_registered) {
-        navCleanupHost.__ytp_nav_cleanup_registered = true;
-        document.addEventListener('yt-navigate-start', () => {
-          try {
-            U.cleanupManager.cleanup();
-          } catch (e) {
-            // Non-critical: cleanup best-effort on navigation
-          }
-        });
+  /**
+   * Fire `onEnter` whenever the user opens the named settings
+   * section, and `onLeave` whenever they leave it. Re-fires on
+   * every modal open/close cycle, so the section's UI must be
+   * idempotently injectable (a common pattern is to gate the
+   * injection with a `WeakSet` of already-populated parents).
+   *
+   * Implementation note: relies on the
+   * `youtube-plus-settings-section-activated` CustomEvent that
+   * `handleSidebarNavigation` dispatches in modal-handlers.js.
+   * If that event is missing, the helper is silently inert.
+   *
+   * @param {string} sectionId
+   * @param {() => void} onEnter
+   * @param {() => void} [onLeave]
+   * @returns {{ dispose: () => void }}
+   */
+  const onSectionActive = (sectionId, onEnter, onLeave) => {
+    let active = false;
+    const handler = (/** @type {any} */ e) => {
+      const detail = e?.detail;
+      if (!detail || detail.section !== sectionId) return;
+      active = true;
+      try {
+        onEnter();
+      } catch (err) {
+        U.logger?.error?.('onSectionActive', `onEnter for "${sectionId}" failed`, err);
+        active = false;
       }
-    } catch (e) {
-      // Non-critical: navigation cleanup hook failed to register
-    }
+    };
+    const leaveHandler = (/** @type {any} */ e) => {
+      if (!active) return;
+      // The `youtube-plus-settings-section-activated` event also
+      // fires on the NEW section when switching; that path is
+      // handled by `handler` above. We only get here if the
+      // caller explicitly tears down the section, e.g. on
+      // settings-updated. Treat any non-matching activation as
+      // a leave.
+      const detail = e?.detail;
+      if (detail && detail.section === sectionId) return;
+      active = false;
+      if (typeof onLeave === 'function') {
+        try {
+          onLeave();
+        } catch (err) {
+          U.logger?.error?.('onSectionActive', `onLeave for "${sectionId}" failed`, err);
+        }
+      }
+    };
+    document.addEventListener('youtube-plus-settings-section-activated', handler);
+    document.addEventListener('youtube-plus-settings-modal-closed', leaveHandler);
+    return {
+      dispose: () => {
+        document.removeEventListener('youtube-plus-settings-section-activated', handler);
+        document.removeEventListener('youtube-plus-settings-modal-closed', leaveHandler);
+      },
+    };
+  };
 
-    if (!window.YouTubePlusChannelStatsHelpers) {
-      window.YouTubePlusChannelStatsHelpers = {
-        async fetchWithRetry(
-          /** @type {() => Promise<any>} */ fetchFn,
-          maxRetries = 2,
-          logger = console
-        ) {
-          let attempt = 0;
-          while (attempt <= maxRetries) {
-            try {
-              // Allow fetchFn to be an async function returning parsed JSON
-              const res = await fetchFn();
-              return res;
-            } catch (err) {
-              attempt += 1;
-              if (attempt > maxRetries) {
-                logger &&
-                  logger.warn &&
-                  logger.warn('[ChannelStatsHelpers] fetch failed after retries', err);
-                return null;
-              }
-              // backoff
-              await new Promise(r => setTimeout(r, 300 * attempt));
-            }
-          }
-          return null;
-        },
-        cacheStats(
-          /** @type {any} */ mapLike,
-          /** @type {string} */ channelId,
-          /** @type {any} */ stats
-        ) {
-          try {
-            if (!mapLike || typeof mapLike.set !== 'function') return;
-            mapLike.set(channelId, stats);
-          } catch (e) {
-            // Non-critical, suppressed
-          }
-        },
-        getCachedStats(
-          /** @type {any} */ mapLike,
-          /** @type {string} */ channelId,
-          cacheDuration = 60000
-        ) {
-          try {
-            if (!mapLike || typeof mapLike.get !== 'function') return null;
-            const s = mapLike.get(channelId);
-            if (!s) return null;
-            if (s.timestamp && Date.now() - s.timestamp > cacheDuration) return null;
-            return s;
-          } catch (e) {
-            return null;
-          }
-        },
-        extractSubscriberCountFromPage() {
-          try {
-            const el = $('yt-formatted-string#subscriber-count') || $('[id*="subscriber-count"]');
-            if (!el) return 0;
-            const txt = el.textContent || '';
-            const digits = txt.replace(/[^0-9]/g, '');
-            return digits ? parseInt(digits, 10) : 0;
-          } catch (e) {
-            return 0;
-          }
-        },
-        createFallbackStats(followerCount = 0) {
-          return {
-            followerCount: followerCount || 0,
-            bottomOdos: [0, 0],
-            error: true,
-            timestamp: Date.now(),
-          };
-        },
-      };
+  U.whenRelevant = U.whenRelevant || whenRelevant;
+  U.on = U.on || on;
+  U.group = U.group || group;
+  U.onSectionActive = U.onSectionActive || onSectionActive;
+
+  // ---------------------------------------------------------------------------
+  // Video ID extraction helpers — shared across download, time, playall
+  // ---------------------------------------------------------------------------
+  /**
+   * Extract video ID from a URL string (query param `v` only).
+   * @param {string} url
+   * @returns {string|null}
+   */
+  const getVideoIdFromUrl = url => {
+    try {
+      return new URLSearchParams(new URL(url).search).get('v');
+    } catch (_e) {
+      return null;
     }
+  };
+  /**
+   * Extract video ID from the current page location.
+   * Checks: query `v`, /shorts/, /live/, youtu.be paths.
+   * @returns {string|null}
+   */
+  const getVideoIdFromLocation = () => {
+    try {
+      const params = new URLSearchParams(window.location.search || '');
+      const fromQuery = params.get('v');
+      if (fromQuery) return fromQuery;
+      const path = window.location.pathname || '';
+      const shortsMatch = path.match(/^\/shorts\/([a-zA-Z0-9_-]{11})/);
+      if (shortsMatch?.[1]) return shortsMatch[1];
+      const liveMatch = path.match(/^\/live\/([a-zA-Z0-9_-]{11})/);
+      if (liveMatch?.[1]) return liveMatch[1];
+      const youtuBeMatch = (window.location.href || '').match(/youtu\.be\/([a-zA-Z0-9_-]{11})/);
+      if (youtuBeMatch?.[1]) return youtuBeMatch[1];
+    } catch (_e) {
+      // non-critical
+    }
+    return null;
+  };
+  U.getVideoIdFromUrl = U.getVideoIdFromUrl || getVideoIdFromUrl;
+  U.getVideoIdFromLocation = U.getVideoIdFromLocation || getVideoIdFromLocation;
+
+  // ---------------------------------------------------------------------------
+  // Shared style injection utility
+  // ---------------------------------------------------------------------------
+  // Canonical path for injecting module CSS. Prefers the design-system
+  // StyleManager; falls back to a raw <style> element when the canonical
+  // service is unavailable. Every call is wrapped in try/catch so a
+  // style failure never breaks the host page.
+  /**
+   * @param {string} id - Unique style element / StyleManager key.
+   * @param {string} css - CSS text to inject.
+   * @param {Element} [target] - Optional parent for the raw <style> fallback
+   *   (defaults to document.head or document.documentElement).
+   */
+  const injectModuleStyles = (id, css, target) => {
+    try {
+      const SM = U.StyleManager;
+      if (SM && typeof SM.add === 'function') {
+        SM.add(id, css);
+        return;
+      }
+    } catch (_e) {
+      // StyleManager unavailable — fall through to raw injection
+    }
+    try {
+      let el = document.getElementById(id);
+      if (!el) {
+        el = document.createElement('style');
+        el.id = id;
+        (target || document.head || document.documentElement).appendChild(el);
+      }
+      el.textContent = css;
+    } catch (_e) {
+      // Non-critical: style injection failed
+    }
+  };
+  U.injectModuleStyles = U.injectModuleStyles || injectModuleStyles;
+
+  // ---------------------------------------------------------------------------
+  // Cross-cutting side effect: SPA navigation cleanup
+  // ---------------------------------------------------------------------------
+  // On `yt-navigate-start`, invoke the cleanup manager. Guarded to run once.
+  //
+  // IMPORTANT: We intentionally DO NOT wrap `window.setTimeout`,
+  // `window.setInterval`, or `window.requestAnimationFrame` globally anymore.
+  // Doing so caused several regressions: (1) YouTube SPA navigation cleanup
+  // would also kill timers scheduled by the page itself or by other
+  // userscripts running in the same context, breaking unrelated features;
+  // (2) modules that captured `setTimeout` at module-init time still saw
+  // the native function, so the wrap was inconsistently applied; (3) the
+  // `helpers.setTimeout_` getter previously returned the wrapped version
+  // which silently no-op'd when the wrapper threw, breaking
+  // `applyLoopStateToCurrentVideo()` in time.js.
+  //
+  // Modules that want their timers cleaned up on SPA navigation should
+  // import the explicit `safeSetTimeout` / `safeSetInterval` /
+  // `safeRequestAnimationFrame` helpers exposed on `YouTubeUtils`. The
+  // canonical YouTubePlusCleanupManager still owns the cleanup call below.
+
+  // ---------------------------------------------------------------------------
+  // Cross-cutting side effect: SPA navigation cleanup
+  // ---------------------------------------------------------------------------
+  // On `yt-navigate-start`, invoke the cleanup manager. Guarded to run once.
+  try {
+    const navHost = /** @type {any} */ (window);
+    if (!navHost.__ytp_nav_cleanup_registered) {
+      navHost.__ytp_nav_cleanup_registered = true;
+      document.addEventListener('yt-navigate-start', () => {
+        try {
+          U.cleanupManager?.cleanup?.();
+        } catch (_e) {
+          // Non-critical
+        }
+      });
+    }
+  } catch (_e) {
+    // Non-critical: navigation cleanup hook failed to register
   }
 })();

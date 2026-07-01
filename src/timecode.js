@@ -1,39 +1,23 @@
-// YouTube Timecode Panel
+// YouTube Timecode Panel — no canonical window symbol (self-initializing IIFE).
+//
+// Responsibility: clickable timestamp links in video descriptions,
+//   progress-bar chapter markers, and timecode navigation helpers.
+//   Uses `__ytpTimeInitDone__` guard for idempotent boot.
+// Public surface: none (self-contained, no LazyLoader registration).
 (function () {
-  'use strict';
-  const setTimeout_ = setTimeout;
-  const renderTemplateClone = (/** @type {Element} */ container, /** @type {string} */ html) => {
-    if (window.YouTubeSafeDOM?.renderTemplateClone) {
-      window.YouTubeSafeDOM.renderTemplateClone(container, html);
-      return;
-    }
-    if (!(container instanceof Element)) return;
-    const template = document.createElement('template');
-    const range = document.createRange();
-    const root = document.body || document.documentElement;
-    if (root) range.selectNode(root);
-    const htmlFactory =
-      window._ytplusCreateHTML || /** @type {(s: string) => string} */ (/** @type {any} */ s => s);
-    // eslint-disable-next-line no-unsanitized/method -- centralized trusted-types/safe-dom fallback
-    template.content.append(range.createContextualFragment(htmlFactory(String(html ?? ''))));
-    container.replaceChildren(template.content.cloneNode(true));
-  };
-
-  // Shared helpers from YouTubeUtils
-  const $ = window.YouTubeUtils.$;
-  const $$ = window.YouTubeUtils.$$;
-  const byId = window.YouTubeUtils.byId;
-
-  if (window.location.hostname !== 'www.youtube.com' || window.frameElement) {
-    return;
-  }
+  // Shared helpers from YouTubeUtils (canonical boot shorthand)
+  const U = window.YouTubeUtils;
+  const { $, $$, byId, setTimeout_ } = U?.helpers ?? {};
+  const throttle = U?.throttle;
+  const waitForElement = U?.waitForElement;
 
   // Prevent multiple initializations
   if (window._timecodeModuleInitialized) return;
   window._timecodeModuleInitialized = true;
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils.t;
+  const t = window.YouTubeUtils?.t || ((/** @type {string} */ key) => key || '');
+  const timecodeLogger = window.YouTubeUtils?.logger || null;
 
   // Configuration
   /** @type {any} */
@@ -64,21 +48,7 @@
 
   let initStarted = false;
 
-  const isRelevantRoute = () => {
-    try {
-      return location.pathname === '/watch';
-    } catch (e) {
-      return false;
-    }
-  };
-
-  const isSettingsModalOpen = () => {
-    try {
-      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
-    } catch (e) {
-      return false;
-    }
-  };
+  const isRelevantRoute = () => window.YouTubeUtils.isWatchRoute();
 
   const scheduleInitRetry = () => {
     const retryScheduler = /** @type {any} */ (YouTubeUtils).createRetryScheduler;
@@ -159,7 +129,7 @@
 
       const parsed = JSON.parse(saved);
       if (typeof parsed !== 'object' || parsed === null) {
-        window.console.warn('[Timecode] Invalid settings format');
+        timecodeLogger?.warn?.('Timecode', 'Invalid settings format');
         return;
       }
 
@@ -202,8 +172,8 @@
         if (
           typeof left === 'number' &&
           typeof top === 'number' &&
-          !isNaN(left) &&
-          !isNaN(top) &&
+          !Number.isNaN(left) &&
+          !Number.isNaN(top) &&
           left >= 0 &&
           top >= 0
         ) {
@@ -211,7 +181,7 @@
         }
       }
     } catch (error) {
-      window.console.error('[Timecode] Error loading settings:', error);
+      timecodeLogger?.error?.('Timecode', 'Error loading settings', error);
     }
   };
 
@@ -232,7 +202,7 @@
       };
       localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
     } catch (error) {
-      window.console.error('[Timecode] Error saving settings:', error);
+      timecodeLogger?.error?.('Timecode', 'Error saving settings', error);
     }
   };
 
@@ -245,20 +215,28 @@
    */
   const clampPanelPosition = (panel, left, top) => {
     try {
-      if (!panel || !(panel instanceof HTMLElement)) {
-        window.console.warn('[Timecode] Invalid panel element');
+      if (!(panel && panel instanceof HTMLElement)) {
+        timecodeLogger?.warn?.('Timecode', 'Invalid panel element');
         return { left: 0, top: 0 };
       }
 
       // Validate input coordinates
-      if (typeof left !== 'number' || typeof top !== 'number' || isNaN(left) || isNaN(top)) {
-        window.console.warn('[Timecode] Invalid position coordinates');
+      if (
+        typeof left !== 'number' ||
+        typeof top !== 'number' ||
+        Number.isNaN(left) ||
+        Number.isNaN(top)
+      ) {
+        timecodeLogger?.warn?.('Timecode', 'Invalid position coordinates');
         return { left: 0, top: 0 };
       }
 
       const rect = panel.getBoundingClientRect();
-      const width = rect.width || panel.offsetWidth || 0;
-      const height = rect.height || panel.offsetHeight || 0;
+      // Single getBoundingClientRect read; use rect.width/rect.height
+      // directly instead of also reading offsetWidth/offsetHeight which
+      // trigger separate forced layouts.
+      const width = rect.width || 0;
+      const height = rect.height || 0;
 
       const maxLeft = Math.max(0, window.innerWidth - width);
       const maxTop = Math.max(0, window.innerHeight - height);
@@ -268,7 +246,7 @@
         top: Math.min(Math.max(0, top), maxTop),
       };
     } catch (error) {
-      window.console.error('[Timecode] Error clamping panel position:', error);
+      timecodeLogger?.error?.('Timecode', 'Error clamping panel position', error);
       return { left: 0, top: 0 };
     }
   };
@@ -287,14 +265,19 @@
    */
   const savePanelPosition = (left, top) => {
     try {
-      if (typeof left !== 'number' || typeof top !== 'number' || isNaN(left) || isNaN(top)) {
-        window.console.warn('[Timecode] Invalid position coordinates for saving');
+      if (
+        typeof left !== 'number' ||
+        typeof top !== 'number' ||
+        Number.isNaN(left) ||
+        Number.isNaN(top)
+      ) {
+        timecodeLogger?.warn?.('Timecode', 'Invalid position coordinates for saving');
         return;
       }
       config.panelPosition = { left, top };
       saveSettings();
     } catch (error) {
-      window.console.error('[Timecode] Error saving panel position:', error);
+      timecodeLogger?.error?.('Timecode', 'Error saving panel position', error);
     }
   };
 
@@ -304,7 +287,7 @@
    * @returns {void}
    */
   const applySavedPanelPosition = (/** @type {any} */ panel) => {
-    if (!panel || !config.panelPosition) return;
+    if (!(panel && config.panelPosition)) return;
 
     requestAnimationFrame(() => {
       const { left, top } = clampPanelPosition(
@@ -423,7 +406,7 @@
       if (match) {
         const [, h, m, s] = match.map(Number);
         // Validate ranges
-        if (isNaN(h) || isNaN(m) || isNaN(s)) return null;
+        if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(s)) return null;
         if (m >= 60 || s >= 60 || h < 0 || m < 0 || s < 0) return null;
         const total = h * 3600 + m * 60 + s;
         // Sanity check: max 24 hours
@@ -435,14 +418,14 @@
       if (match) {
         const [, m, s] = match.map(Number);
         // Validate ranges
-        if (isNaN(m) || isNaN(s)) return null;
+        if (Number.isNaN(m) || Number.isNaN(s)) return null;
         if (m >= 60 || s >= 60 || m < 0 || s < 0) return null;
         return m * 60 + s;
       }
 
       return null;
     } catch (error) {
-      window.console.error('[Timecode] Error parsing time:', error);
+      timecodeLogger?.error?.('Timecode', 'Error parsing time', error);
       return null;
     }
   };
@@ -458,12 +441,12 @@
 
       // Security: limit text length to prevent DoS
       if (text.length > 50000) {
-        window.console.warn('[Timecode] Text too long, truncating');
+        timecodeLogger?.warn?.('Timecode', 'Text too long, truncating');
         text = text.substring(0, 50000);
       }
 
+      /** @type {Array<{time: number, label: string, originalText: string}>} */
       const timecodes = [];
-      const seen = new Set();
       const lines = String(text || '')
         .replace(/\r/g, '')
         .split('\n');
@@ -477,34 +460,51 @@
         if (!timeMatch) continue;
 
         const time = parseTime(timeMatch.token);
-        if (time === null || seen.has(time)) continue;
-        seen.add(time);
+        if (time === null) continue;
 
         let label = stripLeadingTimePrefix(line.slice(timeMatch.length));
         label = label
           .trim()
-          .replace(/^\d+[\.\)]\s*/, '')
+          .replace(/^\d+[.)]\s*/, '')
           .replace(/\s+/g, ' ')
           .substring(0, 100);
 
         const originalLabel = label;
-        label = label.replace(/[<>\"']/g, '');
+        label = label.replace(/[<>"']/g, '');
         label = removeDuplicateText(label);
 
         if (originalLabel !== label && label.length > 0) {
-          window.console.warn('[Timecode] Description deduplicated:', originalLabel, '->', label);
+          timecodeLogger?.warn?.(
+            'Timecode',
+            `Description deduplicated: ${originalLabel} -> ${label}`
+          );
         }
 
-        timecodes.push({ time, label: label || '', originalText: timeMatch.token });
+        const existingIdx = timecodes.findIndex(tc => tc.time === time);
+        if (existingIdx !== -1) {
+          if ((label || '').length > (timecodes[existingIdx].label || '').length) {
+            timecodes[existingIdx] = {
+              time,
+              label: label || '',
+              originalText: timeMatch.token,
+            };
+          }
+        } else {
+          timecodes.push({
+            time,
+            label: label || '',
+            originalText: timeMatch.token,
+          });
+        }
       }
 
       if (lines.length > maxIterations) {
-        window.console.warn('[Timecode] Maximum iterations reached during extraction');
+        timecodeLogger?.warn?.('Timecode', 'Maximum iterations reached during extraction');
       }
 
       return timecodes.sort((a, b) => a.time - b.time);
     } catch (error) {
-      window.console.error('[Timecode] Error extracting timecodes:', error);
+      timecodeLogger?.error?.('Timecode', 'Error extracting timecodes', error);
       return [];
     }
   };
@@ -613,7 +613,7 @@
       if (ariaExpanded === 'true') return false;
 
       const ariaLabel = button.getAttribute('aria-label')?.toLowerCase();
-      if (ariaLabel && ariaLabel.includes('less')) return false;
+      if (ariaLabel?.includes('less')) return false;
 
       if (button.offsetParent !== null) {
         try {
@@ -621,7 +621,7 @@
           await sleep(400);
           return true;
         } catch (error) {
-          window.console.warn('[Timecode] Failed to click expand button:', error);
+          timecodeLogger?.warn?.('Timecode', 'Failed to click expand button', error);
         }
       }
     }
@@ -651,8 +651,8 @@
     const maxAttempts = 3;
     for (let attempt = 0; attempt < maxAttempts; attempt++) {
       try {
-        await YouTubeUtils.waitForElement(DESCRIPTION_SELECTOR_COMBINED, 1500);
-      } catch (e) {
+        await waitForElement(DESCRIPTION_SELECTOR_COMBINED, 1500);
+      } catch (_e) {
         // Continue trying
       }
 
@@ -674,7 +674,7 @@
     const { force = false } = options;
 
     if (!config.enabled) return [];
-    if (!force && !config.autoDetect) return [];
+    if (!(force || config.autoDetect)) return [];
 
     const videoId = getCurrentVideoId();
     if (!videoId) return [];
@@ -711,7 +711,11 @@
         const existing = uniqueMap.get(key);
         // Prefer chapter label if existing label is empty or duplicate
         if (existing && chapter.label && chapter.label.length > existing.label.length) {
-          uniqueMap.set(key, { ...existing, label: chapter.label, isChapter: true });
+          uniqueMap.set(key, {
+            ...existing,
+            label: chapter.label,
+            isChapter: true,
+          });
         } else if (!existing) {
           uniqueMap.set(key, chapter);
         } else {
@@ -844,7 +848,7 @@
 
           // Debug logging
           if (cleanTitle && cleanTitle.length > 0) {
-            window.console.warn('[Timecode Debug] Raw chapter title:', cleanTitle);
+            timecodeLogger?.warn?.('Timecode', `Debug raw chapter title: ${cleanTitle}`);
           }
 
           // Remove time prefix if present in label
@@ -854,7 +858,10 @@
           const deduplicated = removeDuplicateText(cleanTitle);
 
           if (cleanTitle !== deduplicated) {
-            window.console.warn('[Timecode] Removed duplicate:', cleanTitle, '->', deduplicated);
+            timecodeLogger?.warn?.(
+              'Timecode',
+              `Removed duplicate: ${cleanTitle} -> ${deduplicated}`
+            );
           }
 
           cleanTitle = deduplicated;
@@ -871,181 +878,36 @@
   };
 
   // Settings panel
-  const addTimecodePanelSettings = () => {
+  const attachTimecodeHandlers = () => {
     const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
-    if (!advancedSection || advancedSection.querySelector('.timecode-settings-item')) {
-      return;
-    }
+    if (!advancedSection) return;
+    const enableItem = advancedSection.querySelector('.timecode-settings-item');
+    if (!enableItem || /** @type {HTMLElement} */ (enableItem).dataset.handlerAttached) return;
+    /** @type {HTMLElement} */ (enableItem).dataset.handlerAttached = '1';
 
+    const submenuWrap = advancedSection.querySelector('.timecode-submenu[data-submenu="timecode"]');
     const getSubmenuExpanded = () => {
       try {
         const raw = localStorage.getItem('ytp-plus-submenu-states');
         if (!raw) return null;
         const parsed = JSON.parse(raw);
         if (parsed && typeof parsed.timecode === 'boolean') return parsed.timecode;
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Timecode');
       }
       return null;
     };
-    const storedExpanded = getSubmenuExpanded();
-    const initialExpanded = typeof storedExpanded === 'boolean' ? storedExpanded : true;
-
-    const { ctrlKey, altKey, shiftKey } = config.shortcut;
-    const modifierValue =
-      [
-        ctrlKey && altKey && shiftKey && 'ctrl+alt+shift',
-        ctrlKey && altKey && 'ctrl+alt',
-        ctrlKey && shiftKey && 'ctrl+shift',
-        altKey && shiftKey && 'alt+shift',
-        ctrlKey && 'ctrl',
-        altKey && 'alt',
-        shiftKey && 'shift',
-      ].find(Boolean) || 'none';
-
-    const enableDiv = document.createElement('div');
-    enableDiv.className =
-      'ytp-plus-settings-item timecode-settings-item ytp-plus-settings-item--with-submenu';
-    renderTemplateClone(
-      enableDiv,
-      `
-        <div>
-          <label class="ytp-plus-settings-item-label" for="timecode-enable-checkbox">${t(
-            'enableTimecode'
-          )}</label>
-          <div class="ytp-plus-settings-item-description">${t('enableDescription')}</div>
-        </div>
-        <div class="ytp-plus-settings-item-actions">
-          <button
-            type="button"
-            class="ytp-plus-submenu-toggle"
-            data-submenu="timecode"
-            aria-label="Toggle timecode submenu"
-            aria-expanded="${initialExpanded ? 'true' : 'false'}"
-            ${config.enabled ? '' : 'disabled'}
-            style="display:${config.enabled ? 'inline-flex' : 'none'};"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-          <input type="checkbox" id="timecode-enable-checkbox" class="ytp-plus-settings-checkbox" data-setting="enabled" ${
-            config.enabled ? 'checked' : ''
-          }>
-        </div>
-      `
-    );
-
-    const submenuWrap = document.createElement('div');
-    submenuWrap.className = 'timecode-submenu';
-    /** @type {any} */ (submenuWrap).dataset.submenu = 'timecode';
-    /** @type {any} */ (submenuWrap).style.display =
-      config.enabled && initialExpanded ? 'block' : 'none';
-    /** @type {any} */ (submenuWrap).style.marginLeft = '12px';
-    /** @type {any} */ (submenuWrap).style.marginBottom = '12px';
-
-    const submenuCard = document.createElement('div');
-    submenuCard.className = 'glass-card';
-    /** @type {any} */ (submenuCard).style.display = 'flex';
-    /** @type {any} */ (submenuCard).style.flexDirection = 'column';
-    /** @type {any} */ (submenuCard).style.gap = '8px';
-
-    const shortcutDiv = document.createElement('div');
-    shortcutDiv.className = 'ytp-plus-settings-item timecode-settings-item timecode-shortcut-item';
-    /** @type {any} */ (shortcutDiv).style.display = 'flex';
-    renderTemplateClone(
-      shortcutDiv,
-      `
-        <div>
-          <label class="ytp-plus-settings-item-label">${t('keyboardShortcut')}</label>
-          <div class="ytp-plus-settings-item-description">${t('shortcutDescription')}</div>
-        </div>
-        <div style="display: flex; align-items: center; gap: 8px;">
-          <!-- Hidden native select kept for programmatic compatibility -->
-          <select id="timecode-modifier-combo" style="display:none;">
-            ${[
-              'none',
-              'ctrl',
-              'alt',
-              'shift',
-              'ctrl+alt',
-              'ctrl+shift',
-              'alt+shift',
-              'ctrl+alt+shift',
-            ]
-              .map(
-                v =>
-                  `<option value="${v}" ${v === modifierValue ? 'selected' : ''}>${
-                    v === 'none'
-                      ? 'None'
-                      : v
-                          .split('+')
-                          .map((/** @type {any} */ k) => k.charAt(0).toUpperCase() + k.slice(1))
-                          .join('+')
-                  }</option>`
-              )
-              .join('')}
-          </select>
-
-          <div class="glass-dropdown" id="timecode-modifier-dropdown" tabindex="0" role="listbox" aria-expanded="false">
-            <button class="glass-dropdown__toggle" type="button" aria-haspopup="listbox">
-              <span class="glass-dropdown__label">${
-                modifierValue === 'none'
-                  ? 'None'
-                  : modifierValue
-                      .split('+')
-                      .map((/** @type {any} */ k) => k.charAt(0).toUpperCase() + k.slice(1))
-                      .join('+')
-              }</span>
-              <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <ul class="glass-dropdown__list" role="presentation">
-              ${[
-                'none',
-                'ctrl',
-                'alt',
-                'shift',
-                'ctrl+alt',
-                'ctrl+shift',
-                'alt+shift',
-                'ctrl+alt+shift',
-              ]
-                .map(v => {
-                  const label =
-                    v === 'none'
-                      ? 'None'
-                      : v
-                          .split('+')
-                          .map(k => k.charAt(0).toUpperCase() + k.slice(1))
-                          .join('+');
-                  const sel = v === modifierValue ? ' aria-selected="true"' : '';
-                  return `<li class="glass-dropdown__item" data-value="${v}" role="option"${sel}>${label}</li>`;
-                })
-                .join('')}
-            </ul>
-          </div>
-
-          <span style="color:inherit;opacity:0.8;">+</span>
-          <input type="text" id="timecode-key" value="${config.shortcut.key}" maxlength="1" style="width: 30px; text-align: center; background: var(--yt-input-bg); color: var(--yt-text-primary); border: 1px solid var(--yt-border-color); border-radius: 4px; padding: 4px;">
-        </div>
-      `
-    );
-
-    submenuCard.appendChild(shortcutDiv);
-    submenuWrap.appendChild(submenuCard);
-    advancedSection.append(enableDiv, submenuWrap);
 
     window.YouTubePlusDesignSystem?.initGlassDropdown?.({
       dropdown: byId('timecode-modifier-dropdown'),
       hiddenSelect: byId('timecode-modifier-combo'),
     });
 
-    // Event listeners
-    advancedSection.addEventListener('change', e => {
-      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      if (target.matches && target.matches('.ytp-plus-settings-checkbox[data-setting="enabled"]')) {
-        config.enabled = /** @type {HTMLInputElement} */ (target).checked;
-        const submenuToggle = enableDiv.querySelector(
+    const enableCheckbox = byId('timecode-enable-checkbox');
+    if (enableCheckbox instanceof HTMLInputElement) {
+      enableCheckbox.addEventListener('change', _e => {
+        config.enabled = enableCheckbox.checked;
+        const submenuToggle = enableItem.querySelector(
           '.ytp-plus-submenu-toggle[data-submenu="timecode"]'
         );
         if (submenuToggle instanceof HTMLElement) {
@@ -1053,48 +915,43 @@
             const stored = getSubmenuExpanded();
             const nextExpanded = typeof stored === 'boolean' ? stored : true;
             submenuToggle.removeAttribute('disabled');
-            /** @type {any} */ (submenuToggle).style.display = 'inline-flex';
+            submenuToggle.classList.remove('timecode-submenu-toggle-hidden');
             submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
-            /** @type {any} */ (submenuWrap).style.display = nextExpanded ? 'block' : 'none';
+            if (submenuWrap instanceof HTMLElement)
+              submenuWrap.classList.toggle('is-hidden', !nextExpanded);
           } else {
             submenuToggle.setAttribute('disabled', '');
-            /** @type {any} */ (submenuToggle).style.display = 'none';
-            /** @type {any} */ (submenuWrap).style.display = 'none';
+            submenuToggle.classList.add('timecode-submenu-toggle-hidden');
+            if (submenuWrap instanceof HTMLElement) submenuWrap.classList.add('is-hidden');
           }
         }
         toggleTimecodePanel(config.enabled);
         saveSettings();
-      }
-    });
-
-    byId('timecode-modifier-combo')?.addEventListener('change', e => {
-      const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
-      const value = target.value;
-      config.shortcut.ctrlKey = value.includes('ctrl');
-      config.shortcut.altKey = value.includes('alt');
-      config.shortcut.shiftKey = value.includes('shift');
-      saveSettings();
-    });
-
-    byId('timecode-key')?.addEventListener('input', e => {
-      const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-      if (target.value) {
-        config.shortcut.key = target.value.toUpperCase();
-        saveSettings();
-      }
-    });
-  };
-
-  const ensureTimecodePanelSettings = (attempt = 0) => {
-    const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
-    if (!advancedSection) {
-      if (attempt < 20) setTimeout(() => ensureTimecodePanelSettings(attempt + 1), 80);
-      return;
+      });
     }
 
-    addTimecodePanelSettings();
-    if (!$('.timecode-settings-item') && attempt < 20) {
-      setTimeout(() => ensureTimecodePanelSettings(attempt + 1), 80);
+    const modifierCombo = byId('timecode-modifier-combo');
+    if (modifierCombo instanceof HTMLSelectElement) {
+      modifierCombo.addEventListener('change', _e => {
+        const value = modifierCombo.value;
+        config.shortcut.ctrlKey = value.includes('ctrl');
+        config.shortcut.altKey = value.includes('alt');
+        config.shortcut.shiftKey = value.includes('shift');
+        saveSettings();
+      });
+    }
+
+    const keyInput = byId('timecode-key');
+    if (keyInput instanceof HTMLInputElement) {
+      keyInput.addEventListener('input', _e => {
+        if (keyInput.value) {
+          config.shortcut.key = keyInput.value.toUpperCase();
+          saveSettings();
+        }
+      });
+      keyInput.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
+        e.stopPropagation();
+      });
     }
   };
 
@@ -1102,61 +959,7 @@
   const insertTimecodeStyles = () => {
     if (byId('timecode-panel-styles')) return;
 
-    const styles = `
-      html[dark],body[dark]{--yt-timecode-panel-bg:var(--yt-timecode-panel-bg-dark);--yt-timecode-panel-border:var(--yt-timecode-panel-border-dark);--yt-timecode-panel-color:var(--yt-timecode-panel-color-dark)}
-      html:not([dark]){--yt-timecode-panel-bg:var(--yt-timecode-panel-bg-light);--yt-timecode-panel-border:var(--yt-timecode-panel-border-light);--yt-timecode-panel-color:var(--yt-timecode-panel-color-light)}
-      #timecode-panel{position:fixed;right:20px;top:80px;background:var(--yt-timecode-panel-bg);border-radius:16px;box-shadow:0 12px 40px var(--yt-timecode-panel-shadow);width:320px;max-height:70vh;z-index:10000;color:var(--yt-timecode-panel-color);backdrop-filter:blur(14px) saturate(140%);-webkit-backdrop-filter:blur(14px) saturate(140%);border:1.5px solid var(--yt-timecode-panel-border);transition:transform .28s cubic-bezier(.4,0,.2,1),opacity .28s;overflow:hidden;display:flex;flex-direction:column}
-        #timecode-panel.hidden{transform:translateX(300px);opacity:0;pointer-events:none}
-      #timecode-panel.auto-tracking{box-shadow:0 12px 48px var(--yt-danger-ghost);border-color:var(--yt-danger-border)}
-      #timecode-header{display:flex;justify-content:space-between;align-items:center;padding:14px;border-bottom:1px solid var(--yt-surface-overlay-subtle);background:linear-gradient(180deg, var(--yt-surface-overlay-faint), transparent);cursor:move}
-        #timecode-title{font-weight:600;margin:0;font-size:15px;user-select:none;display:flex;align-items:center;gap:8px}
-      #timecode-tracking-indicator{width:8px;height:8px;background:var(--yt-accent);border-radius:50%;opacity:0;transition:opacity .3s}
-        #timecode-panel.auto-tracking #timecode-tracking-indicator{opacity:1}
-      #timecode-current-time{font-family:monospace;font-size:12px;padding:2px 6px;background:var(--yt-danger-border);border-radius:3px;margin-left:auto}
-        #timecode-header-controls{display:flex;align-items:center;gap:6px}
-        #timecode-reload,#timecode-close{background:transparent;border:none;color:inherit;cursor:pointer;width:28px;height:28px;padding:0;display:flex;align-items:center;justify-content:center;border-radius:6px;transition:background .18s,color .18s}
-      #timecode-header-controls svg{width:16px;height:16px;display:block;flex-shrink:0}
-      #timecode-header-controls svg path{vector-effect:non-scaling-stroke}
-      #timecode-reload:hover,#timecode-close:hover{background:var(--yt-surface-overlay-subtle)}
-        #timecode-reload.loading{animation:spin .8s linear infinite}
-      #timecode-list{overflow-y:auto;padding:8px 0;max-height:calc(70vh - 80px);scrollbar-width:thin;scrollbar-color:var(--yt-scrollbar-outline) transparent}
-        #timecode-list::-webkit-scrollbar{width:6px}
-      #timecode-list::-webkit-scrollbar-thumb{background:var(--yt-scrollbar-outline);border-radius:3px}
-        .timecode-item{padding:10px 14px;display:flex;align-items:center;cursor:pointer;transition:background-color .16s,transform .12s;border-left:3px solid transparent;position:relative;border-radius:8px;margin:6px 10px}
-      .timecode-item:hover{background:var(--yt-surface-overlay-subtle);transform:translateY(-2px)}
-        .timecode-item:hover .timecode-actions{opacity:1}
-      .timecode-item.active{background:linear-gradient(90deg, var(--yt-timecode-active-bg-start), var(--yt-timecode-active-bg-end));border-left-color:var(--yt-timecode-active-border);box-shadow:inset 0 0 0 1px var(--yt-timecode-active-inset)}
-        .timecode-item.active.pulse{animation:timecodePulse .8s ease-out}
-      .timecode-item.editing{background:linear-gradient(90deg, var(--yt-warning-soft), var(--yt-panel-overlay-weak));border-left-color:var(--yt-warning)}
-        .timecode-item.editing .timecode-actions{opacity:1}
-        @keyframes timecodePulse{0%{transform:scale(1)}50%{transform:scale(1.02)}100%{transform:scale(1)}}
-        /* spin keyframe defined in shared-keyframes (basic.js) */
-      .timecode-time{font-family:monospace;margin-right:10px;color:var(--yt-text-secondary);font-size:13px;min-width:45px;flex-shrink:0}
-        .timecode-label{white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-size:13px;flex:1;margin-left:4px}
-        .timecode-item:not(:has(.timecode-label)) .timecode-time{flex:1;text-align:left}
-      .timecode-item.has-chapter .timecode-time{color:var(--yt-timecode-chapter)}
-      .timecode-progress{width:0;height:2px;background:var(--yt-timecode-chapter);position:absolute;bottom:0;left:0;transition:width .3s;opacity:.8}
-      .timecode-actions{position:absolute;right:8px;top:50%;transform:translateY(-50%);display:flex;gap:4px;opacity:0;transition:opacity .2s;background:var(--yt-overlay-strong);border-radius:4px;padding:2px}
-      .timecode-action{background:none;border:none;color:var(--yt-text-secondary);cursor:pointer;padding:4px;font-size:12px;border-radius:2px;transition:color .2s,background-color .2s}
-      .timecode-action:hover{color:var(--yt-text-primary);background:var(--yt-button-bg)}
-      .timecode-action.edit:hover{color:var(--yt-warning)}
-      .timecode-action.delete:hover{color:var(--yt-timecode-chapter)}
-      #timecode-empty{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:20px;text-align:center;color:var(--yt-text-secondary);font-size:13px}
-      #timecode-form{padding:12px;border-top:1px solid var(--yt-surface-overlay-subtle);display:none}
-        #timecode-form.visible{display:block}
-      #timecode-form input{width:100%;margin-bottom:8px;padding:8px;background:var(--yt-input-bg);border:1px solid var(--yt-glass-border);border-radius:4px;color:var(--yt-text-primary);font-size:13px}
-      #timecode-form input::placeholder{color:var(--yt-text-secondary)}
-        #timecode-form-buttons{display:flex;gap:8px;justify-content:flex-end}
-        #timecode-form-buttons button{padding:6px 12px;border:none;border-radius:4px;cursor:pointer;font-size:12px;transition:background-color .2s}
-      #timecode-form-cancel{background:var(--yt-button-bg);color:var(--yt-text-primary)}
-      #timecode-form-cancel:hover{background:var(--yt-hover-bg)}
-      #timecode-form-save{background:var(--yt-timecode-chapter);color:var(--yt-text-primary)}
-      #timecode-form-save:hover{background:var(--yt-timecode-active-border)}
-      #timecode-actions{padding:10px;border-top:1px solid var(--yt-surface-overlay-subtle);display:flex;gap:8px;background:linear-gradient(180deg,transparent,var(--yt-panel-overlay-subtle))}
-      #timecode-actions button{padding:8px 12px;border:none;border-radius:8px;cursor:pointer;font-size:13px;transition:background .18s;color:inherit;background:var(--yt-surface-overlay-faint)}
-      #timecode-actions button:hover{background:var(--yt-surface-overlay-subtle)}
-      #timecode-track-toggle.active{background:linear-gradient(90deg,var(--yt-timecode-toggle-active-start),var(--yt-timecode-chapter));color:var(--yt-text-primary)}
-      `;
+    const styles = window.YouTubePlusDesignSystem?.getStyle?.('timecode-panel-styles') || '';
     YouTubeUtils.StyleManager.add('timecode-panel-styles', styles);
   };
 
@@ -1172,7 +975,7 @@
     panel.className = config.enabled ? '' : 'hidden';
     if (config.autoTrackPlayback) panel.classList.add('auto-tracking');
 
-    renderTemplateClone(
+    window.YouTubeUtils.renderTemplateClone(
       panel,
       `
         <div id="timecode-header">
@@ -1198,19 +1001,19 @@
         <div id="timecode-list"></div>
         <div id="timecode-empty">
           <div>${t('noTimecodesFound')}</div>
-          <div style="margin-top:5px;font-size:12px">${t('clickToAdd')}</div>
+          <div class="timecode-empty-hint">${t('clickToAdd')}</div>
         </div>
         <div id="timecode-form">
           <input type="text" id="timecode-form-time" placeholder="${t('timePlaceholder')}">
           <input type="text" id="timecode-form-label" placeholder="${t('labelPlaceholder')}">
           <div id="timecode-form-buttons">
             <button type="button" id="timecode-form-cancel">${t('cancel')}</button>
-            <button type="button" id="timecode-form-save" class="save">${t('save')}</button>
+            <button type="button" id="timecode-form-save" class="save">${t('saveButton')}</button>
           </div>
         </div>
         <div id="timecode-actions">
           <button id="timecode-add-btn">${t('add')}</button>
-          <button id="timecode-export-btn" ${config.export ? '' : 'style="display:none"'}>${t('export')}</button>
+          <button id="timecode-export-btn" class="${config.export ? '' : 'is-hidden'}">${t('export')}</button>
           <button id="timecode-track-toggle" class="${config.autoTrackPlayback ? 'active' : ''}">${config.autoTrackPlayback ? t('tracking') : t('track')}</button>
         </div>
       `
@@ -1291,7 +1094,7 @@
     } else if (item && !target.closest('.timecode-actions')) {
       const time = parseFloat(item.dataset.time);
       const video = $('video');
-      if (video && !isNaN(time)) {
+      if (video && !Number.isNaN(time)) {
         /** @type {HTMLVideoElement} */ (video).currentTime = time;
         if (video.paused) video.play();
         updateActiveItem(item);
@@ -1440,7 +1243,7 @@
   // Panel updates
   const updateTimecodePanel = (/** @type {any} */ timecodes) => {
     const { list, empty } = state.dom;
-    if (!list || !empty) return;
+    if (!(list && empty)) return;
 
     const isEmpty = !timecodes.length;
     empty.style.display = isEmpty ? 'flex' : 'none';
@@ -1451,7 +1254,7 @@
       return;
     }
 
-    renderTemplateClone(
+    window.YouTubeUtils.renderTemplateClone(
       list,
       timecodes
         .map((/** @type {any} */ tc, /** @type {any} */ i) => {
@@ -1467,7 +1270,10 @@
           rawLabel = removeDuplicateText(rawLabel);
 
           if (beforeDedup !== rawLabel && rawLabel.length > 0) {
-            window.console.warn('[Timecode] Display deduplicated:', beforeDedup, '->', rawLabel);
+            timecodeLogger?.warn?.(
+              'Timecode',
+              `Display deduplicated: ${beforeDedup} -> ${rawLabel}`
+            );
           }
 
           // Normalize time comparisons (remove leading zeros for comparison)
@@ -1537,7 +1343,7 @@
         const { panel, currentTime, list } = state.dom;
 
         // Stop tracking if essential elements are missing or panel is hidden
-        if (!video || !panel || panel.classList.contains('hidden') || !config.autoTrackPlayback) {
+        if (!(video && panel) || panel.classList.contains('hidden') || !config.autoTrackPlayback) {
           if (state.trackingId) {
             cancelAnimationFrame(state.trackingId);
             state.trackingId = 0;
@@ -1546,7 +1352,7 @@
         }
 
         // Update current time display
-        if (currentTime && !isNaN(video.currentTime)) {
+        if (currentTime && !Number.isNaN(video.currentTime)) {
           currentTime.textContent = formatTime(video.currentTime);
         }
 
@@ -1561,7 +1367,7 @@
             if (!timeData) continue;
 
             const time = parseFloat(timeData);
-            if (isNaN(time)) continue;
+            if (Number.isNaN(time)) continue;
 
             if (video.currentTime >= time) {
               activeIndex = i;
@@ -1581,8 +1387,11 @@
             if (activeIndex >= 0 && items[activeIndex]) {
               items[activeIndex].classList.add('active');
               try {
-                items[activeIndex].scrollIntoView({ behavior: 'smooth', block: 'center' });
-              } catch (e) {
+                items[activeIndex].scrollIntoView({
+                  behavior: 'smooth',
+                  block: 'center',
+                });
+              } catch (_e) {
                 // Fallback for browsers that don't support smooth scrolling
                 items[activeIndex].scrollIntoView(false);
               }
@@ -1600,7 +1409,7 @@
               const current = parseFloat(currentTimeData);
               const next = parseFloat(nextTimeData);
 
-              if (!isNaN(current) && !isNaN(next) && next > current) {
+              if (!(Number.isNaN(current) || Number.isNaN(next)) && next > current) {
                 const progress = ((video.currentTime - current) / (next - current)) * 100;
                 const progressEl = items[activeIndex].querySelector('.timecode-progress');
                 if (progressEl) {
@@ -1617,7 +1426,7 @@
           state.trackingId = requestAnimationFrame(track);
         }
       } catch (error) {
-        window.console.warn('Timecode tracking error:', error);
+        timecodeLogger?.warn?.('Timecode', 'Tracking error', error);
         // Stop tracking on error to prevent infinite error loops
         if (state.trackingId) {
           cancelAnimationFrame(state.trackingId);
@@ -1713,12 +1522,12 @@
       const minimal = timecodes.map((/** @type {any} */ tc) => ({
         t: tc.time,
         l: tc.label?.trim() || '',
-        c: tc.isChapter || false,
-        u: tc.isUserAdded || false,
+        c: tc.isChapter,
+        u: tc.isUserAdded,
       }));
       localStorage.setItem(`yt_tc_${videoId}`, JSON.stringify(minimal));
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Timecode');
     }
   };
 
@@ -1734,11 +1543,11 @@
               time: tc.t,
               label: tc.l,
               isChapter: tc.c,
-              isUserAdded: tc.u || false,
+              isUserAdded: tc.u,
             }))
             .sort((/** @type {any} */ a, /** @type {any} */ b) => a.time - b.time)
         : null;
-    } catch (e) {
+    } catch (_e) {
       return null;
     }
   };
@@ -1758,7 +1567,7 @@
           time,
           label: label, // Keep original label (can be empty)
           isChapter: item.classList.contains('has-chapter'),
-          isUserAdded: !item.classList.contains('has-chapter') || false,
+          isUserAdded: !item.classList.contains('has-chapter'),
         };
       })
       .sort((a, b) => a.time - b.time);
@@ -1783,9 +1592,9 @@
       if (saved?.length) {
         updateTimecodePanel(saved);
       } else if (config.autoDetect) {
-        detectTimecodes().catch((/** @type {any} */ err) =>
-          window.console.error('[Timecode] Detection failed:', err)
-        );
+        detectTimecodes().catch((/** @type {any} */ err) => {
+          timecodeLogger?.error?.('Timecode', 'Detection failed', err);
+        });
       }
 
       if (config.autoTrackPlayback) startTracking();
@@ -1815,9 +1624,9 @@
         } else if (config.autoDetect) {
           setTimeout(
             () =>
-              detectTimecodes().catch(err =>
-                window.console.error('[Timecode] Detection failed:', err)
-              ),
+              detectTimecodes().catch(err => {
+                timecodeLogger?.error?.('Timecode', 'Detection failed', err);
+              }),
             500
           );
         }
@@ -1842,7 +1651,7 @@
       if (!config.enabled) return;
 
       const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      if (target.matches && target.matches('input, textarea, [contenteditable]')) return;
+      if (target.matches?.('input, textarea, [contenteditable]')) return;
 
       const { key, shiftKey, altKey, ctrlKey } = config.shortcut;
       if (
@@ -1879,7 +1688,7 @@
     loadSettings();
 
     const settingsModalHandler = () => {
-      setTimeout(() => ensureTimecodePanelSettings(), 100);
+      attachTimecodeHandlers();
     };
     if (YouTubeUtils.cleanupManager?.registerListener) {
       YouTubeUtils.cleanupManager.registerListener(
@@ -1895,7 +1704,7 @@
       const target = /** @type {HTMLElement} */ (e.target);
       const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
       if (navItem?.dataset?.section === 'advanced') {
-        setTimeout(() => ensureTimecodePanelSettings(), 50);
+        attachTimecodeHandlers();
       }
     };
     if (YouTubeUtils.cleanupManager?.registerListener) {
@@ -1908,6 +1717,8 @@
   // Initialize
   const init = () => {
     if (initStarted) return;
+    // Runtime only on www.youtube.com (not music/studio/iframes)
+    if (U?.getHostname?.() !== 'www.youtube.com' || window.frameElement) return;
     if (!isRelevantRoute()) return;
 
     const appRoot =
@@ -1932,13 +1743,13 @@
     /** @type {ReturnType<typeof setTimeout> | null} */ let modalObserverTimeout = null;
 
     const attachModalObserver = (/** @type {any} */ modalEl) => {
-      if (!modalEl || !(modalEl instanceof Element)) return;
-      const coordinator = window.YouTubeMutationCoordinator;
+      if (!(modalEl && modalEl instanceof Element)) return;
+      const coordinator = window.YouTubePlusMutationCoordinator;
       if (modalObserverSubId && coordinator?.unsubscribe) {
         try {
           coordinator.unsubscribe(modalObserverSubId);
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Timecode');
         }
         modalObserverSubId = null;
       }
@@ -1961,7 +1772,7 @@
               $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)') &&
               !$('.timecode-settings-item')
             ) {
-              setTimeout(() => ensureTimecodePanelSettings(), 50);
+              attachTimecodeHandlers();
             }
           }, 30);
         },
@@ -1988,7 +1799,7 @@
       const modal = $('.ytp-plus-settings-modal');
       if (modal) {
         attachModalObserver(modal);
-        setTimeout(() => ensureTimecodePanelSettings(), 100);
+        attachTimecodeHandlers();
       }
     };
     if (YouTubeUtils.cleanupManager?.registerListener) {
@@ -2005,13 +1816,13 @@
       const target = /** @type {HTMLElement} */ (e.target);
       const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
       if (navItem?.dataset?.section === 'advanced') {
-        setTimeout(() => ensureTimecodePanelSettings(), 50);
+        attachTimecodeHandlers();
       }
     };
     YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
 
     if (config.enabled && !state.resizeListenerKey) {
-      const onResize = YouTubeUtils.throttle(() => {
+      const onResize = throttle(() => {
         if (!state.dom.panel) return;
 
         const rect = state.dom.panel.getBoundingClientRect();
@@ -2041,19 +1852,56 @@
     init();
   };
 
-  // Register with LazyLoader for deferred initialization
-  if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register('timecode', handleNavigate, {
-      priority: 1,
-      shouldLoad: () => isRelevantRoute() || isSettingsModalOpen(),
+  // Register settings modal listener at module scope so it fires
+  // regardless of route. Without this, the settings UI integration
+  // would only be registered after whenRelevant decides the route is
+  // relevant or the user clicks the Advanced tab, causing a race
+  // condition where opening the modal on a non-/watch page would
+  // miss the event.
+  document.addEventListener('youtube-plus-settings-modal-opened', () => {
+    try {
+      setupTimecodeSettingsIntegration();
+      attachTimecodeHandlers();
+    } catch (_e) {
+      /* non-critical */
+    }
+  });
+
+  // timecode runtime: /watch only. The settings UI is wired in
+  // setupTimecodeSettingsIntegration, which hooks a click listener
+  // that runs the inject when the user opens the "Advanced" tab.
+  // That listener self-guards via state.settingsIntegrationStarted,
+  // so we do not also need a separate onSectionActive subscription.
+  if (window.YouTubeUtils?.whenRelevant) {
+    window.YouTubeUtils.whenRelevant({
+      name: 'timecode',
+      isRelevant: isRelevantRoute,
+      onEnter: handleNavigate,
     });
   } else {
     // Fallback: direct initialization
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', handleNavigate, { once: true });
+      document.addEventListener('DOMContentLoaded', handleNavigate, {
+        once: true,
+      });
     } else {
       handleNavigate();
     }
+  }
+
+  // Settings UI integration must be reachable from the Advanced tab
+  // regardless of route, so the user can configure shortcuts even on
+  // /home, /feed/*, etc. The integration is idempotent and self-guards
+  // via state.settingsIntegrationStarted.
+  if (window.YouTubeUtils?.onSectionActive) {
+    window.YouTubeUtils.onSectionActive('advanced', () => {
+      try {
+        setupTimecodeSettingsIntegration();
+        attachTimecodeHandlers();
+      } catch (_e) {
+        // Non-critical: settings UI is best-effort
+      }
+    });
   }
 
   if (typeof window.YouTubeUtils?.cleanupManager?.registerListener === 'function') {
@@ -2061,7 +1909,9 @@
       passive: true,
     });
   } else {
-    document.addEventListener('yt-navigate-finish', handleNavigate, { passive: true });
+    document.addEventListener('yt-navigate-finish', handleNavigate, {
+      passive: true,
+    });
   }
 
   // Cleanup on beforeunload

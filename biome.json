@@ -1,0 +1,463 @@
+{
+  "$schema": "https://biomejs.dev/schemas/2.4.16/schema.json",
+  "vcs": {
+    "enabled": false,
+    "clientKind": "git",
+    "useIgnoreFile": false
+  },
+  "formatter": {
+    "enabled": true,
+    "formatWithErrors": false,
+    "indentStyle": "space",
+    "indentWidth": 2,
+    "lineWidth": 100,
+    "lineEnding": "lf"
+  },
+  "javascript": {
+    "formatter": {
+      "quoteStyle": "single",
+      "trailingCommas": "es5",
+      "semicolons": "always",
+      "arrowParentheses": "asNeeded",
+      "bracketSpacing": true,
+      "bracketSameLine": false
+    },
+    "globals": [
+      "window",
+      "document",
+      "console",
+      "localStorage",
+      "sessionStorage",
+      "location",
+      "navigator",
+      "history",
+      "trustedTypes",
+      "queueMicrotask",
+      "customElements",
+      "unsafeWindow",
+      "fetch",
+      "URL",
+      "URLSearchParams",
+      "DOMParser",
+      "CustomEvent",
+      "Event",
+      "KeyboardEvent",
+      "MouseEvent",
+      "StorageEvent",
+      "MutationObserver",
+      "IntersectionObserver",
+      "ResizeObserver",
+      "AbortController",
+      "requestAnimationFrame",
+      "cancelAnimationFrame",
+      "requestIdleCallback",
+      "getComputedStyle",
+      "confirm",
+      "performance",
+      "Element",
+      "HTMLElement",
+      "SVGElement",
+      "HTMLButtonElement",
+      "HTMLInputElement",
+      "HTMLIFrameElement",
+      "HTMLMediaElement",
+      "HTMLSelectElement",
+      "Node",
+      "Document",
+      "DocumentFragment",
+      "Window",
+      "CustomElementRegistry",
+      "setTimeout",
+      "clearTimeout",
+      "setInterval",
+      "clearInterval",
+      "globalThis",
+      "TextEncoder",
+      "TextDecoder",
+      "GM_xmlhttpRequest",
+      "GM_addElement",
+      "GM_addStyle",
+      "GM_addValueChangeListener",
+      "GM_getValue",
+      "GM_setValue",
+      "YouTubeUtils",
+      "YouTubePlusLogger",
+      "YouTubePlusTimeLoop",
+      "YouTubePlusScreenshot",
+      "YouTubePlusSpeedControl",
+      "YouTubePlusDownloadButton",
+      "YouTubePlusI18n",
+      "YouTubeSafeDOM",
+      "YouTubePlusCleanupManager",
+      "YouTubePlusDesignSystem",
+      "YouTubeSecurityUtils",
+      "YouTubeDOMCache",
+      "YouTubePlusLazyLoader",
+      "YouTubePlusRegistry",
+      "YouTubePlusMutationCoordinator",
+      "YouTubePlusEventDelegation",
+      "YouTubePlusSettingsStore",
+      "YouTubeErrorBoundary",
+      "YouTubePerformance",
+      "closestFromAnchor",
+      "_querySelector",
+      "$$",
+      "findContentsRenderer",
+      "isVideoPlaying",
+      "nextBrowserTick"
+    ]
+  },
+  "linter": {
+    "enabled": true,
+    "rules": {
+      "recommended": true,
+      "security": {
+        "noGlobalEval": "error"
+      },
+      "correctness": {
+        "noUnusedVariables": "warn",
+        "noConstAssign": "error",
+        "noGlobalObjectCalls": "error",
+        "noInvalidConstructorSuper": "error",
+        "noSelfAssign": "error",
+        "noSwitchDeclarations": "error",
+        "noUnreachable": "error",
+        "noUnsafeOptionalChaining": "error",
+        "useExhaustiveDependencies": "off",
+        "useIsNan": "error",
+        "useYield": "off",
+        "noUndeclaredVariables": "warn"
+      },
+      "style": {
+        "useConst": "error",
+        "useTemplate": "warn",
+        "useDefaultParameterLast": "warn",
+        "useExponentiationOperator": "warn",
+        "useNodejsImportProtocol": "off",
+        "useNumberNamespace": "off",
+        "noParameterAssign": "off",
+        "noInferrableTypes": "off",
+        "useSingleVarDeclarator": "off"
+      },
+      "complexity": {
+        "noExcessiveCognitiveComplexity": {
+          "level": "warn",
+          "options": {
+            "maxAllowedComplexity": 25
+          }
+        },
+        "noBannedTypes": "off",
+        "noForEach": "off",
+        "noStaticOnlyClass": "off",
+        "noUselessConstructor": "warn",
+        "noUselessLoneBlockStatements": "warn",
+        "noUselessRename": "warn",
+        "noUselessTernary": "warn",
+        "noUselessSwitchCase": "warn",
+        "useArrowFunction": "off",
+        "useFlatMap": "warn",
+        "useSimplifiedLogicExpression": "warn"
+      },
+      "suspicious": {
+        "noClassAssign": "error",
+        "noCommentText": "off",
+        "noCompareNegZero": "error",
+        "noConsole": "error",
+        "noDebugger": "error",
+        "noDoubleEquals": "warn",
+        "noDuplicateCase": "error",
+        "noDuplicateClassMembers": "error",
+        "noDuplicateObjectKeys": "error",
+        "noDuplicateParameters": "error",
+        "noEmptyBlockStatements": "warn",
+        "noFallthroughSwitchClause": "error",
+        "noFunctionAssign": "error",
+        "noImportAssign": "error",
+        "noLabelVar": "error",
+        "noRedeclare": "error",
+        "noSelfCompare": "error",
+        "noShadowRestrictedNames": "error",
+        "noSparseArray": "error",
+        "noUnsafeDeclarationMerging": "off",
+        "noVar": "error",
+        "noAssignInExpressions": "off",
+        "noPrototypeBuiltins": "warn"
+      }
+    }
+  },
+  "overrides": [
+    {
+      "includes": ["src/*.js"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 40
+              }
+            },
+            "noCommaOperator": "off",
+            "noArguments": "off"
+          },
+          "suspicious": {
+            "noEmptyBlockStatements": "off",
+            "noConsole": "off",
+            "noShadowRestrictedNames": "off",
+            "useIterableCallbackReturn": "off",
+            "noControlCharactersInRegex": "off"
+          },
+          "correctness": {
+            "noInvalidUseBeforeDeclaration": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/main.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 90
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/stats.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 85
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/download.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 87
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/basic.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 95
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/zoom.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 100
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/timecode.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 98
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/pip.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 75
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/music.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 58
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/enhanced.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 65
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/mutation-coordinator.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 51
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "src/modal-handlers.js",
+        "src/playall.js",
+        "src/utils.js"
+      ],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 100
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["build.js"],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off",
+            "useIterableCallbackReturn": "off"
+          },
+          "style": {
+            "useTemplate": "off"
+          },
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 50
+              }
+            },
+            "useSimplifiedLogicExpression": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": ["src/cleanup-manager.js"],
+      "linter": {
+        "rules": {
+          "complexity": {
+            "noExcessiveCognitiveComplexity": {
+              "level": "warn",
+              "options": {
+                "maxAllowedComplexity": 50
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "includes": ["build.js", "scripts/**/*.js"],
+      "javascript": {
+        "globals": [
+          "process",
+          "__dirname",
+          "__filename",
+          "require",
+          "module",
+          "exports",
+          "Buffer"
+        ]
+      }
+    }
+  ],
+  "files": {
+    "includes": ["src/**/*.js", "build.js", "scripts/**/*.js"],
+    "ignoreUnknown": false,
+    "maxSize": 2097152
+  }
+}

@@ -43,22 +43,25 @@ describe('Build System', () => {
     );
   });
 
-  test('shared-defaults.js should be first in build order', () => {
+  test('error-boundary.js and logger.js should be the first two modules', () => {
+    // error-boundary.js is loaded first so window.YouTubeErrorBoundary is
+    // available for the back-compat bridge in logger.js. logger.js follows
+    // immediately so window.YouTubePlusLogger is published before consumers.
     const buildOrder = JSON.parse(fs.readFileSync(BUILD_ORDER_PATH, 'utf8'));
-    expect(buildOrder[0]).toBe('shared-defaults.js');
+    expect(buildOrder[0]).toBe('error-boundary.js');
     expect(buildOrder[1]).toBe('logger.js');
   });
 
   test('infrastructure modules should come early in build order', () => {
     const buildOrder = JSON.parse(fs.readFileSync(BUILD_ORDER_PATH, 'utf8'));
-    // Check that infrastructure modules are in the first 5
-    const firstSix = buildOrder.slice(0, 6);
-    expect(firstSix).toContain('shared-defaults.js');
-    expect(firstSix).toContain('logger.js');
-    expect(firstSix).toContain('module-registry.js');
-    expect(firstSix).toContain('utils.js');
-    // shared-defaults.js must be first, then logger.js, then utils.js
-    expect(buildOrder[0]).toBe('shared-defaults.js');
+    // Check that infrastructure modules are in the first 7
+    const firstSeven = buildOrder.slice(0, 7);
+    expect(firstSeven).toContain('error-boundary.js');
+    expect(firstSeven).toContain('logger.js');
+    expect(firstSeven).toContain('utils.js');
+    // error-boundary.js must be first, logger.js must be before utils.js
+    expect(buildOrder[0]).toBe('error-boundary.js');
+    expect(buildOrder.indexOf('logger.js')).toBeGreaterThan(buildOrder.indexOf('error-boundary.js'));
     expect(buildOrder.indexOf('utils.js')).toBeGreaterThan(buildOrder.indexOf('logger.js'));
   });
 
@@ -82,7 +85,7 @@ describe('Build System', () => {
   test('build script supports __YTPLUS_INLINE_CSS__ replacement marker', () => {
     const buildScript = fs.readFileSync(BUILD_SCRIPT_PATH, 'utf8');
 
-    expect(buildScript).toContain("content.includes('__YTPLUS_INLINE_CSS__')");
+    expect(buildScript).toContain("content?.includes('__YTPLUS_INLINE_CSS__')");
     expect(buildScript).toContain('/__YTPLUS_INLINE_CSS__\\(\\s*[\'\"]([^\'\"]+?)[\'\"]\\s*\\)/g');
   });
 });

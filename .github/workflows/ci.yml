@@ -13,16 +13,13 @@ concurrency:
 
 jobs:
   test:
-    name: Test & Build
+    name: Test & Build (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
-    env:
-      HUSKY: '0'
-      PUPPETEER_SKIP_DOWNLOAD: 'true'
-
     strategy:
       matrix:
-        node-version: [20.x, 22.x]
-      fail-fast: false
+        node-version: ["20", "22"]
+    env:
+      HUSKY: "0"
 
     steps:
       - name: Checkout code
@@ -34,49 +31,65 @@ jobs:
         uses: actions/setup-node@v5
         with:
           node-version: ${{ matrix.node-version }}
-          cache: 'npm'
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run linting
+      - name: Run Biome lint
         run: npm run lint
+
+      - name: Run Biome format check
+        run: npm run format:check
 
       - name: Run CSP compatibility check
         run: npm run lint:csp
 
-      - name: Run full security suite on PR
-        if: github.event_name == 'pull_request' && matrix.node-version == '22.x'
-        run: npm run security:full
-
-      - name: Enforce complexity budget on changed code
-        if: github.event_name == 'pull_request'
-        run: npm run lint:complexity-budget
+      - name: Run custom lint rules
+        run: npm run lint:custom
 
       - name: Run knip strict
-        if: matrix.node-version == '22.x'
         run: npm run knip:strict
-
-      - name: Run Stylelint
-        run: npm run stylelint
 
       - name: Run type checking
         run: npm run typecheck
 
-      - name: Run format check
-        run: npm run format:check
-
-      - name: Run security audit (non-blocking)
+      - name: Check for hardcoded secrets
         run: |
-          set +e
-          npm audit --audit-level=moderate
-          AUDIT_EXIT=$?
-          set -e
-          if [ $AUDIT_EXIT -ne 0 ]; then
-            echo "⚠️ npm audit reported vulnerabilities (non-blocking in CI test job)"
-          else
-            echo "✅ npm audit passed"
+          echo "Checking for potential secrets..."
+          FOUND_SECRETS=0
+          if grep -r "api[_-]key\s*=\s*['\"]" src/ --include="*.js" -i 2>/dev/null; then
+            echo "⚠️ WARNING: Potential API key found"
+            FOUND_SECRETS=1
           fi
+          if grep -r "token\s*=\s*['\"][a-zA-Z0-9]{20,}" src/ --include="*.js" -i 2>/dev/null; then
+            echo "⚠️ WARNING: Potential token found"
+            FOUND_SECRETS=1
+          fi
+          if [ $FOUND_SECRETS -eq 0 ]; then
+            echo "✅ Secret check passed"
+          else
+            echo "⚠️ Potential secrets found (non-blocking)"
+          fi
+
+      - name: Safety net check (dangerous patterns)
+        run: |
+          echo "Checking for dangerous patterns..."
+          if grep -rE "innerHTML\s*=\s*[^'\"\`]" src/ --include="*.js" | grep -v "innerHTML = ''" | grep -v "createSafeHTML" | grep -v "//"; then
+            echo "⚠️ WARNING: Potentially unsafe innerHTML usage found"
+            echo "Use YouTubeSafeDOM.setHTML() instead"
+          else
+            echo "✅ innerHTML usage is safe"
+          fi
+
+          if [ ! -f "src/safe-dom.js" ]; then
+            echo "❌ ERROR: safe-dom.js not found"
+            exit 1
+          fi
+          echo "✅ Security utilities validated"
+
+      - name: Run security audit
+        run: npm audit --audit-level=high
 
       - name: Run unit tests with coverage
         run: npm run test:ci
@@ -84,8 +97,7 @@ jobs:
           NODE_OPTIONS: --max_old_space_size=4096
 
       - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v4
-        if: matrix.node-version == '22.x'
+        uses: codecov/codecov-action@v5
         continue-on-error: true
         with:
           file: ./coverage/lcov.info
@@ -100,7 +112,6 @@ jobs:
 
       - name: Upload build artifact
         uses: actions/upload-artifact@v5
-        if: matrix.node-version == '22.x'
         with:
           name: userscript
           path: youtube.user.js
@@ -108,15 +119,14 @@ jobs:
 
   release:
     name: Create Release
-    needs: test
+    needs: [test, code-quality, e2e]
     runs-on: ubuntu-latest
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     env:
-      HUSKY: '0'
-      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      HUSKY: "0"
     permissions:
       contents: write
-      
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v5
@@ -124,8 +134,8 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20.x'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
@@ -170,6 +180,21 @@ jobs:
           echo "✓ Build artifacts verified"
           ls -lh youtube.user.js youtube.user.min.js
 
+      - name: Extract changelog for this version
+        if: steps.check-tag.outputs.TAG_EXISTS == 'false'
+        id: changelog
+        run: |
+          VERSION="${{ steps.package-version.outputs.VERSION }}"
+          # Extract section between this version header and the next version header
+          CHANGELOG=$(awk "/^## .*v${VERSION}/{found=1; next} /^## .*v[0-9]/{if(found) exit} found{print}" CHANGELOG.md 2>/dev/null || echo "")
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="No changelog entry for v${VERSION}."
+          fi
+          # Use EOF delimiter to preserve multiline content
+          echo "body<<CHANGELOG_EOF" >> $GITHUB_OUTPUT
+          echo "$CHANGELOG" >> $GITHUB_OUTPUT
+          echo "CHANGELOG_EOF" >> $GITHUB_OUTPUT
+
       - name: Create Release
         if: steps.check-tag.outputs.TAG_EXISTS == 'false'
         uses: softprops/action-gh-release@v2
@@ -179,7 +204,7 @@ jobs:
           body: |
             ## YouTube+ v${{ steps.package-version.outputs.VERSION }}
 
-            Fix and optimized.
+            ${{ steps.changelog.outputs.body }}
           files: |
             youtube.user.js
             youtube.user.min.js
@@ -193,8 +218,7 @@ jobs:
     name: Code Quality Analysis
     runs-on: ubuntu-latest
     env:
-      HUSKY: '0'
-      PUPPETEER_SKIP_DOWNLOAD: 'true'
+      HUSKY: "0"
     permissions:
       checks: write
       contents: read
@@ -209,28 +233,69 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v5
         with:
-          node-version: '20.x'
-          cache: 'npm'
+          node-version: "22"
+          cache: "npm"
 
       - name: Install dependencies
         run: npm ci
 
-      - name: Run ESLint with SARIF output
+      - name: Run Biome lint with JSON output
         run: |
-          npx eslint "src/**/*.js" "build.js" --quiet --format @microsoft/eslint-formatter-sarif --output-file eslint-results.sarif || true
+          npx biome check --no-errors-on-unmatched "src/**/*.js" "build.js" --reporter=json > biome-results.json || true
         continue-on-error: true
 
-      - name: Check SARIF file exists
-        id: check_sarif
+      - name: Check Biome results file exists
+        id: check_biome
         run: |
-          if [ -f eslint-results.sarif ]; then echo "exists=true" >> $GITHUB_OUTPUT; else echo "exists=false" >> $GITHUB_OUTPUT; fi
+          if [ -f biome-results.json ]; then echo "exists=true" >> $GITHUB_OUTPUT; else echo "exists=false" >> $GITHUB_OUTPUT; fi
 
-      - name: Upload SARIF file (if generated)
-        if: steps.check_sarif.outputs.exists == 'true'
-        uses: github/codeql-action/upload-sarif@v4
+      - name: Upload Biome results
+        if: steps.check_biome.outputs.exists == 'true'
+        uses: actions/upload-artifact@v5
         with:
-          sarif_file: eslint-results.sarif
-          category: eslint
+          name: biome-results
+          path: biome-results.json
+          retention-days: 30
+
+  e2e:
+    name: E2E Tests
+    runs-on: ubuntu-latest
+    if: always() && (github.event_name == 'push' || github.event_name == 'pull_request')
+    env:
+      HUSKY: "0"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Playwright browsers
+        run: npx playwright install --with-deps
+
+      - name: Build userscript (required for E2E)
+        run: npm run build:production
+        continue-on-error: true
+
+      - name: Run Playwright E2E tests
+        run: npx playwright test --reporter=list
+        continue-on-error: true
+
+      - name: Upload E2E report
+        if: always()
+        uses: actions/upload-artifact@v5
+        with:
+          name: playwright-report
+          path: e2e-report/
+          retention-days: 7
+        continue-on-error: true
 
   dependency-review:
     name: Dependency Review
@@ -244,4 +309,5 @@ jobs:
       - name: Dependency Review
         uses: actions/dependency-review-action@v4
         with:
-          fail-on-severity: high
+          fail-on-severity: moderate
+          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD

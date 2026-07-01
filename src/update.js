@@ -1,23 +1,28 @@
-// Update checker module
+// Update Checker — LazyLoader registered as 'update'.
+//
+// Responsibility: check for new YTP releases on GitHub, display a
+//   notification banner, and manage the dismiss/snooze state.
+// Public surface: none (self-contained IIFE, registered via LazyLoader).
 (function () {
-  'use strict';
-
   const setTimeout_ = setTimeout.bind(window);
-  const _createHTML =
-    window._ytplusCreateHTML || /** @type {any} */ ((/** @type {string} */ s) => s);
+
   /**
-   * @param {Element} container
-   * @param {string} html
+   * @param {string} id
+   * @param {string} css
    */
-  const renderTemplateClone = (container, html) => {
-    if (!(container instanceof Element)) return;
-    const template = document.createElement('template');
-    const range = document.createRange();
-    const root = document.body || document.documentElement;
-    if (root) range.selectNode(root);
-    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
-    template.content.append(range.createContextualFragment(_createHTML(html)));
-    container.replaceChildren(template.content.cloneNode(true));
+  const injectStyles = (id, css) => {
+    const SM = window.YouTubeUtils?.StyleManager;
+    if (SM && typeof SM.add === 'function') {
+      SM.add(id, css);
+      return;
+    }
+    let el = document.getElementById(id);
+    if (!el) {
+      el = document.createElement('style');
+      el.id = id;
+      (document.head || document.documentElement).appendChild(el);
+    }
+    el.textContent = css;
   };
 
   const REFRESH_ICON_PATHS = [
@@ -66,11 +71,10 @@
   };
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils.t;
-  const byId =
-    window.YouTubeUtils?.byId ||
-    ((/** @type {string} */ id) =>
-      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
+  const t = window.YouTubeUtils?.t || ((/** @type {string} */ key) => key || '');
+  const updateLogger = window.YouTubeUtils?.logger || null;
+  const U = window.YouTubeUtils;
+  const byId = window.YouTubeUtils.byId;
 
   // Language helper delegating to global i18n when available
   const getLanguage = () => window.YouTubeUtils.getLanguage();
@@ -80,7 +84,7 @@
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.4.5',
+    currentVersion: '2.5.2',
     storageKey: 'youtube_plus_update_check',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
@@ -140,7 +144,10 @@
       .split('\n');
 
     for (const line of lines) {
-      const trimmed = line.trimStart();
+      const trimmed = line
+        .trimStart()
+        .replace(/^\/\/\s*/, '')
+        .replace(/^\/\*\s*/, '');
       if (!trimmed.startsWith(prefix)) continue;
       return trimmed.slice(prefix.length).trim();
     }
@@ -226,7 +233,7 @@
 
         // Validate parsed object structure
         if (typeof parsed !== 'object' || parsed === null) {
-          window.console.error('[YouTube+][Update]', 'Invalid settings structure');
+          updateLogger?.error?.('Update', 'Invalid settings structure');
           return;
         }
 
@@ -257,7 +264,7 @@
           }
         }
       } catch (e) {
-        window.console.error('[YouTube+][Update]', 'Failed to load update settings:', e);
+        updateLogger?.error?.('Update', 'Failed to load update settings', e);
       }
     },
 
@@ -276,7 +283,7 @@
 
         localStorage.setItem(UPDATE_CONFIG.storageKey, JSON.stringify(dataToSave));
       } catch (e) {
-        window.console.error('[YouTube+][Update]', 'Failed to save update settings:', e);
+        updateLogger?.error?.('Update', 'Failed to save update settings', e);
       }
     },
 
@@ -289,7 +296,7 @@
     compareVersions: (v1, v2) => {
       // Validate version format
       if (typeof v1 !== 'string' || typeof v2 !== 'string') {
-        window.console.error('[YouTube+][Update]', 'Invalid version format - must be strings');
+        updateLogger?.error?.('Update', 'Invalid version format - must be strings');
         return 0;
       }
 
@@ -319,28 +326,59 @@
       // Normalize null/undefined/empty responses silently; only treat genuinely
       // unexpected payloads (non-string, oversized) as errors worth logging.
       if (text === null || text === undefined || text === '') {
-        return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
+        return {
+          version: null,
+          description: '',
+          downloadUrl: UPDATE_CONFIG.autoInstallUrl,
+        };
       }
-      if (typeof text !== 'string' || text.length > 100000) {
-        window.console.warn('[YouTube+][Update]', 'Invalid metadata text');
-        return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
+      if (typeof text !== 'string') {
+        if (typeof text?.responseText === 'string') {
+          text = text.responseText;
+        } else {
+          updateLogger?.debug?.('Update', `Skipping non-string metadata payload: ${typeof text}`);
+          return {
+            version: null,
+            description: '',
+            downloadUrl: UPDATE_CONFIG.autoInstallUrl,
+          };
+        }
+      }
+      if (text.length > 100000) {
+        updateLogger?.debug?.('Update', `Skipping oversized metadata payload: ${text.length}`);
+        return {
+          version: null,
+          description: '',
+          downloadUrl: UPDATE_CONFIG.autoInstallUrl,
+        };
       }
 
-      let version = extractMetadataField(text, 'version');
-      const description = extractMetadataField(text, 'description');
-      const downloadUrl = extractMetadataField(text, 'downloadURL') || UPDATE_CONFIG.autoInstallUrl;
+      const normalized = String(text || '').replace(/\r/g, '');
+      if (!(normalized.includes('==UserScript==') || normalized.includes('@version'))) {
+        updateLogger?.debug?.('Update', 'Skipping non-userscript metadata response');
+        return {
+          version: null,
+          description: '',
+          downloadUrl: UPDATE_CONFIG.autoInstallUrl,
+        };
+      }
+
+      let version = extractMetadataField(normalized, 'version');
+      const description = extractMetadataField(normalized, 'description');
+      const downloadUrl =
+        extractMetadataField(normalized, 'downloadURL') || UPDATE_CONFIG.autoInstallUrl;
 
       // Validate extracted version
       if (version) {
         version = version.replace(/^v/i, '').trim();
         // Accept '2.2' or '2.2.0' or '2'
         if (!isVersionString(version)) {
-          window.console.error(
-            '[YouTube+][Update]',
-            'Invalid version format in metadata:',
-            version
-          );
-          return { version: null, description: '', downloadUrl: UPDATE_CONFIG.autoInstallUrl };
+          updateLogger?.error?.('Update', `Invalid version format in metadata: ${version}`);
+          return {
+            version: null,
+            description: '',
+            downloadUrl: UPDATE_CONFIG.autoInstallUrl,
+          };
         }
       }
 
@@ -373,9 +411,7 @@
         YouTubeUtils.NotificationManager.show(text, { type, duration });
       } catch (error) {
         window.YouTubeUtils &&
-          /** @type {any} */ (YouTubeUtils).logger &&
-          /** @type {any} */ (YouTubeUtils).logger.debug &&
-          /** @type {any} */ (YouTubeUtils).logger.debug(
+          /** @type {any} */ (YouTubeUtils).logger?.debug?.(
             `[YouTube+] ${type.toUpperCase()}:`,
             text,
             error
@@ -402,12 +438,18 @@
       }
 
       if (!allowedDomains.includes(parsedUrl.hostname)) {
-        return { valid: false, error: `Update URL domain not in allowlist: ${parsedUrl.hostname}` };
+        return {
+          valid: false,
+          error: `Update URL domain not in allowlist: ${parsedUrl.hostname}`,
+        };
       }
 
       return { valid: true, error: null };
     } catch (error) {
-      return { valid: false, error: `Invalid URL format: ${/** @type {any} */ (error).message}` };
+      return {
+        valid: false,
+        error: `Invalid URL format: ${/** @type {any} */ (error).message}`,
+      };
     }
   };
 
@@ -420,7 +462,7 @@
       try {
         sessionStorage.setItem('update_dismissed', details.version);
       } catch (err) {
-        window.console.error('[YouTube+][Update]', 'Failed to persist dismissal state:', err);
+        updateLogger?.error?.('Update', 'Failed to persist dismissal state', err);
       }
     }
   };
@@ -437,7 +479,7 @@
         GM_openInTab_safe(url, { active: true, insert: true, setParent: true });
         return true;
       } catch (gmError) {
-        window.console.error('[YouTube+] GM_openInTab update install failed:', gmError);
+        updateLogger?.error?.('Update', 'GM_openInTab update install failed', gmError);
       }
     }
 
@@ -446,7 +488,7 @@
       const popup = window.open(url, '_blank', 'noopener');
       if (popup) return true;
     } catch (popupError) {
-      window.console.error('[YouTube+] window.open update install failed:', popupError);
+      updateLogger?.error?.('Update', 'window.open update install failed', popupError);
     }
 
     // Method 3: Navigate
@@ -454,7 +496,7 @@
       window.location.assign(url);
       return true;
     } catch (navigationError) {
-      window.console.error('[YouTube+] Navigation to update URL failed:', navigationError);
+      updateLogger?.error?.('Update', 'Navigation to update URL failed', navigationError);
     }
 
     return false;
@@ -471,7 +513,7 @@
     // Validate URL
     const validation = validateDownloadUrl(downloadUrl);
     if (!validation.valid) {
-      window.console.error('[YouTube+][Update]', validation.error);
+      updateLogger?.error?.('Update', validation.error || 'Update URL validation failed');
       return false;
     }
 
@@ -484,13 +526,31 @@
     return success;
   };
 
+  const UPDATE_NOTIFICATION_CSS = `
+    .update-notification-card{z-index:10001;max-width:360px;background:var(--yt-notification-bg);padding:16px 18px;border-radius:var(--yt-radius-lg);color:var(--yt-text-primary);box-shadow:var(--yt-shadow);border:1px solid var(--yt-glass-border);-webkit-backdrop-filter:var(--yt-glass-blur);backdrop-filter:var(--yt-glass-blur);animation:slideInFromBottom .4s ease-out}
+    .update-notification-layout{position:relative;display:flex;align-items:flex-start;gap:12px}
+    .update-notification-icon-wrap{background:var(--yt-glass-bg);border-radius:var(--yt-radius-xs);padding:10px;flex-shrink:0;border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur)}
+    .update-notification-content{flex:1;min-width:0}
+    .update-notification-title{font-weight:600;font-size:15px;margin-bottom:4px}
+    .update-notification-version{font-size:13px;opacity:.9;margin-bottom:8px}
+    .update-changelog-line{font-size:12px;opacity:.85;margin-bottom:6px}
+    .update-changelog-header{font-size:12px;font-weight:600;opacity:.95;margin-bottom:6px}
+    .update-changelog-box{font-size:12px;line-height:1.4;max-height:120px;overflow-y:auto;padding:8px;background:var(--yt-overlay-deep);border-radius:6px;border:1px solid var(--yt-surface-overlay-border);white-space:normal}
+    .update-changelog-fallback{font-size:12px;opacity:.85;margin-bottom:12px}
+    .update-notification-actions{display:flex;gap:8px}
+    .update-install-btn{background:var(--yt-accent);color:#fff;border:none;padding:8px 16px;border-radius:var(--yt-radius-xs);cursor:pointer;font-size:13px;font-weight:700;transition:transform .15s ease;box-shadow:0 6px 18px var(--yt-danger-ghost);backdrop-filter:var(--yt-glass-blur)}
+    .update-install-btn:active{transform:scale(0.96) !important;}
+    .update-dismiss-btn{background:var(--yt-button-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);padding:8px 12px;border-radius:var(--yt-radius-xs);cursor:pointer;font-size:13px;transition:background-color .12s ease, transform .12s ease, border-color .12s ease, color .12s ease;}
+    .update-dismiss-btn:active{transform:scale(0.96) !important;}
+    .update-close-btn{position:absolute;top:-8px;right:-8px;width:28px;height:28px;border-radius:50%;border:1px solid var(--yt-glass-border);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;background:var(--yt-button-bg);color:var(--yt-text-primary);transition:background-color .18s ease, transform .18s ease;}
+    .update-close-btn:active{transform:scale(0.96) !important;}
+  `;
+
   // Enhanced update notification
   const showUpdateNotification = (/** @type {any} */ updateDetails) => {
     // Optionally render notification icon (can be disabled via config)
     const iconHtml = UPDATE_CONFIG.showNotificationIcon
-      ? `<div style="background: var(--yt-glass-bg);
-                        border-radius: var(--yt-radius-xs); padding: 10px; flex-shrink: 0; border: 1px solid var(--yt-glass-border);
-                        backdrop-filter: var(--yt-glass-blur); -webkit-backdrop-filter: var(--yt-glass-blur);">
+      ? `<div class="update-notification-icon-wrap">
             <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M21 12c0 1-1 2-1 2s-1-1-1-2 1-2 1-2 1 1 1 2z"/>
               <path d="m21 12-5-5v3H8v4h8v3l5-5z"/>
@@ -498,101 +558,79 @@
           </div>`
       : '';
     const notification = document.createElement('div');
-    notification.className = 'youtube-enhancer-notification update-notification';
+    notification.className =
+      'youtube-enhancer-notification update-notification update-notification-card';
     notification.setAttribute('role', 'alertdialog');
-    notification.setAttribute('aria-label', t('updateAvailableTitle') || 'Update available');
-    // Use centralized notification container for consistent placement. Keep visual styles but remove fixed positioning.
-    /** @type {any} */ (notification).style.cssText = `
-      z-index: 10001; max-width: 360px;
-      background: var(--yt-notification-bg); padding: 16px 18px; border-radius: var(--yt-radius-lg);
-      color: var(--yt-text-primary);
-      box-shadow: var(--yt-shadow);
-      border: 1px solid var(--yt-glass-border);
-      -webkit-backdrop-filter: var(--yt-glass-blur);
-      backdrop-filter: var(--yt-glass-blur);
-      animation: slideInFromBottom 0.4s ease-out;
-    `;
+    notification.setAttribute('aria-label', t('updateAvailableTitle'));
 
-    renderTemplateClone(
+    injectStyles(
+      'yt-plus-update-notification-styles',
+      UPDATE_NOTIFICATION_CSS + (window.YouTubePlusStyleResources?.update || '')
+    );
+
+    window.YouTubeUtils.renderTemplateClone(
       notification,
       `
-        <div style="position: relative; display: flex; align-items: flex-start; gap: 12px;">
+        <div class="update-notification-layout">
             ${iconHtml}
-          <div style="flex: 1; min-width: 0;">
-            <div style="font-weight: 600; font-size: 15px; margin-bottom: 4px;">${t('updateAvailableTitle')}</div>
-            <div style="font-size: 13px; opacity: 0.9; margin-bottom: 8px;">
+          <div class="update-notification-content">
+            <div class="update-notification-title">${t('updateAvailableTitle')}</div>
+            <div class="update-notification-version">
               ${t('version')} ${updateDetails.version}
             </div>
             ${
               updateDetails.changelog || updateDetails.description
-                ? (function () {
-                    const header = t('changelogHeader');
+                ? (
+                    function () {
+                      const header = t('changelogHeader');
 
-                    // Prefer fetched changelog, fall back to metadata description
-                    const raw =
-                      updateDetails.changelog && updateDetails.changelog.length > 0
-                        ? updateDetails.changelog
-                        : updateDetails.description || '';
-
-                    // Sanitize and normalize incoming text: convert HTML breaks to newlines,
-                    // strip tags and decode a few common entities.
-                    const sanitize = (/** @type {any} */ s) =>
-                      String(s)
+                      // Prefer fetched changelog, fall back to metadata description.
+                      // SECURITY: do NOT use a regex sanitizer here — the canonical
+                      // YouTubeSafeDOM policy (Trusted Types + DOM allowlist) is the
+                      // single source of truth. We treat `raw` as plain text and
+                      // escape it via textContent; the surrounding `renderTemplateClone`
+                      // still re-parses the result through the policy as a defence in
+                      // depth. The previous regex sanitizer failed on unterminated
+                      // tags / nested markup and gave a false sense of safety.
+                      const safeDom = window.YouTubeSafeDOM;
+                      const rawText =
+                        updateDetails.changelog && updateDetails.changelog.length > 0
+                          ? updateDetails.changelog
+                          : updateDetails.description || '';
+                      const normalized = String(rawText)
                         .replace(/<br\s*\/?>/gi, '\n')
-                        .replace(/<\/p>/gi, '\n')
-                        .replace(/<[^>]*>?/g, '') // strip complete AND incomplete HTML tags
-                        .replace(/&amp;/g, '&')
-                        .replace(/&lt;/g, '<')
-                        .replace(/&gt;/g, '>')
-                        .replace(/&quot;/g, '"')
-                        .replace(/&#039;/g, "'")
-                        .trim();
+                        .replace(/<\/(p|div|li)>/gi, '\n')
+                        .replace(/\r\n?/g, '\n');
 
-                    const text = sanitize(raw);
+                      const escapeHtml = /** @type {(s: any) => string} */ (
+                        /** @type {any} */ s =>
+                          typeof safeDom?.escapeHTML === 'function' ? safeDom.escapeHTML(s) : ''
+                      );
 
-                    // Split into non-empty lines and render each as its own block so wrapping works.
-                    const lines = text
-                      .split(/\n+/)
-                      .map(l => l.trim())
-                      .filter(Boolean);
-                    const listHtml = lines
-                      .map(
-                        l =>
-                          `<div style="font-size:12px; opacity:0.85; margin-bottom:6px;">${l}</div>`
-                      )
-                      .join('');
+                      const escapedHeader = escapeHtml(header);
+                      const lines = normalized
+                        .split(/\n+/)
+                        .map(l => l.trim())
+                        .filter(Boolean);
+                      const listHtml = lines
+                        .map(l => `<div class="update-changelog-line">${escapeHtml(l)}</div>`)
+                        .join('');
 
-                    return (
-                      `<div style="font-size:12px; font-weight:600; opacity:0.95; margin-bottom:6px;">${header}</div>` +
-                      `<div style="font-size:12px; line-height:1.4; max-height:120px; overflow-y:auto; padding:8px; background: var(--yt-overlay-deep); border-radius:6px; border:1px solid var(--yt-surface-overlay-border); white-space:normal;">${listHtml}</div>`
-                    );
-                  })()
-                : `<div style="font-size: 12px); opacity: 0.85; margin-bottom: 12px;">${t('newFeatures')}</div>`
+                      return (
+                        `<div class="update-changelog-header">${escapedHeader}</div>` +
+                        `<div class="update-changelog-box">${listHtml}</div>`
+                      );
+                    }
+                  )()
+                : `<div class="update-changelog-fallback">${t('newFeatures')}</div>`
             }
-            <div style="display: flex; gap: 8px;">
-              <button id="update-install-btn" type="button" style="
-                background: var(--yt-accent); color: white; border: none;
-                padding: 8px 16px; border-radius: var(--yt-radius-xs); cursor: pointer;
-                font-size: 13px; font-weight: 700; transition: transform 0.15s ease;
-                box-shadow: 0 6px 18px var(--yt-danger-ghost);
-                backdrop-filter: var(--yt-glass-blur);
-              ">${t('installUpdate')}</button>
-              <button id="update-dismiss-btn" type="button" style="
-                background: var(--yt-button-bg); color: var(--yt-text-primary);
-                border: 1px solid var(--yt-glass-border); padding: 8px 12px;
-                border-radius: var(--yt-radius-xs); cursor: pointer; font-size: 13px; transition: all 0.12s ease;
-              ">${t('later')}</button>
+            <div class="update-notification-actions">
+              <button id="update-install-btn" class="update-install-btn" type="button">${t('installUpdate')}</button>
+              <button id="update-dismiss-btn" class="update-dismiss-btn" type="button">${t('later')}</button>
             </div>
           </div>
-          <button id="update-close-btn" aria-label="${t('dismiss')}" style="
-            position: absolute; top: -8px; right: -8px; width: 28px; height: 28px;
-            border-radius: 50%; border: none; cursor: pointer; display: flex;
-            align-items: center; justify-content: center; font-size: 16px; line-height: 1;
-            background: var(--yt-button-bg); color: var(--yt-text-primary); transition: background 0.18s ease;
-            border: 1px solid var(--yt-glass-border);
-          ">&times;</button>
+          <button id="update-close-btn" class="update-close-btn" aria-label="${t('dismiss')}">&times;</button>
         </div>
-        <style>${window.YouTubePlusStyleResources?.update || ''}</style>
       `
     );
 
@@ -605,13 +643,13 @@
       _container.className = 'youtube-enhancer-notification-container';
       try {
         document.body.appendChild(_container);
-      } catch (e) {
+      } catch (_e) {
         document.body.appendChild(notification);
       }
     }
     try {
       _container.insertBefore(notification, _container.firstChild);
-    } catch (e) {
+    } catch (_e) {
       document.body.appendChild(notification);
     }
 
@@ -694,7 +732,10 @@
             method: 'GET',
             url: requestUrl,
             timeout: 10000,
-            headers: { Accept: 'text/plain', 'User-Agent': 'YouTube+ UpdateChecker' },
+            headers: {
+              Accept: 'text/plain',
+              'User-Agent': 'YouTube+ UpdateChecker',
+            },
             onload: (/** @type {any} */ response) => {
               clearTimeout(timeoutId);
               if (response.status >= 200 && response.status < 300) resolve(response.responseText);
@@ -720,7 +761,10 @@
           method: 'GET',
           cache: 'no-cache',
           signal: controller.signal,
-          headers: { Accept: 'text/plain', 'User-Agent': 'YouTube+ UpdateChecker' },
+          headers: {
+            Accept: 'text/plain',
+            'User-Agent': 'YouTube+ UpdateChecker',
+          },
         });
         if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
         return await res.text();
@@ -745,9 +789,7 @@
     if (shouldShowNotification) {
       showUpdateNotification(updateDetails);
       window.YouTubeUtils &&
-        /** @type {any} */ (YouTubeUtils).logger &&
-        /** @type {any} */ (YouTubeUtils).logger.debug &&
-        /** @type {any} */ (YouTubeUtils).logger.debug(
+        /** @type {any} */ (YouTubeUtils).logger?.debug?.(
           `YouTube + Update available: ${updateDetails.version}`
         );
       return;
@@ -770,8 +812,8 @@
     return !!(
       error.name === 'AbortError' ||
       error.name === 'NetworkError' ||
-      (error.message && error.message.includes('fetch')) ||
-      (error.message && error.message.includes('network'))
+      error.message?.includes('fetch') ||
+      error.message?.includes('network')
     );
   };
 
@@ -834,7 +876,7 @@
 
       // Parse changelog from HTML
       // Look for version link followed by changelog span
-      // Structure: <a ...>v2.4.5</a> ... <span class="version-changelog">...</span>
+      // Structure: <a ...>v2.5.2</a> ... <span class="version-changelog">...</span>
       const domParser = typeof window.DOMParser === 'function' ? new window.DOMParser() : null;
       if (domParser) {
         try {
@@ -868,16 +910,16 @@
               .filter(line => line.length > 0)
               .join('\n');
           }
-        } catch (e) {
+        } catch (_e) {
           /* fall through to empty result */
         }
       }
 
       return '';
     } catch (error) {
-      window.console.warn(
-        '[YouTube+][Update] Failed to fetch changelog:',
-        /** @type {any} */ (error).message
+      updateLogger?.warn?.(
+        'Update',
+        `Failed to fetch changelog: ${/** @type {any} */ (error).message}`
       );
       return '';
     }
@@ -902,12 +944,10 @@
           metaText = fallbackText;
         }
       } catch (fallbackErr) {
-        if (typeof console !== 'undefined' && window.console.warn) {
-          window.console.warn(
-            '[YouTube+][Update] Fallback metadata fetch failed:',
-            /** @type {any} */ (fallbackErr).message
-          );
-        }
+        updateLogger?.warn?.(
+          'Update',
+          `Fallback metadata fetch failed: ${/** @type {any} */ (fallbackErr).message}`
+        );
       }
     }
 
@@ -918,9 +958,9 @@
         // Keep original metadata description but expose fetched changelog on a separate property
         details.changelog = typeof changelog === 'string' && changelog.length > 0 ? changelog : '';
       } catch (changelogErr) {
-        window.console.warn(
-          '[YouTube+][Update] Failed to fetch changelog:',
-          /** @type {any} */ (changelogErr).message
+        updateLogger?.warn?.(
+          'Update',
+          `Failed to fetch changelog: ${/** @type {any} */ (changelogErr).message}`
         );
         details.changelog = '';
       }
@@ -959,7 +999,7 @@
       validateUpdateUrl(UPDATE_CONFIG.updateUrl);
       return true;
     } catch (urlError) {
-      window.console.error('[YouTube+][Update]', 'Invalid update URL configuration:', urlError);
+      updateLogger?.error?.('Update', 'Invalid update URL configuration', urlError);
       throw urlError;
     }
   };
@@ -997,18 +1037,18 @@
             markUpdateDismissed(updateDetails);
             try {
               utils.showNotification(t('installing'));
-            } catch (e) {
-              // Non-critical, suppressed
+            } catch (_e) {
+              U.logSuppressed(_e, 'Update');
             }
           } else {
-            window.console.warn(
-              '[YouTube+][Update] Auto-install could not be initiated for',
-              updateDetails.downloadUrl
+            updateLogger?.warn?.(
+              'Update',
+              `Auto-install could not be initiated for ${updateDetails.downloadUrl}`
             );
           }
         }
       } catch (e) {
-        window.console.error('[YouTube+][Update] Auto-installation failed:', e);
+        updateLogger?.error?.('Update', 'Auto-installation failed', e);
       }
     }
   };
@@ -1045,15 +1085,15 @@
     const RETRY_DELAY = 2000;
 
     if (isTransientError(error) && retryCount < MAX_RETRIES) {
-      window.console.warn(
-        `[YouTube+][Update] Retry ${retryCount + 1}/${MAX_RETRIES} after error:`,
-        error.message
+      updateLogger?.warn?.(
+        'Update',
+        `Retry ${retryCount + 1}/${MAX_RETRIES} after error: ${error.message}`
       );
-      await new Promise(resolve => setTimeout_(resolve, RETRY_DELAY * Math.pow(2, retryCount)));
+      await new Promise(resolve => setTimeout_(resolve, RETRY_DELAY * 2 ** retryCount));
       return checkForUpdates(force, retryCount + 1);
     }
 
-    window.console.error('[YouTube+][Update] Check failed after retries:', error);
+    updateLogger?.error?.('Update', 'Check failed after retries', error);
     if (force) {
       utils.showNotification(t('updateCheckFailed').replace('{msg}', error.message), 'error', 4000);
     }
@@ -1090,102 +1130,114 @@
     }
   };
 
+  const UPDATE_SETTINGS_CSS = `
+    .update-settings-card{padding:16px;margin-top:20px;border-radius:12px;background:var(--yt-surface-overlay-subtle);border:1px solid var(--yt-surface-overlay-border);-webkit-backdrop-filter:blur(10px) saturate(120%);backdrop-filter:blur(10px) saturate(120%);box-shadow:0 6px 20px var(--yt-update-card-shadow)}
+    .update-settings-header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
+    .update-settings-title{margin:0;font-size:16px;font-weight:600;color:var(--yt-spec-text-primary)}
+    .update-settings-status-card{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:16px;background:var(--yt-surface-overlay-subtle);border-radius:10px;margin-bottom:16px}
+    .update-settings-version-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
+    .update-settings-label{font-size:14px;font-weight:600;color:var(--yt-spec-text-primary)}
+    .update-settings-pill{font-size:13px;font-weight:600;color:var(--yt-spec-text-primary);padding:3px 10px;background:var(--yt-surface-overlay-soft);border-radius:12px;border:1px solid var(--yt-glass-border)}
+    .update-settings-meta{font-size:12px;color:var(--yt-spec-text-secondary)}
+    .update-settings-meta-strong{font-weight:500}
+    .update-settings-latest{color:var(--yt-update-available-text);font-weight:600}
+    .update-status-col{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
+    .update-status-badge{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:20px}
+    .update-status-badge--available{background:linear-gradient(135deg,var(--yt-danger-soft),var(--yt-danger-border));border:1px solid var(--yt-danger-card-border)}
+    .update-status-badge--ok{background:linear-gradient(135deg,var(--yt-success-soft),var(--yt-success-soft-hover));border:1px solid var(--yt-success-accent-soft)}
+    .update-status-dot{width:6px;height:6px;border-radius:50%}
+    .update-status-dot--available{background:var(--yt-update-available-dot);animation:pulse 2s infinite}
+    .update-status-dot--ok{background:var(--yt-success-accent)}
+    .update-status-text{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
+    .update-status-text--available{color:var(--yt-update-available-text)}
+    .update-status-text--ok{color:var(--yt-success-accent)}
+    .update-install-inline-btn{background:linear-gradient(135deg,var(--yt-update-install-bg-start),var(--yt-update-install-bg-end));color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;transition:background-color .3s ease, transform .15s cubic-bezier(0.2,0,0,1), box-shadow .3s ease;box-shadow:0 4px 12px var(--yt-update-install-shadow)}
+    .update-install-inline-btn:active{transform:scale(0.96) !important;}
+    .update-settings-actions{display:flex;gap:12px}
+    .update-check-btn{flex:1;padding:12px;font-size:13px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px}
+    .update-refresh-icon{display:inline-block;vertical-align:middle;flex-shrink:0}
+  `;
+
   // Optimized settings UI
   const addUpdateSettings = () => {
-    const aboutSection = YouTubeUtils.querySelector(
-      '.ytp-plus-settings-section[data-section="about"]'
-    );
-    if (!aboutSection || YouTubeUtils.querySelector('.update-settings-container')) return;
+    const aboutSection = document.querySelector('.ytp-plus-settings-section[data-section="about"]');
+    if (!(aboutSection instanceof HTMLElement)) return;
+    if (aboutSection.querySelector('.update-settings-container')) return;
 
     const updateContainer = document.createElement('div');
-    updateContainer.className = 'update-settings-container';
-    /** @type {any} */ (updateContainer).style.cssText = `
-        padding: 16px; margin-top: 20px; border-radius: 12px;
-        background: var(--yt-surface-overlay-subtle); border: 1px solid var(--yt-surface-overlay-border);
-        -webkit-backdrop-filter: blur(10px) saturate(120%);
-        backdrop-filter: blur(10px) saturate(120%);
-        box-shadow: 0 6px 20px var(--yt-update-card-shadow);
-      `;
+    updateContainer.className = 'update-settings-container update-settings-card';
 
     const lastCheckTime = utils.formatTimeAgo(updateState.lastCheck);
 
-    renderTemplateClone(
+    injectStyles(
+      'yt-plus-update-settings-styles',
+      UPDATE_SETTINGS_CSS + (window.YouTubePlusStyleResources?.update || '')
+    );
+
+    window.YouTubeUtils.renderTemplateClone(
       updateContainer,
       `
-        <div style="display: flex; align-items: center; gap: 12px; margin-bottom: 12px;">
-          <h3 style="margin: 0; font-size: 16px; font-weight: 600; color: var(--yt-spec-text-primary);">
+        <div class="update-settings-header">
+          <h3 class="update-settings-title">
             ${t('enhancedExperience')}
           </h3>
         </div>
-        
-        <div style="display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; 
-                    padding: 16px; background: var(--yt-surface-overlay-subtle); border-radius: 10px; margin-bottom: 16px;">
+
+        <div class="update-settings-status-card">
           <div>
-            <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px;">
-              <span style="font-size: 14px; font-weight: 600; color: var(--yt-spec-text-primary);">${t('currentVersion')}</span>
-              <span style="font-size: 13px; font-weight: 600; color: var(--yt-spec-text-primary); 
-                           padding: 3px 10px; background: var(--yt-surface-overlay-soft); border-radius: 12px; 
-                           border: 1px solid var(--yt-glass-border);">${UPDATE_CONFIG.currentVersion}</span>
+            <div class="update-settings-version-row">
+              <span class="update-settings-label">${t('currentVersion')}</span>
+              <span class="update-settings-pill">${UPDATE_CONFIG.currentVersion}</span>
             </div>
-            <div style="font-size: 12px; color: var(--yt-spec-text-secondary);">
-              ${t('lastChecked')}: <span style="font-weight: 500;">${lastCheckTime}</span>
+            <div class="update-settings-meta">
+              ${t('lastChecked')}: <span class="update-settings-meta-strong">${lastCheckTime}</span>
               ${
                 updateState.lastVersion && updateState.lastVersion !== UPDATE_CONFIG.currentVersion
-                  ? `<br>${t('latestAvailable')}: <span style="color: var(--yt-update-available-text); font-weight: 600;">${updateState.lastVersion}</span>`
+                  ? `<br>${t('latestAvailable')}: <span class="update-settings-latest">${updateState.lastVersion}</span>`
                   : ''
               }
             </div>
           </div>
-          
+
           ${
             updateState.updateAvailable
               ? `
-            <div style="display: flex; flex-direction: column; align-items: flex-end; gap: 8px;">
-              <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; 
-                          background: linear-gradient(135deg, var(--yt-danger-soft), var(--yt-danger-border)); 
-                          border: 1px solid var(--yt-danger-card-border); border-radius: 20px;">
-                <div style="width: 6px; height: 6px; background: var(--yt-update-available-dot); border-radius: 50%; animation: pulse 2s infinite;"></div>
-                <span style="font-size: 11px; color: var(--yt-update-available-text); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+            <div class="update-status-col">
+              <div class="update-status-badge update-status-badge--available">
+                <div class="update-status-dot update-status-dot--available"></div>
+                <span class="update-status-text update-status-text--available">
                   ${t('updateAvailable')}
                 </span>
               </div>
-              <button id="install-update-btn" style="background: linear-gradient(135deg, var(--yt-update-install-bg-start), var(--yt-update-install-bg-end)); 
-                      color: white; border: none; padding: 8px 16px; border-radius: 8px; cursor: pointer; 
-                      font-size: 12px; font-weight: 600; transition: all 0.3s ease; 
-                      box-shadow: 0 4px 12px var(--yt-update-install-shadow);">${t('installUpdate')}</button>
+              <button id="install-update-btn" class="update-install-inline-btn">${t('installUpdate')}</button>
             </div>
           `
               : `
-            <div style="display: flex; align-items: center; gap: 8px; padding: 6px 12px; 
-                        background: linear-gradient(135deg, var(--yt-success-soft), var(--yt-success-soft-hover)); 
-                        border: 1px solid var(--yt-success-accent-soft); border-radius: 20px;">
-              <div style="width: 6px; height: 6px; background: var(--yt-success-accent); border-radius: 50%;"></div>
-              <span style="font-size: 11px; color: var(--yt-success-accent); font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;">
+            <div class="update-status-badge update-status-badge--ok">
+              <div class="update-status-dot update-status-dot--ok"></div>
+              <span class="update-status-text update-status-text--ok">
                 ${t('upToDate')}
               </span>
             </div>
           `
           }
         </div>
-        
-        <div style="display: flex; gap: 12px;">
-          <button class="ytp-plus-button ytp-plus-button-primary" id="manual-update-check" 
-                  style="flex: 1; padding: 12px; font-size: 13px; font-weight: 600; display: inline-flex; align-items: center; justify-content: center; gap: 6px;">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display: inline-block; vertical-align: middle; flex-shrink: 0;">
+
+        <div class="update-settings-actions">
+            <button class="ytp-plus-button ytp-plus-button-primary update-check-btn" id="manual-update-check">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="update-refresh-icon">
               <path d="M21.5 2v6h-6M2.5 22v-6h6M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1"/>
             </svg>
             ${t('checkForUpdates')}
           </button>
-          <button class="ytp-plus-button" id="open-update-page" style="padding: 12px 16px; font-size: 13px; background: var(--yt-button-bg); border: 1px solid var(--yt-glass-border);">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="gray" stroke-width="2">
+          <button class="ytp-plus-button update-open-page-btn" id="open-update-page">
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
               <polyline points="15,3 21,3 21,9"/>
               <line x1="10" y1="14" x2="21" y2="3"/>
             </svg>
           </button>
         </div>
-
-        <style>${window.YouTubePlusStyleResources?.update || ''}</style>
       `
     );
 
@@ -1197,8 +1249,8 @@
       const aboutFooter = aboutSection.querySelector('.ytp-plus-about-footer');
       if (aboutActions) aboutSection.appendChild(aboutActions);
       if (aboutFooter) aboutSection.appendChild(aboutFooter);
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Update');
     }
 
     // Event listeners with optimization
@@ -1300,7 +1352,8 @@
   const setupAboutClickHandler = () => {
     const clickHandler = (/** @type {any} */ evt) => {
       const el = /** @type {HTMLElement} */ (/** @type {any} */ (evt).target);
-      if (el.classList?.contains('ytp-plus-settings-nav-item') && el.dataset?.section === 'about') {
+      const navItem = el.closest('.ytp-plus-settings-nav-item');
+      if (navItem?.dataset?.section === 'about') {
         setTimeout_(addUpdateSettings, 50);
       }
     };
@@ -1317,11 +1370,7 @@
    */
   const logInitialization = () => {
     try {
-      if (
-        window.YouTubeUtils &&
-        /** @type {any} */ (YouTubeUtils).logger &&
-        /** @type {any} */ (YouTubeUtils).logger.debug
-      ) {
+      if (window.YouTubeUtils && /** @type {any} */ (YouTubeUtils).logger?.debug) {
         /** @type {any} */ (YouTubeUtils).logger.debug('YouTube + Update Checker initialized', {
           version: UPDATE_CONFIG.currentVersion,
           enabled: UPDATE_CONFIG.enabled,
@@ -1329,8 +1378,8 @@
           updateAvailable: updateState.updateAvailable,
         });
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Update');
     }
   };
 
@@ -1346,21 +1395,15 @@
     setupUpdateChecks();
     setupSettingsObserver();
     setupAboutClickHandler();
-    logInitialization();
-  };
-
-  const isUpdateRelevantRoute = () => {
-    const path = location.pathname || '';
-    if (location.hostname === 'music.youtube.com') return true;
-    return path === '/watch' || path.startsWith('/shorts');
-  };
-
-  const isSettingsModalOpen = () => {
-    try {
-      return Boolean(document.querySelector('.ytp-plus-settings-modal'));
-    } catch (e) {
-      return false;
+    // If the about section is already in the DOM (i.e. the user
+    // activated the About tab before init ran), populate it now.
+    // `setupSettingsObserver` only fires on the *next* modal-open
+    // event, so without this direct call the section would stay
+    // empty until the modal is closed and reopened.
+    if (document.querySelector('.ytp-plus-settings-section[data-section="about"]')) {
+      setTimeout_(addUpdateSettings, 0);
     }
+    logInitialization();
   };
 
   const startUpdateRuntime = () => {
@@ -1371,13 +1414,32 @@
     }
   };
 
-  if (window.YouTubePlusLazyLoader?.register) {
-    window.YouTubePlusLazyLoader.register('update', startUpdateRuntime, {
-      priority: 20,
-      delay: 0,
-      shouldLoad: () => isUpdateRelevantRoute() || isSettingsModalOpen(),
-    });
-  } else {
+  // Register settings modal listener at module scope so it fires
+  // regardless of which tab section is active. Without this, the
+  // listener inside init() -> setupSettingsObserver() would only be
+  // registered after the About tab is activated, causing a race
+  // condition where opening the modal before clicking About would
+  // miss the event.
+  document.addEventListener('youtube-plus-settings-modal-opened', () => {
+    if (!_initDone) {
+      init();
+    } else {
+      setTimeout_(addUpdateSettings, 100);
+    }
+  });
+
+  // Update is a section-gated hot module — its only consumer is
+  // the "About" tab of the settings modal. We do not need a
+  // route-gated runtime because the update check is only useful
+  // when the user is looking at the version info. Opening the
+  // "About" section fires the section-activated event, which
+  // triggers the runtime.
+  if (window.YouTubeUtils?.onSectionActive) {
+    window.YouTubeUtils.onSectionActive('about', startUpdateRuntime);
+  } else if (typeof window !== 'undefined') {
+    // Fallback: ensure the runtime is wired so the "Check for
+    // updates" button still works if the helper surface is
+    // unavailable for some reason.
     startUpdateRuntime();
   }
 })();

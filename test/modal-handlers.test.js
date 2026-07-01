@@ -41,7 +41,7 @@ describe('ModalHandlers', () => {
   };
 
   beforeEach(() => {
-    Object.defineProperty(window, 'YouTubeDOMCache', {
+    Object.defineProperty(window, 'YouTubePlusDOMCache', {
       configurable: true,
       writable: true,
       value: {

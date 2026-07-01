@@ -54,6 +54,12 @@ describe('Download Module', () => {
         storage: { get: jest.fn(), set: jest.fn(), remove: jest.fn() },
         logger: { debug: jest.fn(), info: jest.fn(), warn: jest.fn(), error: jest.fn() },
         SETTINGS_KEY: 'youtube_plus_settings',
+        isWatchRoute: jest.fn(() => window.location.pathname === '/watch'),
+        isShortsRoute: jest.fn(() => window.location.pathname.startsWith('/shorts')),
+        isYouTubeDomain: jest.fn(() => true),
+        isChannelRoute: jest.fn(() => false),
+        isSettingsModalOpen: jest.fn(() => false),
+        logSuppressed: jest.fn(),
       },
     });
     Object.defineProperty(window, 'YouTubePlusI18n', {
@@ -82,7 +88,7 @@ describe('Download Module', () => {
         createChild: jest.fn(),
       },
     });
-    Object.defineProperty(window, 'YouTubeDOMCache', {
+    Object.defineProperty(window, 'YouTubePlusDOMCache', {
       configurable: true,
       writable: true,
       value: {

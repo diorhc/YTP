@@ -1,22 +1,24 @@
-// Shared DOM helpers from YouTubeUtils — defined at file scope for use across all IIFEs
+// Enhanced Tabviews — canonical tab-switching, description, and
+//   engagement-panel orchestration for the YTP tabview overlay.
+//
+// Responsibility: DOM helpers shared across IIFEs (top-button click,
+//   tab-button click, dislike-button restoration, inline-expander
+//   state management). No public window symbol; consumes
+//   YouTubeUtils.$/$$/byId/helpers at file scope.
+// Public surface: none (self-contained IIFEs, no LazyLoader).
 const enhancedSetTimeout_ = setTimeout;
 const { $, $$, byId } = window.YouTubeUtils || {};
-const onDomReady =
-  window.YouTubeUtils?.onDomReady ||
-  ((/** @type {() => void} */ cb) => {
-    if (document.readyState !== 'loading') cb();
-    else document.addEventListener('DOMContentLoaded', cb, { once: true });
-  });
+const onDomReady = window.YouTubeUtils.onDomReady;
+const enhancedLogger = window.YouTubeUtils?.logger || window.YouTubePlusLogger || null;
+const U = window.YouTubeUtils;
 
 // Enhanced Tabviews
 (function () {
-  'use strict';
-
-  const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
-  const _getLanguage = window.YouTubeUtils.getLanguage;
+  const _setSafeHTML = U.setSafeHTML;
+  const _getLanguage = U.getLanguage;
 
   // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils.t;
+  const t = U?.t || ((/** @type {string} */ key) => key || '');
 
   /**
    * Configuration object for scroll-to-top button
@@ -26,14 +28,14 @@ const onDomReady =
    */
   /** @type {any} */
   const config = {
-    enabled: window.YouTubeUtils?.loadFeatureEnabled?.('enableScrollToTopButton') ?? true,
+    enabled: U?.loadFeatureEnabled?.('enableScrollToTopButton') ?? true,
     storageKey: 'youtube_top_button_settings',
   };
 
   // Shared debounce helper — prefers YouTubeUtils, falls back to shared defaults
-  const _debounce = window.YouTubeUtils.debounce;
+  const _debounce = U.debounce;
 
-  const isTabviewEnabled = () => window.YouTubeUtils?.loadFeatureEnabled?.('enableTabview') ?? true;
+  const isTabviewEnabled = () => U?.loadFeatureEnabled?.('enableTabview') ?? true;
 
   /** @type {any} */
   let universalScrollHandler = null;
@@ -80,7 +82,7 @@ const onDomReady =
 
   const getUniversalScrollContainer = () => {
     try {
-      const host = window.location.hostname;
+      const host = U?.getHostname?.() || '';
       const candidates = [];
       if (host === 'music.youtube.com') {
         // YouTube Music: use shared resolver + additional candidates
@@ -115,7 +117,7 @@ const onDomReady =
         return document.scrollingElement || document.documentElement;
       }
     } catch (e) {
-      window.console.warn('[YouTube+] Error detecting scroll container:', e);
+      enhancedLogger?.warn?.('Enhanced', 'Error detecting scroll container', e);
     }
     return document.scrollingElement || document.documentElement;
   };
@@ -127,22 +129,22 @@ const onDomReady =
     try {
       const btn = byId('universal-top-button');
       if (btn) btn.remove();
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     try {
       if (universalScrollHandler && universalScrollContainer) {
         universalScrollContainer.removeEventListener('scroll', universalScrollHandler);
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     try {
       if (universalWindowScrollHandler) {
         window.removeEventListener('scroll', universalWindowScrollHandler);
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     try {
       if (universalWindowScrollHandler && universalExtraScrollTargets.size) {
@@ -152,20 +154,20 @@ const onDomReady =
             if (/** @type {any} */ (target)._ytpScrollAttached) {
               /** @type {any} */ (target)._ytpScrollAttached = false;
             }
-          } catch (e) {
-            // Non-critical, suppressed
+          } catch (_e) {
+            U.logSuppressed(_e, 'Enhanced');
           }
         }
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     try {
       if (universalAttachTimeoutIds.length) {
         universalAttachTimeoutIds.forEach(id => clearTimeout(id));
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     universalScrollHandler = null;
     universalScrollContainer = null;
@@ -180,7 +182,7 @@ const onDomReady =
   let musicSideScrollContainer = null;
 
   const getMusicSidePanelContainer = () => {
-    if (window.location.hostname !== 'music.youtube.com') return null;
+    if (!U?.isMusicDomain?.()) return null;
 
     // Direct selectors for the queue/side panel content
     const directSelectors = [
@@ -197,8 +199,8 @@ const onDomReady =
       try {
         const el = $(sel);
         if (el && el.scrollHeight > el.clientHeight + 30) return el;
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Enhanced');
       }
     }
 
@@ -219,8 +221,8 @@ const onDomReady =
         try {
           const el = root.querySelector(sel);
           if (el && el.scrollHeight > el.clientHeight + 30) return el;
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Enhanced');
         }
       }
     }
@@ -231,15 +233,15 @@ const onDomReady =
     try {
       const btn = byId('music-side-top-button');
       if (btn) btn.remove();
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     try {
       if (musicSideScrollHandler && musicSideScrollContainer) {
         musicSideScrollContainer.removeEventListener('scroll', musicSideScrollHandler);
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     musicSideScrollHandler = null;
     musicSideScrollContainer = null;
@@ -249,14 +251,14 @@ const onDomReady =
     try {
       const rightButton = byId('right-tabs-top-button');
       if (rightButton) rightButton.remove();
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     try {
       const playlistButton = byId('playlist-panel-top-button');
       if (playlistButton) playlistButton.remove();
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
 
     removeMusicSideButton();
@@ -265,13 +267,13 @@ const onDomReady =
 
     try {
       $$('#right-tabs .tab-content-cld').forEach(tab => {
-        if (tab && tab._topButtonScrollHandler) {
+        if (tab?._topButtonScrollHandler) {
           tab.removeEventListener('scroll', tab._topButtonScrollHandler);
           tab._topButtonScrollHandler = null;
         }
       });
     } catch (e) {
-      window.console.warn('[YouTube+] Error cleaning up tab scroll handlers:', e);
+      enhancedLogger?.warn?.('Enhanced', 'Error cleaning up tab scroll handlers', e);
     }
 
     try {
@@ -287,18 +289,18 @@ const onDomReady =
           rightTabsEl._scrollCleanup = null;
         }
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
 
     try {
       const playlistScroll = $('ytd-playlist-panel-renderer #items');
-      if (playlistScroll && playlistScroll._topButtonScrollHandler) {
+      if (playlistScroll?._topButtonScrollHandler) {
         playlistScroll.removeEventListener('scroll', playlistScroll._topButtonScrollHandler);
         playlistScroll._topButtonScrollHandler = null;
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
   };
 
@@ -317,8 +319,7 @@ const onDomReady =
   let musicSidePanelSubId = null;
 
   const shouldInitReturnDislike = () =>
-    (window.YouTubeUtils?.isWatchPage?.() ?? false) ||
-    (window.YouTubeUtils?.isShortsPage?.() ?? false);
+    (U?.isWatchPage?.() ?? false) || (U?.isShortsPage?.() ?? false);
 
   const isTopButton = (/** @type {any} */ el) =>
     el &&
@@ -359,7 +360,7 @@ const onDomReady =
 
       if (button.id === 'universal-top-button') {
         // Always re-detect container on Music/Studio since SPA navigation changes it
-        const host = window.location.hostname;
+        const host = U?.getHostname?.() || '';
         const isMusic = host === 'music.youtube.com';
         const isStudio = host === 'studio.youtube.com';
         const target =
@@ -426,7 +427,7 @@ const onDomReady =
         }
       }
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error scrolling to top:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error scrolling to top', error);
     }
   };
 
@@ -459,7 +460,7 @@ const onDomReady =
           }
         );
       } else {
-        const _cm = window.YouTubeUtils?.cleanupManager;
+        const _cm = U?.cleanupManager;
         const _clickHandler = (/** @type {any} */ ev) => {
           const target = ev.target?.closest?.('.top-button');
           if (isTopButton(target)) handleTopButtonActivate(target);
@@ -489,51 +490,28 @@ const onDomReady =
   };
 
   /**
-   * Adds CSS styles for scroll-to-top button and scrollbars
+   * Adds CSS styles for scroll-to-top button and scrollbars.
+   * Prefers the canonical design-system StyleManager so this CSS shares the
+   * single style host with the rest of the design system. Idempotent via
+   * StyleManager.add (last write wins, no-op when css is unchanged).
    * @returns {void}
    */
   const addStyles = () => {
-    if (byId('custom-styles')) return;
-
-    const style = document.createElement('style');
-    style.id = 'custom-styles';
-    style.textContent = `
-      :root{--yt-scrollbar-width:8px;--yt-scrollbar-track:transparent;--yt-scrollbar-thumb:rgba(144,144,144,.5);--yt-scrollbar-thumb-hover:rgba(170,170,170,.7);--yt-scrollbar-thumb-active:rgba(190,190,190,.9);}
-      ::-webkit-scrollbar{width:var(--yt-scrollbar-width)!important;height:var(--yt-scrollbar-width)!important;}
-      ::-webkit-scrollbar-track{background:var(--yt-scrollbar-track)!important;border-radius:4px!important;}
-      ::-webkit-scrollbar-thumb{background:var(--yt-scrollbar-thumb)!important;border-radius:4px!important;transition:background .2s!important;}
-      ::-webkit-scrollbar-thumb:hover{background:var(--yt-scrollbar-thumb-hover)!important;}
-      ::-webkit-scrollbar-thumb:active{background:var(--yt-scrollbar-thumb-active)!important;}
-      ::-webkit-scrollbar-corner{background:transparent!important;}
-      html,body,#content,#guide-content,#secondary,#comments,#chat,ytd-comments,ytd-watch-flexy,ytd-browse,ytd-search,ytd-playlist-panel-renderer,#right-tabs,.tab-content-cld,ytmusic-app-layout{scrollbar-width:thin;scrollbar-color:var(--yt-scrollbar-thumb) var(--yt-scrollbar-track);}
-      html[dark]{--yt-scrollbar-thumb:rgba(144,144,144,.4);--yt-scrollbar-thumb-hover:rgba(170,170,170,.6);--yt-scrollbar-thumb-active:rgba(190,190,190,.8);}
-      .top-button{position:fixed;bottom:16px;right:16px;width:40px;height:40px;background:var(--yt-button-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);border-radius:50%;cursor:pointer;display:flex;align-items:center;justify-content:center;z-index:2100;opacity:0;visibility:hidden;transition:all .3s cubic-bezier(0.4, 0, 0.2, 1);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur);box-shadow:var(--yt-shadow);}
-      .top-button:hover{background:var(--yt-hover-bg);transform:translateY(-2px) scale(1.07);box-shadow:var(--yt-shadow);}
-      .top-button:active{transform:translateY(-1px) scale(1.03);}
-      .top-button:focus{outline:2px solid var(--yt-accent);outline-offset:2px;}
-      .top-button.visible{opacity:1;visibility:visible;}
-      .top-button svg{transition:transform .2s ease;}
-      .top-button:hover svg{transform:translateY(-1px) scale(1.1);}
-      html[dark]{--yt-top-btn-bg:var(--yt-button-bg);--yt-top-btn-color:var(--yt-text-primary);--yt-top-btn-border:var(--yt-glass-border);--yt-top-btn-hover:var(--yt-hover-bg);}
-      html:not([dark]){--yt-top-btn-bg:var(--yt-button-bg);--yt-top-btn-color:var(--yt-text-primary);--yt-top-btn-border:var(--yt-glass-border);--yt-top-btn-hover:var(--yt-hover-bg);}
-      #right-tabs .top-button{position:absolute;z-index:1000;}
-      ytd-watch-flexy:not([tyt-tab^="#"]) #right-tabs .top-button{display:none;}
-      ytd-playlist-panel-renderer .top-button{position:absolute;z-index:1000;}
-      ytd-watch-flexy[flexy] #movie_player, ytd-watch-flexy[flexy] #movie_player .html5-video-container, ytd-watch-flexy[flexy] .html5-main-video{width:100%!important; max-width:100%!important;}
-      ytd-watch-flexy[flexy] .html5-main-video{height:auto!important; max-height:100%!important; object-fit:contain!important; transform:none!important;}
-      ytd-watch-flexy[flexy] #player-container-outer, ytd-watch-flexy[flexy] #movie_player{display:flex!important; align-items:center!important; justify-content:center!important;}
-      /* Return YouTube Dislike button styling */
-      dislike-button-view-model button{min-width:fit-content!important;width:auto!important;}
-      dislike-button-view-model .yt-spec-button-shape-next__button-text-content{display:inline-flex!important;align-items:center!important;justify-content:center!important;}
-      #ytp-plus-dislike-text{display:inline-block!important;visibility:visible!important;opacity:1!important;margin-left:6px!important;font-size:1.4rem!important;line-height:2rem!important;font-weight:500!important;}
-      ytd-segmented-like-dislike-button-renderer dislike-button-view-model button{min-width:fit-content!important;}
-      ytd-segmented-like-dislike-button-renderer .yt-spec-button-shape-next__button-text-content{min-width:2.4rem!important;}
-      /* Shorts-specific dislike button styling */
-      ytd-reel-video-renderer dislike-button-view-model #ytp-plus-dislike-text{font-size:1.2rem!important;line-height:1.8rem!important;margin-left:4px!important;}
-      ytd-reel-video-renderer dislike-button-view-model button{padding:8px 12px!important;min-width:auto!important;}
-      ytd-shorts dislike-button-view-model .yt-spec-button-shape-next__button-text-content{display:inline-flex!important;min-width:auto!important;}
-        `;
-    (document.head || document.documentElement).appendChild(style);
+    try {
+      const SM = U?.StyleManager;
+      if (SM && typeof SM.add === 'function') {
+        const css = window.YouTubePlusDesignSystem?.getStyle?.('ytp-enhanced-styles') || '';
+        SM.add('ytp-enhanced-styles', css);
+        // Legacy cleanup: earlier versions injected a standalone
+        // <style id="custom-styles"> element. Remove any such leftover so
+        // users upgrading from older releases don't keep stale CSS in the
+        // DOM. Safe no-op when the element is absent.
+        const legacy = byId('custom-styles');
+        if (legacy) legacy.remove();
+      }
+    } catch (e) {
+      enhancedLogger?.warn?.('Enhanced', 'Failed to inject enhanced styles via StyleManager', e);
+    }
   };
 
   /**
@@ -544,10 +522,10 @@ const onDomReady =
    */
   const handleScroll = (scrollContainer, button) => {
     try {
-      if (!button || !scrollContainer) return;
+      if (!(button && scrollContainer)) return;
       button.classList.toggle('visible', scrollContainer.scrollTop > 100);
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error in handleScroll:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error in handleScroll', error);
     }
   };
 
@@ -594,7 +572,7 @@ const onDomReady =
               }
             }
           } catch (e) {
-            window.console.warn('[YouTube+] Error cleaning up right-tabs scroll handler:', e);
+            enhancedLogger?.warn?.('Enhanced', 'Error cleaning up right-tabs scroll handler', e);
           }
 
           // Always use direct DOM query — class-based ':not(.tab-content-hidden)' selectors
@@ -645,7 +623,7 @@ const onDomReady =
             }
           }
         } catch (error) {
-          window.console.error('[YouTube+][Enhanced] Error in setupScrollListener:', error);
+          enhancedLogger?.error?.('Enhanced', 'Error in setupScrollListener', error);
         }
       }, 100);
     };
@@ -676,7 +654,7 @@ const onDomReady =
       rightTabs.appendChild(button);
       setupScrollListener();
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error creating button:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error creating button', error);
     }
   };
 
@@ -710,7 +688,7 @@ const onDomReady =
       );
 
       // Ensure the button is above YouTube Music/Studio overlays
-      const host = window.location.hostname;
+      const host = U?.getHostname?.() || '';
       if (host === 'music.youtube.com' || host === 'studio.youtube.com') {
         /** @type {any} */ (button).style.zIndex = '10000';
       }
@@ -724,7 +702,9 @@ const onDomReady =
       }, 100);
 
       universalScrollHandler = scrollHandler;
-      scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
+      scrollContainer.addEventListener('scroll', scrollHandler, {
+        passive: true,
+      });
 
       const initialOffset = scrollContainer === window ? window.scrollY : scrollContainer.scrollTop;
       button.classList.toggle('visible', initialOffset > 100);
@@ -767,7 +747,9 @@ const onDomReady =
           for (const target of targets) {
             if (target && !(/** @type {any} */ (target)._ytpScrollAttached)) {
               /** @type {any} */ (target)._ytpScrollAttached = true;
-              target.addEventListener('scroll', musicScrollCheck, { passive: true });
+              target.addEventListener('scroll', musicScrollCheck, {
+                passive: true,
+              });
               universalExtraScrollTargets.add(target);
             }
           }
@@ -778,7 +760,7 @@ const onDomReady =
         universalAttachTimeoutIds.push(enhancedSetTimeout_(attachMusicScrollListeners, 3000));
       }
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error creating universal button:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error creating universal button', error);
     }
   };
 
@@ -811,10 +793,12 @@ const onDomReady =
         /** @type {any} */ (playlistPanel).style.position || 'relative';
 
       // Force the button to be positioned inside the playlist panel (override global fixed)
-      /** @type {any} */ (button).style.position = 'absolute';
-      /** @type {any} */ (button).style.bottom = '16px';
-      /** @type {any} */ (button).style.right = '16px';
-      /** @type {any} */ (button).style.zIndex = '1000';
+      Object.assign(/** @type {any} */ (button).style, {
+        position: 'absolute',
+        bottom: '16px',
+        right: '16px',
+        zIndex: '1000',
+      });
 
       playlistPanel.appendChild(button);
 
@@ -828,7 +812,9 @@ const onDomReady =
         100
       );
       scrollContainer._topButtonScrollHandler = scrollHandler;
-      scrollContainer.addEventListener('scroll', scrollHandler, { passive: true });
+      scrollContainer.addEventListener('scroll', scrollHandler, {
+        passive: true,
+      });
       handleScroll(
         /** @type {HTMLElement} */ (scrollContainer),
         /** @type {HTMLElement} */ (button)
@@ -872,12 +858,12 @@ const onDomReady =
 
           // Otherwise keep normal display and let handleScroll control visibility class
           /** @type {any} */ (button).style.display = '';
-        } catch (e) {
+        } catch (_e) {
           // On error, prefer hiding to avoid stray UI
           try {
             /** @type {any} */ (button).style.display = 'none';
-          } catch (e) {
-            // Non-critical, suppressed
+          } catch (_e) {
+            U.logSuppressed(_e, 'Enhanced');
           }
         }
       };
@@ -890,12 +876,12 @@ const onDomReady =
           ro.observe(/** @type {Element} */ (playlistPanel));
           if (scrollContainer) ro.observe(/** @type {Element} */ (scrollContainer));
         }
-      } catch (e) {
+      } catch (_e) {
         ro = null;
       }
 
       // Observe attribute/class changes via centralized coordinator.
-      const coordinator = window.YouTubeMutationCoordinator;
+      const coordinator = window.YouTubePlusMutationCoordinator;
       if (coordinator?.watchTarget) {
         coordinator.watchTarget(
           'enhanced::playlistPanelVisibility',
@@ -915,22 +901,22 @@ const onDomReady =
 
       // Register cleanup for ResizeObserver when available
       try {
-        if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
+        if (U && YouTubeUtils.cleanupManager) {
           if (ro) {
             YouTubeUtils.cleanupManager.register(() => {
               try {
                 ro.disconnect();
-              } catch (e) {
-                // Non-critical, suppressed
+              } catch (_e) {
+                U.logSuppressed(_e, 'Enhanced');
               }
             });
           }
         }
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Enhanced');
       }
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error creating playlist panel button:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error creating playlist panel button', error);
     }
   };
 
@@ -940,7 +926,7 @@ const onDomReady =
    */
   const createMusicSidePanelButton = () => {
     try {
-      if (window.location.hostname !== 'music.youtube.com') return;
+      if (!U?.isMusicDomain?.()) return;
       setupTopButtonDelegation();
       if (byId('music-side-top-button')) return;
       if (!config.enabled) return;
@@ -948,7 +934,7 @@ const onDomReady =
       const panel = getMusicSidePanelContainer();
       if (!panel) {
         // Retry with scheduler since YouTube Music loads content dynamically
-        window.YouTubeUtils?.createRetryScheduler?.({
+        U?.createRetryScheduler?.({
           check: () => {
             if (byId('music-side-top-button') || !config.enabled) return true;
             return !!getMusicSidePanelContainer() && (createMusicSidePanelButton(), true);
@@ -971,10 +957,12 @@ const onDomReady =
 
       /** @type {any} */ (panel).style.position =
         /** @type {any} */ (panel).style.position || 'relative';
-      /** @type {any} */ (button).style.position = 'absolute';
-      /** @type {any} */ (button).style.bottom = '16px';
-      /** @type {any} */ (button).style.right = '16px';
-      /** @type {any} */ (button).style.zIndex = '1000';
+      Object.assign(/** @type {any} */ (button).style, {
+        position: 'absolute',
+        bottom: '16px',
+        right: '16px',
+        zIndex: '1000',
+      });
 
       panel.appendChild(button);
 
@@ -987,7 +975,7 @@ const onDomReady =
       panel.addEventListener('scroll', scrollHandler, { passive: true });
       button.classList.toggle('visible', panel.scrollTop > 100);
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error creating music side button:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error creating music side button', error);
     }
   };
 
@@ -995,10 +983,50 @@ const onDomReady =
   const RETURN_DISLIKE_API = 'https://returnyoutubedislikeapi.com/votes';
   const DISLIKE_CACHE_TTL = 10 * 60 * 1000; // 10 minutes
   const dislikeCache = new Map(); // videoId -> { value, expiresAt }
-  /** @type {string | null} */
-  let dislikeObserver = null;
+  /** @type {MutationObserver | null} */
+  let dislikeDirectObserver = null;
   /** @type {string | null} */
   let dislikePollTimer = null;
+  /** @type {any} */
+  let dislikeFallbackIntervalId = null;
+  /** @type {HTMLElement | null} */
+  let observedDislikeButton = null;
+
+  /** @returns {Element | null} */
+  const queryShadow = (/** @type {any} */ element, /** @type {string} */ selector) => {
+    if (!element) return null;
+    const root = element.shadowRoot || element;
+    /** @type {Element | null} */
+    const found = root.querySelector(selector);
+    if (found) return found;
+
+    const children = root.querySelectorAll('*');
+    for (const child of children) {
+      /** @type {Element | null} */
+      const res = queryShadow(child, selector);
+      if (res) return res;
+    }
+    return null;
+  };
+
+  const findAllInShadow = (
+    /** @type {any} */ root,
+    /** @type {string} */ selector,
+    /** @type {any[]} */ results = []
+  ) => {
+    if (!root) return results;
+    if (root.querySelectorAll) {
+      const found = root.querySelectorAll(selector);
+      for (const el of found) results.push(el);
+    }
+    const children = root.querySelectorAll ? root.querySelectorAll('*') : [];
+    for (const child of children) {
+      if (child.shadowRoot) {
+        findAllInShadow(child.shadowRoot, selector, results);
+      }
+    }
+    return results;
+  };
 
   const formatCompactNumber = (/** @type {any} */ number) => {
     try {
@@ -1006,7 +1034,7 @@ const onDomReady =
         notation: 'compact',
         compactDisplay: 'short',
       }).format(Number(number) || 0);
-    } catch (e) {
+    } catch (_e) {
       // Intentional: Intl.NumberFormat may not support locale; fall back to plain string
       return String(number || 0);
     }
@@ -1065,7 +1093,10 @@ const onDomReady =
         const val = Number.isFinite(Number(rawDislikes))
           ? Math.max(0, Math.floor(Number(rawDislikes)))
           : 0;
-        dislikeCache.set(videoId, { value: val, expiresAt: Date.now() + DISLIKE_CACHE_TTL });
+        dislikeCache.set(videoId, {
+          value: val,
+          expiresAt: Date.now() + DISLIKE_CACHE_TTL,
+        });
         return val;
       }
 
@@ -1086,12 +1117,15 @@ const onDomReady =
         const val = Number.isFinite(Number(rawDislikes2))
           ? Math.max(0, Math.floor(Number(rawDislikes2)))
           : 0;
-        dislikeCache.set(videoId, { value: val, expiresAt: Date.now() + DISLIKE_CACHE_TTL });
+        dislikeCache.set(videoId, {
+          value: val,
+          expiresAt: Date.now() + DISLIKE_CACHE_TTL,
+        });
         return val;
       } finally {
         clearTimeout(id);
       }
-    } catch (e) {
+    } catch (_e) {
       // on any error, return 0 but don't throw
       return 0;
     }
@@ -1106,14 +1140,43 @@ const onDomReady =
         const meta = $("meta[itemprop='videoId'], meta[itemprop='identifier']");
         return meta?.getAttribute('content') || null;
       }
-      return urlObj.searchParams.get('v');
-    } catch (e) {
+      let v = urlObj.searchParams.get('v');
+      if (v) return v;
+
+      // Fallback 1: ytd-watch-flexy video-id attribute
+      const watchFlexy = $('ytd-watch-flexy');
+      if (watchFlexy) {
+        v = watchFlexy.getAttribute('video-id');
+        if (v) return v;
+      }
+
+      // Fallback 2: movie_player getVideoData()
+      const moviePlayer = byId('movie_player') || $('#movie_player');
+      if (moviePlayer && typeof moviePlayer.getVideoData === 'function') {
+        v = moviePlayer.getVideoData()?.video_id;
+        if (v) return v;
+      }
+
+      // Fallback 3: meta tag videoId
+      const metaVideoId = $("meta[itemprop='videoId']");
+      if (metaVideoId) {
+        v = metaVideoId.getAttribute('content');
+        if (v) return v;
+      }
+
+      return null;
+    } catch (_e) {
       return null;
     }
   };
 
   const getButtonsContainer = () => {
     return (
+      $(
+        'ytd-watch-flexy:not([hidden]) ytd-menu-renderer.ytd-watch-metadata > div#top-level-buttons-computed'
+      ) ||
+      $('ytd-watch-flexy:not([hidden]) ytd-menu-renderer.ytd-video-primary-info-renderer > div') ||
+      $('ytd-watch-flexy:not([hidden]) #menu-container #top-level-buttons-computed') ||
       $('ytd-menu-renderer.ytd-watch-metadata > div#top-level-buttons-computed') ||
       $('ytd-menu-renderer.ytd-video-primary-info-renderer > div') ||
       $('#menu-container #top-level-buttons-computed') ||
@@ -1177,14 +1240,15 @@ const onDomReady =
 
     // Fallback: try to find by button label or position
     const dislikeBtn =
-      buttons.querySelector('button[aria-label*="islike"]') ||
-      buttons.querySelector('button[aria-label*="Не нравится"]');
+      buttons.querySelector('button[aria-label*="dislike" i]') ||
+      buttons.querySelector('button[aria-label*="islike" i]') ||
+      buttons.querySelector('button[aria-label*="не нравится" i]');
     if (dislikeBtn) {
       return dislikeBtn.closest('dislike-button-view-model') || dislikeBtn.parentElement;
     }
 
     // Last resort: second child in container
-    return buttons.children && buttons.children[1] ? buttons.children[1] : null;
+    return buttons.children?.[1] ? buttons.children[1] : null;
   };
 
   const getDislikeButton = () => {
@@ -1195,74 +1259,148 @@ const onDomReady =
     }
 
     const buttons = getButtonsContainer();
-    return getDislikeButtonFromContainer(buttons);
+    const btn = getDislikeButtonFromContainer(buttons);
+    if (btn) return btn;
+
+    // Fallbacks
+    return (
+      $(
+        'ytd-watch-flexy:not([hidden]) ytd-watch-metadata ytd-segmented-like-dislike-button-renderer dislike-button-view-model'
+      ) ||
+      $('ytd-watch-flexy:not([hidden]) ytd-watch-metadata dislike-button-view-model') ||
+      $(
+        'ytd-watch-metadata ytd-segmented-like-dislike-button-renderer dislike-button-view-model'
+      ) ||
+      $('ytd-watch-metadata dislike-button-view-model') ||
+      $('ytd-segmented-like-dislike-button-renderer dislike-button-view-model') ||
+      $('dislike-button-view-model') ||
+      $('#segmented-dislike-button') ||
+      null
+    );
   };
 
   const getOrCreateDislikeText = (/** @type {any} */ dislikeButton) => {
     if (!dislikeButton) return null;
 
-    // Check if our custom text already exists (prevent duplicates)
-    const existingCustom = dislikeButton.querySelector('#ytp-plus-dislike-text');
-    if (existingCustom) return existingCustom;
-
-    // Try to find existing text container in various YouTube button structures
-    const textSpan =
-      dislikeButton.querySelector('span.yt-core-attributed-string:not(#ytp-plus-dislike-text)') ||
-      dislikeButton.querySelector('#text') ||
-      dislikeButton.querySelector('yt-formatted-string') ||
-      dislikeButton.querySelector('span[role="text"]:not(#ytp-plus-dislike-text)') ||
-      dislikeButton.querySelector('.yt-spec-button-shape-next__button-text-content');
-
-    // If native text exists, use it directly to avoid duplication
-    if (textSpan && textSpan.id !== 'ytp-plus-dislike-text') {
-      textSpan.id = 'ytp-plus-dislike-text';
-      return textSpan;
+    const isShorts = window.location.pathname.startsWith('/shorts');
+    if (isShorts) {
+      // Find native label element
+      const label =
+        queryShadow(dislikeButton, 'yt-formatted-string') ||
+        queryShadow(dislikeButton, 'span[role="text"]') ||
+        queryShadow(dislikeButton, 'span.label') ||
+        queryShadow(dislikeButton, '.label');
+      if (label) {
+        if (!label.hasAttribute('data-ytp-original-text')) {
+          label.setAttribute('data-ytp-original-text', label.innerText || 'Dislike');
+        }
+        return label;
+      }
     }
 
-    // For view-model buttons, find the proper container
-    const viewModelHost = dislikeButton.closest('ytDislikeButtonViewModelHost') || dislikeButton;
+    // Check if our custom text already exists (prevent duplicates)
+    const existingCustom = queryShadow(dislikeButton, '#ytp-plus-dislike-text');
+    if (existingCustom) return existingCustom;
+
+    // Find the proper button element
     const buttonShape =
-      viewModelHost.querySelector('button-view-model button') ||
-      viewModelHost.querySelector('button[aria-label]') ||
+      queryShadow(dislikeButton, 'button') ||
       dislikeButton.querySelector('button') ||
+      dislikeButton.closest('button') ||
       dislikeButton;
 
-    // Check if text container already exists
-    let textContainer = buttonShape.querySelector(
-      '.yt-spec-button-shape-next__button-text-content'
-    );
+    // Find or create the standard text container (which might be in shadow DOM)
+    let textContainer = queryShadow(buttonShape, '.yt-spec-button-shape-next__button-text-content');
+
+    if (!textContainer) {
+      const targetElement = buttonShape.shadowRoot || buttonShape;
+      textContainer = targetElement.querySelector(
+        '.yt-spec-button-shape-next__button-text-content'
+      );
+      if (!textContainer) {
+        textContainer = document.createElement('div');
+        textContainer.className = 'yt-spec-button-shape-next__button-text-content';
+        const icon = queryShadow(buttonShape, '.yt-spec-button-shape-next__icon');
+        const parent = icon ? icon.parentNode : buttonShape;
+        parent.appendChild(textContainer);
+      }
+    }
 
     // Create a dedicated span with proper styling to match like button
-    // Use min-width to prevent CLS when count loads
     const created = document.createElement('span');
     created.id = 'ytp-plus-dislike-text';
     created.setAttribute('role', 'text');
     created.className = 'yt-core-attributed-string yt-core-attributed-string--white-space-no-wrap';
-    const isShorts = window.location.pathname.startsWith('/shorts');
-    // Added min-width to reserve space and prevent CLS
-    /** @type {any} */ (created).style.cssText = isShorts
-      ? 'margin-left: 4px; font-size: 1.2rem; line-height: 1.8rem; font-weight: 500; min-width: 1.5em; display: inline-block; text-align: center;'
-      : 'margin-left: 6px; font-size: 1.4rem; line-height: 2rem; font-weight: 500; min-width: 2em; display: inline-block; text-align: center;';
+    created.classList.add('ytp-plus-dislike-text--regular');
+    textContainer.appendChild(created);
 
     try {
-      if (!textContainer) {
-        // Create text container if it doesn't exist (matching like button structure)
-        textContainer = document.createElement('div');
-        textContainer.className = 'yt-spec-button-shape-next__button-text-content';
-        textContainer.appendChild(created);
-        buttonShape.appendChild(textContainer);
-      } else {
-        textContainer.appendChild(created);
-      }
-
-      // Ensure button has proper width
-      /** @type {any} */ (buttonShape).style.minWidth = 'auto';
-      /** @type {any} */ (buttonShape).style.width = 'auto';
-      if (viewModelHost !== dislikeButton) {
-        /** @type {any} */ (viewModelHost).style.minWidth = 'auto';
+      const rootNode = textContainer.getRootNode();
+      if (rootNode instanceof ShadowRoot && !rootNode.querySelector('#ytp-plus-dislike-style')) {
+        const style = document.createElement('style');
+        style.id = 'ytp-plus-dislike-style';
+        style.textContent = `
+          #ytp-plus-dislike-text.ytp-plus-dislike-text--regular {
+            margin-left: 6px !important;
+            font-size: 1.4rem !important;
+            line-height: 2rem !important;
+            font-weight: 500 !important;
+            display: inline-block !important;
+            visibility: visible !important;
+            opacity: 1 !important;
+            min-width: 2em !important;
+            text-align: center !important;
+          }
+          :host {
+            min-width: fit-content !important;
+            width: auto !important;
+          }
+          yt-button-shape {
+            min-width: fit-content !important;
+            width: auto !important;
+          }
+          button.yt-spec-button-shape-next--icon-only-default,
+          button.yt-spec-button-shape-next--segmented-end,
+          button.yt-spec-button-shape-next,
+          button {
+            min-width: fit-content !important;
+            width: auto !important;
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+          }
+          button.yt-spec-button-shape-next--segmented-end {
+            padding-left: 8px !important;
+            padding-right: 12px !important;
+          }
+          button.yt-spec-button-shape-next--icon-only-default {
+            padding-left: 8px !important;
+            padding-right: 8px !important;
+          }
+          .yt-spec-button-shape-next__button-text-content {
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            min-width: fit-content !important;
+          }
+        `;
+        rootNode.appendChild(style);
       }
     } catch (e) {
-      window.console.warn('YTP: Failed to create dislike text:', e);
+      enhancedLogger?.warn?.('Enhanced', 'Failed to inject shadow style', e);
+    }
+
+    try {
+      // Ensure button and its wrapper have proper width/sizing
+      buttonShape.style.minWidth = 'auto';
+      buttonShape.style.width = 'auto';
+      const viewModelHost = dislikeButton.closest('ytDislikeButtonViewModelHost');
+      if (viewModelHost) {
+        viewModelHost.style.minWidth = 'auto';
+      }
+      dislikeButton.style.minWidth = 'auto';
+    } catch (e) {
+      enhancedLogger?.warn?.('Enhanced', 'Failed to style dislike button', e);
     }
     return created;
   };
@@ -1282,52 +1420,62 @@ const onDomReady =
         /** @type {any} */ (container).style.opacity = '1';
 
         // Make sure parent button container is wide enough
-        const buttonShape = container.closest('button') || dislikeButton.querySelector('button');
+        const buttonShape =
+          container.closest('button') ||
+          queryShadow(dislikeButton, 'button') ||
+          dislikeButton.querySelector('button');
         if (buttonShape) {
           /** @type {any} */ (buttonShape).style.minWidth = 'fit-content';
           /** @type {any} */ (buttonShape).style.width = 'auto';
         }
       }
     } catch (e) {
-      window.console.warn('YTP: Failed to set dislike display:', e);
+      enhancedLogger?.warn?.('Enhanced', 'Failed to set dislike display', e);
     }
   };
 
   const setupDislikeObserver = (/** @type {any} */ dislikeButton) => {
     if (!dislikeButton) return;
-    if (dislikeObserver) {
-      window.YouTubeMutationCoordinator?.unwatch?.(dislikeObserver);
-      dislikeObserver = null;
+    const innerBtn =
+      queryShadow(dislikeButton, 'button') ||
+      dislikeButton.querySelector('button') ||
+      dislikeButton;
+    const targetNode = innerBtn.getRootNode();
+    if (dislikeDirectObserver && observedDislikeButton === targetNode) {
+      return; // Already observing this exact targetNode (ShadowRoot or element)
+    }
+    if (dislikeDirectObserver) {
+      dislikeDirectObserver.disconnect();
+      dislikeDirectObserver = null;
     }
 
-    // Don't observe if we already have text displayed
-    const existingText = dislikeButton.querySelector('#ytp-plus-dislike-text');
-    if (existingText?.textContent && existingText.textContent !== '0') {
-      return;
-    }
-
-    const coordinator = window.YouTubeMutationCoordinator;
-    if (coordinator?.watchTarget) {
-      dislikeObserver = 'enhanced::dislikeObserver';
-      coordinator.watchTarget(
-        dislikeObserver,
-        dislikeButton,
-        () => {
-          // on any mutation, update displayed cached value
-          const vid = getVideoIdForDislike();
-          const cached = dislikeCache.get(vid);
-          if (cached) {
-            const btn = getDislikeButton();
-            if (btn) setDislikeDisplay(btn, cached.value);
-          }
-        },
-        { childList: true, subtree: true, attributes: true }
-      );
+    observedDislikeButton = targetNode;
+    try {
+      dislikeDirectObserver = new MutationObserver(() => {
+        // on any mutation, update displayed cached value
+        const vid = getVideoIdForDislike();
+        const cached = dislikeCache.get(vid);
+        if (cached) {
+          const btn = getDislikeButton();
+          if (btn) setDislikeDisplay(btn, cached.value);
+        }
+      });
+      dislikeDirectObserver.observe(targetNode, {
+        childList: true,
+        subtree: true,
+        attributes: true,
+      });
+    } catch (e) {
+      enhancedLogger?.warn?.('Enhanced', 'Failed to create dislike direct observer', e);
     }
   };
 
   const initReturnDislike = async () => {
     try {
+      if (dislikeFallbackIntervalId) {
+        clearInterval(dislikeFallbackIntervalId);
+        dislikeFallbackIntervalId = null;
+      }
       // avoid multiple polls
       if (dislikePollTimer) return;
 
@@ -1335,32 +1483,79 @@ const onDomReady =
       const checkButton = async () => {
         const btn = getDislikeButton();
         if (btn) {
-          if (dislikePollTimer) {
-            window.YouTubeMutationCoordinator?.unsubscribe?.(dislikePollTimer);
-            dislikePollTimer = null;
+          const isShorts = window.location.pathname.startsWith('/shorts');
+
+          // Verify if inner elements are fully loaded and ready
+          if (!isShorts) {
+            const innerBtn =
+              queryShadow(btn, 'button') ||
+              btn.querySelector('button') ||
+              (btn.tagName === 'BUTTON' ? btn : null);
+            if (!innerBtn) {
+              // Inner button shape is not upgraded or populated yet. Keep waiting.
+              return false;
+            }
           }
+
           const vid = getVideoIdForDislike();
+          if (!vid) return false;
+
+          // Check if already processed for this button and video ID
+          const existingText = isShorts
+            ? queryShadow(btn, 'yt-formatted-string, span[role="text"], span.label, .label')
+            : queryShadow(btn, '#ytp-plus-dislike-text');
+
+          if (btn.getAttribute('data-ytp-video-id') === vid) {
+            if (existingText) {
+              if (isShorts) {
+                // For Shorts, verify the label doesn't contain the default non-numeric text
+                const originalText = existingText.getAttribute('data-ytp-original-text');
+                if (originalText && existingText.innerText !== originalText) {
+                  return true;
+                }
+              } else {
+                // For normal watch page, verify the custom text container is not empty
+                if (existingText.innerText && existingText.innerText.trim() !== '') {
+                  return true;
+                }
+              }
+            }
+          }
+
           const val = await fetchDislikes(vid);
           setDislikeDisplay(btn, val);
+          btn.setAttribute('data-ytp-video-id', vid);
           setupDislikeObserver(btn);
           return true;
         }
         return false;
       };
 
+      // Helper for retrying checkButton
+      const runCheckWithRetry = async (retryCount = 0) => {
+        try {
+          const success = await checkButton();
+          if (!success && retryCount < 15) {
+            enhancedSetTimeout_(() => runCheckWithRetry(retryCount + 1), 100 + retryCount * 100);
+          }
+        } catch (_e) {
+          // ignore
+        }
+      };
+
       // Check immediately
-      if (await checkButton()) return;
+      await runCheckWithRetry();
 
       // Set up coordinator subscription for button appearance
       const isShorts = window.location.pathname.startsWith('/shorts');
-      const maxTime = 10000; // 10 seconds timeout
+      const maxTime = 20000; // 20 seconds timeout
       const startTime = Date.now();
 
-      const coordinator = window.YouTubeMutationCoordinator;
+      const coordinator = window.YouTubePlusMutationCoordinator;
       if (coordinator?.subscribeRoot) {
         const pollSelector = isShorts
-          ? '#shorts-container'
-          : 'ytd-watch-flexy #below, #page-manager';
+          ? '#shorts-container, ytd-shorts'
+          : 'ytd-watch-flexy, #page-manager, #below';
         dislikePollTimer = 'enhanced::dislikePoll';
         coordinator.subscribeRoot(
           dislikePollTimer,
@@ -1372,38 +1567,88 @@ const onDomReady =
               dislikePollTimer = null;
               return;
             }
-            await checkButton();
+            await runCheckWithRetry();
           },
-          { selector: pollSelector, childList: true, attributes: false, subtree: true }
+          {
+            selector: pollSelector,
+            childList: true,
+            attributes: false,
+            subtree: true,
+          }
         );
       }
+
+      // Start periodic fallback check
+      dislikeFallbackIntervalId = setInterval(async () => {
+        if (!shouldInitReturnDislike()) {
+          if (dislikeFallbackIntervalId) {
+            clearInterval(dislikeFallbackIntervalId);
+            dislikeFallbackIntervalId = null;
+          }
+          return;
+        }
+        try {
+          await checkButton();
+        } catch (_e) {
+          // ignore
+        }
+      }, 1500);
     } catch (e) {
-      window.console.warn('[YouTube+] Failed to initialize Return YouTube Dislike:', e);
+      enhancedLogger?.warn?.('Enhanced', 'Failed to initialize Return YouTube Dislike', e);
     }
   };
 
   const cleanupReturnDislike = () => {
     try {
       if (dislikePollTimer) {
-        window.YouTubeMutationCoordinator?.unsubscribe?.(dislikePollTimer);
+        window.YouTubePlusMutationCoordinator?.unsubscribe?.(dislikePollTimer);
         dislikePollTimer = null;
       }
-      if (dislikeObserver) {
-        window.YouTubeMutationCoordinator?.unwatch?.(dislikeObserver);
-        dislikeObserver = null;
+      if (dislikeFallbackIntervalId) {
+        clearInterval(dislikeFallbackIntervalId);
+        dislikeFallbackIntervalId = null;
       }
+      if (dislikeDirectObserver) {
+        dislikeDirectObserver.disconnect();
+        dislikeDirectObserver = null;
+      }
+      observedDislikeButton = null;
       // Remove all created dislike text spans
-      $$('#ytp-plus-dislike-text').forEach(el => {
+      /** @type {Element[]} */
+      const dislikeSpans = [];
+      findAllInShadow(document.body, '#ytp-plus-dislike-text', dislikeSpans);
+      dislikeSpans.forEach(el => {
         try {
           if (el.parentNode) el.parentNode.removeChild(el);
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Enhanced');
         }
       });
-      // Clear cache to free memory
-      dislikeCache.clear();
+      // Remove data-ytp-video-id attributes
+      /** @type {Element[]} */
+      const buttonsWithAttr = [];
+      findAllInShadow(document.body, '[data-ytp-video-id]', buttonsWithAttr);
+      buttonsWithAttr.forEach(el => {
+        try {
+          el.removeAttribute('data-ytp-video-id');
+        } catch (_e) {
+          U.logSuppressed(_e, 'Enhanced');
+        }
+      });
+      // Restore original text on label elements
+      /** @type {Element[]} */
+      const originalTexts = [];
+      findAllInShadow(document.body, '[data-ytp-original-text]', originalTexts);
+      originalTexts.forEach(el => {
+        try {
+          el.innerText = el.getAttribute('data-ytp-original-text') || '';
+          el.removeAttribute('data-ytp-original-text');
+        } catch (_e) {
+          U.logSuppressed(_e, 'Enhanced');
+        }
+      });
     } catch (e) {
-      window.console.warn('YTP: Dislike cleanup error:', e);
+      enhancedLogger?.warn?.('Enhanced', 'Dislike cleanup error', e);
     }
   };
 
@@ -1413,7 +1658,7 @@ const onDomReady =
    */
   const observeTabChanges = () => {
     try {
-      const coordinator = window.YouTubeMutationCoordinator;
+      const coordinator = window.YouTubePlusMutationCoordinator;
       if (!coordinator?.subscribeRoot) return null;
 
       const observerId = 'enhanced::tabChanges';
@@ -1433,7 +1678,7 @@ const onDomReady =
               enhancedSetTimeout_(setupScrollListener, 100);
             }
           } catch (error) {
-            window.console.error('[YouTube+][Enhanced] Error in mutation observer:', error);
+            enhancedLogger?.error?.('Enhanced', 'Error in mutation observer', error);
           }
         },
         {
@@ -1447,9 +1692,9 @@ const onDomReady =
 
       // Track observer for diagnostics
       try {
-        window.YouTubeUtils?.ObserverRegistry?.track?.();
-      } catch (e) {
-        // Non-critical, suppressed
+        U?.ObserverRegistry?.track?.();
+      } catch (_e) {
+        U.logSuppressed(_e, 'Enhanced');
       }
 
       const rightTabs = $('#right-tabs');
@@ -1458,14 +1703,14 @@ const onDomReady =
       }
       // No target found — untrack
       try {
-        window.YouTubeUtils?.ObserverRegistry?.untrack?.();
-      } catch (e) {
-        // Non-critical, suppressed
+        U?.ObserverRegistry?.untrack?.();
+      } catch (_e) {
+        U.logSuppressed(_e, 'Enhanced');
       }
       coordinator.unsubscribe(observerId);
       return null;
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error in observeTabChanges:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error in observeTabChanges', error);
       return null;
     }
   };
@@ -1475,14 +1720,11 @@ const onDomReady =
    * @returns {boolean}
    */
   const needsUniversalButton = () => {
-    const host = window.location.hostname;
+    const host = U?.getHostname?.() || '';
     // Always show on Music and Studio
     if (host === 'music.youtube.com' || host === 'studio.youtube.com') return true;
 
-    if (
-      (window.YouTubeUtils?.isWatchPage?.() ?? false) ||
-      (window.YouTubeUtils?.isShortsPage?.() ?? false)
-    ) {
+    if ((U?.isWatchPage?.() ?? false) || (U?.isShortsPage?.() ?? false)) {
       return !isTabviewEnabled();
     }
 
@@ -1514,7 +1756,7 @@ const onDomReady =
         enhancedSetTimeout_(setupScrollListener, 100);
       }
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error in click handler:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error in click handler', error);
     }
   };
 
@@ -1527,8 +1769,7 @@ const onDomReady =
       if (isTabClickListenerAttached) return;
       const delegator = window.YouTubePlusEventDelegation;
       if (delegator?.on) {
-        tabDelegationHandler = (/** @type {any} */ ev, /** @type {any} */ target) => {
-          void ev;
+        tabDelegationHandler = (/** @type {any} */ _ev, /** @type {any} */ target) => {
           if (!target) return;
           enhancedSetTimeout_(setupScrollListener, 100);
         };
@@ -1541,7 +1782,7 @@ const onDomReady =
       }
       isTabClickListenerAttached = true;
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error in setupEvents:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error in setupEvents', error);
     }
   };
 
@@ -1558,7 +1799,7 @@ const onDomReady =
       tabDelegationRegistered = false;
       isTabClickListenerAttached = false;
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error cleaning up events:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error cleaning up events', error);
     }
   };
 
@@ -1571,8 +1812,8 @@ const onDomReady =
       } else {
         tabCheckTimeoutId = clearTimeoutSafe(tabCheckTimeoutId);
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     tabCheckTimeoutId = null;
     try {
@@ -1585,24 +1826,24 @@ const onDomReady =
       } else {
         playlistPanelCheckTimeoutId = clearTimeoutSafe(playlistPanelCheckTimeoutId);
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     playlistPanelCheckTimeoutId = null;
 
     try {
       if (tabChangesObserver) {
-        window.YouTubeMutationCoordinator?.unsubscribe?.(tabChangesObserver);
+        window.YouTubePlusMutationCoordinator?.unsubscribe?.(tabChangesObserver);
       }
       if (tabChangesObserver) {
         try {
-          window.YouTubeUtils?.ObserverRegistry?.untrack?.();
-        } catch (e) {
-          // Non-critical, suppressed
+          U?.ObserverRegistry?.untrack?.();
+        } catch (_e) {
+          U.logSuppressed(_e, 'Enhanced');
         }
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     tabChangesObserver = null;
 
@@ -1610,32 +1851,32 @@ const onDomReady =
 
     try {
       cleanupReturnDislike();
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
   };
 
   const startWatchEnhancements = () => {
     if (!config.enabled) return;
-    if (!(window.YouTubeUtils?.isWatchPage?.() ?? false)) return;
+    if (!(U?.isWatchPage?.() ?? false)) return;
 
     const token = ++watchInitToken;
     setupEvents();
 
     // Use shared RetryScheduler for tab detection
-    const tabScheduler = window.YouTubeUtils?.createRetryScheduler?.({
+    const tabScheduler = U?.createRetryScheduler?.({
       check: () => {
-        if (token !== watchInitToken || !(window.YouTubeUtils?.isWatchPage?.() ?? false)) {
+        if (token !== watchInitToken || !(U?.isWatchPage?.() ?? false)) {
           return true;
         } // stop
         if ($('#right-tabs')) {
           createButton();
           try {
             if (tabChangesObserver) {
-              window.YouTubeMutationCoordinator?.unsubscribe?.(tabChangesObserver);
+              window.YouTubePlusMutationCoordinator?.unsubscribe?.(tabChangesObserver);
             }
-          } catch (e) {
-            // Non-critical, suppressed
+          } catch (_e) {
+            U.logSuppressed(_e, 'Enhanced');
           }
           tabChangesObserver = observeTabChanges();
           return true; // done
@@ -1647,9 +1888,9 @@ const onDomReady =
     });
 
     // Use shared RetryScheduler for playlist panel detection
-    const playlistScheduler = window.YouTubeUtils?.createRetryScheduler?.({
+    const playlistScheduler = U?.createRetryScheduler?.({
       check: () => {
-        if (token !== watchInitToken || !(window.YouTubeUtils?.isWatchPage?.() ?? false)) {
+        if (token !== watchInitToken || !(U?.isWatchPage?.() ?? false)) {
           return true;
         }
         try {
@@ -1659,7 +1900,7 @@ const onDomReady =
             return true;
           }
         } catch (error) {
-          window.console.error('[YouTube+][Enhanced] Error checking for playlist panel:', error);
+          enhancedLogger?.error?.('Enhanced', 'Error checking for playlist panel', error);
         }
         return false;
       },
@@ -1685,11 +1926,11 @@ const onDomReady =
           if (needsUniversalButton() && !byId('universal-top-button')) {
             createUniversalButton();
           }
-          if (window.location.hostname === 'music.youtube.com' && !byId('music-side-top-button')) {
+          if (U?.isMusicDomain?.() && !byId('music-side-top-button')) {
             createMusicSidePanelButton();
           }
         } catch (error) {
-          window.console.error('[YouTube+][Enhanced] Error checking page type:', error);
+          enhancedLogger?.error?.('Enhanced', 'Error checking page type', error);
         }
       };
 
@@ -1699,17 +1940,10 @@ const onDomReady =
         checkPageType();
 
         if (shouldInitReturnDislike()) {
-          const _doInitDislike = () => {
-            try {
-              initReturnDislike();
-            } catch (e) {
-              window.console.warn('[YouTube+] initReturnDislike error:', e);
-            }
-          };
-          if (typeof requestIdleCallback === 'function') {
-            requestIdleCallback(_doInitDislike, { timeout: 3000 });
-          } else {
-            enhancedSetTimeout_(_doInitDislike, 0);
+          try {
+            initReturnDislike();
+          } catch (e) {
+            enhancedLogger?.warn?.('Enhanced', 'initReturnDislike error', e);
           }
         }
 
@@ -1721,7 +1955,7 @@ const onDomReady =
       onNavigate();
 
       // Listen for navigation changes (YouTube is SPA)
-      if (typeof window.YouTubeUtils?.cleanupManager?.registerListener === 'function') {
+      if (typeof U?.cleanupManager?.registerListener === 'function') {
         YouTubeUtils.cleanupManager.registerListener(
           document,
           'yt-navigate-finish',
@@ -1735,10 +1969,10 @@ const onDomReady =
       }
 
       // For YouTube Music: also listen on popstate and observe #side-panel appearance
-      if (window.location.hostname === 'music.youtube.com') {
+      if (U?.isMusicDomain?.()) {
         window.addEventListener('popstate', () => enhancedSetTimeout_(onNavigate, 200));
         // Observe DOM for side-panel becoming scrollable via centralized coordinator.
-        const coordinator = window.YouTubeMutationCoordinator;
+        const coordinator = window.YouTubePlusMutationCoordinator;
         if (coordinator?.subscribeRoot) {
           musicSidePanelSubId = 'enhanced::musicSidePanel';
           coordinator.subscribeRoot(
@@ -1758,7 +1992,7 @@ const onDomReady =
         }
       }
     } catch (error) {
-      window.console.error('[YouTube+][Enhanced] Error in initialization:', error);
+      enhancedLogger?.error?.('Enhanced', 'Error in initialization', error);
     }
   };
 
@@ -1775,9 +2009,7 @@ const onDomReady =
       const nextEnabled = e?.detail?.enableScrollToTopButton !== false;
       const tabviewEnabled = e?.detail?.enableTabview !== false;
       const shouldUseUniversalOnWatch =
-        ((window.YouTubeUtils?.isWatchPage?.() ?? false) ||
-          (window.YouTubeUtils?.isShortsPage?.() ?? false)) &&
-        !tabviewEnabled;
+        ((U?.isWatchPage?.() ?? false) || (U?.isShortsPage?.() ?? false)) && !tabviewEnabled;
       config.enabled = nextEnabled;
       if (!config.enabled) {
         cleanupTopButtons();
@@ -1791,12 +2023,20 @@ const onDomReady =
       if ((needsUniversalButton() || shouldUseUniversalOnWatch) && !byId('universal-top-button')) {
         createUniversalButton();
       }
-      if (window.location.hostname === 'music.youtube.com' && !byId('music-side-top-button')) {
+      if (U?.isMusicDomain?.() && !byId('music-side-top-button')) {
         createMusicSidePanelButton();
       }
       startWatchEnhancements();
-    } catch (e) {
-      // Non-critical, suppressed
+
+      if (shouldInitReturnDislike()) {
+        try {
+          initReturnDislike();
+        } catch (e) {
+          enhancedLogger?.warn?.('Enhanced', 'initReturnDislike error after settings update', e);
+        }
+      }
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
   });
 
@@ -1805,11 +2045,22 @@ const onDomReady =
 
 // Remember Manual Playback Quality
 (function () {
-  'use strict';
-
   const QUALITY_STORAGE_KEY = 'youtube_plus_manual_playback_quality';
   const APPLY_ATTEMPTS = 16;
   const APPLY_INTERVAL_MS = 350;
+
+  const QUALITY_RANKING = [
+    'highres',
+    'hd2160',
+    'hd1440',
+    'hd1080',
+    'hd720',
+    'large',
+    'medium',
+    'small',
+    'tiny',
+    'auto',
+  ];
 
   /** @type {Array<ReturnType<typeof setTimeout>>} */
   let pendingApplyTimeouts = [];
@@ -1819,7 +2070,7 @@ const onDomReady =
     try {
       const path = window.location.pathname || '';
       return path === '/watch' || path.startsWith('/shorts/');
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   };
@@ -1840,8 +2091,8 @@ const onDomReady =
       if (path.startsWith('/shorts/')) {
         return path.split('/')[2] || '';
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
     return '';
   };
@@ -1856,7 +2107,7 @@ const onDomReady =
   const getStoredQuality = () => {
     try {
       return normalizeQuality(localStorage.getItem(QUALITY_STORAGE_KEY));
-    } catch (e) {
+    } catch (_e) {
       return '';
     }
   };
@@ -1869,13 +2120,13 @@ const onDomReady =
         return;
       }
       localStorage.setItem(QUALITY_STORAGE_KEY, normalized);
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
   };
 
   const applyStoredQualityOnce = () => {
-    if (!(window.YouTubeUtils?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
+    if (!(U?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
       return true;
     }
     if (!isVideoPage()) return true;
@@ -1887,7 +2138,14 @@ const onDomReady =
     if (!player) return false;
 
     const currentVideoId = getCurrentVideoId();
-    if (currentVideoId && lastAppliedVideoId === currentVideoId) return true;
+    const currentQuality = normalizeQuality(player?.getPlaybackQuality?.());
+    if (
+      currentVideoId &&
+      lastAppliedVideoId === currentVideoId &&
+      currentQuality === preferredQuality
+    ) {
+      return true;
+    }
 
     try {
       const availableQualityLevels =
@@ -1895,28 +2153,53 @@ const onDomReady =
           ? player.getAvailableQualityLevels().map(normalizeQuality).filter(Boolean)
           : [];
 
-      if (availableQualityLevels.length && !availableQualityLevels.includes(preferredQuality)) {
-        lastAppliedVideoId = currentVideoId;
-        return true;
+      // Player metadata can arrive later on initial load; keep retrying until levels are known.
+      if (
+        !availableQualityLevels.length ||
+        (availableQualityLevels.length === 1 && availableQualityLevels[0] === 'auto')
+      ) {
+        return false;
+      }
+
+      let targetQuality = preferredQuality;
+      if (!availableQualityLevels.includes(preferredQuality)) {
+        const prefIdx = QUALITY_RANKING.indexOf(preferredQuality);
+        if (prefIdx !== -1) {
+          targetQuality =
+            QUALITY_RANKING.slice(prefIdx).find(q => availableQualityLevels.includes(q)) || 'auto';
+        }
       }
 
       if (typeof player.setPlaybackQualityRange === 'function') {
-        player.setPlaybackQualityRange(preferredQuality, preferredQuality);
+        player.setPlaybackQualityRange(targetQuality, targetQuality);
       }
       if (typeof player.setPlaybackQuality === 'function') {
-        player.setPlaybackQuality(preferredQuality);
+        player.setPlaybackQuality(targetQuality);
+      }
+
+      try {
+        localStorage.setItem(
+          'yt-player-quality',
+          JSON.stringify({
+            data: targetQuality,
+            expiration: Date.now() + 1000 * 60 * 60 * 24 * 30,
+            creation: Date.now(),
+          })
+        );
+      } catch (_err) {
+        // Suppress
       }
 
       lastAppliedVideoId = currentVideoId;
       return true;
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   };
 
   const scheduleApplyStoredQuality = () => {
     clearPendingApplyTimeouts();
-    if (!(window.YouTubeUtils?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
+    if (!(U?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
       return;
     }
     if (!isVideoPage()) return;
@@ -1931,6 +2214,54 @@ const onDomReady =
     }
   };
 
+  const parseQualityFromLabelOrValue = (
+    /** @type {string} */ label,
+    /** @type {string} */ value
+  ) => {
+    const val = normalizeQuality(value);
+    // If it's already a recognized YouTube quality identifier, use it
+    if (
+      [
+        'highres',
+        'hd2160',
+        'hd1440',
+        'hd1080',
+        'hd720',
+        'large',
+        'medium',
+        'small',
+        'tiny',
+        'auto',
+      ].includes(val)
+    ) {
+      return val;
+    }
+
+    // Fallback: parse from label
+    const lbl = String(label || '').toLowerCase();
+    if (lbl.includes('2160p') || lbl.includes('4k') || lbl.includes('2160')) return 'hd2160';
+    if (lbl.includes('1440p') || lbl.includes('2k') || lbl.includes('1440')) return 'hd1440';
+    if (lbl.includes('1080p') || lbl.includes('1080')) return 'hd1080';
+    if (lbl.includes('720p') || lbl.includes('720')) return 'hd720';
+    if (lbl.includes('480p') || lbl.includes('480')) return 'large';
+    if (lbl.includes('360p') || lbl.includes('360')) return 'medium';
+    if (lbl.includes('240p') || lbl.includes('240')) return 'small';
+    if (lbl.includes('144p') || lbl.includes('144')) return 'tiny';
+    if (lbl.includes('auto') || lbl.includes('авто')) return 'auto';
+
+    if (val.includes('2160')) return 'hd2160';
+    if (val.includes('1440')) return 'hd1440';
+    if (val.includes('1080')) return 'hd1080';
+    if (val.includes('720')) return 'hd720';
+    if (val.includes('480')) return 'large';
+    if (val.includes('360')) return 'medium';
+    if (val.includes('240')) return 'small';
+    if (val.includes('144')) return 'tiny';
+    if (val.includes('auto')) return 'auto';
+
+    return val;
+  };
+
   const handleQualityMenuInteraction = (/** @type {Event} */ event) => {
     const target = /** @type {HTMLElement | null} */ (
       event.target instanceof HTMLElement ? event.target : null
@@ -1943,25 +2274,41 @@ const onDomReady =
     const label = String(menuItem.textContent || '')
       .trim()
       .toLowerCase();
+    const menuValue = String(
+      menuItem.getAttribute('data-value') || /** @type {any} */ (menuItem).dataset?.value || ''
+    ).trim();
 
-    if (!label) return;
-    if (!/(\bauto\b|\d{3,4}p|\bhd\b|\b4k\b|\b8k\b)/.test(label)) return;
+    if (!(label || menuValue)) return;
+    if (!(menuValue || /(\bauto\b|авто|\d{3,4}p|\bhd\b|\b4k\b|\b8k\b)/.test(label))) return;
 
-    enhancedSetTimeout_(() => {
-      if (!(window.YouTubeUtils?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
+    const parsedQuality = parseQualityFromLabelOrValue(label, menuValue);
+    if (parsedQuality) {
+      if (!(U?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
         return;
       }
+      storeQuality(parsedQuality);
+      enhancedSetTimeout_(() => {
+        scheduleApplyStoredQuality();
+      }, 50);
+    } else {
+      // Fallback: wait and query player
+      enhancedSetTimeout_(() => {
+        if (!(U?.loadFeatureEnabled?.('enableRememberManualQuality') ?? true)) {
+          return;
+        }
 
-      if (label.includes('auto')) {
-        storeQuality('auto');
-        return;
-      }
+        if (menuValue === 'auto' || /\bauto\b|авто/.test(label)) {
+          storeQuality('auto');
+          return;
+        }
 
-      const currentQuality = normalizeQuality(getPlayer()?.getPlaybackQuality?.());
-      if (currentQuality) {
-        storeQuality(currentQuality);
-      }
-    }, 150);
+        const currentQuality = normalizeQuality(getPlayer()?.getPlaybackQuality?.());
+        if (currentQuality) {
+          storeQuality(currentQuality);
+        }
+        scheduleApplyStoredQuality();
+      }, 150);
+    }
   };
 
   const handleNavigation = () => {
@@ -1986,7 +2333,12 @@ const onDomReady =
     scheduleApplyStoredQuality();
   });
 
-  window.addEventListener('yt-navigate-finish', handleNavigation, { passive: true });
+  window.addEventListener('yt-navigate-finish', handleNavigation, {
+    passive: true,
+  });
+  window.addEventListener('ytp:nav-refresh', handleNavigation, {
+    passive: true,
+  });
   onDomReady(scheduleApplyStoredQuality);
 })();
 
@@ -1995,12 +2347,13 @@ const onDomReady =
   try {
     const host = typeof location === 'undefined' ? '' : location.hostname;
     if (!host) return;
-    if (!/(^|\.)youtube\.com$/.test(host) && !/\.youtube\.google/.test(host)) return;
+    if (!(/(^|\.)youtube\.com$/.test(host) || /\.youtube\.google/.test(host))) return;
 
-    const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
+    const SETTINGS_KEY = U?.SETTINGS_KEY || 'youtube_plus_settings';
     const STYLE_ELEMENT_ID = 'ytp-zen-features-style';
     const NON_CRITICAL_STYLE_ID = 'ytp-zen-features-style-noncritical';
     const STYLE_MANAGER_KEY = 'zen-features-style';
+    const NON_CRITICAL_STYLE_MANAGER_KEY = 'zen-features-style-noncritical';
     /** @type {any} */
     let nonCriticalTimer = null;
 
@@ -2023,7 +2376,6 @@ const onDomReady =
         betterCaptions: true,
         playerBlur: true,
         theaterEnhancements: true,
-        misc: true,
       },
     };
 
@@ -2031,10 +2383,15 @@ const onDomReady =
       /** @type {any} */
       let parsed = null;
       try {
-        const raw = localStorage.getItem(SETTINGS_KEY);
-        if (raw) parsed = JSON.parse(raw);
+        const store = /** @type {any} */ (window).YouTubePlusSettingsStore;
+        if (store && typeof store.load === 'function') {
+          parsed = store.load();
+        } else {
+          const raw = localStorage.getItem(SETTINGS_KEY);
+          if (raw) parsed = JSON.parse(raw);
+        }
       } catch (e) {
-        window.console.warn('[YouTube+] Zen settings parse error:', e);
+        enhancedLogger?.warn?.('Enhanced', 'Zen settings parse error', e);
       }
 
       const merged = {
@@ -2096,10 +2453,6 @@ const onDomReady =
         @media only screen and (min-width: 1400px) {yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) { height: 60px !important; max-width: 700px !important; transform: scale(1.1) !important;}}
         yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) .ytSearchboxComponentInputBox,
         yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {background-color: var(--yt-bg-primary) !important; box-shadow: black 0 0 30px !important;}
-        @media (prefers-color-scheme: dark) {
-          yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) .ytSearchboxComponentInputBox,
-          yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {background-color: var(--yt-modal-bg) !important;}
-        }
         yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {margin-top: 10px !important;}
         @media only screen and (min-width: 1400px) {yt-searchbox:has(.ytSearchboxComponentInputBoxHasFocus) #i0 {margin-top: 30px !important;}}
         .ytd-masthead #center:has(.ytSearchboxComponentInputBoxHasFocus) {height: 100vh !important; width: 100vw !important; left: 0 !important; top: 0 !important; position: fixed !important; justify-content: center !important; align-items: center !important;}
@@ -2241,10 +2594,6 @@ const onDomReady =
         ytd-watch-flexy:is([theater],[full-bleed-player]):not([fullscreen]) #player-full-bleed-container { overflow: hidden !important;}
         ytd-watch-flexy[fullscreen] ytd-live-chat-frame { background-color: var(--app-drawer-content-container-background-color) !important;}
       `,
-      misc: `        
-        /* Show video meta on hover */
-        #content #dismissible:hover ytd-video-meta-block { opacity: 1 !important;}
-      `,
       compactFeed: `
       /* Compact feed – reduced spacing, hover menus, inline details */
         ytd-rich-item-renderer { margin-bottom: 15px !important;}
@@ -2261,7 +2610,7 @@ const onDomReady =
           --yt-glass-blur-light:none !important;
           --yt-glass-blur-heavy:none !important;
         }
-        html[dark],html:not([dark]):not([light]) {
+        html[dark],html[data-ytp-theme="dark"] {
           --yt-glass-bg:rgba(24,24,24,.96) !important;
           --yt-panel-bg:rgba(30,30,30,.98) !important;
           --yt-header-bg:rgba(22,22,22,.98) !important;
@@ -2269,7 +2618,7 @@ const onDomReady =
           --yt-input-bg:rgba(34,34,34,.98) !important;
           --yt-glass-shadow:0 10px 28px rgba(0,0,0,.28) !important;
         }
-        html[light] {
+        html[light],html[data-ytp-theme="light"],html:not([dark]):not([data-ytp-theme="dark"]) {
           --yt-glass-bg:rgba(255,255,255,.98) !important;
           --yt-panel-bg:rgba(250,250,250,.99) !important;
           --yt-header-bg:rgba(245,245,245,.99) !important;
@@ -2347,72 +2696,114 @@ const onDomReady =
       if (sideColsEnabled && sideCols > 0) {
         css += `
         /* Side Videos: ${sideCols}-column card grid */
-        ytd-watch-flexy #secondary #related ytd-item-section-renderer #contents,
-        ytd-watch-flexy #secondary #related ytd-watch-next-secondary-results-renderer #items {
+        #secondary #related {
+          min-width: 0 !important;
+          overflow: visible !important;
+        }
+        #secondary {
+          overflow: visible !important;
+        }
+        #secondary #related ytd-item-section-renderer.ytd-watch-next-secondary-results-renderer {
+          width: ${sideCols >= 2 ? '200%' : '100%'} !important;
+        }
+        #secondary #related #contents,
+        #secondary #related ytd-watch-next-secondary-results-renderer #items {
           display: grid !important;
           grid-template-columns: repeat(${sideCols}, minmax(0, 1fr)) !important;
           gap: 8px !important;
           padding: 0 !important;
           align-items: start !important;
         }
-        ytd-watch-flexy #secondary #related ytd-compact-video-renderer,
-        ytd-watch-flexy #secondary #related ytd-compact-radio-renderer,
-        ytd-watch-flexy #secondary #related ytd-compact-playlist-renderer,
-        ytd-watch-flexy #secondary #related yt-lockup-view-model {
+        /* yt-lockup-view-model: card container */
+        #secondary #related yt-lockup-view-model {
           width: 100% !important;
           min-width: 0 !important;
           max-width: 100% !important;
           margin: 0 !important;
           box-sizing: border-box !important;
         }
-        ytd-watch-flexy #secondary #related yt-lockup-view-model .ytLockupViewModelHost {
-          display: block !important;
-          width: 100% !important;
-          min-width: 0 !important;
-        }
-        ytd-watch-flexy #secondary #related yt-lockup-view-model .ytLockupViewModelHorizontal,
-        ytd-watch-flexy #secondary #related yt-lockup-view-model .yt-lockup-view-model-wiz {
+        /* Host div: switch from horizontal row to vertical column */
+        #secondary #related .ytLockupViewModelHost {
           display: flex !important;
           flex-direction: column !important;
           align-items: stretch !important;
           width: 100% !important;
           min-width: 0 !important;
-          gap: 6px !important;
+          gap: 0 !important;
+          flex-wrap: nowrap !important;
         }
-        ytd-watch-flexy #secondary #related yt-lockup-view-model .yt-lockup-view-model-wiz__content-image,
-        ytd-watch-flexy #secondary #related yt-lockup-view-model [class*="LockupContentImage"],
-        ytd-watch-flexy #secondary #related yt-lockup-view-model yt-image {
+        /* Thumbnail link: override inline style="width: 55%" */
+        #secondary #related .ytLockupViewModelContentImage {
           width: 100% !important;
           max-width: 100% !important;
           min-width: 0 !important;
-          height: auto !important;
           flex: 0 0 auto !important;
+          position: relative !important;
         }
-        ytd-watch-flexy #secondary #related yt-lockup-view-model yt-image img {
+        /* Thumbnail image container */
+        #secondary #related .ytThumbnailViewModelHost {
           width: 100% !important;
-          height: auto !important;
+          max-width: 100% !important;
+        }
+        #secondary #related .ytThumbnailViewModelImage {
+          width: 100% !important;
+          aspect-ratio: 16 / 9 !important;
+        }
+        #secondary #related .ytThumbnailViewModelImage img {
+          width: 100% !important;
+          height: 100% !important;
           object-fit: cover !important;
           display: block !important;
         }
-        ytd-watch-flexy #secondary #related yt-lockup-view-model .yt-lockup-view-model-wiz__text-container {
-          padding: 4px 0 0 0 !important;
-          min-width: 0 !important;
+        /* Metadata: full width */
+        #secondary #related .ytLockupViewModelMetadata {
           width: 100% !important;
+          min-width: 0 !important;
+          flex: 1 1 auto !important;
+        }
+        #secondary #related yt-lockup-metadata-view-model {
+          width: 100% !important;
+        }
+        #secondary #related .ytLockupMetadataViewModelTextContainer {
+          width: 100% !important;
+          min-width: 0 !important;
+        }
+        #secondary #related .ytLockupMetadataViewModelHeadingReset {
+          width: 100% !important;
+          min-width: 0 !important;
+          overflow: hidden !important;
+          text-overflow: ellipsis !important;
+          display: -webkit-box !important;
+          -webkit-line-clamp: 2 !important;
+          -webkit-box-orient: vertical !important;
+        }
+        /* Legacy compact renderers (fallback) */
+        #secondary #related ytd-compact-video-renderer,
+        #secondary #related ytd-compact-radio-renderer,
+        #secondary #related ytd-compact-playlist-renderer {
+          width: 100% !important;
+          min-width: 0 !important;
+          max-width: 100% !important;
+          margin: 0 !important;
           box-sizing: border-box !important;
         }
-        ytd-watch-flexy #secondary #related ytd-compact-video-renderer #dismissible {
+        #secondary #related ytd-compact-video-renderer #dismissible,
+        #secondary #related ytd-compact-radio-renderer #dismissible,
+        #secondary #related ytd-compact-playlist-renderer #dismissible {
           display: flex !important;
           flex-direction: column !important;
           gap: 6px !important;
           width: 100% !important;
         }
-        ytd-watch-flexy #secondary #related ytd-compact-video-renderer ytd-thumbnail {
+        #secondary #related ytd-compact-video-renderer ytd-thumbnail,
+        #secondary #related ytd-compact-radio-renderer ytd-thumbnail,
+        #secondary #related ytd-compact-playlist-renderer ytd-thumbnail {
           width: 100% !important;
           max-width: 100% !important;
           min-width: 0 !important;
         }
-        ytd-watch-flexy #secondary #related ytd-compact-video-renderer .details,
-        ytd-watch-flexy #secondary #related ytd-compact-video-renderer #meta {
+        #secondary #related ytd-compact-video-renderer .details,
+        #secondary #related ytd-compact-video-renderer #meta {
           padding-left: 0 !important;
           min-width: 0 !important;
           width: 100% !important;
@@ -2423,25 +2814,25 @@ const onDomReady =
       if (z.betterCaptions && themeVariant !== 'solid') css += CSS_BLOCKS.betterCaptions;
       if (z.playerBlur && themeVariant !== 'solid') css += CSS_BLOCKS.playerBlur;
       if (z.compactFeed) css += CSS_BLOCKS.compactFeed;
-      if (z.misc) css += CSS_BLOCKS.misc;
       return css.trim();
     };
 
     const removeStyles = () => {
       try {
-        if (window.YouTubeUtils?.StyleManager?.remove) {
-          window.YouTubeUtils.StyleManager.remove(STYLE_MANAGER_KEY);
+        if (U?.StyleManager?.remove) {
+          U.StyleManager.remove(STYLE_MANAGER_KEY);
+          U.StyleManager.remove(NON_CRITICAL_STYLE_MANAGER_KEY);
         }
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Enhanced');
       }
 
       if (nonCriticalTimer) {
         if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
           try {
             window.cancelIdleCallback(nonCriticalTimer);
-          } catch (e) {
-            // Non-critical, suppressed
+          } catch (_e) {
+            U.logSuppressed(_e, 'Enhanced');
           }
         } else {
           clearTimeout(nonCriticalTimer);
@@ -2453,8 +2844,8 @@ const onDomReady =
       if (el) {
         try {
           el.remove();
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Enhanced');
         }
       }
 
@@ -2462,13 +2853,34 @@ const onDomReady =
       if (ncEl) {
         try {
           ncEl.remove();
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch (_e) {
+          U.logSuppressed(_e, 'Enhanced');
         }
       }
     };
 
     const applyNonCriticalStyles = (/** @type {any} */ css) => {
+      // Prefer the canonical design-system StyleManager so non-critical zen
+      // CSS shares the single style host with the rest of the design system.
+      // StyleManager.add('', '') is treated as remove(), so we can hand both
+      // "set" and "clear" through the same call.
+      try {
+        const SM = U?.StyleManager;
+        if (SM && typeof SM.add === 'function') {
+          SM.add(NON_CRITICAL_STYLE_MANAGER_KEY, css || '');
+          // Ensure legacy <style id="ytp-zen-features-style-noncritical">
+          // from older releases (or from the raw fallback below) isn't left
+          // behind to double-apply the same CSS.
+          const legacy = byId(NON_CRITICAL_STYLE_ID);
+          if (legacy) legacy.remove();
+          return;
+        }
+      } catch (_e) {
+        // Fall through to raw fallback to preserve behavior when StyleManager
+        // is somehow unavailable.
+      }
+
+      // Raw <style> fallback — only reached when StyleManager isn't available.
       if (!css) {
         const ncEl = byId(NON_CRITICAL_STYLE_ID);
         if (ncEl) ncEl.remove();
@@ -2493,14 +2905,14 @@ const onDomReady =
 
       const criticalCss = buildCriticalCss(settings);
       const nonCriticalCss = buildNonCriticalCss(settings);
-      if (!criticalCss && !nonCriticalCss) {
+      if (!(criticalCss || nonCriticalCss)) {
         removeStyles();
         return;
       }
 
       try {
-        if (window.YouTubeUtils?.StyleManager?.add) {
-          window.YouTubeUtils.StyleManager.add(STYLE_MANAGER_KEY, criticalCss || '');
+        if (U?.StyleManager?.add) {
+          U.StyleManager.add(STYLE_MANAGER_KEY, criticalCss || '');
           // Ensure legacy <style> isn't left behind
           const el = byId(STYLE_ELEMENT_ID);
           if (el) el.remove();
@@ -2508,8 +2920,8 @@ const onDomReady =
             if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
               try {
                 window.cancelIdleCallback(nonCriticalTimer);
-              } catch (e) {
-                // Non-critical, suppressed
+              } catch (_e) {
+                U.logSuppressed(_e, 'Enhanced');
               }
             } else {
               clearTimeout(nonCriticalTimer);
@@ -2530,8 +2942,8 @@ const onDomReady =
           }
           return;
         }
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Enhanced');
       }
 
       let el = byId(STYLE_ELEMENT_ID);
@@ -2546,8 +2958,8 @@ const onDomReady =
         if (typeof window !== 'undefined' && typeof window.cancelIdleCallback === 'function') {
           try {
             window.cancelIdleCallback(nonCriticalTimer);
-          } catch (e) {
-            // Non-critical, suppressed
+          } catch (_e) {
+            U.logSuppressed(_e, 'Enhanced');
           }
         } else {
           clearTimeout(nonCriticalTimer);
@@ -2582,32 +2994,34 @@ const onDomReady =
         const sb = $('yt-searchbox');
         if (sb instanceof HTMLElement) sb.style.willChange = '';
       };
-      document.addEventListener(
-        'focusin',
-        e => {
-          if (e.target instanceof Element && e.target.closest('yt-searchbox')) {
-            _applySearchboxWillChange();
-          }
-        },
-        { passive: true, capture: true }
-      );
-      document.addEventListener(
-        'focusout',
-        e => {
-          if (e.target instanceof Element && e.target.closest('yt-searchbox')) {
-            _clearSearchboxWillChange();
-          }
-        },
-        { passive: true, capture: true }
-      );
-    } catch (e) {
-      // Non-critical, suppressed
+      /** @param {Event} e */
+      const _focusinHandler = e => {
+        if (e.target instanceof Element && e.target.closest('yt-searchbox')) {
+          _applySearchboxWillChange();
+        }
+      };
+      /** @param {Event} e */
+      const _focusoutHandler = e => {
+        if (e.target instanceof Element && e.target.closest('yt-searchbox')) {
+          _clearSearchboxWillChange();
+        }
+      };
+      document.addEventListener('focusin', _focusinHandler, { passive: true, capture: true });
+      document.addEventListener('focusout', _focusoutHandler, { passive: true, capture: true });
+      if (U?.cleanupManager?.register) {
+        U.cleanupManager.register(() => {
+          document.removeEventListener('focusin', _focusinHandler, { capture: true });
+          document.removeEventListener('focusout', _focusoutHandler, { capture: true });
+        });
+      }
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
 
     window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {
       try {
         applyStyles(e?.detail || loadSettings(), true);
-      } catch (e) {
+      } catch (_e) {
         applyFromStorage(true);
       }
     });
@@ -2623,7 +3037,7 @@ const onDomReady =
       { passive: true }
     );
   } catch (err) {
-    window.console.error('zen-youtube-features injection failed', err);
+    enhancedLogger?.error?.('Enhanced', 'zen-youtube-features injection failed', err);
   }
 })();
 
@@ -2631,22 +3045,24 @@ const onDomReady =
 // 1) Auto-expand live chat in theater overlay (avoid "Show chat" placeholder)
 // 2) Preload comments content so Zen comments panel is not empty
 (function () {
-  'use strict';
-
   const host = typeof location === 'undefined' ? '' : location.hostname;
   if (!host) return;
-  if (!/(^|\.)youtube\.com$/.test(host) && !/\.youtube\.google/.test(host)) return;
+  if (!(/(^|\.)youtube\.com$/.test(host) || /\.youtube\.google/.test(host))) return;
 
-  const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
+  const SETTINGS_KEY = U?.SETTINGS_KEY || 'youtube_plus_settings';
   const PRELOADED_ATTR = 'data-ytp-zen-comments-preloaded';
 
   const readSettings = () => {
     try {
+      const store = /** @type {any} */ (window).YouTubePlusSettingsStore;
+      if (store && typeof store.load === 'function') {
+        return store.load();
+      }
       const raw = localStorage.getItem(SETTINGS_KEY);
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       return parsed && typeof parsed === 'object' ? parsed : null;
-    } catch (e) {
+    } catch (_e) {
       return null;
     }
   };
@@ -2663,13 +3079,17 @@ const onDomReady =
     if (!element) return;
     try {
       element.dispatchEvent(
-        new window.MouseEvent('click', { bubbles: true, cancelable: true, view: window })
+        new window.MouseEvent('click', {
+          bubbles: true,
+          cancelable: true,
+          view: window,
+        })
       );
-    } catch (e) {
+    } catch (_e) {
       try {
         element.click();
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Enhanced');
       }
     }
   };
@@ -2677,7 +3097,7 @@ const onDomReady =
   const preloadCommentsInBackground = (/** @type {any} */ flexy) => {
     const commentsTab = $('#tab-comments');
     const commentsBtn = $('#material-tabs a[tyt-tab-content="#tab-comments"]');
-    if (!commentsTab || !commentsBtn || commentsTab.getAttribute(PRELOADED_ATTR) === '1') return;
+    if (!(commentsTab && commentsBtn) || commentsTab.getAttribute(PRELOADED_ATTR) === '1') return;
 
     // Disable tiny pre-load mode CSS from main.js for theater overlay comments.
     if (flexy && !flexy.hasAttribute('keep-comments-scroller')) {
@@ -2728,8 +3148,8 @@ const onDomReady =
           if (cnt.isHiddenByUser === true) cnt.isHiddenByUser = false;
           expanded = cnt.collapsed === false;
         }
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'Enhanced');
       }
 
       // Method 2: click the "Show chat" button as fallback
@@ -2753,7 +3173,7 @@ const onDomReady =
   };
 
   const runOverlayFixes = () => {
-    if (!(window.YouTubeUtils?.isWatchPage?.() ?? false)) return;
+    if (!(U?.isWatchPage?.() ?? false)) return;
     if (!isTheaterEnhancementEnabled()) return;
 
     const flexy = $('ytd-watch-flexy');
@@ -2777,7 +3197,7 @@ const onDomReady =
 
   // --- Targeted observers (NOT document.body subtree — that fires hundreds of times during page parse) ---
   const setupOverlayObservers = () => {
-    const coordinator = window.YouTubeMutationCoordinator;
+    const coordinator = window.YouTubePlusMutationCoordinator;
     if (!coordinator?.watchTarget) return;
 
     // Observer 1: watch ytd-watch-flexy for theater / fullscreen attribute changes
@@ -2821,28 +3241,31 @@ const onDomReady =
     attachChatObserver();
 
     // Re-attach after SPA navigation (new flexy/chat elements are created)
-    window.addEventListener(
-      'yt-navigate-finish',
-      () => {
-        expandAttempts = 0; // reset on navigation so chat can expand on new page
-        enhancedSetTimeout_(() => {
-          attachFlexyObserver();
-          attachChatObserver();
-          scheduleRun();
-        }, 180);
-      },
-      { passive: true }
-    );
+    const _navFinishHandler = () => {
+      expandAttempts = 0; // reset on navigation so chat can expand on new page
+      enhancedSetTimeout_(() => {
+        attachFlexyObserver();
+        attachChatObserver();
+        scheduleRun();
+      }, 180);
+    };
+    if (U?.cleanupManager?.registerListener) {
+      U.cleanupManager.registerListener(window, 'yt-navigate-finish', _navFinishHandler, {
+        passive: true,
+      });
+    } else {
+      window.addEventListener('yt-navigate-finish', _navFinishHandler, { passive: true });
+    }
 
     try {
-      if (window.YouTubeUtils?.cleanupManager?.register) {
-        window.YouTubeUtils.cleanupManager.register(() => {
+      if (U?.cleanupManager?.register) {
+        U.cleanupManager.register(() => {
           coordinator.unwatch(flexyObserverId);
           coordinator.unwatch(chatObserverId);
         });
       }
-    } catch (e) {
-      // Non-critical, suppressed
+    } catch (_e) {
+      U.logSuppressed(_e, 'Enhanced');
     }
   };
 
@@ -2861,369 +3284,4 @@ const onDomReady =
     scheduleRun();
     setupOverlayObservers();
   }
-})();
-
-// Comment Translation Button
-// Restores the "Translate to ..." button that YouTube removed from comments
-(function () {
-  'use strict';
-
-  const t = window.YouTubeUtils.t;
-
-  const TRANSLATE_BTN_CLASS = 'ytp-comment-translate-btn';
-  const TRANSLATED_ATTR = 'data-ytp-translated';
-  const ORIGINAL_ATTR = 'data-ytp-original-text';
-  const SETTINGS_KEY = window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings';
-  /** @type {string | null} */
-  let translateObserver = null;
-
-  /**
-   * Map YouTube+/YouTube locale codes → Google Translate BCP-47 codes.
-   * Google Translate uses mostly ISO 639-1 with some regional variants.
-   */
-  const LANG_MAP = {
-    // YouTube+ internal codes
-    cn: 'zh-CN',
-    tw: 'zh-TW',
-    kr: 'ko',
-    jp: 'ja',
-    ng: 'en',
-    du: 'nl',
-    be: 'be',
-    bg: 'bg',
-    kk: 'kk',
-    ky: 'ky',
-    uz: 'uz',
-    uk: 'uk',
-    // YouTube locale codes → ISO 639-1
-    'zh-hans': 'zh-CN',
-    'zh-hant': 'zh-TW',
-    'zh-cn': 'zh-CN',
-    'zh-tw': 'zh-TW',
-    'zh-hk': 'zh-TW',
-    iw: 'he', // YouTube uses 'iw' for Hebrew
-    jv: 'jw', // Javanese
-    'sr-latn': 'sr',
-    'pt-br': 'pt',
-    'pt-pt': 'pt',
-    // Pass-through for standard ISO 639-1 codes
-    ar: 'ar',
-    az: 'az',
-    cs: 'cs',
-    da: 'da',
-    de: 'de',
-    el: 'el',
-    en: 'en',
-    es: 'es',
-    fi: 'fi',
-    fr: 'fr',
-    hi: 'hi',
-    hr: 'hr',
-    hu: 'hu',
-    id: 'id',
-    it: 'it',
-    lt: 'lt',
-    lv: 'lv',
-    ms: 'ms',
-    nl: 'nl',
-    no: 'no',
-    pl: 'pl',
-    ro: 'ro',
-    ru: 'ru',
-    sk: 'sk',
-    sl: 'sl',
-    sq: 'sq',
-    sv: 'sv',
-    th: 'th',
-    tr: 'tr',
-    vi: 'vi',
-  };
-
-  /** Normalise any locale/YouTube+ code to a Google-Translate-compatible code */
-  const toGoogleLang = (/** @type {any} */ code) => {
-    if (!code) return 'en';
-    const lower = code.toLowerCase();
-    if (/** @type {any} */ (LANG_MAP)[lower]) return /** @type {any} */ (LANG_MAP)[lower];
-    // Strip region suffix for unknown codes (e.g. 'es-419' → 'es')
-    const base = lower.split('-')[0];
-    return /** @type {any} */ (LANG_MAP)[base] || base || 'en';
-  };
-
-  /** Detect user's preferred language (returns Google-Translate-compatible code) */
-  const getUserLanguage = () => {
-    try {
-      // 1. YouTube+ i18n internal code (e.g. 'cn', 'kr', 'jp')
-      return toGoogleLang(window.YouTubeUtils.getLanguage());
-      // 2. <html lang="..."> attribute set by YouTube
-    } catch (e) {
-      // Non-critical, suppressed
-    }
-    // 3. Browser navigator.language
-    return toGoogleLang(navigator.language) || 'en';
-  };
-
-  /** Translate text using Google Translate (free endpoint) */
-  const translateText = async (/** @type {any} */ text, /** @type {any} */ targetLang) => {
-    const controller = new AbortController();
-    const timerId = enhancedSetTimeout_(() => controller.abort(), 8000); // 8 s timeout
-    try {
-      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
-      const resp = await fetch(url, { signal: controller.signal });
-      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-      const data = await resp.json();
-      if (Array.isArray(data) && Array.isArray(data[0])) {
-        return data[0].map((/** @type {any} */ s) => (s && s[0]) || '').join('');
-      }
-    } catch (e) {
-      if (/** @type {any} */ (e)?.name !== 'AbortError') {
-        window.console.warn('[YouTube+] Translation failed:', e);
-      }
-    } finally {
-      clearTimeout(timerId);
-    }
-    return null;
-  };
-
-  /** Get the translate button label (uses i18n) */
-  const getTranslateLabel = () => t('translateComment') || 'Translate';
-
-  /** Get the show-original button label (uses i18n) */
-  const getShowOriginalLabel = () => t('showOriginal') || 'Show original';
-
-  /** Inject CSS for translate button */
-  const injectStyles = (() => {
-    let injected = false;
-    return () => {
-      if (injected) return;
-      injected = true;
-      const css = `
-        .${TRANSLATE_BTN_CLASS}{
-          display:inline-flex;align-items:center;gap:4px;
-          background:none;border:none;cursor:pointer;
-          color:var(--yt-spec-text-secondary,#aaa);
-          font-size:1.2rem;line-height:1.8rem;font-weight:400;
-          padding:4px 0;margin-top:4px;
-          font-family:'Roboto','Arial',sans-serif;
-          transition:color .2s;
-        }
-        .${TRANSLATE_BTN_CLASS}:hover{color:var(--yt-spec-text-primary,#fff);}
-        .${TRANSLATE_BTN_CLASS}[disabled]{opacity:.5;cursor:wait;}
-        .${TRANSLATE_BTN_CLASS} svg{flex-shrink:0;}
-      `;
-      try {
-        if (window.YouTubeUtils?.StyleManager?.add) {
-          window.YouTubeUtils.StyleManager.add('ytp-comment-translate-styles', css);
-          return;
-        }
-      } catch (e) {
-        // Non-critical, suppressed
-      }
-      const style = document.createElement('style');
-      style.id = 'ytp-comment-translate-styles';
-      style.textContent = css;
-      (document.head || document.documentElement).appendChild(style);
-    };
-  })();
-
-  const translateIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>`;
-  const _setSafeHTML = window.YouTubeUtils.setSafeHTML;
-
-  const isCommentTranslateEnabled = (settings = null) => {
-    try {
-      const currentSettings =
-        settings ||
-        /** @type {any} */ (window).youtubePlus?.settings ||
-        (() => {
-          const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-          return parsed && typeof parsed === 'object' ? parsed : {};
-        })();
-      return currentSettings?.enableCommentTranslate !== false;
-    } catch (e) {
-      return true;
-    }
-  };
-
-  const removeTranslateButtons = () => {
-    $$(`.${TRANSLATE_BTN_CLASS}`).forEach(btn => btn.remove());
-    $$(`[${TRANSLATED_ATTR}][${ORIGINAL_ATTR}]`).forEach(
-      /** @param {Element} node */ node => {
-        const original = node.getAttribute(ORIGINAL_ATTR);
-        if (original) node.textContent = original;
-        node.removeAttribute(TRANSLATED_ATTR);
-        node.removeAttribute(ORIGINAL_ATTR);
-      }
-    );
-  };
-
-  const stopTranslateObserver = () => {
-    if (!translateObserver) return;
-    window.YouTubeMutationCoordinator?.unwatch?.(translateObserver);
-    translateObserver = null;
-  };
-
-  /** Add translate button to a comment element */
-  const addTranslateButton = (/** @type {any} */ commentEl) => {
-    if (commentEl.querySelector(`.${TRANSLATE_BTN_CLASS}`)) return;
-
-    // Find the text content element
-    const contentEl = commentEl.querySelector(
-      '#content-text.ytd-comment-view-model, ' +
-        '#content-text.ytd-comment-renderer, ' +
-        'yt-attributed-string#content-text, ' +
-        'yt-formatted-string#content-text, ' +
-        '#content-text'
-    );
-    if (!contentEl) return;
-
-    const text = (contentEl.textContent || '').trim();
-    if (!text || text.length < 2) return;
-
-    // Don't add if comment is already in user's language (basic heuristic)
-    const userLang = getUserLanguage();
-
-    const btn = document.createElement('button');
-    btn.className = TRANSLATE_BTN_CLASS;
-    btn.type = 'button';
-    _setSafeHTML(btn, `${translateIcon} ${getTranslateLabel()}`);
-    btn.setAttribute('aria-label', getTranslateLabel());
-
-    btn.addEventListener('click', async e => {
-      e.preventDefault();
-      e.stopPropagation();
-
-      if (contentEl.hasAttribute(TRANSLATED_ATTR)) {
-        // Toggle back to original
-        const original = contentEl.getAttribute(ORIGINAL_ATTR);
-        if (original) {
-          contentEl.textContent = original;
-          contentEl.removeAttribute(TRANSLATED_ATTR);
-          _setSafeHTML(btn, `${translateIcon} ${getTranslateLabel()}`);
-          btn.setAttribute('aria-label', getTranslateLabel());
-        }
-        return;
-      }
-
-      btn.disabled = true;
-      _setSafeHTML(btn, `${translateIcon} ...`);
-
-      const originalText = contentEl.textContent || '';
-      const translated = await translateText(originalText, userLang);
-
-      if (translated && translated !== originalText) {
-        contentEl.setAttribute(ORIGINAL_ATTR, originalText);
-        contentEl.setAttribute(TRANSLATED_ATTR, 'true');
-        contentEl.textContent = translated;
-        _setSafeHTML(btn, `${translateIcon} ${getShowOriginalLabel()}`);
-        btn.setAttribute('aria-label', getShowOriginalLabel());
-      } else {
-        _setSafeHTML(btn, `${translateIcon} ${getTranslateLabel()}`);
-        btn.setAttribute('aria-label', getTranslateLabel());
-      }
-      btn.disabled = false;
-    });
-
-    // Insert after the text content
-    const actionBar = commentEl.querySelector(
-      '#action-buttons, ytd-comment-action-buttons-renderer, #toolbar'
-    );
-    if (actionBar) {
-      actionBar.parentElement.insertBefore(btn, actionBar);
-    } else {
-      contentEl.after(btn);
-    }
-  };
-
-  /** Process all visible comments */
-  const processComments = () => {
-    const commentSelectors = [
-      'ytd-comment-view-model',
-      'ytd-comment-renderer',
-      'ytd-comment-thread-renderer',
-    ];
-    for (const sel of commentSelectors) {
-      $$(sel).forEach(addTranslateButton);
-    }
-  };
-
-  /** Debounced processing */
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let processTimeout = null;
-  const scheduleProcess = () => {
-    if (processTimeout) clearTimeout(processTimeout);
-    processTimeout = enhancedSetTimeout_(processComments, 300);
-  };
-
-  const startTranslateFeature = () => {
-    if (!isCommentTranslateEnabled()) {
-      stopTranslateObserver();
-      removeTranslateButtons();
-      return;
-    }
-
-    injectStyles();
-    processComments();
-
-    if (translateObserver) return;
-
-    // Observe for new comments
-    const commentsContainer = $('#comments, #tab-comments, #content');
-    const target = commentsContainer || document.body;
-
-    const coordinator = window.YouTubeMutationCoordinator;
-    if (coordinator?.watchTarget) {
-      translateObserver = 'enhanced::translateComments';
-      coordinator.watchTarget(
-        translateObserver,
-        target,
-        (/** @type {MutationRecord[]} */ mutations) => {
-          let hasNewComments = false;
-          for (const m of mutations) {
-            for (const node of m.addedNodes) {
-              if (!(node instanceof Element)) continue;
-              if (
-                node.matches?.(
-                  'ytd-comment-view-model, ytd-comment-renderer, ytd-comment-thread-renderer'
-                ) ||
-                node.querySelector?.('ytd-comment-view-model, ytd-comment-renderer, #content-text')
-              ) {
-                hasNewComments = true;
-                break;
-              }
-            }
-            if (hasNewComments) break;
-          }
-          if (hasNewComments) scheduleProcess();
-        },
-        { childList: true, attributes: false, subtree: true }
-      );
-    }
-  };
-
-  // Lazy init on watch pages
-  const scheduleInit = () => {
-    const isVideoPage = location.pathname === '/watch' || location.pathname.startsWith('/shorts/');
-    if (!isVideoPage) return;
-
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(() => startTranslateFeature(), { timeout: 3000 });
-    } else {
-      enhancedSetTimeout_(startTranslateFeature, 1500);
-    }
-  };
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', scheduleInit, { once: true });
-  } else {
-    scheduleInit();
-  }
-
-  window.addEventListener('yt-navigate-finish', scheduleInit, { passive: true });
-  window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {
-    if (isCommentTranslateEnabled(e?.detail)) {
-      startTranslateFeature();
-      return;
-    }
-    stopTranslateObserver();
-    removeTranslateButtons();
-  });
 })();

@@ -1,22 +1,10 @@
-// Playlist Search
+// Playlist Search — LazyLoader registered as 'playlist-search'.
+//
+// Responsibility: search/filter bar for YouTube playlist pages.
+//   Renders a text input that filters playlist entries in real time
+//   and highlights matching items.
+// Public surface: none (self-contained IIFE, registered via LazyLoader).
 (function () {
-  'use strict';
-  const _createHTML = window._ytpDefaults?.createHTML || ((/** @type {string} */ s) => s);
-  /**
-   * @param {Element} container
-   * @param {string} html
-   */
-  const renderTemplateClone = (container, html) => {
-    if (!(container instanceof Element)) return;
-    const template = document.createElement('template');
-    const range = document.createRange();
-    const root = document.body || document.documentElement;
-    if (root) range.selectNode(root);
-    // eslint-disable-next-line no-unsanitized/method -- pre-sanitized via Trusted Types policy (_createHTML)
-    template.content.append(range.createContextualFragment(_createHTML(html)));
-    container.replaceChildren(template.content.cloneNode(true));
-  };
-
   let featureEnabled = true;
   const setFeatureEnabled = (/** @type {boolean|undefined} */ nextEnabled) => {
     featureEnabled = nextEnabled !== false;
@@ -35,20 +23,12 @@
   window._playlistSearchInitialized = true;
 
   // Shared DOM helper from YouTubeUtils
-  const qs = window.YouTubeUtils.$;
-  const qsAll = window.YouTubeUtils.$$;
-  const byId = window.YouTubeUtils.byId;
-
-  // Shared translation helper from YouTubeUtils
-  const t = window.YouTubeUtils.t;
+  const U = window.YouTubeUtils;
+  const { $: qs, $$: qsAll, t, logger: playlistLogger } = U?.helpers ?? {};
 
   // This module targets playlist content on both /watch and /playlist pages.
   const shouldRunOnThisPage = () => {
-    return (
-      window.location.hostname.endsWith('youtube.com') &&
-      window.location.hostname !== 'music.youtube.com' &&
-      (window.location.pathname === '/watch' || window.location.pathname === '/playlist')
-    );
+    return U.isYouTubeDomain() && (U.isWatchRoute() || window.location.pathname === '/playlist');
   };
 
   const isPlaylistPage = () => window.location.pathname === '/playlist';
@@ -58,22 +38,22 @@
     try {
       const params = new URLSearchParams(window.location.search);
       return params.has('list');
-    } catch (e) {
+    } catch (_e) {
       return false;
     }
   };
 
-  const onDomReady = (/** @type {() => void} */ cb) => {
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', cb, { once: true });
-    } else {
-      cb();
-    }
-  };
+  const onDomReady =
+    U?.onDomReady ||
+    (cb => {
+      if (document.readyState === 'loading')
+        document.addEventListener('DOMContentLoaded', cb, { once: true });
+      else cb();
+    });
 
   // Shared debounce/throttle from YouTubeUtils
-  const debounce = window.YouTubeUtils.debounce;
-  const throttle = window.YouTubeUtils.throttle || window._ytpDefaults?.throttle;
+  const debounce = U.debounce;
+  const throttle = U.throttle;
 
   // Previously limited to specific lists (LL/WL). Now support any playlist id.
 
@@ -144,11 +124,11 @@
       attached = true;
 
       const handleFocus = (/** @type {HTMLInputElement} */ input) => {
-        /** @type {any} */ (input).style.borderColor = 'var(--yt-spec-call-to-action)';
+        input.classList.add('is-focused');
       };
 
       const handleBlur = (/** @type {HTMLInputElement} */ input) => {
-        /** @type {any} */ (input).style.borderColor = 'var(--yt-spec-10-percent-layer)';
+        input.classList.remove('is-focused');
       };
 
       const handleInput = (/** @type {HTMLInputElement} */ input) => {
@@ -174,8 +154,7 @@
           document,
           'focusin',
           '.ytplus-playlist-search-input',
-          (/** @type {any} */ ev, /** @type {any} */ target) => {
-            void ev;
+          (/** @type {any} */ _ev, /** @type {any} */ target) => {
             if (target) handleFocus(target);
           }
         );
@@ -183,8 +162,7 @@
           document,
           'focusout',
           '.ytplus-playlist-search-input',
-          (/** @type {any} */ ev, /** @type {any} */ target) => {
-            void ev;
+          (/** @type {any} */ _ev, /** @type {any} */ target) => {
             if (target) handleBlur(target);
           }
         );
@@ -192,8 +170,7 @@
           document,
           'input',
           '.ytplus-playlist-search-input',
-          (/** @type {any} */ ev, /** @type {any} */ target) => {
-            void ev;
+          (/** @type {any} */ _ev, /** @type {any} */ target) => {
             if (target) handleInput(target);
           }
         );
@@ -232,28 +209,32 @@
   // Load settings from localStorage
   const loadSettings = () => {
     try {
-      const globalSettings = localStorage.getItem(
-        window.YouTubeUtils?.SETTINGS_KEY || 'youtube_plus_settings'
-      );
-      if (globalSettings) {
-        const parsedGlobal = JSON.parse(globalSettings);
-        if (typeof parsedGlobal.enablePlaylistSearch === 'boolean') {
-          config.enabled = parsedGlobal.enablePlaylistSearch;
+      const store = /** @type {any} */ (window).YouTubePlusSettingsStore;
+      const globalSettings =
+        store && typeof store.load === 'function'
+          ? store.load()
+          : (() => {
+              const raw = localStorage.getItem(U?.SETTINGS_KEY || 'youtube_plus_settings');
+              return raw ? JSON.parse(raw) : null;
+            })();
+      if (globalSettings && typeof globalSettings === 'object') {
+        if (typeof globalSettings.enablePlaylistSearch === 'boolean') {
+          config.enabled = globalSettings.enablePlaylistSearch;
         }
       }
       const saved = localStorage.getItem(config.storageKey);
       if (saved) {
         const parsed = JSON.parse(saved);
         // Use safeMerge to prevent prototype pollution
-        if (window.YouTubeUtils && window.YouTubeUtils.safeMerge) {
-          window.YouTubeUtils.safeMerge(config, parsed);
+        if (U?.safeMerge) {
+          U.safeMerge(config, parsed);
         } else {
           // Fallback: only copy known safe keys
           if (typeof parsed.enabled === 'boolean') config.enabled = parsed.enabled;
         }
       }
     } catch (error) {
-      window.console.warn('[Playlist Search] Failed to load settings:', error);
+      playlistLogger?.warn?.('Playlist Search', 'Failed to load settings', error);
     }
   };
 
@@ -275,7 +256,7 @@
 
       return null;
     } catch (error) {
-      window.console.warn('[Playlist Search] Failed to get playlist ID:', error);
+      playlistLogger?.warn?.('Playlist Search', 'Failed to get playlist ID', error);
       return null;
     }
   };
@@ -301,21 +282,21 @@
       ];
       for (const s of sel) {
         const el = playlistPanel.querySelector(s) || qs(s);
-        if (el && el.textContent && el.textContent.trim()) {
+        if (el?.textContent?.trim()) {
           // Sanitize and limit length
           const title = el.textContent.trim();
-          return title.length > 100 ? title.substring(0, 100) + '...' : title;
+          return title.length > 100 ? `${title.substring(0, 100)}...` : title;
         }
       }
 
       // Fallback to meta or channel-specific metadata
       const meta = qs('meta[name="title"]') || qs('meta[property="og:title"]');
-      if (meta && meta.content) {
+      if (meta?.content) {
         const title = meta.content.trim();
-        return title.length > 100 ? title.substring(0, 100) + '...' : title;
+        return title.length > 100 ? `${title.substring(0, 100)}...` : title;
       }
     } catch (error) {
-      window.console.warn('[Playlist Search] Failed to get display name:', error);
+      playlistLogger?.warn?.('Playlist Search', 'Failed to get display name', error);
     }
 
     // Default to sanitized id if nothing else
@@ -342,7 +323,7 @@
       };
     }
 
-    if (window.YouTubeUtils?.isWatchPage?.() === true) {
+    if (U?.isWatchPage?.() === true) {
       const panel = qs('ytd-playlist-panel-renderer');
       if (!panel) return null;
       const itemsContainer =
@@ -387,13 +368,6 @@
     // Create search container
     const searchContainer = /** @type {any} */ (document.createElement('div'));
     searchContainer.className = 'ytplus-playlist-search';
-    searchContainer.style.cssText = `
-      padding: 8px 16px;
-      background: transparent;
-      border-bottom: 1px solid var(--yt-spec-10-percent-layer);
-      z-index: 50;
-      width: 94%;
-    `;
 
     // Make search (and delete bar inside it) sticky within the playlist area.
     // We try to use `position: sticky` when possible; if the DOM structure
@@ -404,10 +378,12 @@
         // If we're on the /watch page, keep the previous simple sticky style
         // to avoid changing the look/positioning inside the right-hand panel.
         if (!state.isPlaylistPage) {
-          searchContainer.style.position = 'sticky';
-          searchContainer.style.top = '0';
-          searchContainer.style.zIndex = '1';
-          searchContainer.style.background = 'transparent';
+          Object.assign(searchContainer.style, {
+            position: 'sticky',
+            top: '0',
+            zIndex: '1',
+            background: 'transparent',
+          });
           return;
         }
 
@@ -434,23 +410,26 @@
 
         if (scrollAncestor && scrollAncestor !== document.body) {
           // If a scrollable ancestor exists, use sticky
-          searchContainer.style.position = 'sticky';
-          searchContainer.style.top = `${topOffset}px`;
-          searchContainer.style.background = 'var(--yt-spec-badge-chip-background)';
-          searchContainer.style.backdropFilter = 'blur(6px)';
-          searchContainer.style.boxShadow = 'var(--yt-shadow)';
+          Object.assign(searchContainer.style, {
+            position: 'sticky',
+            top: `${topOffset}px`,
+            background: 'var(--yt-spec-badge-chip-background)',
+            backdropFilter: 'blur(6px)',
+            boxShadow: 'var(--yt-shadow)',
+          });
         } else if (panel) {
           // Fallback: position fixed near the playlist panel so it remains visible
           const rect = panel.getBoundingClientRect();
-          searchContainer.style.position = 'fixed';
-          searchContainer.style.top = `${topOffset}px`;
-          // Place horizontally aligned with the panel
-          searchContainer.style.left = `${rect.left}px`;
-          searchContainer.style.width = `${rect.width}px`;
-          searchContainer.style.background = 'var(--yt-spec-badge-chip-background)';
-          searchContainer.style.backdropFilter = 'blur(6px)';
-          searchContainer.style.boxShadow = '0 6px 20px rgba(0,0,0,0.4)';
-          searchContainer.style.zIndex = '9999';
+          Object.assign(searchContainer.style, {
+            position: 'fixed',
+            top: `${topOffset}px`,
+            left: `${rect.left}px`,
+            width: `${rect.width}px`,
+            background: 'var(--yt-spec-badge-chip-background)',
+            backdropFilter: 'blur(6px)',
+            boxShadow: '0 6px 20px rgba(0,0,0,0.4)',
+            zIndex: '9999',
+          });
 
           // Recompute on resize/scroll to keep alignment
           const recompute = debounce(() => {
@@ -467,7 +446,7 @@
           searchContainer.style.top = `${topOffset}px`;
           searchContainer.style.background = 'var(--yt-spec-badge-chip-background)';
         }
-      } catch (e) {
+      } catch (_e) {
         // Ignore errors and leave default styles
       }
     };
@@ -483,18 +462,6 @@
       : 'searchPlaceholder';
     searchInput.placeholder = t(placeholderKey, { playlist: playlistName });
     searchInput.className = 'ytplus-playlist-search-input';
-    searchInput.style.cssText = `
-      width: 93%;
-      padding: 8px 16px;
-      border: 1px solid var(--yt-spec-10-percent-layer);
-      border-radius: 20px;
-      background: var(--yt-spec-badge-chip-background);
-      color: var(--yt-text-primary);
-      font-size: 14px;
-      font-family: 'Roboto', Arial, sans-serif;
-      outline: none;
-      transition: border-color 0.2s;
-    `;
 
     setupInputDelegation();
 
@@ -536,8 +503,8 @@
   // Setup MutationObserver for dynamic playlist updates
   const setupPlaylistObserver = () => {
     // Disconnect existing watcher if any
-    if (state.rootSubId && window.YouTubeMutationCoordinator?.unsubscribe) {
-      window.YouTubeMutationCoordinator.unsubscribe(state.rootSubId);
+    if (state.rootSubId && window.YouTubePlusMutationCoordinator?.unsubscribe) {
+      window.YouTubePlusMutationCoordinator.unsubscribe(state.rootSubId);
       state.rootSubId = null;
     }
     if (state.observerFallbackTimerId) {
@@ -546,7 +513,7 @@
     }
 
     const playlistPanel = state.playlistPanel || getPlaylistContext()?.panel;
-    if (!playlistPanel || !state.itemTagName || !state.itemSelector) return;
+    if (!(playlistPanel && state.itemTagName && state.itemSelector)) return;
 
     let lastUpdateCount = state.originalItems.length;
     let updateScheduled = false;
@@ -595,7 +562,7 @@
           collectOriginalItems();
 
           // Re-apply current search filter if any
-          if (state.searchInput && state.searchInput.value) {
+          if (state.searchInput?.value) {
             filterPlaylistItems(state.searchInput.value);
           }
         }
@@ -603,7 +570,7 @@
       });
     }, config.observerThrottleMs);
 
-    const coordinator = window.YouTubeMutationCoordinator;
+    const coordinator = window.YouTubePlusMutationCoordinator;
     if (coordinator?.subscribeRoot) {
       state.rootSubId = coordinator.subscribeRoot('playlist-search-items', handleMutations, {
         selector: itemSelector,
@@ -615,16 +582,16 @@
     state.observerFallbackTimerId = setInterval(() => {
       try {
         const currentItemsRoot = state.itemsContainer || state.playlistPanel || playlistPanel;
-        if (!currentItemsRoot || !state.itemSelector) return;
+        if (!(currentItemsRoot && state.itemSelector)) return;
         const currentItems = currentItemsRoot.querySelectorAll(state.itemSelector);
         if (currentItems.length !== state.originalItems.length) {
           collectOriginalItems();
-          if (state.searchInput && state.searchInput.value) {
+          if (state.searchInput?.value) {
             filterPlaylistItems(state.searchInput.value);
           }
         }
-      } catch (e) {
-        // Non-critical, suppressed
+      } catch (_e) {
+        U.logSuppressed(_e, 'PlaylistSearch');
       }
     }, config.observerThrottleMs);
   };
@@ -634,13 +601,14 @@
    */
   const collectOriginalItems = () => {
     const itemsRoot = state.itemsContainer || state.playlistPanel;
-    if (!itemsRoot || !state.itemSelector) return;
+    if (!(itemsRoot && state.itemSelector)) return;
     const items = itemsRoot.querySelectorAll(state.itemSelector);
 
     // Limit number of items to prevent performance issues
     if (items.length > config.maxPlaylistItems) {
-      window.console.warn(
-        `[Playlist Search] Playlist has ${items.length} items, limiting to ${config.maxPlaylistItems}`
+      playlistLogger?.warn?.(
+        'Playlist Search',
+        `Playlist has ${items.length} items, limiting to ${config.maxPlaylistItems}`
       );
     }
 
@@ -708,7 +676,7 @@
 
     // Validate and sanitize query
     if (query && typeof query !== 'string') {
-      window.console.warn('[Playlist Search] Invalid query type');
+      playlistLogger?.warn?.('Playlist Search', 'Invalid query type');
       return;
     }
 
@@ -767,7 +735,7 @@
   // Update results count (optional visual feedback)
   const updateResultsCount = (/** @type {number} */ visible, /** @type {number} */ total) => {
     // Could add a results counter here if desired
-    window.YouTubeUtils?.logger?.debug?.(`[Playlist Search] Showing ${visible} of ${total} videos`);
+    U?.logger?.debug?.(`[Playlist Search] Showing ${visible} of ${total} videos`);
   };
 
   // ── Video Deletion Feature (similar to comment.js pattern) ──
@@ -779,10 +747,10 @@
    */
   const logError = (context, error) => {
     const errorObj = error instanceof Error ? error : new Error(String(error));
-    if (window.YouTubeErrorBoundary) {
-      window.YouTubeErrorBoundary.logError(errorObj, { context });
+    if (window.YouTubePlusErrorBoundary) {
+      window.YouTubePlusErrorBoundary.logError(errorObj, { context });
     } else {
-      window.console.error(`[YouTube+][PlaylistSearch] ${context}:`, error);
+      playlistLogger?.error?.('PlaylistSearch', context, error);
     }
   };
 
@@ -793,11 +761,11 @@
    * @param {string} context - Error context for debugging
    * @returns {T} Wrapped function
    */
-  // Use shared withErrorBoundary from YouTubeErrorBoundary
+  // Use shared withErrorBoundary from YouTubePlusErrorBoundary
   const withErrorBoundary = (fn, context) => {
-    if (window.YouTubeErrorBoundary?.withErrorBoundary) {
+    if (window.YouTubePlusErrorBoundary?.withErrorBoundary) {
       return /** @type {any} */ (
-        window.YouTubeErrorBoundary.withErrorBoundary(
+        window.YouTubePlusErrorBoundary.withErrorBoundary(
           /** @type {(...args: unknown[]) => unknown} */ (/** @type {unknown} */ (fn)),
           'PlaylistSearch'
         )
@@ -838,8 +806,7 @@
         tb.title = t('playlistDeleteModeExit');
       }
       if (deleteBar) {
-        const db = /** @type {any} */ (deleteBar);
-        if (db.style) db.style.display = '';
+        deleteBar.classList.add('is-visible');
       }
       addCheckboxesToItems();
     } else {
@@ -850,8 +817,7 @@
         tb.title = t('playlistDeleteMode');
       }
       if (deleteBar) {
-        const db = /** @type {any} */ (deleteBar);
-        if (db.style) db.style.display = 'none';
+        deleteBar.classList.remove('is-visible');
       }
       removeCheckboxesFromItems();
     }
@@ -863,7 +829,7 @@
    */
   const addCheckboxesToItems = withErrorBoundary(() => {
     const itemsRoot = state.itemsContainer || state.playlistPanel;
-    if (!itemsRoot || !state.itemSelector) return;
+    if (!(itemsRoot && state.itemSelector)) return;
 
     const items = itemsRoot.querySelectorAll(state.itemSelector);
     items.forEach((item, idx) => {
@@ -875,13 +841,6 @@
       checkbox.className = 'ytplus-playlist-item-checkbox ytp-plus-settings-checkbox';
       checkbox.setAttribute('aria-label', t('playlistSelectVideo'));
       checkbox.dataset.index = String(idx);
-      checkbox.style.cssText = `
-        position: absolute;
-        top: 8px;
-        left: 8px;
-        z-index: 2;
-        cursor: pointer;
-      `;
 
       checkbox.addEventListener('change', () => {
         const videoId = item.getAttribute('video-id') || `item-${idx}`;
@@ -926,7 +885,6 @@
 
     if (deleteBtn) {
       deleteBtn.disabled = state.selectedItems.size === 0;
-      deleteBtn.style.opacity = state.selectedItems.size > 0 ? '1' : '0.5';
     }
     if (countSpan) {
       /** @type {any} */ (countSpan).textContent = t('playlistSelectedCount', {
@@ -940,7 +898,7 @@
    */
   const selectAllItems = withErrorBoundary(() => {
     const itemsRoot = state.itemsContainer || state.playlistPanel;
-    if (!itemsRoot || !state.itemSelector) return;
+    if (!(itemsRoot && state.itemSelector)) return;
 
     itemsRoot
       .querySelectorAll('.ytplus-playlist-item-checkbox')
@@ -990,7 +948,7 @@
           item.querySelector('button.yt-icon-button');
 
         if (!menuBtn) {
-          window.console.warn('[Playlist Search] Could not find menu button for item');
+          playlistLogger?.warn?.('Playlist Search', 'Could not find menu button for item');
           resolve(false);
           return;
         }
@@ -1045,7 +1003,7 @@
             } else {
               // Close the menu if we can't find the option
               document.body.click();
-              window.console.warn('[Playlist Search] Could not find "Remove" option in menu');
+              playlistLogger?.warn?.('Playlist Search', 'Could not find "Remove" option in menu');
               resolve(false);
             }
           } catch (err) {
@@ -1073,7 +1031,7 @@
 
     state.isDeleting = true;
     const itemsRoot = state.itemsContainer || state.playlistPanel;
-    if (!itemsRoot || !state.itemSelector) {
+    if (!(itemsRoot && state.itemSelector)) {
       state.isDeleting = false;
       return;
     }
@@ -1115,7 +1073,7 @@
       failCount > 0
         ? t('playlistDeletePartial', { success: successCount, fail: failCount })
         : t('playlistDeleteSuccess', { count: successCount });
-    window.YouTubeUtils?.logger?.debug?.(`[Playlist Search] ${msg}`);
+    U?.logger?.debug?.(`[Playlist Search] ${msg}`);
   }, 'deleteSelectedItems');
 
   /**
@@ -1135,7 +1093,7 @@
     toggleBtn.setAttribute('aria-pressed', 'false');
     toggleBtn.setAttribute('aria-label', t('playlistDeleteMode'));
     toggleBtn.title = t('playlistDeleteMode');
-    renderTemplateClone(
+    U.renderTemplateClone(
       toggleBtn,
       `
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none"
@@ -1147,33 +1105,15 @@
       </svg>
     `
     );
-    toggleBtn.style.cssText = `
-      background: transparent;
-      border: 1px solid var(--yt-spec-10-percent-layer);
-      border-radius: 50%;
-      width: 36px;
-      height: 36px;
-      display: inline-flex;
-      align-items: center;
-      justify-content: center;
-      cursor: pointer;
-      color: var(--yt-spec-text-secondary);
-      transition: all 0.2s;
-      vertical-align: middle;
-      margin-left: 6px;
-      flex-shrink: 0;
-    `;
     toggleBtn.addEventListener('click', toggleDeleteMode);
 
     // Wrap search input and toggle in a flex container
     const inputWrapper = /** @type {any} */ (document.createElement('div'));
-    inputWrapper.style.cssText = 'display:flex;align-items:center;gap:6px;';
+    inputWrapper.className = 'ytplus-playlist-input-row';
     const searchInput = /** @type {any} */ (
       searchContainer.querySelector('.ytplus-playlist-search-input')
     );
     if (searchInput) {
-      searchInput.style.width = ''; // Reset fixed width
-      searchInput.style.flex = '1';
       if (searchInput.parentNode) {
         searchInput.parentNode.insertBefore(inputWrapper, searchInput);
       }
@@ -1184,22 +1124,9 @@
     // Action bar (hidden initially)
     const deleteBar = /** @type {any} */ (document.createElement('div'));
     deleteBar.className = 'ytplus-playlist-delete-bar';
-    deleteBar.style.cssText = `
-      display: none;
-      padding: 6px 0 0;
-      gap: 8px;
-      align-items: center;
-      flex-wrap: wrap;
-    `;
-    deleteBar.style.display = 'none';
 
     const countSpan = /** @type {any} */ (document.createElement('span'));
     countSpan.className = 'ytplus-playlist-selected-count';
-    countSpan.style.cssText = `
-      font-size: 12px;
-      color: var(--yt-spec-text-secondary);
-      margin-right: auto;
-    `;
     countSpan.textContent = t('playlistSelectedCount', { count: 0 });
 
     const createBtn = (
@@ -1210,18 +1137,7 @@
       const btn = /** @type {any} */ (document.createElement('button'));
       btn.type = 'button';
       btn.textContent = label;
-      btn.className = cls;
-      btn.style.cssText = `
-        padding: 5px 12px;
-        border-radius: 16px;
-        border: 1px solid var(--yt-spec-10-percent-layer);
-        cursor: pointer;
-        font-size: 12px;
-        font-weight: 500;
-        background: var(--yt-spec-badge-chip-background);
-        color: var(--yt-spec-text-primary);
-        transition: all 0.2s;
-      `;
+      btn.className = `ytplus-playlist-delete-action ${cls}`;
       btn.addEventListener('click', onClick);
       return btn;
     };
@@ -1234,10 +1150,6 @@
       deleteSelectedItems
     );
     deleteBtn.disabled = true;
-    deleteBtn.style.opacity = '0.5';
-    deleteBtn.style.background = 'var(--yt-search-highlight-bg)';
-    deleteBtn.style.borderColor = 'var(--yt-search-highlight-border)';
-    deleteBtn.style.color = 'var(--yt-search-highlight-accent)';
 
     deleteBar.append(countSpan, selectAllBtn, clearAllBtn, deleteBtn);
     searchContainer.appendChild(deleteBar);
@@ -1247,48 +1159,16 @@
    * Add CSS styles for the delete UI components
    */
   const addDeleteStyles = () => {
-    if (byId('ytplus-playlist-delete-styles')) return;
-    const css = `
-      .ytplus-playlist-delete-toggle.active {
-        color: var(--yt-search-highlight-accent) !important;
-        border-color: var(--yt-search-highlight-border-strong) !important;
-        background: var(--yt-search-highlight-faint) !important;
-      }
-      .ytplus-playlist-delete-toggle:hover {
-        color: var(--yt-spec-text-primary);
-        border-color: var(--yt-spec-text-secondary);
-      }
-      .ytplus-playlist-delete-bar {
-        display: flex;
-      }
-      .ytplus-playlist-delete-selected:not(:disabled):hover {
-        background: var(--yt-search-highlight-hover) !important;
-      }
-      .ytplus-playlist-select-all:hover,
-      .ytplus-playlist-clear-all:hover {
-        background: var(--yt-spec-10-percent-layer) !important;
-      }
-      .ytplus-playlist-item-checkbox {
-        opacity: 0.85;
-        transition: opacity 0.15s;
-      }
-      .ytplus-playlist-item-checkbox:hover {
-        opacity: 1;
-      }
-      /* Checkbox base styles inherited from basic.js .ytp-plus-settings-checkbox — no need to duplicate */
-    `;
     try {
-      if (window.YouTubeUtils?.StyleManager) {
-        window.YouTubeUtils.StyleManager.add('ytplus-playlist-delete-styles', css);
-        return;
+      const StyleManager = U?.StyleManager;
+      if (StyleManager && typeof StyleManager.add === 'function') {
+        const css =
+          window.YouTubePlusDesignSystem?.getStyle?.('ytplus-playlist-delete-styles') || '';
+        StyleManager.add('ytplus-playlist-delete-styles', css);
       }
     } catch (e) {
-      // Non-critical, suppressed
+      playlistLogger?.warn?.('PlaylistSearch', 'Failed to inject delete styles', e);
     }
-    const style = document.createElement('style');
-    style.id = 'ytplus-playlist-delete-styles';
-    style.textContent = css;
-    (document.head || document.documentElement).appendChild(style);
   };
 
   // Clean up search UI
@@ -1307,8 +1187,8 @@
     }
 
     // Disconnect mutation observer
-    if (state.rootSubId && window.YouTubeMutationCoordinator?.unsubscribe) {
-      window.YouTubeMutationCoordinator.unsubscribe(state.rootSubId);
+    if (state.rootSubId && window.YouTubePlusMutationCoordinator?.unsubscribe) {
+      window.YouTubePlusMutationCoordinator.unsubscribe(state.rootSubId);
       state.rootSubId = null;
     }
     if (state.observerFallbackTimerId) {
@@ -1357,16 +1237,28 @@
 
     // Only add UI if we're on a playlist page
     if (newPlaylistId) {
-      const waitFor = window.YouTubeUtils.waitFor || window.YouTubeUtils.waitForElement;
+      const targetSelector = isPlaylistPage()
+        ? 'ytd-playlist-video-list-renderer #contents'
+        : 'ytd-playlist-panel-renderer #items';
+      const waitFor = U.waitForElement;
       if (typeof waitFor === 'function') {
-        waitFor(
-          isPlaylistPage()
-            ? 'ytd-playlist-video-list-renderer #contents'
-            : 'ytd-playlist-panel-renderer #items',
-          1500
-        ).finally(addSearchUI);
+        waitFor(targetSelector, 1500).finally(addSearchUI);
       } else {
-        requestAnimationFrame(addSearchUI);
+        const retryFactory = U?.createRetryScheduler;
+        if (typeof retryFactory === 'function') {
+          retryFactory({
+            label: 'playlist-search-add-ui',
+            interval: 160,
+            maxAttempts: 10,
+            check: () => {
+              if (!document.querySelector(targetSelector)) return false;
+              addSearchUI();
+              return Boolean(qs('.ytplus-playlist-search'));
+            },
+          });
+        } else {
+          addSearchUI();
+        }
       }
     }
   }, 250);
@@ -1399,24 +1291,21 @@
     handleNavigation();
   };
 
-  if (window.YouTubePlusLazyLoader) {
-    window.YouTubePlusLazyLoader.register(
-      'playlist-search',
-      ensureInit,
-      /** @type {any} */ ({ priority: 1, shouldLoad: isRelevantRoute })
-    );
+  if (U?.whenRelevant) {
+    U.whenRelevant({
+      name: 'playlist-search',
+      isRelevant: isRelevantRoute,
+      onEnter: ensureInit,
+    });
   } else {
     onDomReady(ensureInit);
   }
 
-  if (
-    window.YouTubeUtils?.cleanupManager &&
-    typeof window.YouTubeUtils.cleanupManager.registerListener === 'function'
-  ) {
-    YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
+  if (U?.cleanupManager && typeof U.cleanupManager.registerListener === 'function') {
+    U.cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
       passive: true,
     });
-    YouTubeUtils.cleanupManager.registerListener(window, 'beforeunload', cleanup, {
+    U.cleanupManager.registerListener(window, 'beforeunload', cleanup, {
       passive: true,
     });
   } else {
@@ -1430,8 +1319,8 @@
       const nextEnabled = detail?.enablePlaylistSearch !== false;
       if (nextEnabled === featureEnabled) return;
       setFeatureEnabled(nextEnabled);
-    } catch (e) {
-      setFeatureEnabled(window.YouTubeUtils?.loadFeatureEnabled?.('enablePlaylistSearch') ?? true);
+    } catch (_e) {
+      setFeatureEnabled(U?.loadFeatureEnabled?.('enablePlaylistSearch') ?? true);
     }
   });
 })();

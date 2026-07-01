@@ -1,44 +1,60 @@
-// Performance monitoring for YouTube+ userscript (Enhanced)
+/**
+ * YouTube+ Diagnostics & Profiling
+ *
+ * Canonical owner: diagnostics / profiling only.
+ *
+ * The module measures the running userscript and records timing data. It does
+ * NOT modify the page, own feature lifecycle, or act as a shared utility bag.
+ * If you find yourself wanting to add a `RAFScheduler`, `DOMBatcher`,
+ * `IntersectionObserver` helper, or INP-yielding wrapper here, it belongs in
+ * a different canonical module instead (e.g. mutation-coordinator.js,
+ * dom-cache.js, design-system.js).
+ *
+ * Public surface (window.YouTubePerformance):
+ *   - mark(name)                       create a performance mark
+ *   - measure(name, startMark, end?)   measure duration between two marks
+ *   - timeFunction(name, fn)           wrap a sync fn with timing
+ *   - timeAsyncFunction(name, fn)      wrap an async fn with timing
+ *   - recordMetric(name, value, meta?) record a custom metric
+ *   - getStats(name?)                  aggregate stats for one or all metrics
+ *   - getPerformanceEntries(type)      wrap performance.getEntriesByType
+ *   - clearMetrics()                   reset all recorded data
+ *   - config                           { enabled, sampleRate }
+ *
+ * Auto-initialised on load (idempotent):
+ *   - Web Vitals observers (LCP, CLS, FID, INP)
+ *   - long-task observer
+ *   - page-load timing
+ *   - SPA navigation marks (yt-navigate-start / yt-navigate-finish)
+ *
+ * To disable everything at runtime: window.YouTubePerformance.config.enabled = false
+ */
 (function () {
-  'use strict';
+  /* global PerformanceObserver */
 
-  /* global Blob, URL, PerformanceObserver */
-
-  /**
-   * Performance monitoring configuration
-   */
-  const PerformanceConfig = {
-    enabled: true,
-    sampleRate: 0.01, // 1% sampling by default (can be overridden via YouTubePlusConfig)
-    storageKey: 'youtube_plus_performance',
-    metricsRetention: 100, // Keep last 100 metrics
-    enableconsoleOutput: false,
-    logLevel: 'info', // 'debug', 'info', 'warn', 'error'
-  };
+  if (typeof window !== 'undefined' && window.YouTubePerformance) {
+    return;
+  }
 
   const isTestEnv = (() => {
     try {
-      // Jest provides process.env.JEST_WORKER_ID in node/jsdom
       return typeof process !== 'undefined' && !!process?.env?.JEST_WORKER_ID;
-    } catch (e) {
+    } catch {
       return false;
     }
   })();
 
-  const qs =
-    window.YouTubeUtils?.$ ||
-    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
-      (root || document).querySelector(selector));
-  const qsAll =
-    window.YouTubeUtils?.$$ ||
-    ((/** @type {string} */ selector, /** @type {Document|Element|undefined} */ root) =>
-      Array.from((root || document).querySelectorAll(selector)));
-  const byId =
-    window.YouTubeUtils?.byId ||
-    ((/** @type {string} */ id) =>
-      /** @type {HTMLElement|null} */ (document['getElementById'](id)));
+  const logger = window.YouTubeUtils?.logger || window.YouTubePlusLogger || null;
 
-  const getConfiguredSampleRate = () => {
+  const config = {
+    enabled: true,
+    // 100% in tests to keep diagnostics deterministic; 1% in production by default.
+    sampleRate: isTestEnv ? 1.0 : 0.01,
+    metricsRetention: 100,
+  };
+
+  // Honor a user-configured sample rate when present.
+  if (!isTestEnv) {
     try {
       const cfg = window.YouTubePlusConfig;
       const explicit =
@@ -46,171 +62,103 @@
         cfg?.performanceSampleRate ??
         cfg?.perfSampleRate ??
         undefined;
-
-      if (typeof explicit === 'number' && isFinite(explicit)) {
-        return Math.min(1, Math.max(0, explicit));
+      if (typeof explicit === 'number' && Number.isFinite(explicit)) {
+        config.sampleRate = Math.min(1, Math.max(0, explicit));
       }
-    } catch (e) {
-      // ignore
+    } catch {
+      /* no-op */
     }
-    return PerformanceConfig.sampleRate;
-  };
-
-  // Apply sample rate (always 100% in tests to avoid flakiness)
-  PerformanceConfig.sampleRate = isTestEnv ? 1.0 : getConfiguredSampleRate();
-
-  // Sampling gate: keep API available but disable heavy observers/recording when not sampled.
-  try {
-    if (
-      !isTestEnv &&
-      PerformanceConfig.sampleRate < 1 &&
-      Math.random() > PerformanceConfig.sampleRate
-    ) {
-      PerformanceConfig.enabled = false;
+    // Sampling gate: keep the API available but disable observers/recording
+    // when this session is not selected.
+    if (config.sampleRate < 1 && Math.random() > config.sampleRate) {
+      config.enabled = false;
     }
-  } catch (e) {
-    // ignore
   }
 
-  /**
-   * Performance metrics storage
-   */
-  /** @type {{
-   * timings: Map<string, any>,
-   * marks: Map<string, number>,
-   * measures: any[],
-   * resources: any[],
-   * webVitals: {
-   *   LCP: number|null,
-   *   CLS: number,
-   *   FID: number|null,
-   *   INP: number|null,
-   *   FCP: number|null,
-   *   TTFB: number|null
-   * }
-   * }} */
+  /** @type {{ timings: Map<string, any>, marks: Map<string, number>, measures: any[], webVitals: { LCP: number|null, CLS: number, FID: number|null, INP: number|null, FCP: number|null, TTFB: number|null } }} */
   const metrics = {
     timings: new Map(),
     marks: new Map(),
     measures: [],
-    resources: [],
-    webVitals: {
-      LCP: null,
-      CLS: 0,
-      FID: null,
-      INP: null,
-      FCP: null,
-      TTFB: null,
-    },
+    webVitals: { LCP: null, CLS: 0, FID: null, INP: null, FCP: null, TTFB: null },
   };
 
   /**
-   * Create a performance mark
-   * @param {string} name - Mark name
+   * @param {string} name
    */
   const mark = name => {
-    if (!PerformanceConfig.enabled) return;
-
+    if (!config.enabled) return;
     try {
       if (typeof performance !== 'undefined' && performance.mark) {
         performance.mark(name);
       }
       metrics.marks.set(name, Date.now());
     } catch (e) {
-      window.console.warn('[YouTube+ Perf] Failed to create mark:', e);
+      logger?.warn?.('Performance', 'Failed to create mark', e);
     }
   };
 
   /**
-   * Measure time between two marks
-   * @param {string} name - Measure name
-   * @param {string} startMark - Start mark name
-   * @param {string} endMark - End mark name (optional, defaults to now)
-   * @returns {number} Duration in milliseconds
+   * @param {string} name
+   * @param {string} startMark
+   * @param {string} [endMark]
+   * @returns {number}
    */
-  const measure = (
-    /** @type {string} */ name,
-    /** @type {string} */ startMark,
-    /** @type {string|undefined} */ endMark
-  ) => {
-    if (!PerformanceConfig.enabled) return 0;
-
+  const measure = (name, startMark, endMark) => {
+    if (!config.enabled) return 0;
     try {
       const startTime = metrics.marks.get(startMark);
-      if (!startTime) {
-        // window.console.warn(`[YouTube+ Perf] Start mark "${startMark}" not found`);
-        return 0;
-      }
+      if (!startTime) return 0; // Missing start mark; stay quiet in hot paths.
 
       const endTime = endMark ? (metrics.marks.get(endMark) ?? Date.now()) : Date.now();
       const duration = endTime - startTime;
 
-      const measureData = {
+      metrics.measures.push({
         name,
         startMark,
         endMark: endMark || 'now',
         duration,
         timestamp: Date.now(),
-      };
-
-      metrics.measures.push(measureData);
-
-      // Keep only recent measures
-      if (metrics.measures.length > PerformanceConfig.metricsRetention) {
+      });
+      if (metrics.measures.length > config.metricsRetention) {
         metrics.measures.shift();
       }
 
-      if (PerformanceConfig.enableconsoleOutput) {
-        window.YouTubeUtils?.logger?.debug?.(`[YouTube+ Perf] ${name}: ${duration.toFixed(2)}ms`);
-      }
-
-      // Try native performance API
       if (typeof performance !== 'undefined' && performance.measure) {
         try {
           performance.measure(name, startMark, endMark);
-        } catch (e) {
-          // Non-critical, suppressed
+        } catch {
+          /* no-op */
         }
       }
-
       return duration;
     } catch (e) {
-      window.console.warn('[YouTube+ Perf] Failed to measure:', e);
+      logger?.warn?.('Performance', 'Failed to measure', e);
       return 0;
     }
   };
 
   /**
-   * Time a function execution
-   * @param {string} name - Timer name
-   * @param {Function} fn - Function to time
-   * @returns {Function} Wrapped function
+   * @param {string} name
+   * @param {(...args: any[]) => any} fn
    */
   const timeFunction = (name, fn) => {
-    if (!PerformanceConfig.enabled) return fn;
-
+    if (!config.enabled) return fn;
     return /** @this {any} */ function (/** @type {any[]} */ ...args) {
-      const startMark = `${name}-start-${Date.now()}`;
+      const startMark = `${name}-start`;
       mark(startMark);
-
       try {
-        const fnCallable = /** @type {(...params: any[]) => unknown} */ (fn);
-        const result = fnCallable.apply(this, args);
-        const promiseLike = /** @type {{ then?: unknown; finally?: unknown }} */ (
-          /** @type {unknown} */ (result)
-        );
-
-        // Handle promises
+        const result = fn.apply(this, args);
+        const maybePromise = /** @type {{ then?: unknown; finally?: unknown }} */ (result);
         if (
           result &&
-          typeof promiseLike.then === 'function' &&
-          typeof promiseLike.finally === 'function'
+          typeof maybePromise.then === 'function' &&
+          typeof maybePromise.finally === 'function'
         ) {
-          return /** @type {(onFinally: () => void) => unknown} */ (promiseLike.finally)(() => {
+          return /** @type {any} */ (maybePromise.finally)(() => {
             measure(name, startMark, undefined);
           });
         }
-
         measure(name, startMark, undefined);
         return result;
       } catch (error) {
@@ -221,21 +169,16 @@
   };
 
   /**
-   * Time an async function execution
-   * @param {string} name - Timer name
-   * @param {Function} fn - Async function to time
-   * @returns {Function} Wrapped async function
+   * @param {string} name
+   * @param {(...args: any[]) => Promise<any>} fn
    */
   const timeAsyncFunction = (name, fn) => {
-    if (!PerformanceConfig.enabled) return fn;
-
+    if (!config.enabled) return fn;
     return /** @this {any} */ async function (/** @type {any[]} */ ...args) {
-      const startMark = `${name}-start-${Date.now()}`;
+      const startMark = `${name}-start`;
       mark(startMark);
-
       try {
-        const fnCallable = /** @type {(...params: any[]) => Promise<unknown>} */ (fn);
-        const result = await fnCallable.apply(this, args);
+        const result = await fn.apply(this, args);
         measure(name, startMark, undefined);
         return result;
       } catch (error) {
@@ -246,42 +189,27 @@
   };
 
   /**
-   * Record custom metric
-   * @param {string} name - Metric name
-   * @param {number} value - Metric value
-   * @param {Object} metadata - Additional metadata
+   * @param {string} name
+   * @param {number} value
+   * @param {Record<string, any>} [metadata]
    */
-  const recordMetric = (
-    /** @type {string} */ name,
-    /** @type {number} */ value,
-    /** @type {Record<string, any>} */ metadata = {}
-  ) => {
-    if (!PerformanceConfig.enabled) return;
-
-    const metric = {
+  const recordMetric = (name, value, metadata = {}) => {
+    if (!config.enabled) return;
+    metrics.timings.set(name, {
       name,
       value,
       timestamp: Date.now(),
       ...metadata,
-    };
-
-    metrics.timings.set(name, metric);
-
-    if (PerformanceConfig.enableconsoleOutput) {
-      window.YouTubeUtils?.logger?.debug?.(`[YouTube+ Perf] ${name}: ${value}`, metadata);
-    }
+    });
   };
 
   /**
-   * Get performance statistics
-   * @param {string} metricName - Optional metric name filter
-   * @returns {Object|null} Performance statistics
+   * @param {string} [metricName]
    */
-  const getStats = (/** @type {string|undefined} */ metricName) => {
+  const getStats = metricName => {
     if (metricName) {
       const filtered = metrics.measures.filter(m => m.name === metricName);
       if (filtered.length === 0) return null;
-
       const durations = filtered.map(m => m.duration);
       return {
         name: metricName,
@@ -292,16 +220,12 @@
         latest: durations[durations.length - 1],
       };
     }
-
-    // Get all stats
     /** @type {Record<string, any>} */
     const allMetrics = {};
-    const metricNames = [...new Set(metrics.measures.map(m => m.name))];
-
-    metricNames.forEach(name => {
-      allMetrics[name] = getStats(name);
+    const names = [...new Set(metrics.measures.map(m => m.name))];
+    names.forEach(n => {
+      allMetrics[n] = getStats(n);
     });
-
     return {
       metrics: allMetrics,
       webVitals: { ...metrics.webVitals },
@@ -312,258 +236,42 @@
   };
 
   /**
-   * Get memory usage information
-   * @returns {any|null} Memory usage data
+   * @param {string} type
+   * @returns {any[]}
    */
-  const getMemoryUsage = () => {
-    const perf = /** @type {any} */ (performance);
-    if (typeof performance === 'undefined' || !perf.memory) {
-      return null;
-    }
-
+  const getPerformanceEntries = type => {
+    if (typeof performance === 'undefined' || !performance.getEntriesByType) return [];
     try {
-      const memory = perf.memory;
-      return {
-        usedJSHeapSize: memory.usedJSHeapSize,
-        totalJSHeapSize: memory.totalJSHeapSize,
-        jsHeapSizeLimit: memory.jsHeapSizeLimit,
-        usedPercent: ((memory.usedJSHeapSize / memory.jsHeapSizeLimit) * 100).toFixed(2),
-      };
-    } catch (e) {
-      return null;
+      return performance.getEntriesByType(type);
+    } catch {
+      return [];
     }
   };
 
-  /**
-   * Track memory usage as a metric
-   */
-  const trackMemory = () => {
-    const memory = /** @type {any} */ (getMemoryUsage());
-    if (memory) {
-      recordMetric('memory-usage', memory.usedJSHeapSize, {
-        totalJSHeapSize: memory.totalJSHeapSize,
-        usedPercent: memory.usedPercent,
-      });
-    }
-  };
-
-  /**
-   * Check if metrics exceed thresholds
-   * @param {Object} thresholds - Threshold configuration
-   * @returns {any[]} Array of threshold violations
-   */
-  const checkThresholds = (/** @type {Record<string, number>} */ thresholds) => {
-    /** @type {any[]} */
-    const violations = [];
-    const allStats = getStats(undefined);
-
-    if (!allStats || !(/** @type {any} */ (allStats).metrics)) return violations;
-
-    Object.entries(thresholds).forEach(([metricName, threshold]) => {
-      const stat = /** @type {any} */ (allStats).metrics[metricName];
-      if (stat && stat.avg > threshold) {
-        violations.push({
-          metric: metricName,
-          threshold,
-          actual: stat.avg,
-          exceeded: stat.avg - threshold,
-        });
-      }
-    });
-
-    return violations;
-  };
-
-  /**
-   * Export metrics to JSON
-   * @returns {string} JSON string of metrics
-   */
-  const exportMetrics = () => {
-    const data = {
-      timestamp: new Date().toISOString(),
-      userAgent: navigator.userAgent,
-      url: window.location.href,
-      memory: getMemoryUsage(),
-      stats: getStats(undefined),
-      measures: metrics.measures,
-      customMetrics: Object.fromEntries(metrics.timings),
-      webVitals: metrics.webVitals,
-    };
-
-    return JSON.stringify(data, null, 2);
-  };
-
-  /**
-   * Export metrics to downloadable file
-   * @param {string} filename - Filename for export
-   * @returns {boolean} Success status
-   */
-  const exportToFile = (filename = 'youtube-plus-performance.json') => {
-    try {
-      const data = exportMetrics();
-      if (typeof Blob === 'undefined') {
-        window.console.warn('[YouTube+ Perf] Blob API not available');
-        return false;
-      }
-      const blob = new Blob([data], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = filename;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-      return true;
-    } catch (e) {
-      window.console.error('[YouTube+ Perf] Failed to export to file:', e);
-      return false;
-    }
-  };
-
-  /**
-   * Aggregate metrics by time period
-   * @param {number} periodMs - Time period in milliseconds
-   * @returns {any[]} Aggregated metrics
-   */
-  const aggregateByPeriod = (periodMs = 60000) => {
-    const periods = new Map();
-
-    metrics.measures.forEach(measure => {
-      const periodStart = Math.floor(measure.timestamp / periodMs) * periodMs;
-      if (!periods.has(periodStart)) {
-        periods.set(periodStart, []);
-      }
-      periods.get(periodStart).push(measure);
-    });
-
-    /** @type {any[]} */
-    const aggregated = [];
-    periods.forEach((measures, periodStart) => {
-      const durations = measures.map((/** @type {any} */ m) => m.duration);
-      aggregated.push({
-        period: new Date(periodStart).toISOString(),
-        count: durations.length,
-        min: Math.min(...durations),
-        max: Math.max(...durations),
-        avg:
-          durations.reduce((/** @type {number} */ a, /** @type {number} */ b) => a + b, 0) /
-          durations.length,
-      });
-    });
-
-    return aggregated;
-  };
-
-  /**
-   * Clear all performance metrics
-   */
   const clearMetrics = () => {
     metrics.timings.clear();
     metrics.marks.clear();
     metrics.measures = [];
-    metrics.resources = [];
-    metrics.webVitals = {
-      LCP: null,
-      CLS: 0,
-      FID: null,
-      INP: null,
-      FCP: null,
-      TTFB: null,
-    };
-
-    try {
-      localStorage.removeItem(PerformanceConfig.storageKey);
-    } catch (e) {
-      // Non-critical, suppressed
-    }
-
-    if (typeof performance !== 'undefined' && performance.clearMarks) {
+    metrics.webVitals = { LCP: null, CLS: 0, FID: null, INP: null, FCP: null, TTFB: null };
+    if (typeof performance !== 'undefined') {
       try {
-        performance.clearMarks();
-        performance.clearMeasures();
-      } catch (e) {
-        // Non-critical, suppressed
+        performance.clearMarks?.();
+        performance.clearMeasures?.();
+      } catch {
+        /* no-op */
       }
     }
   };
 
-  /**
-   * Monitor DOM mutations performance
-   * @param {Element} element - Element to monitor
-   * @param {string} name - Monitor name
-   * @returns {{disconnect: () => void, takeRecords: () => MutationRecord[]}|null} Monitor handle
-   */
-  const monitorMutations = (element, name) => {
-    if (!PerformanceConfig.enabled) return null;
-    const coordinator = window.YouTubeMutationCoordinator;
-    if (!coordinator?.watchTarget) return null;
-
-    let mutationCount = 0;
-    const startTime = Date.now();
-    const subId = `performance::monitorMutations::${name}::${Date.now()}::${Math.random().toString(36).slice(2, 8)}`;
-
-    coordinator.watchTarget(
-      subId,
-      element,
-      /** @param {MutationRecord[]} mutations */ mutations => {
-        mutationCount += mutations.length;
-        recordMetric(`${name}-mutations`, mutationCount, {
-          elapsed: Date.now() - startTime,
-        });
-      },
-      {
-        childList: true,
-        subtree: true,
-        // P8: Removed `attributes: true` — attribute mutations are very frequent on
-        // YouTube's data-driven custom elements and create overhead without value.
-      }
-    );
-
-    return {
-      disconnect: () => coordinator.unwatch(subId),
-      takeRecords: () => [],
-    };
-  };
-
-  /**
-   * Get browser performance entries
-   * @param {string} type - Entry type filter
-   * @returns {any[]} Performance entries
-   */
-  const getPerformanceEntries = type => {
-    if (typeof performance === 'undefined' || !performance.getEntriesByType) {
-      return [];
-    }
-
-    try {
-      return performance.getEntriesByType(type);
-    } catch (e) {
-      return [];
-    }
-  };
-
-  /**
-   * Initialize Performance Observer for Web Vitals
-   */
   const initPerformanceObserver = () => {
     if (typeof PerformanceObserver === 'undefined') return;
-
     try {
-      // Observe LCP
       new PerformanceObserver(entryList => {
         const entries = entryList.getEntries();
         const lastEntry = entries[entries.length - 1];
-        metrics.webVitals.LCP = lastEntry.startTime;
-        if (PerformanceConfig.enableconsoleOutput) {
-          window.console.warn(
-            `[YouTube+ Perf] LCP: ${lastEntry.startTime.toFixed(2)}ms`,
-            lastEntry
-          );
-        }
+        if (lastEntry) metrics.webVitals.LCP = lastEntry.startTime;
       }).observe({ type: 'largest-contentful-paint', buffered: true });
 
-      // Observe CLS
       new PerformanceObserver(entryList => {
         for (const entry of entryList.getEntries()) {
           const layoutShiftEntry = /** @type {{ hadRecentInput?: boolean; value?: number }} */ (
@@ -573,42 +281,60 @@
             metrics.webVitals.CLS += layoutShiftEntry.value || 0;
           }
         }
-        if (PerformanceConfig.enableconsoleOutput && PerformanceConfig.logLevel === 'debug') {
-          window.console.warn(`[YouTube+ Perf] CLS: ${metrics.webVitals.CLS.toFixed(4)}`);
-        }
       }).observe({ type: 'layout-shift', buffered: true });
 
-      // Observe FID (First Input Delay)
       new PerformanceObserver(entryList => {
         const firstInput = /** @type {any} */ (entryList.getEntries()[0]);
-        metrics.webVitals.FID = (firstInput.processingStart || 0) - (firstInput.startTime || 0);
-        if (PerformanceConfig.enableconsoleOutput) {
-          window.console.warn(`[YouTube+ Perf] FID: ${metrics.webVitals.FID.toFixed(2)}ms`);
-        }
+        metrics.webVitals.FID = (firstInput?.processingStart || 0) - (firstInput?.startTime || 0);
       }).observe({ type: 'first-input', buffered: true });
 
-      // Observe INP (Interaction to Next Paint) - experimental
       try {
         new PerformanceObserver(entryList => {
           const entries = entryList.getEntries();
-          // Simplified INP calculation (just taking max duration for now)
-          const maxDuration = Math.max(...entries.map(e => e.duration));
-          metrics.webVitals.INP = maxDuration;
+          if (entries.length > 0) {
+            const maxDuration = Math.max(...entries.map(e => e.duration));
+            metrics.webVitals.INP = maxDuration;
+          }
         }).observe(/** @type {any} */ ({ type: 'event', buffered: true, durationThreshold: 16 }));
-      } catch (e) {
-        void e; // INP might not be supported; reference `e` to satisfy linters
+      } catch {
+        /* no-op */
       }
     } catch (e) {
-      window.console.warn('[YouTube+ Perf] Failed to init PerformanceObserver:', e);
+      logger?.warn?.('Performance', 'Failed to init PerformanceObserver', e);
     }
   };
 
-  /**
-   * Log page load performance
-   */
-  const logPageLoadMetrics = () => {
-    if (!PerformanceConfig.enabled) return;
+  const initLongTaskMonitor = () => {
+    if (typeof PerformanceObserver === 'undefined') return;
+    if (
+      Array.isArray(PerformanceObserver.supportedEntryTypes) &&
+      !PerformanceObserver.supportedEntryTypes.includes('longtask')
+    ) {
+      return;
+    }
+    try {
+      /** @type {{ duration: number, startTime: number, name: string }[]} */
+      const longTasks = [];
+      new PerformanceObserver(list => {
+        for (const entry of list.getEntries()) {
+          longTasks.push({
+            duration: entry.duration,
+            startTime: entry.startTime,
+            name: entry.name,
+          });
+          if (longTasks.length > 50) longTasks.shift();
+        }
+        recordMetric('long-tasks-count', longTasks.length);
+        const totalBlocking = longTasks.reduce((sum, t) => sum + Math.max(0, t.duration - 50), 0);
+        recordMetric('total-blocking-time', totalBlocking);
+      }).observe({ type: 'longtask', buffered: true });
+    } catch {
+      /* no-op */
+    }
+  };
 
+  const logPageLoadMetrics = () => {
+    if (!config.enabled) return;
     try {
       const navigation = getPerformanceEntries('navigation')[0];
       if (navigation) {
@@ -617,679 +343,57 @@
         recordMetric('dom-interactive', navigation.domInteractive);
       }
     } catch (e) {
-      window.console.warn('[YouTube+ Perf] Failed to log page metrics:', e);
+      logger?.warn?.('Performance', 'Failed to log page metrics', e);
     }
   };
 
-  // Auto-log page load metrics
+  const initNavigationTracking = () => {
+    window.addEventListener('yt-navigate-start', () => mark('yt-navigate-start'), {
+      passive: true,
+    });
+    window.addEventListener(
+      'yt-navigate-finish',
+      () => {
+        mark('yt-navigate-finish');
+        measure('yt-navigation-duration', 'yt-navigate-start', undefined);
+      },
+      { passive: true }
+    );
+  };
+
+  const perfApi = {
+    mark,
+    measure,
+    timeFunction,
+    timeAsyncFunction,
+    recordMetric,
+    getStats,
+    getPerformanceEntries,
+    clearMetrics,
+    config,
+  };
+
   if (typeof window !== 'undefined') {
+    // Page-load timing
     if (document.readyState === 'complete') {
       logPageLoadMetrics();
     } else {
       window.addEventListener('load', logPageLoadMetrics, { once: true });
     }
 
-    // Initialize Web Vitals observers (only when enabled to reduce overhead)
-    if (PerformanceConfig.enabled) {
+    if (config.enabled) {
       initPerformanceObserver();
+      initLongTaskMonitor();
     }
-
-    /**
-     * RAF Scheduler for batched animations
-     */
-    const RAFScheduler = (() => {
-      /** @type {number|null} */
-      let rafId = null;
-      /** @type {Set<() => void>} */
-      const callbacks = new Set();
-
-      const flush = () => {
-        rafId = null;
-        Array.from(callbacks).forEach(cb => {
-          try {
-            cb();
-          } catch (e) {
-            window.console.error('[RAF] Error:', e);
-          }
-        });
-        callbacks.clear();
-      };
-
-      return {
-        schedule: (/** @type {() => void} */ callback) => {
-          callbacks.add(callback);
-          if (!rafId) rafId = requestAnimationFrame(flush);
-          return () => callbacks.delete(callback);
-        },
-        cancelAll: () => {
-          if (rafId) cancelAnimationFrame(rafId);
-          rafId = null;
-          callbacks.clear();
-        },
-      };
-    })();
-
-    /**
-     * Lazy Loader using Intersection Observer
-     */
-    const LazyLoader = (() => {
-      /** @type {Map<IntersectionObserver, Set<Element>>} */
-      const observers = new Map();
-
-      return {
-        create: (/** @type {any} */ options = {}) => {
-          const { root = null, rootMargin = '50px', threshold = 0.01, onIntersect } = options;
-
-          const observer = new IntersectionObserver(
-            entries => {
-              entries.forEach(entry => {
-                if (entry.isIntersecting) {
-                  onIntersect(entry.target, entry);
-                  observer.unobserve(entry.target);
-                }
-              });
-            },
-            { root, rootMargin, threshold }
-          );
-
-          observers.set(observer, new Set());
-
-          return {
-            observe: (/** @type {Element} */ el) => {
-              if (el instanceof Element) {
-                observer.observe(el);
-                observers.get(observer)?.add(el);
-              }
-            },
-            unobserve: (/** @type {Element} */ el) => {
-              if (el instanceof Element) {
-                observer.unobserve(el);
-                observers.get(observer)?.delete(el);
-              }
-            },
-            disconnect: () => {
-              observer.disconnect();
-              observers.delete(observer);
-            },
-          };
-        },
-        disconnectAll: () => {
-          observers.forEach((_, o) => o.disconnect());
-          observers.clear();
-        },
-      };
-    })();
-
-    /**
-     * DOM Batcher for efficient DOM mutations
-     */
-    const DOMBatcher = (() => {
-      /** @type {Map<Element, Element[]>} */
-      const batches = new Map();
-
-      return {
-        batch: (/** @type {Element} */ container, /** @type {Element[]} */ elements) => {
-          if (!batches.has(container)) batches.set(container, []);
-          batches.get(container)?.push(...elements);
-        },
-        flush: () => {
-          RAFScheduler.schedule(() => {
-            batches.forEach((elements, container) => {
-              if (!container.isConnected) {
-                batches.delete(container);
-                return;
-              }
-              const frag = document.createDocumentFragment();
-              elements.forEach(el => frag.appendChild(el));
-              container.appendChild(frag);
-            });
-            batches.clear();
-          });
-        },
-        clear: (/** @type {Element} */ container) => batches.delete(container),
-      };
-    })();
-
-    /**
-     * Element Cache using WeakMap (auto garbage collected)
-     */
-    const ElementCache = (() => {
-      const cache = new WeakMap();
-
-      return {
-        get: (/** @type {Element} */ el, /** @type {string} */ key) => cache.get(el)?.[key],
-        set: (/** @type {Element} */ el, /** @type {string} */ key, /** @type {any} */ val) => {
-          let data = cache.get(el);
-          if (!data) {
-            data = {};
-            cache.set(el, data);
-          }
-          data[key] = val;
-        },
-        has: (/** @type {Element} */ el, /** @type {string} */ key) => {
-          const data = cache.get(el);
-          return data ? key in data : false;
-        },
-        delete: (/** @type {Element} */ el, /** @type {string} */ key) => {
-          const data = cache.get(el);
-          if (data) delete data[key];
-        },
-      };
-    })();
-
-    // Expose performance monitoring API
-    /** @type {any} */ (window).YouTubePerformance = {
-      mark,
-      measure,
-      timeFunction,
-      timeAsyncFunction,
-      recordMetric,
-      getStats,
-      exportMetrics,
-      exportToFile,
-      clearMetrics,
-      monitorMutations,
-      getPerformanceEntries,
-      getMemoryUsage,
-      trackMemory,
-      checkThresholds,
-      aggregateByPeriod,
-      config: PerformanceConfig,
-      RAFScheduler,
-      LazyLoader,
-      DOMBatcher,
-      ElementCache,
-    };
-
-    /**
-     * Yield to main thread to improve INP
-     * Uses scheduler.yield() if available, falls back to setTimeout
-     * @returns {Promise<void>}
-     */
-    const yieldToMain = () => {
-      return new Promise(resolve => {
-        if ('scheduler' in window && typeof window.scheduler?.yield === 'function') {
-          window.scheduler.yield().then(resolve);
-        } else {
-          setTimeout(resolve, 0);
-        }
-      });
-    };
-
-    /**
-     * Break up long tasks into smaller chunks to improve INP
-     * @param {Array<Function>} tasks - Array of task functions
-     * @param {number} [yieldInterval=50] - Yield after this many ms
-     * @returns {Promise<void>}
-     */
-    const runChunkedTasks = async (tasks, yieldInterval = 50) => {
-      let lastYield = performance.now();
-
-      for (const task of tasks) {
-        task();
-
-        const now = performance.now();
-        if (now - lastYield > yieldInterval) {
-          await yieldToMain();
-          lastYield = performance.now();
-        }
-      }
-    };
-
-    /**
-     * Wrap event handler to yield periodically for better INP
-     * @param {Function} handler - Original event handler
-     * @param {Object} [options] - Options
-     * @param {number} [options.maxBlockTime=50] - Max time to block before yielding
-     * @returns {Function} Wrapped handler
-     */
-    const wrapForINP = (/** @type {Function} */ handler, /** @type {any} */ options = {}) => {
-      const { maxBlockTime = 50 } = options;
-
-      return /** @this {any} */ async function (/** @type {any[]} */ ...args) {
-        const start = performance.now();
-        let result;
-
-        try {
-          result = handler.apply(this, args);
-
-          // If handler returns a promise, wait for it
-          if (result && typeof result.then === 'function') {
-            result = await result;
-          }
-        } finally {
-          const elapsed = performance.now() - start;
-          if (elapsed > maxBlockTime) {
-            // Record long task for debugging
-            recordMetric('long-task', elapsed, { handler: handler.name || 'anonymous' });
-          }
-        }
-
-        return result;
-      };
-    };
-
-    // Add INP helpers to global API
-    /** @type {any} */ (window).YouTubePerformance.yieldToMain = yieldToMain;
-    /** @type {any} */ (window).YouTubePerformance.runChunkedTasks = runChunkedTasks;
-    /** @type {any} */ (window).YouTubePerformance.wrapForINP = wrapForINP;
-
-    // ─── LCP Optimization Suite ────────────────────────────────────────────────
-    // Target: Main page <5s, Video page <3.5s, Playlist page <3.5s
-
-    /**
-     * 1. Resource Hints - preconnect to YouTube CDN origins
-     *    Shaves 100-300ms from first resource fetch on each origin.
-     */
-    const injectResourceHints = () => {
-      const origins = [
-        'https://www.youtube.com',
-        'https://i.ytimg.com', // Thumbnails (LCP candidate)
-        'https://yt3.ggpht.com', // Channel avatars
-        'https://fonts.googleapis.com', // Fonts
-        'https://www.gstatic.com', // Static resources
-        'https://play.google.com', // Play store resources
-      ];
-
-      const head = document.head;
-      if (!head) return;
-
-      const existingHrefs = new Set();
-      head.querySelectorAll('link[rel="preconnect"]').forEach(el => {
-        existingHrefs.add(el.href);
-      });
-
-      for (const origin of origins) {
-        if (existingHrefs.has(origin) || existingHrefs.has(origin + '/')) continue;
-        const link = document.createElement('link');
-        link.rel = 'preconnect';
-        link.href = origin;
-        link.crossOrigin = 'anonymous';
-        head.appendChild(link);
-      }
-    };
-
-    /**
-     * 2. LCP Element Priority Boost
-     *    Set fetchpriority="high" on the LCP element (main video thumbnail / player poster).
-     */
-    const boostLCPElement = () => {
-      const path = location.pathname;
-      /** @type {string|undefined} */
-      let lcpSelector;
-
-      if (path === '/watch' || path.startsWith('/shorts/')) {
-        // Video page: player poster or first video frame
-        lcpSelector =
-          '#movie_player .ytp-cued-thumbnail-overlay-image, #movie_player video, ytd-player #ytd-player .html5-video-container';
-      } else if (path === '/playlist') {
-        // Playlist page: first visible thumbnail
-        lcpSelector = 'ytd-playlist-video-renderer:first-child img.yt-core-image';
-      } else {
-        // Main page: first visible rich item thumbnail
-        lcpSelector =
-          'ytd-rich-item-renderer:first-child img.yt-core-image, ytd-rich-grid-media img.yt-core-image';
-      }
-
-      if (!lcpSelector) return;
-
-      requestAnimationFrame(() => {
-        const el = /** @type {any} */ (qs(lcpSelector));
-        if (el && el.tagName === 'IMG') {
-          el.setAttribute('fetchpriority', 'high');
-          el.setAttribute('loading', 'eager');
-          // Remove lazy loading if set by YouTube
-          if (el.loading === 'lazy') el.loading = 'eager';
-        }
-      });
-    };
-
-    /**
-     * 3. Content-Visibility CSS for off-screen sections
-     *    Dramatically reduces initial render work by skipping layout/paint for below-the-fold.
-     */
-    const injectContentVisibilityCSS = () => {
-      const cssId = 'ytp-perf-content-visibility';
-      if (byId(cssId)) return;
-
-      const css = `
-        /* ── YouTube+ LCP Performance Optimizations ── */
-
-        /* Off-screen section rendering deferral */
-        ytd-comments#comments { content-visibility: auto; contain-intrinsic-size: auto 800px; }
-        #secondary ytd-compact-video-renderer:nth-child(n+6) { content-visibility: auto; contain-intrinsic-size: auto 94px; }
-        ytd-watch-next-secondary-results-renderer ytd-item-section-renderer { content-visibility: auto; contain-intrinsic-size: auto 600px; }
-
-        /* Main/browse feed - defer items below first viewport */
-        ytd-rich-grid-renderer #contents > ytd-rich-item-renderer:nth-child(n+9) { content-visibility: auto; contain-intrinsic-size: auto 360px; }
-        ytd-section-list-renderer > #contents > ytd-item-section-renderer:nth-child(n+3) { content-visibility: auto; contain-intrinsic-size: auto 500px; }
-
-        /* Playlist page - defer items beyond visible viewport */
-        ytd-playlist-video-list-renderer #contents > ytd-playlist-video-renderer:nth-child(n+12) { content-visibility: auto; contain-intrinsic-size: auto 90px; }
-
-        /* Note: contain:layout is intentionally omitted here — it breaks position:sticky
-           for chips-wrapper and tabs-container on browse/channel pages. */
-
-        /* Guide sidebar - not needed for LCP */
-        ytd-mini-guide-renderer { content-visibility: auto; contain-intrinsic-size: auto 100vh; }
-        tp-yt-app-drawer#guide { content-visibility: auto; contain-intrinsic-size: 240px 100vh; }
-
-        /* Below-the-fold metadata */
-        ytd-watch-metadata #description { content-visibility: auto; contain-intrinsic-size: auto 120px; }
-        ytd-structured-description-content-renderer { content-visibility: auto; contain-intrinsic-size: auto 200px; }
-
-        /* Shorts shelf on browse pages */
-        ytd-reel-shelf-renderer { content-visibility: auto; contain-intrinsic-size: auto 320px; }
-
-        /* Comments container on main watch - contain:style only, not layout (preserves sticky) */
-        ytd-item-section-renderer#sections { contain: style; }
-
-        /* Reduce paint complexity for non-visible items */
-        ytd-rich-grid-row:nth-child(n+4) { content-visibility: auto; contain-intrinsic-size: auto 240px; }
-
-        /* Engagement panels - safe deferral only when fully hidden */
-        ytd-engagement-panel-section-list-renderer[visibility="ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"] { content-visibility: auto; contain-intrinsic-size: auto 0px; }
-
-        /* Optimize image decoding */
-        ytd-thumbnail img, yt-image img, .yt-core-image { content-visibility: auto; }
-      `;
-
-      const style = document.createElement('style');
-      style.id = cssId;
-      style.textContent = css;
-      (document.head || document.documentElement).appendChild(style);
-    };
-
-    /**
-     * 4. Deferred Image Loading
-     *    Lazy-load images below the fold using IntersectionObserver.
-     */
-    const setupDeferredImageLoading = () => {
-      const imgObserver = new IntersectionObserver(
-        entries => {
-          for (const entry of entries) {
-            if (entry.isIntersecting) {
-              const img = entry.target;
-              const dataSrc = img.getAttribute('data-ytp-deferred-src');
-              if (dataSrc) {
-                img.src = dataSrc;
-                img.removeAttribute('data-ytp-deferred-src');
-              }
-              imgObserver.unobserve(img);
-            }
-          }
-        },
-        { rootMargin: '200px 0px' }
-      );
-
-      // Observe below-fold thumbnail images
-      const observeImages = () => {
-        const belowFold = qsAll(
-          'ytd-rich-item-renderer:nth-child(n+5) img[src]:not([data-ytp-img-observed]),' +
-            'ytd-compact-video-renderer:nth-child(n+4) img[src]:not([data-ytp-img-observed])'
-        );
-        belowFold.forEach(img => {
-          img.setAttribute('data-ytp-img-observed', '1');
-        });
-      };
-
-      // Run periodically to catch new items
-      /** @type {ReturnType<typeof setTimeout>|null} */
-      let imgTimer = null;
-      const scheduleObserve = () => {
-        if (imgTimer) return;
-        imgTimer = setTimeout(() => {
-          imgTimer = null;
-          observeImages();
-        }, 500);
-      };
-
-      const _pCm = window.YouTubeUtils?.cleanupManager;
-      if (_pCm?.registerListener) {
-        _pCm.registerListener(window, 'yt-navigate-finish', scheduleObserve, { passive: true });
-      } else {
-        window.addEventListener('yt-navigate-finish', scheduleObserve, { passive: true });
-      }
-      if (document.readyState !== 'loading') {
-        scheduleObserve();
-      } else {
-        document.addEventListener('DOMContentLoaded', scheduleObserve, { once: true });
-      }
-    };
-
-    /**
-     * 5. MutationObserver Optimization
-     *    Provides a shared, debounced MutationObserver to reduce overhead
-     *    from multiple independent subtree observers.
-     */
-    const SharedMutationManager = (() => {
-      /** @type {string|null} */
-      let observerSubId = null;
-      /** @type {Map<string, {callback: Function, filter?: Function}>} */
-      const callbacks = new Map(); // key -> {callback, filter}
-      let scheduled = false;
-      /** @type {MutationRecord[]} */
-      const pending = [];
-
-      const flush = () => {
-        scheduled = false;
-        const entries = [...pending];
-        pending.length = 0;
-
-        for (const [, { callback, filter }] of callbacks) {
-          const filtered = filter ? entries.filter(/** @type {any} */ (filter)) : entries;
-          if (filtered.length > 0) {
-            try {
-              callback(filtered);
-            } catch (e) {
-              window.console.warn('[YouTube+ Perf] SharedMutation callback error:', e);
-            }
-          }
-        }
-      };
-
-      const start = () => {
-        if (observerSubId) return;
-        const coordinator = window.YouTubeMutationCoordinator;
-        if (!coordinator?.subscribeRoot) return;
-        observerSubId = 'performance::sharedMutation';
-        coordinator.subscribeRoot(
-          observerSubId,
-          (/** @type {MutationRecord[]} */ mutations) => {
-            pending.push(...mutations);
-            if (!scheduled) {
-              scheduled = true;
-              // Use microtask for fast batching without losing responsiveness
-              queueMicrotask(flush);
-            }
-          },
-          { childList: true, attributes: false, subtree: true }
-        );
-      };
-
-      return {
-        /**
-         * Register a callback for shared mutation observation.
-         * @param {string} key - Unique key
-         * @param {Function} callback - Called with filtered mutations
-         * @param {Function} [filter] - Optional filter for mutations
-         */
-        register(key, callback, filter) {
-          callbacks.set(key, { callback, filter });
-          if (callbacks.size === 1) start();
-        },
-        unregister(/** @type {string} */ key) {
-          callbacks.delete(key);
-          if (callbacks.size === 0 && observerSubId) {
-            const coordinator = window.YouTubeMutationCoordinator;
-            coordinator?.unsubscribe?.(observerSubId);
-            observerSubId = null;
-          }
-        },
-        getCallbackCount: () => callbacks.size,
-      };
-    })();
-
-    /**
-     * 6. Idle-time Task Scheduler
-     *    Schedules non-critical initialization to idle periods.
-     */
-    const IdleScheduler = (() => {
-      /** @type {{fn: Function, priority: number}[]} */
-      const queue = [];
-      let running = false;
-
-      const processQueue = (/** @type {IdleDeadline|null} */ deadline) => {
-        while (queue.length > 0 && (deadline ? deadline.timeRemaining() > 5 : true)) {
-          const task = queue.shift();
-          if (!task) continue;
-          try {
-            task.fn();
-          } catch (e) {
-            window.console.warn('[YouTube+ Perf] Idle task error:', e);
-          }
-          if (!deadline) break; // Without deadline, run one task per iteration
-        }
-
-        if (queue.length > 0) {
-          scheduleNext();
-        } else {
-          running = false;
-        }
-      };
-
-      const scheduleNext = () => {
-        if (typeof requestIdleCallback === 'function') {
-          requestIdleCallback(processQueue, { timeout: 3000 });
-        } else {
-          setTimeout(() => processQueue(null), 50);
-        }
-      };
-
-      return {
-        /**
-         * Schedule a task for idle execution.
-         * @param {Function} fn - Task function
-         * @param {number} [priority=0] - Higher = runs first
-         */
-        schedule(fn, priority = 0) {
-          queue.push({ fn, priority });
-          queue.sort((a, b) => b.priority - a.priority);
-          if (!running) {
-            running = true;
-            scheduleNext();
-          }
-        },
-        /** Get number of pending tasks */
-        pending: () => queue.length,
-      };
-    })();
-
-    /**
-     * 7. Long Task monitoring (via PerformanceObserver)
-     *    Helps identify blocking scripts beyond 50ms.
-     */
-    const initLongTaskMonitor = () => {
-      if (typeof PerformanceObserver === 'undefined') return;
-      if (
-        Array.isArray(PerformanceObserver.supportedEntryTypes) &&
-        !PerformanceObserver.supportedEntryTypes.includes('longtask')
-      ) {
-        return;
-      }
-      try {
-        /** @type {{ duration: number, startTime: number, name: string }[]} */
-        const longTasks = [];
-        new PerformanceObserver(list => {
-          for (const entry of list.getEntries()) {
-            longTasks.push({
-              duration: entry.duration,
-              startTime: entry.startTime,
-              name: entry.name,
-            });
-            if (longTasks.length > 50) longTasks.shift();
-          }
-          recordMetric('long-tasks-count', longTasks.length);
-          const totalBlocking = longTasks.reduce((sum, t) => sum + Math.max(0, t.duration - 50), 0);
-          recordMetric('total-blocking-time', totalBlocking);
-        }).observe({ type: 'longtask', buffered: true });
-      } catch (e) {
-        // longtask observer not supported
-      }
-    };
-
-    /**
-     * 8. Navigation-aware performance tracking
-     *    Reset and re-measure on YouTube SPA navigations.
-     */
-    const initNavigationTracking = () => {
-      const _pCm2 = window.YouTubeUtils?.cleanupManager;
-      const _addL = (
-        /** @type {EventTarget} */ t,
-        /** @type {string} */ ev,
-        /** @type {EventListenerOrEventListenerObject} */ fn,
-        /** @type {AddEventListenerOptions|boolean|undefined} */ o = undefined
-      ) => {
-        if (_pCm2?.registerListener) _pCm2.registerListener(t, ev, fn, o);
-        else t.addEventListener(ev, fn, o);
-      };
-      _addL(
-        window,
-        'yt-navigate-start',
-        () => {
-          mark('yt-navigate-start');
-        },
-        { passive: true }
-      );
-
-      _addL(
-        window,
-        'yt-navigate-finish',
-        () => {
-          mark('yt-navigate-finish');
-          measure('yt-navigation-duration', 'yt-navigate-start', undefined);
-
-          // Re-boost LCP for new page
-          requestAnimationFrame(() => {
-            boostLCPElement();
-          });
-        },
-        { passive: true }
-      );
-    };
-
-    /**
-     * Initialize all LCP optimizations
-     */
-    const initLCPOptimizations = () => {
-      try {
-        // Critical (run immediately - biggest LCP impact)
-        injectResourceHints();
-        injectContentVisibilityCSS();
-        boostLCPElement();
-
-        // High priority (run in next microtask)
-        queueMicrotask(() => {
-          initNavigationTracking();
-          initLongTaskMonitor();
-        });
-
-        // Lower priority (defer to idle)
-        IdleScheduler.schedule(() => setupDeferredImageLoading(), 2);
-      } catch (e) {
-        window.console.warn('[YouTube+ Perf] LCP optimization init error:', e);
-      }
-    };
-
-    // Run LCP optimizations immediately
-    initLCPOptimizations();
-
-    // Expose new performance APIs
-    /** @type {any} */ (window).YouTubePerformance.SharedMutationManager = SharedMutationManager;
-    /** @type {any} */ (window).YouTubePerformance.IdleScheduler = IdleScheduler;
-    /** @type {any} */ (window).YouTubePerformance.boostLCPElement = boostLCPElement;
-    /** @type {any} */ (window).YouTubePerformance.injectResourceHints = injectResourceHints;
-
-    window.YouTubeUtils?.logger?.debug?.('[YouTube+] Performance monitoring initialized');
+    initNavigationTracking();
+
+    Object.defineProperty(window, 'YouTubePerformance', {
+      value: perfApi,
+      configurable: true,
+      enumerable: false,
+      writable: true,
+    });
+
+    window.YouTubeUtils?.logger?.debug?.('[YouTube+] Performance diagnostics initialised');
   }
 })();
