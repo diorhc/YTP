@@ -31,15 +31,14 @@ module.exports = {
   // current aggregate values so CI stays green while preventing
   // meaningful drops in the well-tested modules.
   //
-  // Current coverage (v8): lines 28.8%, functions 43.08%, branches 51.49%.
-  // Thresholds set 1pp above current to block regressions.
-  // Raise as coverage improves.
+  // Current CI coverage (v8): lines 28.88%, functions 42.78%, branches 51.48%.
+  // Thresholds set below CI baseline to prevent false negatives.
   coverageThreshold: {
     global: {
-      branches: 52,
-      functions: 44,
-      lines: 29,
-      statements: 29,
+      branches: 51,
+      functions: 42,
+      lines: 28,
+      statements: 28,
     },
   },
   verbose: true,

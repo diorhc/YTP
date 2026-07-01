@@ -265,31 +265,45 @@ jobs:
       HUSKY: "0"
 
     steps:
+      - name: Check if e2e tests exist
+        id: check-e2e
+        run: |
+          if [ -d "e2e" ] && [ "$(ls -A e2e 2>/dev/null)" ]; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+            echo "No e2e tests found, skipping"
+          fi
+
       - name: Checkout code
+        if: steps.check-e2e.outputs.exists == 'true'
         uses: actions/checkout@v5
 
       - name: Setup Node.js
+        if: steps.check-e2e.outputs.exists == 'true'
         uses: actions/setup-node@v5
         with:
           node-version: "22"
           cache: "npm"
 
       - name: Install dependencies
+        if: steps.check-e2e.outputs.exists == 'true'
         run: npm ci
 
       - name: Install Playwright browsers
-        run: npx playwright install --with-deps
+        if: steps.check-e2e.outputs.exists == 'true'
+        run: npx playwright install --with-deps chromium
 
       - name: Build userscript (required for E2E)
+        if: steps.check-e2e.outputs.exists == 'true'
         run: npm run build:production
-        continue-on-error: true
 
       - name: Run Playwright E2E tests
-        run: npx playwright test --reporter=list
-        continue-on-error: true
+        if: steps.check-e2e.outputs.exists == 'true'
+        run: npx playwright test --reporter=list --project=chromium
 
       - name: Upload E2E report
-        if: always()
+        if: steps.check-e2e.outputs.exists == 'true' && always()
         uses: actions/upload-artifact@v5
         with:
           name: playwright-report

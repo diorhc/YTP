@@ -38,12 +38,10 @@
     "src/zoom.js",
     "src/voting.js",
     "scripts/**/*.js",
-    ".github/scripts/**/*.js",
     "test/**/*.js"
   ],
   "project": [
     "scripts/**/*.js",
-    ".github/scripts/**/*.js",
     "test/**/*.js",
     "src/**/*.js"
   ],
