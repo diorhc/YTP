@@ -1,12 +1,9 @@
 describe('Report module', () => {
-  const fs = require('fs');
-  const path = require('path');
-
   /** @returns {HTMLDivElement} */
   function createModalWithReportSection() {
     const modal = document.createElement('div');
     const section = document.createElement('div');
-    section.className = 'ytp-plus-settings-section';
+    section.className = 'yp-settings-section';
     section.setAttribute('data-section', 'report');
     modal.appendChild(section);
     document.body.appendChild(modal);
@@ -14,9 +11,36 @@ describe('Report module', () => {
   }
 
   function loadReportScript() {
-    const srcPath = path.resolve(__dirname, '../src/report.js');
-    const code = fs.readFileSync(srcPath, 'utf8');
-    window.eval(code);
+    jest.resetModules();
+    delete window.YouTubePlusReport;
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        t: key => key || '',
+        createWithErrorBoundary: _name => fn => fn,
+        setSafeHTML: jest.fn((el, html) => {
+          el.innerHTML = html;
+        }),
+        logSuppressed: jest.fn(),
+      },
+    });
+    Object.defineProperty(window, 'YouTubePlusCleanupManager', {
+      configurable: true,
+      writable: true,
+      value: {
+        registerListener: (target, type, handler, opts) => {
+          target?.addEventListener?.(type, handler, opts);
+          return Symbol('listener-key');
+        },
+      },
+    });
+    Object.defineProperty(window, 'YouTubeSafeDOM', {
+      configurable: true,
+      writable: true,
+      value: { sanitizeHTML: jest.fn(s => s) },
+    });
+    require('../src/report.js');
   }
 
   /** @param {unknown} value @returns {HTMLDivElement} */
@@ -47,15 +71,34 @@ describe('Report module', () => {
   }
 
   beforeEach(() => {
-    delete window.youtubePlusReport;
+    delete window.YouTubePlusReport;
     document.body.innerHTML = '';
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        t: key => key || '',
+        createWithErrorBoundary: _name => fn => fn,
+        logSuppressed: jest.fn(),
+      },
+    });
+    Object.defineProperty(window, 'YouTubePlusCleanupManager', {
+      configurable: true,
+      writable: true,
+      value: {
+        registerListener: (target, type, handler, opts) => {
+          target?.addEventListener?.(type, handler, opts);
+          return Symbol('listener-key');
+        },
+      },
+    });
   });
 
   describe('Module Initialization', () => {
-    test('exposes a render function on window.youtubePlusReport', () => {
+    test('exposes canonical window.YouTubePlusReport', () => {
       loadReportScript();
-      expect(typeof window.youtubePlusReport).toBe('object');
-      expect(typeof window.youtubePlusReport.render).toBe('function');
+      expect(typeof window.YouTubePlusReport).toBe('object');
+      expect(typeof window.YouTubePlusReport.render).toBe('function');
     });
   });
 
@@ -67,7 +110,7 @@ describe('Report module', () => {
 
     test('should render form with all required fields', () => {
       const modal = requireDiv(document.body.querySelector('div'));
-      window.youtubePlusReport.render(modal);
+      window.YouTubePlusReport.render(modal);
 
       expect(modal.querySelector('select')).toBeTruthy();
       const inputs = modal.querySelectorAll(
@@ -81,7 +124,7 @@ describe('Report module', () => {
 
     test('should render three action buttons', () => {
       const modal = requireDiv(document.body.querySelector('div'));
-      window.youtubePlusReport.render(modal);
+      window.YouTubePlusReport.render(modal);
 
       const buttons = modal.querySelectorAll('button.glass-button');
       expect(buttons.length).toBe(3);
@@ -92,9 +135,9 @@ describe('Report module', () => {
 
     test('should render privacy notice', () => {
       const modal = requireDiv(document.body.querySelector('div'));
-      window.youtubePlusReport.render(modal);
+      window.YouTubePlusReport.render(modal);
 
-      const privacy = modal.querySelector('.ytp-plus-settings-item-description');
+      const privacy = modal.querySelector('.yp-settings-item-description');
       expect(privacy).toBeTruthy();
       if (privacy) {
         expect((privacy.textContent || '').length).toBeGreaterThan(0);
@@ -103,7 +146,7 @@ describe('Report module', () => {
 
     test('should handle missing modal gracefully', () => {
       expect(() => {
-        window.youtubePlusReport.render(null);
+        window.YouTubePlusReport.render(null);
       }).not.toThrow();
     });
 
@@ -111,7 +154,7 @@ describe('Report module', () => {
       const modal = document.createElement('div');
       document.body.appendChild(modal);
       expect(() => {
-        window.youtubePlusReport.render(modal);
+        window.YouTubePlusReport.render(modal);
       }).not.toThrow();
     });
   });
@@ -120,7 +163,7 @@ describe('Report module', () => {
     beforeEach(() => {
       loadReportScript();
       const modal = createModalWithReportSection();
-      window.youtubePlusReport.render(modal);
+      window.YouTubePlusReport.render(modal);
     });
 
     test('should require title and description', () => {
@@ -175,32 +218,98 @@ describe('Report module', () => {
     beforeEach(() => {
       loadReportScript();
       const modal = createModalWithReportSection();
-      window.youtubePlusReport.render(modal);
+      window.YouTubePlusReport.render(modal);
     });
 
-    test('should open GitHub issue in new tab', () => {
-      const buttons = document.querySelectorAll('button.glass-button');
-      expect(buttons.length).toBe(3);
+    test('should open GitHub issue in new tab when clicked', () => {
+      const titleInput = document.querySelector('input:not([type="email"]):not([type="checkbox"])');
+      const descInput = document.querySelector('textarea');
+      expect(titleInput).toBeTruthy();
+      expect(descInput).toBeTruthy();
+      titleInput.value = 'Bug report title';
+      descInput.value = 'Description text long enough';
 
-      const githubBtn = buttons[0];
-      expect(githubBtn).toBeTruthy();
-      expect(githubBtn.tagName).toBe('BUTTON');
+      const openSpy = jest.spyOn(window, 'open').mockImplementation(() => null);
+      const githubBtn = document.querySelectorAll('button.glass-button')[0];
+      githubBtn.click();
+
+      expect(openSpy).toHaveBeenCalledTimes(1);
+      const calledUrl = openSpy.mock.calls[0][0];
+      expect(calledUrl).toContain('github.com/diorhc/YTP/issues/new');
+      expect(calledUrl).toContain('title=%5BBug%5D%20Bug%20report%20title');
+      openSpy.mockRestore();
     });
 
-    test('should copy report to clipboard', async () => {
-      const buttons = document.querySelectorAll('button.glass-button');
-      expect(buttons.length).toBe(3);
+    test('should copy report to clipboard when clicked', async () => {
+      const titleInput = document.querySelector('input:not([type="email"]):not([type="checkbox"])');
+      const descInput = document.querySelector('textarea');
+      titleInput.value = 'Copy report title';
+      descInput.value = 'Description text long enough';
 
-      const copyBtn = buttons[1];
-      expect(copyBtn).toBeTruthy();
-      expect(copyBtn.tagName).toBe('BUTTON');
+      const writeText = jest.fn().mockResolvedValue(undefined);
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: { writeText },
+      });
+
+      const copyBtn = document.querySelectorAll('button.glass-button')[1];
+      copyBtn.click();
+
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(writeText).toHaveBeenCalledTimes(1);
+      expect(writeText.mock.calls[0][0]).toContain('Copy report title');
     });
 
-    test('should prepare email with mailto link', () => {
-      const buttons = document.querySelectorAll('button');
-      const emailBtn = buttons[2];
+    test('copy falls back to execCommand when the clipboard API is absent', async () => {
+      const titleInput = document.querySelector('input:not([type="email"]):not([type="checkbox"])');
+      const descInput = document.querySelector('textarea');
+      titleInput.value = 'Legacy copy title';
+      descInput.value = 'Description text long enough';
 
-      expect(emailBtn).toBeTruthy();
+      Object.defineProperty(navigator, 'clipboard', {
+        configurable: true,
+        value: undefined,
+      });
+      // jsdom has no execCommand; stub the call the fallback path relies on.
+      const execCalls = [];
+      Object.defineProperty(document, 'execCommand', {
+        configurable: true,
+        value: cmd => {
+          execCalls.push(cmd);
+          return true;
+        },
+      });
+
+      const copyBtn = document.querySelectorAll('button.glass-button')[1];
+      copyBtn.click();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(execCalls).toEqual(['copy']);
+      delete document.execCommand;
+      delete navigator.clipboard;
+    });
+
+    test('should open a prefilled mailto link when email button is clicked', () => {
+      const titleInput = document.querySelector('input:not([type="email"]):not([type="checkbox"])');
+      const descInput = document.querySelector('textarea');
+      titleInput.value = 'Email report title';
+      descInput.value = 'Description text long enough';
+
+      const clickSpy = jest.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {
+        /* mock */
+      });
+      const emailBtn = document.querySelectorAll('button.glass-button')[2];
+      expect(emailBtn.disabled).toBe(false);
+      emailBtn.click();
+
+      expect(clickSpy).toHaveBeenCalledTimes(1);
+      const link = clickSpy.mock.instances[0];
+      expect(link.href).toMatch(/^mailto:\?subject=/);
+      expect(link.href).toContain('Email%20report%20title');
+      expect(emailBtn.disabled).toBe(true);
+      clickSpy.mockRestore();
     });
 
     test('should disable button during submission', () => {
@@ -210,6 +319,32 @@ describe('Report module', () => {
       buttons.forEach(btn => {
         expect(btn.disabled).toBe(false);
       });
+    });
+
+    test('should validate and include email when submitting report', () => {
+      const titleInput = document.querySelector('input:not([type="email"]):not([type="checkbox"])');
+      const emailInput = document.querySelector('input[type="email"]');
+      const descInput = document.querySelector('textarea');
+      const submitBtn = document.querySelectorAll('button.glass-button')[0];
+
+      titleInput.value = 'Test title for email validation';
+      descInput.value = 'Description text long enough for test';
+
+      const openSpy = jest.spyOn(window, 'open').mockImplementation(() => null);
+
+      // 1. Invalid email triggers validation error
+      emailInput.value = 'not-an-email';
+      submitBtn.click();
+      expect(openSpy).not.toHaveBeenCalled();
+
+      // 2. Valid email passes validation and is included in payload
+      emailInput.value = 'valid.user@example.com';
+      submitBtn.click();
+      expect(openSpy).toHaveBeenCalledTimes(1);
+      const calledUrl = openSpy.mock.calls[0][0];
+      expect(calledUrl).toContain('valid.user%40example.com');
+
+      openSpy.mockRestore();
     });
   });
 
@@ -223,16 +358,77 @@ describe('Report module', () => {
       loadReportScript();
     });
 
-    test('should include debug info when checkbox is checked', () => {
+    test('should update debug preview when checkbox is toggled', () => {
       const modal = createModalWithReportSection();
-      window.youtubePlusReport.render(modal);
+      window.YouTubePlusReport.render(modal);
 
       const checkbox = requireInput(modal.querySelector('input[type="checkbox"]'));
+      const preview = modal.querySelector('.glass-card');
 
       expect(checkbox.checked).toBe(false);
+      expect(preview.style.display).toBe('none');
 
+      // Check checkbox and trigger change
       checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change'));
+
       expect(checkbox.checked).toBe(true);
+      expect(preview.style.display).toBe('block');
+      expect(preview.textContent).toContain('Version:');
+      expect(preview.textContent).toContain('User agent:');
+
+      // Uncheck checkbox and trigger change
+      checkbox.checked = false;
+      checkbox.dispatchEvent(new Event('change'));
+      expect(preview.style.display).toBe('none');
+    });
+
+    test('handles error in getDebugInfo gracefully and logs suppressed error', () => {
+      const logSuppressed = jest.fn();
+      window.YouTubeUtils.logSuppressed = logSuppressed;
+      window.YouTubeUtils.SettingsManager = {
+        load: () => {
+          throw new Error('Simulated settings error');
+        },
+      };
+
+      const modal = createModalWithReportSection();
+      window.YouTubePlusReport.render(modal);
+
+      const checkbox = requireInput(modal.querySelector('input[type="checkbox"]'));
+      checkbox.checked = true;
+      checkbox.dispatchEvent(new Event('change'));
+
+      expect(logSuppressed).toHaveBeenCalled();
+    });
+  });
+
+  describe('Sanitizer availability', () => {
+    test('validation refuses input when no sanitizer is available', () => {
+      loadReportScript();
+      Object.defineProperty(window, 'YouTubeSafeDOM', {
+        configurable: true,
+        writable: true,
+        value: {},
+      });
+      const logSuppressed = jest.fn();
+      window.YouTubeUtils.logSuppressed = logSuppressed;
+
+      const modal = createModalWithReportSection();
+      window.YouTubePlusReport.render(modal);
+
+      const titleInput = document.querySelector('input:not([type="email"]):not([type="checkbox"])');
+      const descInput = document.querySelector('textarea');
+      titleInput.value = 'A valid title here';
+      descInput.value = 'Description text long enough';
+
+      const submitBtn = document.querySelectorAll('button.glass-button')[0];
+      submitBtn.click();
+
+      // The sanitizer contract throws instead of silently escaping; the
+      // submit handler reports the failure and resets the button.
+      expect(logSuppressed).toHaveBeenCalled();
+      expect(submitBtn.disabled).toBe(false);
     });
   });
 });

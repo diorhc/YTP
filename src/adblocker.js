@@ -1,34 +1,39 @@
-// Ad Blocker — no canonical window symbol (self-initializing IIFE).
+// Ad Blocker.
 //
 // Responsibility: hide promoted/ad elements in the YouTube player and
 //   recommendation sidebar. Listens for DOM mutations and toggles a
 //   CSS class on detected ad containers.
-// Public surface: none (self-contained, no LazyLoader registration).
+// Public surface: window.YouTubePlusAdBlocker.
 (function () {
-  const setTimeout_ = setTimeout.bind(window);
-
-  // Shared helpers from YouTubeUtils (canonical in utils.js)
+  // Shared helpers from YouTubeUtils.
   const U = window.YouTubeUtils;
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'AdBlocker');
+
   const adblockerLogger = U.logger || null;
   const $ = (/** @type {string} */ sel, /** @type {Document | Element} */ ctx = document) =>
     U.$(sel, ctx);
 
+  /** Module namespace in the shared settings blob. */
+  const MODULE_NAME = 'adblocker';
+
+  /** @returns {YouTubePlusSettingsStore | null} the store when the blob bridge is active */
+  const bridgedStore = () => window.YouTubePlusSettingsStore?.moduleBridge?.() ?? null;
+
+  /** @type {YouTubePlusFeatureContext | null} */
+  let adblockerCtx = null;
+
   /**
    * @typedef {{
    *   enableLogging: boolean,
-   *   maxRetries: number,
-   *   enabled: boolean,
    *   storageKey: string
    * }} AdBlockerConfig
    */
 
   /**
    * @typedef {{
-   *   isYouTubeShorts: boolean,
    *   isYouTubeMusic: boolean,
    *   lastSkipAttempt: number,
-   *   retryCount: number,
-   *   initialized: boolean,
    *   moviePlayerSubId: string | null,
    *   adSlotSubId: string | null
    * }} AdBlockerState
@@ -54,6 +59,8 @@
 
   /**
    * @typedef {{
+   *   readLegacy: () => Record<string, unknown> | null,
+   *   assign: (parsed: Record<string, unknown> | null) => void,
    *   load: () => void,
    *   save: () => void
    * }} AdBlockerSettings
@@ -75,6 +82,140 @@
     'ytd-button-renderer.ytp-ad-skip-button-renderer button',
   ].join(',');
 
+  /** Click the first visible skip button; a natural user action. */
+  const clickVisibleSkipButton = () => {
+    // Batch getBoundingClientRect reads before any writes (clicks)
+    // to avoid forced layout reflow per iteration.
+    const skipButtons = document.querySelectorAll(SKIP_SELECTOR);
+    const rects = Array.from(skipButtons, btn => btn.getBoundingClientRect());
+    for (let i = 0; i < skipButtons.length; i++) {
+      if (rects[i].width > 0 && rects[i].height > 0) {
+        /** @type {HTMLElement} */ (skipButtons[i]).click();
+        return true;
+      }
+    }
+    return false;
+  };
+
+  /** Mute the ad media and seek to its end. */
+  const seekThroughAd = () => {
+    const video = /** @type {HTMLVideoElement | null} */ ($(AdBlocker.selectors.video));
+    if (video) {
+      video.muted = true;
+      // Attempt to seek to end of ad if duration is available
+      if (video.duration && Number.isFinite(video.duration) && video.duration > 0) {
+        // The ad media can refuse seeks while it is unseekable.
+        try {
+          video.currentTime = Math.max(video.duration - 0.1, 0);
+        } catch (e) {
+          logS(e);
+          adblockerLogger?.warn?.('AdBlocker', 'Ad seek error', e);
+        }
+      }
+    }
+  };
+
+  /** Click the first available ad-overlay close control. */
+  const closeAdOverlay = () => {
+    const overlaySelectors = [
+      '.ytp-ad-overlay-close-button',
+      '.ytp-ad-overlay-close-container button',
+      '.ytp-ad-overlay-close-button button',
+      // 2025+ overlay close
+      '.ytp-ad-overlay-ad-info-button-container',
+      'button[id="dismiss-button"]',
+    ];
+    for (const sel of overlaySelectors) {
+      const overlayClose = $(sel);
+      if (overlayClose) {
+        /** @type {HTMLElement} */ (overlayClose).click();
+        return;
+      }
+    }
+  };
+
+  /** Click a dismissal control on the enforcement overlay, else remove it. */
+  const dismissEnforcementOverlay = () => {
+    const enforcement = document.querySelector('ytd-enforcement-message-view-model');
+    if (!enforcement) return false;
+    // Find any dismiss/close/allow button
+    const btns = enforcement.querySelectorAll(
+      'button, tp-yt-paper-button, a.yt-spec-button-shape-next--outline'
+    );
+    for (const btn of btns) {
+      const btnText = (btn.textContent || '').toLowerCase().trim();
+      // Click "Allow YouTube ads", "Dismiss", or the X button
+      if (
+        btnText.includes('allow') ||
+        btnText.includes('dismiss') ||
+        btnText.includes('разрешить') ||
+        btn.getAttribute('aria-label')?.includes('close')
+      ) {
+        /** @type {HTMLElement} */ (btn).click();
+        return true;
+      }
+    }
+    // If no matching button, try removing the overlay
+    enforcement.remove();
+    return true;
+  };
+
+  /** Recognize the ad-blocker warning dialogs by their visible text. */
+  const isAdBlockerWarningText = (/** @type {string} */ text) =>
+    text.includes('ad blocker') ||
+    text.includes('ad blockers') ||
+    text.includes('блокировщик') ||
+    text.includes('will be blocked') ||
+    text.includes('будет заблокирован') ||
+    (text.includes('allow') && text.includes('ads')) ||
+    (text.includes('blocker') && text.includes('video'));
+
+  /** Dismiss the paper-dialog ad-blocker warning, else hide and remove it. */
+  const dismissWarningDialog = () => {
+    const dialogs = document.querySelectorAll(
+      'tp-yt-paper-dialog, ytd-popup-container tp-yt-paper-dialog, yt-dialog-container'
+    );
+    for (const dialog of dialogs) {
+      const text = (dialog.textContent || '').toLowerCase();
+      if (!isAdBlockerWarningText(text)) continue;
+
+      // Try dismiss/allow buttons
+      const dismissBtns = dialog.querySelectorAll(
+        '#dismiss-button button, .dismiss-button, button[id*="dismiss"], ' +
+          'tp-yt-paper-button, yt-button-renderer button, a[href]'
+      );
+      for (const btn of dismissBtns) {
+        const btnText = (btn.textContent || '').toLowerCase();
+        if (
+          btnText.includes('dismiss') ||
+          btnText.includes('allow') ||
+          btnText.includes('not using') ||
+          btnText.includes('report')
+        ) {
+          /** @type {HTMLElement} */ (btn).click();
+          return true;
+        }
+      }
+      // Last resort: remove dialog
+      /** @type {HTMLElement} */ (dialog).style.display = 'none';
+      dialog.remove();
+      return true;
+    }
+    return false;
+  };
+
+  /** Show through overlay backdrops YouTube leaves blocking interaction. */
+  const hideBlockerBackdrops = () => {
+    const overlays = /** @type {NodeListOf<HTMLElement>} */ (
+      document.querySelectorAll('tp-yt-iron-overlay-backdrop, .yt-dialog-overlay')
+    );
+    for (const overlay of overlays) {
+      if (overlay.style.display !== 'none' && overlay.offsetParent !== null) {
+        overlay.style.display = 'none';
+      }
+    }
+  };
+
   /**
    * Ad blocking functionality for YouTube
    * @namespace AdBlocker
@@ -83,18 +224,13 @@
     /** @type {AdBlockerConfig} */
     config: {
       enableLogging: false,
-      maxRetries: 2,
-      enabled: true,
       storageKey: 'youtube_adblocker_settings',
     },
 
     /** @type {AdBlockerState} */
     state: {
-      isYouTubeShorts: false,
       isYouTubeMusic: location.hostname === 'music.youtube.com',
       lastSkipAttempt: 0,
-      retryCount: 0,
-      initialized: false,
       moviePlayerSubId: null,
       adSlotSubId: null,
     },
@@ -136,74 +272,70 @@
     /** @type {AdBlockerSettings} */
     settings: {
       /**
-       * Load settings from localStorage with validation
-       * @returns {void}
+       * Read and validate the legacy key payload. Returns null when it is
+       * absent or unusable so the live config is left untouched.
+       * @returns {Record<string, unknown> | null}
        */
-      load() {
+      readLegacy() {
         try {
-          const saved = localStorage.getItem(AdBlocker.config.storageKey);
-          if (!saved) return;
-
+          const saved = U.storage?.getItem(AdBlocker.config.storageKey);
+          if (!saved) return null;
           const parsed = JSON.parse(saved);
           if (typeof parsed !== 'object' || parsed === null) {
             adblockerLogger?.warn?.('AdBlocker', 'Invalid settings format');
-            return;
+            return null;
           }
-
-          // Validate and apply settings
-          if (typeof parsed.enabled === 'boolean') {
-            AdBlocker.config.enabled = parsed.enabled;
-          } else {
-            AdBlocker.config.enabled = true; // Default to enabled
-          }
-
-          if (typeof parsed.enableLogging === 'boolean') {
-            AdBlocker.config.enableLogging = parsed.enableLogging;
-          } else {
-            AdBlocker.config.enableLogging = false; // Default to disabled
-          }
+          return /** @type {Record<string, unknown>} */ (parsed);
         } catch (error) {
+          logS(error);
           adblockerLogger?.error?.('AdBlocker', 'Error loading settings', error);
-          // Set safe defaults on error
-          AdBlocker.config.enabled = true;
-          AdBlocker.config.enableLogging = false;
+          // Safe defaults on corrupt storage.
+          return {};
         }
       },
 
       /**
-       * Save settings to localStorage with error handling
-       * @returns {void}
+       * Apply a settings object to the live config, filling absent fields.
+       * @param {Record<string, unknown> | null} parsed
        */
+      assign(parsed) {
+        if (parsed === null) return;
+        AdBlocker.config.enableLogging =
+          typeof parsed.enableLogging === 'boolean' ? parsed.enableLogging : false;
+      },
+
+      load() {
+        const store = bridgedStore();
+        if (store) {
+          const mod = store.getModuleSettings(MODULE_NAME);
+          if (mod && Object.keys(mod).length) {
+            AdBlocker.settings.assign(mod);
+            return;
+          }
+          AdBlocker.settings.assign(AdBlocker.settings.readLegacy());
+          AdBlocker.settings.save();
+          return;
+        }
+        AdBlocker.settings.assign(AdBlocker.settings.readLegacy());
+      },
+
       save() {
+        const payload = {
+          enableLogging: AdBlocker.config.enableLogging,
+        };
+        const store = bridgedStore();
+        if (store) {
+          store.updateModuleSettings(MODULE_NAME, payload);
+          return;
+        }
+        // Storage can be disabled or full.
         try {
-          const settingsToSave = {
-            enabled: AdBlocker.config.enabled,
-            enableLogging: AdBlocker.config.enableLogging,
-          };
-          localStorage.setItem(AdBlocker.config.storageKey, JSON.stringify(settingsToSave));
+          U.storage?.setItem(AdBlocker.config.storageKey, JSON.stringify(payload));
         } catch (error) {
+          logS(error);
           adblockerLogger?.error?.('AdBlocker', 'Error saving settings', error);
         }
       },
-    },
-
-    /**
-     * Get cached player elements
-     * @returns {Object} Object containing player element and controller
-     */
-    getPlayer() {
-      const now = Date.now();
-      if (now - AdBlocker.cache.lastCacheTime > AdBlocker.cache.cacheTimeout) {
-        AdBlocker.cache.moviePlayer = $('#movie_player');
-        AdBlocker.cache.ytdPlayer = $('#ytd-player');
-        AdBlocker.cache.lastCacheTime = now;
-      }
-
-      const playerEl = AdBlocker.cache.ytdPlayer;
-      return {
-        element: AdBlocker.cache.moviePlayer,
-        player: playerEl?.getPlayer?.() || playerEl,
-      };
     },
 
     /**
@@ -212,8 +344,6 @@
      * @returns {void}
      */
     skipAd() {
-      if (!AdBlocker.config.enabled) return;
-
       const now = Date.now();
       if (now - AdBlocker.state.lastSkipAttempt < 300) return;
       AdBlocker.state.lastSkipAttempt = now;
@@ -227,63 +357,12 @@
         (moviePlayer.classList.contains('ad-showing') ||
           moviePlayer.classList.contains('ad-interrupting'));
       if (!isAdShowing) {
-        AdBlocker.state.retryCount = 0;
         return;
       }
 
-      try {
-        // Strategy 1: Click skip button if available (most natural user action)
-        // Uses module-level cached SKIP_SELECTOR constant.
-        // Batch getBoundingClientRect reads before any writes (clicks)
-        // to avoid forced layout reflow per iteration.
-        const skipButtons = document.querySelectorAll(SKIP_SELECTOR);
-        const rects = Array.from(skipButtons, btn => btn.getBoundingClientRect());
-        for (let i = 0; i < skipButtons.length; i++) {
-          if (rects[i].width > 0 && rects[i].height > 0) {
-            skipButtons[i].click();
-            AdBlocker.state.retryCount = 0;
-            return;
-          }
-        }
-
-        // Strategy 2: Speed through ad (mute + seek to end)
-        const video = $(AdBlocker.selectors.video);
-        if (video) {
-          video.muted = true;
-          // Attempt to seek to end of ad if duration is available
-          if (video.duration && Number.isFinite(video.duration) && video.duration > 0) {
-            try {
-              video.currentTime = Math.max(video.duration - 0.1, 0);
-            } catch (e) {
-              adblockerLogger?.warn?.('AdBlocker', 'Ad seek error', e);
-            }
-          }
-        }
-
-        // Strategy 3: Close overlay ads
-        const overlaySelectors = [
-          '.ytp-ad-overlay-close-button',
-          '.ytp-ad-overlay-close-container button',
-          '.ytp-ad-overlay-close-button button',
-          // 2025+ overlay close
-          '.ytp-ad-overlay-ad-info-button-container',
-          'button[id="dismiss-button"]',
-        ];
-        for (const sel of overlaySelectors) {
-          const overlayClose = $(sel);
-          if (overlayClose) {
-            overlayClose.click();
-            break;
-          }
-        }
-
-        AdBlocker.state.retryCount = 0;
-      } catch (_e) {
-        if (AdBlocker.state.retryCount < AdBlocker.config.maxRetries) {
-          AdBlocker.state.retryCount++;
-          setTimeout(AdBlocker.skipAd, 800);
-        }
-      }
+      if (clickVisibleSkipButton()) return;
+      seekThroughAd();
+      closeAdOverlay();
     },
 
     /**
@@ -291,105 +370,24 @@
      * @returns {void}
      */
     dismissAdBlockerWarning() {
-      if (!AdBlocker.config.enabled) return;
-      try {
-        // Strategy 1: Handle the enforcement message overlay
-        const enforcement = document.querySelector('ytd-enforcement-message-view-model');
-        if (enforcement) {
-          // Find any dismiss/close/allow button
-          const btns = enforcement.querySelectorAll(
-            'button, tp-yt-paper-button, a.yt-spec-button-shape-next--outline'
-          );
-          for (const btn of btns) {
-            const btnText = (btn.textContent || '').toLowerCase().trim();
-            // Click "Allow YouTube ads", "Dismiss", or the X button
-            if (
-              btnText.includes('allow') ||
-              btnText.includes('dismiss') ||
-              btnText.includes('разрешить') ||
-              btn.getAttribute('aria-label')?.includes('close')
-            ) {
-              btn.click();
-              return;
-            }
-          }
-          // If no matching button, try removing the overlay
-          enforcement.remove();
-          return;
-        }
-
-        // Strategy 2: Handle paper dialog popups
-        const dialogs = document.querySelectorAll(
-          'tp-yt-paper-dialog, ytd-popup-container tp-yt-paper-dialog, yt-dialog-container'
-        );
-        for (const dialog of dialogs) {
-          const text = (dialog.textContent || '').toLowerCase();
-          const isAdBlockWarning =
-            text.includes('ad blocker') ||
-            text.includes('ad blockers') ||
-            text.includes('блокировщик') ||
-            text.includes('will be blocked') ||
-            text.includes('будет заблокирован') ||
-            (text.includes('allow') && text.includes('ads')) ||
-            (text.includes('blocker') && text.includes('video'));
-
-          if (!isAdBlockWarning) continue;
-
-          // Try dismiss/allow buttons
-          const dismissBtns = dialog.querySelectorAll(
-            '#dismiss-button button, .dismiss-button, button[id*="dismiss"], ' +
-              'tp-yt-paper-button, yt-button-renderer button, a[href]'
-          );
-          for (const btn of dismissBtns) {
-            const btnText = (btn.textContent || '').toLowerCase();
-            if (
-              btnText.includes('dismiss') ||
-              btnText.includes('allow') ||
-              btnText.includes('not using') ||
-              btnText.includes('report')
-            ) {
-              btn.click();
-              return;
-            }
-          }
-          // Last resort: remove dialog
-          /** @type {any} */ (dialog).style.display = 'none';
-          dialog.remove();
-          return;
-        }
-
-        // Strategy 3: Handle overlay/backdrop that blocks interaction
-        const overlays = document.querySelectorAll(
-          'tp-yt-iron-overlay-backdrop, .yt-dialog-overlay'
-        );
-        for (const overlay of overlays) {
-          if (
-            /** @type {any} */ (overlay).style.display !== 'none' &&
-            overlay.offsetParent !== null
-          ) {
-            /** @type {any} */ (overlay).style.display = 'none';
-          }
-        }
-      } catch (_e) {
-        // Silently ignore
-      }
+      if (dismissEnforcementOverlay()) return;
+      if (dismissWarningDialog()) return;
+      hideBlockerBackdrops();
     },
 
     // Minimal CSS injection - only hide minor UI elements that YouTube doesn't monitor
     addCss() {
-      if ($('#yt-ab-styles') || !AdBlocker.config.enabled) return;
-
       // Only use ads selectors (countdown, survey) in CSS
       // element selectors (masthead-ad, merch, etc.) are removed via DOM to avoid detection
       const styles = `${AdBlocker.selectors.ads}{display:none!important;}`;
-      const SM = YouTubeUtils?.StyleManager;
+      const SM = U?.StyleManager;
       if (SM && typeof SM.add === 'function') {
         SM.add('yt-ab-styles', styles);
       }
     },
 
     removeCss() {
-      const SM = YouTubeUtils?.StyleManager;
+      const SM = U?.StyleManager;
       if (SM && typeof SM.remove === 'function') {
         SM.remove('yt-ab-styles');
       }
@@ -397,99 +395,78 @@
 
     // Batched element removal
     removeElements() {
-      if (!AdBlocker.config.enabled || AdBlocker.state.isYouTubeMusic) return;
+      if (AdBlocker.state.isYouTubeMusic) return;
 
       // Use requestIdleCallback for non-blocking removal
       const remove = () => {
-        // Remove known ad elements directly (these were previously in CSS)
-        try {
-          const adElements = document.querySelectorAll(AdBlocker.selectors.elements);
-          adElements.forEach(el => {
-            try {
-              el.remove();
-            } catch (_e) {
-              U.logSuppressed(_e, 'AdBlocker');
-            }
-          });
-        } catch (_e) {
-          U.logSuppressed(_e, 'AdBlocker');
-        }
+        // Remove known ad elements directly; these ship via the DOM path
+        // (not CSS) to avoid detection.
+        document.querySelectorAll(AdBlocker.selectors.elements).forEach(el => {
+          el.remove();
+        });
 
         // Remove ad-slot renderers
-        const elements = document.querySelectorAll(AdBlocker.selectors.removal);
-        elements.forEach(el => {
-          try {
-            // Prefer removing a known item wrapper (thumbnail card, reel item, etc.)
-            for (const w of AdBlocker.wrappers) {
-              const wrap = el.closest(w);
-              if (wrap) {
-                wrap.remove();
-                return;
-              }
-            }
-
-            // If ad is inside a reel item specifically, remove the reel container
-            const reel = el.closest('ytd-reel-video-renderer');
-            if (reel) {
-              reel.remove();
+        document.querySelectorAll(AdBlocker.selectors.removal).forEach(el => {
+          // Prefer removing a known item wrapper (thumbnail card, reel item, etc.)
+          for (const w of AdBlocker.wrappers) {
+            const wrap = el.closest(w);
+            if (wrap) {
+              wrap.remove();
               return;
             }
+          }
 
-            // If standalone ad-slot-renderer or other ad container, remove the nearest reasonable container
-            const container =
-              el.closest('ytd-ad-slot-renderer') || el.closest('.ad-container') || el;
-            if (container?.remove) {
-              container.remove();
-            }
-          } catch (e) {
-            if (AdBlocker.config.enableLogging) {
-              adblockerLogger?.warn?.('AdBlocker', 'removeElements error', e);
-            }
+          // If ad is inside a reel item specifically, remove the reel container
+          const reel = el.closest('ytd-reel-video-renderer');
+          if (reel) {
+            reel.remove();
+            return;
+          }
+
+          // If standalone ad-slot-renderer or other ad container, remove the nearest reasonable container
+          const container = el.closest('ytd-ad-slot-renderer') || el.closest('.ad-container') || el;
+          if (container?.remove) {
+            container.remove();
           }
         });
       };
 
-      const ric = /** @type {any} */ (window).requestIdleCallback;
+      const ric = window.requestIdleCallback;
       if (typeof ric === 'function') {
-        ric(remove, { timeout: 100 });
+        // The idle callback fires at most once and needs no tracking.
+        ric(
+          () => {
+            remove();
+          },
+          { timeout: 100 }
+        );
       } else {
-        setTimeout(remove, 0);
+        // The context frame releases itself on fire and at the feature stop,
+        // so repeated removeElements calls cannot accumulate pool entries.
+        adblockerCtx?.frame(remove);
       }
     },
 
-    // Attach change handler to the static checkbox in settings modal
-    attachSettingsHandler() {
-      try {
-        const checkbox = document.getElementById('ytp-plus-setting-enableAdBlocker');
-        if (!(checkbox instanceof HTMLInputElement)) return;
-        if (checkbox.dataset.handlerAttached) return;
-        checkbox.dataset.handlerAttached = 'true';
-        checkbox.checked = AdBlocker.config.enabled;
-        checkbox.addEventListener('change', (/** @type {Event} */ e) => {
-          const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-          AdBlocker.config.enabled = target.checked;
-          AdBlocker.settings.save();
-          AdBlocker.config.enabled ? AdBlocker.addCss() : AdBlocker.removeCss();
-        });
-      } catch (_e) {
-        // non-critical
-      }
-    },
-
-    // Streamlined initialization
-    init() {
-      if (AdBlocker.state.initialized) return;
-      AdBlocker.state.initialized = true;
+    // Wire the runtime. Everything the blocker reacts with is owned by the
+    // feature context: the release at the route exit removes the CSS,
+    // unregisters the coordinators and drops the listeners together.
+    start(/** @type {YouTubePlusFeatureContext} */ ctx) {
+      adblockerCtx = ctx;
 
       AdBlocker.settings.load();
 
-      if (AdBlocker.config.enabled) {
-        AdBlocker.addCss();
-        AdBlocker.removeElements();
-      }
+      AdBlocker.addCss();
+      AdBlocker.removeElements();
 
-      // Start optimized intervals with cleanup registration
-      // P7: Cache movie_player reference to avoid 4+ redundant DOM queries per check cycle
+      // Blob changes arrive through the unified event; only adblocker keys
+      // matter. The feature lifecycle owns the on/off switch, so re-reading
+      // only applies a logging change from another tab.
+      ctx.listen(window, 'youtube-plus-settings-updated', (/** @type {Event} */ e) => {
+        if (window.YouTubePlusSettingsStore?.affectsModule?.(e, MODULE_NAME) === false) return;
+        AdBlocker.settings.load();
+      });
+
+      // Cache movie_player reference to avoid 4+ redundant DOM queries per check cycle
       /** @type {Element | null} */
       let _cachedMoviePlayer = null;
       let _mpCacheTs = 0;
@@ -513,157 +490,149 @@
       };
 
       const combinedAdCheck = () => {
-        if (!AdBlocker.config.enabled) return;
         if (isAdActive()) {
           AdBlocker.skipAd();
           AdBlocker.dismissAdBlockerWarning();
         }
       };
 
-      // Primary: MutationObserver on #movie_player class attribute (event-driven, no polling)
-      // Primary: coordinator watcher on #movie_player class attribute (event-driven, no polling)
-      try {
-        const attachAdObserver = () => {
-          const coordinator = window.YouTubePlusMutationCoordinator;
-          if (!coordinator?.watchTarget) return;
+      // Primary: coordinator watcher on #movie_player class attribute
+      // (event-driven, no polling). When the player is absent (boot before
+      // the DOM builds, SPA replacement), a root subscription for
+      // '#movie_player' delivers the insertion and re-attaches instead of a
+      // repeating retry timer.
+      /** @type {Element | null} */
+      let watchedPlayer = null;
+      const attachAdObserver = () => {
+        const coordinator = window.YouTubePlusMutationCoordinator;
+        if (!coordinator?.watchTarget) return;
 
-          const moviePlayer = $('#movie_player');
-          if (!moviePlayer) {
-            // Retry once after short delay if player not yet in DOM
-            setTimeout_(attachAdObserver, 1500);
-            return;
-          }
-
-          if (AdBlocker.state.moviePlayerSubId) {
-            coordinator.unwatch(AdBlocker.state.moviePlayerSubId);
-          }
-          AdBlocker.state.moviePlayerSubId = 'adblocker::moviePlayerClass';
-
-          coordinator.watchTarget(
-            AdBlocker.state.moviePlayerSubId,
-            moviePlayer,
-            () => {
-              if (AdBlocker.config.enabled && isAdActive()) {
-                AdBlocker.skipAd();
-                AdBlocker.dismissAdBlockerWarning();
-              }
-            },
-            { attributes: true, childList: false, subtree: false, attributeFilter: ['class'] }
-          );
-
-          if (YouTubeUtils.cleanupManager?.register) {
-            YouTubeUtils.cleanupManager.register(() => {
-              if (AdBlocker.state.moviePlayerSubId) {
-                coordinator.unwatch(AdBlocker.state.moviePlayerSubId);
-                AdBlocker.state.moviePlayerSubId = null;
-              }
-            });
-          }
-        };
-        attachAdObserver();
-      } catch (e) {
-        adblockerLogger?.warn?.('AdBlocker', 'Ad observer setup error', e);
-      }
-
-      // Also monitor video play events for immediate ad detection
-      try {
-        const handleVideoPlay = () => {
-          if (AdBlocker.config.enabled) {
-            // Single delayed check — MutationObserver handles fast detection
-            setTimeout(combinedAdCheck, 100);
-          }
-        };
-        if (YouTubeUtils.cleanupManager?.registerListener) {
-          YouTubeUtils.cleanupManager.registerListener(document, 'playing', handleVideoPlay, {
-            capture: true,
-            passive: true,
-          });
-        } else {
-          document.addEventListener('playing', handleVideoPlay, { capture: true, passive: true });
+        const moviePlayer = $('#movie_player');
+        // Mutations inside the player reach the wait subscription too; the
+        // watcher already on this player needs no re-attach.
+        if (moviePlayer && moviePlayer === watchedPlayer && moviePlayer.isConnected) return;
+        if (AdBlocker.state.moviePlayerSubId) {
+          coordinator.unwatch(AdBlocker.state.moviePlayerSubId);
+          AdBlocker.state.moviePlayerSubId = null;
         }
-      } catch (e) {
-        adblockerLogger?.warn?.('AdBlocker', 'Ad play listener error', e);
-      }
+        watchedPlayer = null;
+        if (!moviePlayer) return;
+        watchedPlayer = moviePlayer;
+        AdBlocker.state.moviePlayerSubId = 'adblocker::moviePlayerClass';
 
-      // Navigation handling — also run removeElements on page transitions
-      const handleNavigation = () => {
-        AdBlocker.state.isYouTubeShorts = location.pathname.startsWith('/shorts/');
-        AdBlocker.cache.lastCacheTime = 0; // Reset cache
-        if (AdBlocker.config.enabled) AdBlocker.removeElements();
+        coordinator.watchTarget(AdBlocker.state.moviePlayerSubId, moviePlayer, combinedAdCheck, {
+          attributes: true,
+          childList: false,
+          subtree: false,
+          attributeFilter: ['class'],
+        });
       };
+      attachAdObserver();
 
-      // Use centralized pushState/replaceState event from utils.js
-      const navHandler = () => setTimeout(handleNavigation, 50);
-      if (YouTubeUtils.cleanupManager?.registerListener) {
-        YouTubeUtils.cleanupManager.registerListener(window, 'ytp-history-navigate', navHandler);
-      } else {
-        window.addEventListener('ytp-history-navigate', navHandler);
-      }
-
-      // Settings modal integration — attach handler to static checkbox
-      const settingsHandler = () => {
-        setTimeout(AdBlocker.attachSettingsHandler, 50);
-      };
-      if (YouTubeUtils.cleanupManager?.registerListener) {
-        YouTubeUtils.cleanupManager.registerListener(
-          document,
-          'youtube-plus-settings-modal-opened',
-          settingsHandler
+      const moviePlayerWaitSubId = 'adblocker::moviePlayerWait';
+      if (window.YouTubePlusMutationCoordinator?.subscribeRoot) {
+        window.YouTubePlusMutationCoordinator.subscribeRoot(
+          moviePlayerWaitSubId,
+          () => attachAdObserver(),
+          {
+            selector: '#movie_player',
+            childList: true,
+            subtree: true,
+            attributes: false,
+          }
         );
-      } else {
-        document.addEventListener('youtube-plus-settings-modal-opened', settingsHandler);
       }
+      ctx.onDispose(() => {
+        const c = window.YouTubePlusMutationCoordinator;
+        if (AdBlocker.state.moviePlayerSubId && c?.unwatch) {
+          c.unwatch(AdBlocker.state.moviePlayerSubId);
+          AdBlocker.state.moviePlayerSubId = null;
+        }
+        c?.unsubscribe?.(moviePlayerWaitSubId);
+      });
+
+      // Video play events for immediate ad detection; the class watcher
+      // handles fast detection, this only adds one delayed check.
+      ctx.listen(
+        document,
+        'playing',
+        () => {
+          ctx.timeout(combinedAdCheck, 100);
+        },
+        {
+          capture: true,
+          passive: true,
+        }
+      );
+
+      // Navigation handling: also run removeElements on page transitions.
+      const handleNavigation = () => {
+        AdBlocker.cache.lastCacheTime = 0; // Reset cache
+        AdBlocker.removeElements();
+      };
+      ctx.listen(window, 'yp-history-navigate', () => ctx.timeout(handleNavigation, 50), false);
 
       // Observe DOM for dynamically inserted ad slots and remove them
-      // Use coordinator root subscription with selector filtering.
-      try {
-        const coordinator = window.YouTubePlusMutationCoordinator;
-        if (coordinator?.subscribeRoot) {
+      // (coordinator root subscription with selector filtering)
+      const adSlotCoordinator = window.YouTubePlusMutationCoordinator;
+      if (adSlotCoordinator?.subscribeRoot) {
+        if (AdBlocker.state.adSlotSubId) {
+          adSlotCoordinator.unsubscribe(AdBlocker.state.adSlotSubId);
+        }
+        AdBlocker.state.adSlotSubId = 'adblocker::adSlots';
+        adSlotCoordinator.subscribeRoot(
+          AdBlocker.state.adSlotSubId,
+          () => {
+            AdBlocker.removeElements();
+          },
+          {
+            selector:
+              'ytd-ad-slot-renderer, ytd-merch-shelf-renderer, #player-ads, ad-slot-renderer',
+            childList: true,
+            attributes: false,
+            subtree: true,
+          }
+        );
+        ctx.onDispose(() => {
           if (AdBlocker.state.adSlotSubId) {
-            coordinator.unsubscribe(AdBlocker.state.adSlotSubId);
+            window.YouTubePlusMutationCoordinator?.unsubscribe?.(AdBlocker.state.adSlotSubId);
+            AdBlocker.state.adSlotSubId = null;
           }
-          AdBlocker.state.adSlotSubId = 'adblocker::adSlots';
-          coordinator.subscribeRoot(
-            AdBlocker.state.adSlotSubId,
-            () => {
-              AdBlocker.removeElements();
-            },
-            {
-              selector:
-                'ytd-ad-slot-renderer, ytd-merch-shelf-renderer, #player-ads, ad-slot-renderer',
-              childList: true,
-              attributes: false,
-              subtree: true,
-            }
-          );
-          if (YouTubeUtils.cleanupManager?.register) {
-            YouTubeUtils.cleanupManager.register(() => {
-              if (AdBlocker.state.adSlotSubId) {
-                coordinator.unsubscribe(AdBlocker.state.adSlotSubId);
-                AdBlocker.state.adSlotSubId = null;
-              }
-            });
-          }
-        }
-      } catch (e) {
-        if (AdBlocker.config.enableLogging) {
-          adblockerLogger?.warn?.('AdBlocker', 'Failed to create adSlotObserver', e);
-        }
+        });
       }
 
       // Initial skip attempt
-      if (AdBlocker.config.enabled) {
-        setTimeout(AdBlocker.skipAd, 200);
-        // Also check for ad blocker warning popup
-        setTimeout(AdBlocker.dismissAdBlockerWarning, 500);
+      ctx.timeout(() => {
+        AdBlocker.skipAd();
+      }, 200);
+      // Also check for ad blocker warning popup
+      ctx.timeout(() => {
+        AdBlocker.dismissAdBlockerWarning();
+      }, 500);
+    },
+
+    stop() {
+      if (adblockerCtx) {
+        adblockerCtx.dispose();
+        adblockerCtx = null;
       }
+      AdBlocker.removeCss();
     },
   };
 
-  // Initialize
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', AdBlocker.init, { once: true });
-  } else {
-    AdBlocker.init();
-  }
+  // --- FeatureLifecycle: the runtime starts when `enableAdBlocker` is on ---
+  // Routes carry the pages where something is removed: player ads on watch,
+  // the shorts player, and the feed/home/search list ad slots. Channel and
+  // other pages ship none of the module's removal selectors.
+  const adblockerFeature = window.YouTubePlusFeatureRegistry?.FeatureLifecycle?.define?.({
+    id: 'adblocker',
+    settingsKey: 'enableAdBlocker',
+    routes: ['watch', 'shorts', 'home', 'feed', 'search'],
+    start: AdBlocker.start,
+    stop: AdBlocker.stop,
+  });
+  adblockerFeature?.sync();
+
+  window.AdBlocker = AdBlocker;
+  window.YouTubePlusAdBlocker = AdBlocker;
 })();

@@ -8,10 +8,9 @@
     node scripts/update-greasyfork-badges.js <greasyfork-url> [readme-path]
 
   Example:
-    node scripts/update-greasyfork-badges.js https://greasyfork.org/ru/scripts/537017-youtube README.md
+    node scripts/update-greasyfork-badges.js https://greasyfork.org/scripts/537017-youtube README.md
 
 */
-'use strict';
 
 const fs = require('fs/promises');
 const { URL } = require('url');
@@ -28,7 +27,7 @@ function parseNumberString(inputStr) {
   // handle k shorthand
   const kMatch = str.match(/^([\d,.\s]+)\s*k$/i);
   if (kMatch) {
-    const n = Number(kMatch[1].replace(/[ ,\.]/g, ''));
+    const n = Number(kMatch[1].replace(/[ ,.]/g, ''));
     if (!Number.isNaN(n)) return Math.round(n * 1000);
   }
   // remove non-digit characters
@@ -41,7 +40,7 @@ function parseVersionString(s) {
   if (!s) return null;
   const m = String(s)
     .trim()
-    .match(/(\d+\.[\d\.a-zA-Z-]+)/);
+    .match(/(\d+\.[\d.a-zA-Z-]+)/);
   return m ? m[1] : null;
 }
 
@@ -126,7 +125,9 @@ async function tryJsonEndpoint(baseUrl) {
     candidates.push(`${baseUrl}.json`);
   }
 
+  /** @type {number|null} */
   let installCount = null;
+  /** @type {string|null} */
   let version = null;
 
   for (const c of candidates) {
@@ -142,7 +143,9 @@ async function tryJsonEndpoint(baseUrl) {
 
 async function tryScrapeHtml(url) {
   const html = await fetchText(url);
+  /** @type {number|null} */
   let installCount = null;
+  /** @type {string|null} */
   let version = null;
 
   // Try to find install count
@@ -163,8 +166,8 @@ async function tryScrapeHtml(url) {
   // Try to find version
   const versionPatterns = [
     /<dt[^>]*>\s*(?:Version|Версия)\s*<\/dt>\s*<dd[^>]*>\s*([^<\n]+)\s*<\/dd>/i,
-    /(?:Version|Версия)[:\s]{0,10}([0-9]+\.[0-9][0-9a-zA-Z\.-]*)/i,
-    /class="attribute-value">\s*([0-9]+\.[0-9][0-9a-zA-Z\.-]*)\s*<\/dd>[\s\S]{0,80}?<dt[^>]*>\s*(?:Version|Версия)/i,
+    /(?:Version|Версия)[:\s]{0,10}([0-9]+\.[0-9][0-9a-zA-Z.-]*)/i,
+    /class="attribute-value">\s*([0-9]+\.[0-9][0-9a-zA-Z.-]*)\s*<\/dd>[\s\S]{0,80}?<dt[^>]*>\s*(?:Version|Версия)/i,
   ];
 
   for (const re of versionPatterns) {
@@ -177,7 +180,7 @@ async function tryScrapeHtml(url) {
 
   // Fallback for install count: find first reasonable number
   if (!installCount) {
-    const allNums = [...html.matchAll(/([0-9]{2,}[0-9,\.\skK]*)/g)];
+    const allNums = [...html.matchAll(/([0-9]{2,}[0-9,.\skK]*)/g)];
     if (allNums.length > 0) {
       installCount = parseNumberString(allNums[0][1]);
     }
@@ -185,7 +188,7 @@ async function tryScrapeHtml(url) {
 
   // Fallback for version: find semver-like string
   if (!version) {
-    const any = html.match(/(\d+\.[0-9A-Za-z\.-]+\.[0-9A-Za-z\.-]+)/);
+    const any = html.match(/(\d+\.[0-9A-Za-z.-]+\.[0-9A-Za-z.-]+)/);
     if (any) version = any[1];
   }
 
@@ -213,7 +216,7 @@ async function updateReadme(readmePath, installCount, version, targetUrl) {
   const downloadsEnd = '<!-- GREASYFORK_INSTALLS:END -->';
   const hasMarkers = content.includes(downloadsStart) && content.includes(downloadsEnd);
   if (hasMarkers) {
-    const badgeRe = new RegExp(`${downloadsStart}[\s\S]*?${downloadsEnd}`, 'm');
+    const badgeRe = new RegExp(`${downloadsStart}[\\s\\S]*?${downloadsEnd}`, 'm');
     const match = content.match(badgeRe);
     if (match && match[0]) {
       const block = match[0];
@@ -251,7 +254,7 @@ async function updateReadme(readmePath, installCount, version, targetUrl) {
     const badgeBlock = `${downloadsStart}\n\n${badgesLine}\n\n${downloadsEnd}\n`;
 
     if (match) {
-      const insertIdx = match.index + match[0].length;
+      const insertIdx = (match.index ?? 0) + match[0].length;
       content = `${content.slice(0, insertIdx)}\n${badgeBlock}\n${content.slice(insertIdx)}`;
     } else {
       content = `${badgeBlock}\n${content}`;
@@ -281,7 +284,9 @@ async function main() {
 
   console.log('📥 Fetching GreasyFork data for', targetUrl);
 
+  /** @type {number|null} */
   let installCount = null;
+  /** @type {string|null} */
   let version = null;
 
   // Try JSON endpoint first
@@ -300,7 +305,10 @@ async function main() {
       if (!installCount) installCount = htmlInstalls;
       if (!version) version = htmlVersion;
     } catch (err) {
-      console.error('Failed to fetch or parse GreasyFork page:', err.message || err);
+      console.error(
+        'Failed to fetch or parse GreasyFork page:',
+        err instanceof Error ? err.message : err
+      );
     }
   }
 

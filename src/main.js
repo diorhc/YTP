@@ -1,69 +1,7 @@
-// @ts-nocheck
-// ---------------------------------------------------------------------------
-// Strict-checking exemption for this file.
-//
-// The file is 6100+ lines of hand-written ES2020 that predates the
-// strict checkJs flow. Removing @ts-nocheck produces ~628 errors.
-//
-// Migration plan (incremental, by category):
-//   Phase 1 — Outer IIFE (lines 6056-6154): annotate with JSDoc, ~15 errors.
-//   Phase 2 — Style object (lines 5891-6054): type as Record<string, string>.
-//   Phase 3 — executionScript helpers (flag constants, layout state):
-//             add @type annotations to ~50 most-trafficked variables.
-//   Phase 4 — executionScript core (tab switching, comment patching):
-//             annotate function parameters and return types.
-//   Phase 5 — Remove @ts-nocheck, fix remaining errors category-by-category.
-//
-// Each phase should be a separate commit to keep reviews manageable.
-// ---------------------------------------------------------------------------
-
-/**
- * main.js - tabview runtime / boot orchestrator.
- *
- * Owns the YouTube watch-page tabview overlay: it injects a tab strip
- * (info / comments / videos) into the right-rail of ytd-watch-flexy,
- * swaps the default description and chat into the chosen tab, and
- * patches a number of ytd-* custom-element prototype methods to keep
- * layout, comments, engagement panels, and chat in sync.
- *
- * Architecture:
- *   - This file is shipped as a string to a page-context <script>
- *     element (see the outer IIFE at the bottom of the file) so the
- *     tabview code can attach to YouTube's prototype-mutated custom
- *     elements directly.
- *   - Canonical services are preferred over local ownership where they
- *     exist: YouTubeSafeDOM (TrustedHTML), YouTubePlusLogger, the
- *     YouTubePlusCleanupManager, and the YouTubePlusDesignSystem
- *     StyleManager all back the relevant responsibilities.
- *   - Boot/runtime hardening: both the outer IIFE and the inner
- *     executionScript are guarded by a window-level idempotency flag
- *     so duplicate injection cannot re-register listeners or
- *     observers.
- *
- * Strict-checking readiness: the file IS included in the tsconfig
- * include list (src/ .js glob) but uses `@ts-nocheck` to
- * suppress errors. The JSDoc added here is intentionally narrow —
- * only on public boot/runtime entry points and helpers — so the
- * incremental sweep that removes `@ts-nocheck` can proceed without
- * a large surface of new typing errors at once.
- */
-const VAL_ROUNDED_A1 = 12;
-
-/**
- * Page-context boot body. Injected by the outer IIFE via GM_addElement
- * so it runs inside the YouTube page's own window. Wraps every side
- * effect in a top-level try/catch so an unexpected failure degrades
- * to "tabview disabled" rather than breaking the host page.
- *
- * @param {string} communicationKey - Per-boot nonce, only used for
- *   the injected sourceURL when dev-tools debugging is enabled.
- * @returns {void}
- */
-const executionScript = _communicationKey => {
-  // Boot/runtime hardening: window-level idempotency guard so a duplicate
-  // re-entry (HMR, script re-injection, or accidental double-load) cannot
-  // register listeners/observers twice. Mirrors the same pattern used in
-  // basic.js / time.js (window.__ytpBasicInitDone__ / window.__ytpTimeInitDone__).
+const executionScript = (
+  /** @type {string} */ communicationKey,
+  /** @type {{ enabled?: boolean }} */ opts = {}
+) => {
   if (typeof window !== 'undefined' && window.__ytpMainExecDone__) {
     return;
   }
@@ -71,487 +9,506 @@ const executionScript = _communicationKey => {
     window.__ytpMainExecDone__ = true;
   }
 
-  const _ll =
-    typeof window !== 'undefined' && window.YouTubePlusLogger?.createLogger
+  const createExecLogger = () => {
+    const isDev =
+      typeof window !== 'undefined' && Boolean(window.__ytpDebug__ || window.__ytpDevMode);
+    return typeof window !== 'undefined' && window.YouTubePlusLogger?.createLogger
       ? window.YouTubePlusLogger.createLogger('Tabview')
       : {
           error: console.error,
           warn: console.warn,
-          info: console.log,
+          info: isDev ? console.log : () => {},
           debug: () => {},
-          log: console.log,
+          log: isDev ? console.log : () => {},
         };
+  };
+  const _ll = /** @type {ExecLogger} */ (createExecLogger());
   const _cm = typeof window !== 'undefined' ? window.YouTubePlusCleanupManager : null;
-  const _safeDOM = typeof window !== 'undefined' && window.YouTubeSafeDOM;
-  const _mc = typeof window !== 'undefined' && window.YouTubePlusMutationCoordinator;
+  /**
+   * Safe observer registration helper that delegates to _cm if available,
+   * or returns the raw observer instance if _cm is not present.
+   * @template {IntersectionObserver | MutationObserver | ResizeObserver} T
+   * @param {T} observer
+   * @param {Element|null} [element]
+   * @param {{ scope?: string } | null} [options]
+   * @returns {T}
+   */
+  const _registerObserver = (observer, element = null, options = null) => {
+    if (_cm && typeof _cm.registerObserver === 'function') {
+      return /** @type {T} */ (_cm.registerObserver(observer, element, options || undefined));
+    }
+    return observer;
+  };
 
-  // -------------------------------------------------------------------------
-  // Tab-view status bit flags — named constants for the layout state
-  // machine bits used by tabsStatusCorrection, calculationFn, and
-  // other functions that react to YouTube watch-page attribute changes.
-  // -------------------------------------------------------------------------
+  /**
+   * Safe listener registration helper that delegates to _cm if available,
+   * or falls back to target.addEventListener if _cm is not present.
+   * @param {EventTarget|null|undefined} target
+   * @param {string} type
+   * @param {EventListenerOrEventListenerObject} listener
+   * @param {boolean|AddEventListenerOptions} [options]
+   * @param {boolean} [isSession]
+   * @returns {symbol | null}
+   */
+  const _registerListener = (target, type, listener, options = undefined, isSession = false) => {
+    if (!target) return null;
+    if (_cm && typeof _cm.registerListener === 'function') {
+      return _cm.registerListener(
+        target,
+        type,
+        /** @type {EventListener} */ (listener),
+        options,
+        isSession
+      );
+    }
+    if (typeof target.addEventListener === 'function') {
+      target.addEventListener(type, listener, options); // lint:custom:ignore
+    }
+    return null;
+  };
+  /** @type {YouTubeSafeDOM | null} */ const _safeDOM =
+    (typeof window !== 'undefined' && window.YouTubeSafeDOM) || null;
+  /** @type {YouTubePlusMutationCoordinatorAPI | null} */ const _mc =
+    (typeof window !== 'undefined' && window.YouTubePlusMutationCoordinator) || null;
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    window.YouTubeUtils?.logSuppressed?.(_err, _label || 'Main');
+
+  /**
+   * A YouTube Polymer element prototype. The core patches lifecycle, observer
+   * and data members by runtime name (`attached498`, `_dataChanged496`, ...),
+   * which cannot be listed, so this stays a runtime-name-addressable record.
+   * @typedef {{ [key: string]: any; [key: symbol]: any }} YtProto
+   */
+  /**
+   * Page-realm execution logger: the facade logger when available, otherwise a
+   * console-like fallback. Tabview passes numeric codes and error objects, so
+   * the methods accept any arguments.
+   * @typedef {{ error: (...args: unknown[]) => void; warn: (...args: unknown[]) => void; info: (...args: unknown[]) => void; debug: (...args: unknown[]) => void; log: (...args: unknown[]) => void }} ExecLogger
+   */
+
   const FLAG = {
-    /** Theater mode active */
     THEATER: 1,
-    /** Tab (info/comments/videos) is selected */
     TAB_SELECTED: 2,
-    /** Chat panel collapsed (tyt-chat=&#39;-&#39;) */
     CHAT_COLLAPSED: 4,
-    /** Chat panel expanded (tyt-chat=&#39;+&#39;) */
     CHAT_EXPANDED: 8,
-    /** Two-column layout active */
     TWO_COLUMNS: 16,
-    /** Engagement panel open */
     ENGAGEMENT_PANEL: 32,
-    /** Fullscreen mode */
     FULLSCREEN: 64,
-    /** Playlist expanded */
     PLAYLIST: 128,
-    /** External YTLSTM integration active */
     EXTERNAL_YTLSTM: 4096,
-    /** All standard flags (excludes EXTERNAL_YTLSTM) */
     ALL_STANDARD: 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128,
-    /** All flags including external integration */
     ALL: 1 | 2 | 4 | 8 | 16 | 32 | 64 | 128 | 4096,
   };
 
-  const isTabviewEnabled = () => {
-    try {
-      const store = typeof window !== 'undefined' ? window.YouTubePlusSettingsStore : null;
-      if (store && typeof store.get === 'function') {
-        const v = store.get('enableTabview');
-        return v !== false;
-      }
-      const local =
-        typeof localStorage !== 'undefined' ? localStorage.getItem('youtube_plus_settings') : null;
-      if (local) {
-        const parsed = JSON.parse(local);
-        return parsed ? parsed.enableTabview !== false : true;
-      }
-    } catch (_) {
-      // Ignore
-    }
-    return true;
-  };
+  // the enablement flag is handed in from the userscript realm
+  // (loadFeatureEnabled): the page realm has no SettingsStore, so its own
+  // probing always returned true here.
+  const tabviewEnabled = !(opts && opts.enabled === false);
 
-  // Trusted Types hardening: install a `default` policy on the page's
-  // window.trustedTypes so plain-string assignments to TT sinks
-  // (innerHTML, setHTMLUnsafe, Range.createContextualFragment, etc.)
-  // do not throw on hosts that enforce TT with `require-trusted-types-for`.
-  //
-  // safe-dom.js is loaded earlier in build.order.json and has already
-  // installed its named policy on the userscript context. When that
-  // canonical policy is reachable in this trust boundary (the normal
-  // case, via `window.YouTubeSafeDOM` from `unsafeWindow`), we delegate
-  // the default policy's createHTML / createScriptURL to it so the
-  // default fallback is at least as defensive as safe-dom itself
-  // (script / iframe / object / embed tags, on*= handlers, and
-  // `javascript:` / `data:text/html` URLs are stripped).
-  //
-  // If the canonical policy is not reachable here, we degrade to the
-  // previous identity behaviour (createHTML passes through unchanged).
-  // This is strictly no worse than the prior code, and the boot probe
-  // below will surface any resulting sink-type mismatch as a clear
-  // bail-out.
-  if (typeof trustedTypes !== 'undefined' && trustedTypes.defaultPolicy === null) {
-    const canonicalPolicy =
-      _safeDOM && typeof _safeDOM.getTrustedTypesPolicy === 'function'
-        ? _safeDOM.getTrustedTypesPolicy()
-        : null;
-    let _createHTMLReentrant = false;
-    const safeCreateHTML = html => {
-      if (_createHTMLReentrant) {
-        return typeof html === 'string' ? html : String(html == null ? '' : html);
-      }
-      _createHTMLReentrant = true;
-      try {
-        const value = typeof html === 'string' ? html : String(html == null ? '' : html);
-        return canonicalPolicy && typeof canonicalPolicy.createHTML === 'function'
-          ? canonicalPolicy.createHTML(value)
-          : value;
-      } finally {
-        _createHTMLReentrant = false;
-      }
-    };
-    const safeCreateScriptURL = url => {
-      const value = typeof url === 'string' ? url : String(url == null ? '' : url);
-      return canonicalPolicy && typeof canonicalPolicy.createScriptURL === 'function'
-        ? canonicalPolicy.createScriptURL(value)
-        : value;
-    };
-    try {
-      trustedTypes.createPolicy('default', {
-        createHTML: safeCreateHTML,
-        createScriptURL: safeCreateScriptURL,
-        createScript: () => {
-          throw new Error('Script creation not allowed by YouTube Plus TT policy');
-        },
-      });
-    } catch (_e) {
-      // Policy name collision or TT restriction â€” fall through. The
-      // boot probe below will report any sink-type mismatch.
-    }
-  }
-
-  /**
-   * Wrap a string as TrustedHTML (or a plain string on hosts without
-   * Trusted Types). Delegates to the canonical safe-dom service when
-   * present; falls back to the raw string only on the narrow path
-   * where safe-dom is not reachable in the current trust boundary.
-   *
-   * The `default` Trusted Types policy installed above keeps
-   * plain-string assignments to innerHTML permissive on hosts that
-   * enforce TT, so this fallback is safe at the assignment site even
-   * when the canonical service is absent.
-   * @param {string} s
-   * @returns {string|unknown}
-   */
-  function createHTML(s) {
+  // This core runs in the PAGE realm, where the sandbox's YouTubeSafeDOM is
+  // absent. YouTube enforces `require-trusted-types-for 'script'` (Chrome and
+  // Firefox), so a raw string assigned to an HTML sink is blocked there. A
+  // private page-realm policy, created once and never exposed, wraps only the
+  // static tab markup built below (its i18n text is escaped).
+  /** @type {{ createHTML: (value: string) => string } | null | undefined} undefined until the first use */
+  let pageHtmlPolicy;
+  /** @param {string} s */
+  const createHTML = s => {
     if (_safeDOM && typeof _safeDOM.createTrustedHTML === 'function') {
       return _safeDOM.createTrustedHTML(s);
     }
-    return s;
-  }
-
-  let trustHTMLErr = null;
-  try {
-    const probe = document.createElement('div');
-    if (_safeDOM && typeof _safeDOM.createFragment === 'function') {
-      probe.appendChild(_safeDOM.createFragment(createHTML('1')));
-    } else {
-      probe.textContent = createHTML('1');
+    const tt =
+      /** @type {{ trustedTypes?: { createPolicy?: (name: string, rules: { createHTML: (value: string) => string }) => { createHTML: (value: string) => string } } }} */ (
+        window
+      ).trustedTypes;
+    if (tt && typeof tt.createPolicy === 'function') {
+      if (pageHtmlPolicy === undefined) {
+        try {
+          pageHtmlPolicy = tt.createPolicy('ytplus-tabview', {
+            createHTML: (/** @type {string} */ x) => x,
+          });
+        } catch (e) {
+          logS(e);
+          pageHtmlPolicy = null;
+        }
+      }
+      if (pageHtmlPolicy) return pageHtmlPolicy.createHTML(s);
     }
-  } catch (e) {
-    trustHTMLErr = e;
-  }
+    return s;
+  };
+
+  /** @returns {unknown} the thrown error, or null when the probe succeeded */
+  const probeTrustedHTML = () => {
+    try {
+      const probe = document.createElement('div');
+      if (_safeDOM && typeof _safeDOM.createFragment === 'function') {
+        probe.appendChild(_safeDOM.createFragment(createHTML('1')));
+      } else {
+        probe.textContent = createHTML('1');
+      }
+      return null;
+    } catch (e) {
+      logS(e);
+      return e;
+    }
+  };
+
+  const trustHTMLErr = probeTrustedHTML();
 
   if (trustHTMLErr) {
     _ll.error('trustHTMLErr', trustHTMLErr);
-    // Bail out: the host enforces a Trusted Types policy that our
-    // default-policy bridge cannot satisfy. Skip the main body so the
-    // outer try/catch does not see a second error. End-user behavior
-    // is preserved: tabview is disabled with the same logged error.
     return;
   }
 
   try {
-    let _executionFinished = 0;
-
     if (typeof CustomElementRegistry === 'undefined') return;
-    if (CustomElementRegistry.prototype.define000) return;
+    // Stop only when this page-context patch has already been installed.
+    if (typeof CustomElementRegistry.prototype.define000 === 'function') return;
     if (typeof CustomElementRegistry.prototype.define !== 'function') return;
 
-    /** @type {HTMLElement} */
-    const HTMLElement_ = HTMLElement.prototype.constructor;
-
     /**
-     *  @param {Element} elm
-     * @param {string} selector
-     * @returns {Element | null}
-     *  */
-    const qsOne = (elm, selector) => {
-      return HTMLElement_.prototype.querySelector.call(elm, selector);
-    };
-
-    /**
-     *  @param {Element} elm
-     * @param {string} selector
-     * @returns {NodeListOf<Element>}
-     *  */
-    const _qsAll = (elm, selector) => {
-      return HTMLElement_.prototype.querySelectorAll.call(elm, selector);
-    };
-
-    /**
-     * Define own properties on a prototype with defensive null-checking.
-     * Skips any `null`/`undefined` descriptors and emits a warning so
-     * the caller notices the bad entry instead of silently dropping it.
-     * @param {object|null|undefined} p Target prototype (no-op when falsy).
-     * @param {object} o Property descriptors keyed by name.
-     * @returns {object|undefined} Result of `Object.defineProperties`, or
-     *   `undefined` when `p` is falsy.
+     * Install the 000/111 prototype helpers and return the two the core reuses.
+     * @returns {{ HTMLElement_: typeof HTMLElement, qsOne: (elm: Element, selector: string) => Element|null }}
      */
-    const defineProperties = (p, o) => {
-      if (!p) {
-        _ll.warn(`defineProperties ERROR: Prototype is undefined`);
-        return;
-      }
-      for (const k of Object.keys(o)) {
-        if (!o[k]) {
-          _ll.warn(`defineProperties ERROR: Property ${k} is undefined`);
-          delete o[k];
-        }
-      }
-      return Object.defineProperties(p, o);
-    };
+    const installPrototypePatches = () => {
+      /** @type {typeof HTMLElement} */
+      // cross-realm: the page's HTMLElement prototype differs from the sandbox's
+      const HTMLElement_ = /** @type {typeof HTMLElement} */ (
+        /** @type {unknown} */ (HTMLElement.prototype.constructor)
+      );
 
-    /**
-     * Polyfill for the native `Element.replaceChildren(...)` method.
-     * Removes every existing child then appends the supplied children.
-     * Used as a fallback when the host prototype does not implement
-     * `replaceChildren` directly.
-     * @param {...Node|string} new_children Children to append after
-     *   clearing the parent.
-     * @returns {void}
-     */
-    const replaceChildrenPolyfill = function replaceChildren(...new_children) {
-      let el = this.firstChild;
-      while (el) {
-        const next = el.nextSibling;
-        el.remove();
-        el = next;
-      }
-      this.append(...new_children);
-    };
-
-    const pdsBaseDF = Object.getOwnPropertyDescriptors(DocumentFragment.prototype);
-
-    if (pdsBaseDF.replaceChildren) {
-      defineProperties(DocumentFragment.prototype, {
-        replaceChildren000: pdsBaseDF.replaceChildren,
-      });
-    } else {
-      DocumentFragment.prototype.replaceChildren000 = replaceChildrenPolyfill;
-    }
-
-    const pdsBaseNode = Object.getOwnPropertyDescriptors(Node.prototype);
-
-    if (!(pdsBaseNode.appendChild000 || pdsBaseNode.insertBefore000)) {
-      defineProperties(Node.prototype, {
-        appendChild000: pdsBaseNode.appendChild,
-        insertBefore000: pdsBaseNode.insertBefore,
-      });
-    }
-
-    const pdsBaseElement = Object.getOwnPropertyDescriptors(Element.prototype);
-
-    if (!(pdsBaseElement.setAttribute000 || pdsBaseElement.querySelector000)) {
-      const nPdsElement = {
-        setAttribute000: pdsBaseElement.setAttribute,
-        getAttribute000: pdsBaseElement.getAttribute,
-        hasAttribute000: pdsBaseElement.hasAttribute,
-        removeAttribute000: pdsBaseElement.removeAttribute,
-        querySelector000: pdsBaseElement.querySelector,
+      /** @param {Element} elm @param {string} selector */
+      const qsOne = (elm, selector) => {
+        return HTMLElement_.prototype.querySelector.call(elm, selector);
       };
 
-      if (pdsBaseElement.replaceChildren) {
-        nPdsElement.replaceChildren000 = pdsBaseElement.replaceChildren;
+      /** @param {unknown} p @param {Record<string, PropertyDescriptor>} o */
+      const defineProperties = (p, o) => {
+        if (!p) {
+          _ll.warn(`defineProperties ERROR: Prototype is undefined`);
+          return;
+        }
+        for (const k of Object.keys(o)) {
+          if (!o[k]) {
+            _ll.warn(`defineProperties ERROR: Property ${k} is undefined`);
+            delete o[k];
+          }
+        }
+        return Object.defineProperties(p, o);
+      };
+
+      /** @this {Element} @param {...Node} new_children */
+      const replaceChildrenPolyfill = function replaceChildren(...new_children) {
+        let el = this.firstChild;
+        while (el) {
+          const next = el.nextSibling;
+          el.remove();
+          el = next;
+        }
+        this.append(...new_children);
+      };
+
+      const pdsBaseDF = Object.getOwnPropertyDescriptors(DocumentFragment.prototype);
+
+      if (pdsBaseDF.replaceChildren) {
+        defineProperties(DocumentFragment.prototype, {
+          replaceChildren000: pdsBaseDF.replaceChildren,
+        });
       } else {
-        Element.prototype.replaceChildren000 = replaceChildrenPolyfill;
+        DocumentFragment.prototype.replaceChildren000 = replaceChildrenPolyfill;
       }
 
-      defineProperties(Element.prototype, nPdsElement);
-    }
+      const pdsBaseNode = Object.getOwnPropertyDescriptors(Node.prototype);
 
-    Element.prototype.setAttribute111 = function (p, v) {
-      v = `${v}`;
-      if (this.getAttribute000(p) === v) return;
-      this.setAttribute000(p, v);
+      if (!(pdsBaseNode.appendChild000 || pdsBaseNode.insertBefore000)) {
+        defineProperties(Node.prototype, {
+          appendChild000: pdsBaseNode.appendChild,
+          insertBefore000: pdsBaseNode.insertBefore,
+        });
+      }
+
+      const pdsBaseElement = Object.getOwnPropertyDescriptors(Element.prototype);
+
+      if (!(pdsBaseElement.setAttribute000 || pdsBaseElement.querySelector000)) {
+        /** @type {Record<string, PropertyDescriptor>} */
+        const nPdsElement = {
+          setAttribute000: pdsBaseElement.setAttribute,
+          getAttribute000: pdsBaseElement.getAttribute,
+          hasAttribute000: pdsBaseElement.hasAttribute,
+          removeAttribute000: pdsBaseElement.removeAttribute,
+          querySelector000: pdsBaseElement.querySelector,
+        };
+
+        if (pdsBaseElement.replaceChildren) {
+          nPdsElement.replaceChildren000 = pdsBaseElement.replaceChildren;
+        } else {
+          Element.prototype.replaceChildren000 = replaceChildrenPolyfill;
+        }
+
+        defineProperties(Element.prototype, nPdsElement);
+      }
+
+      /** @this {Element} @param {string} p @param {string | number | boolean} v */
+      Element.prototype.setAttribute111 = function (p, v) {
+        v = `${v}`;
+        if (this.getAttribute000(p) === v) return;
+        this.setAttribute000(p, v);
+      };
+
+      /** @this {Element} @param {string} p */
+      Element.prototype.incAttribute111 = function (p) {
+        let v = Number(this.getAttribute000(p)) || 0;
+        v = v > 1e9 ? 9 : v + 1;
+        this.setAttribute000(p, `${v}`);
+        return v;
+      };
+
+      return { HTMLElement_, qsOne };
+    };
+    const { HTMLElement_, qsOne } = installPrototypePatches();
+
+    /**
+     * @param {Event} evt
+     * @returns {Element | null} the hovered watch-metadata element, or null
+     */
+    const getHoveredMetaData = evt => {
+      const target = evt ? evt.target : null;
+      if (!(target instanceof HTMLElement_)) return null;
+      return target.closest('ytd-watch-metadata') || null;
     };
 
-    Element.prototype.incAttribute111 = function (p) {
-      let v = +this.getAttribute000(p) || 0;
-      v = v > 1e9 ? 9 : v + 1;
-      this.setAttribute000(p, `${v}`);
-      return v;
+    /**
+     * @param {ParentNode} host
+     * @param {Node} excluded
+     * @returns {Node[]} every child of `host` except `excluded`
+     */
+    const collectOtherChildren = (host, excluded) => {
+      /** @type {Node[]} */
+      const others = [];
+      for (let child = host.firstChild; child instanceof Node; child = child.nextSibling) {
+        if (child !== excluded) others.push(child);
+      }
+      return others;
     };
 
+    /**
+     * Move `node` between `previousSiblings` and `nextSiblings` in place, without
+     * detaching the host's other children.
+     * @param {Element} host
+     * @param {Node} node
+     * @param {Node[]|null} previousSiblings
+     * @param {Node[]|null} nextSiblings
+     * @param {Node[]} others
+     */
+    const moveBetweenSiblings = (host, node, previousSiblings, nextSiblings, others) => {
+      const fragment = new DocumentFragment();
+      if (others.length > 0) fragment.replaceChildren000(...others);
+      if (previousSiblings && previousSiblings.length > 0) {
+        fragment.replaceChildren000(...previousSiblings);
+        host.insertBefore000(fragment, node);
+      }
+      if (nextSiblings && nextSiblings.length > 0) {
+        fragment.replaceChildren000(...nextSiblings);
+        host.appendChild000(fragment);
+      }
+      fragment.replaceChildren000();
+    };
+
+    /** @param {Node[]} others */
+    const removeDisconnectedChildren = others => {
+      for (const child of others) {
+        if (child instanceof Element && child.isConnected === false) child.remove(); // remove triggering
+      }
+    };
+
+    /**
+     * @this {Element}
+     * @param {Node[] | null} previousSiblings
+     * @param {Node} node
+     * @param {Node[] | null} nextSiblings
+     */
     Element.prototype.assignChildren111 = function (previousSiblings, node, nextSiblings) {
       // assume all previousSiblings, node, and nextSiblings are on the page
       //  -> only remove triggering is needed
-      let nodeList = [];
-      for (let t = this.firstChild; t instanceof Node; t = t.nextSibling) {
-        if (t === node) continue;
-        nodeList.push(t);
-      }
-
+      const others = collectOtherChildren(this, node);
       inPageRearrange = true;
       if (node.parentNode === this) {
-        let fm = new DocumentFragment();
-        if (nodeList.length > 0) {
-          fm.replaceChildren000(...nodeList);
-        }
-        if (previousSiblings && previousSiblings.length > 0) {
-          fm.replaceChildren000(...previousSiblings);
-          this.insertBefore000(fm, node);
-        }
-        if (nextSiblings && nextSiblings.length > 0) {
-          fm.replaceChildren000(...nextSiblings);
-          this.appendChild000(fm);
-        }
-        fm.replaceChildren000();
-        fm = null;
+        moveBetweenSiblings(this, node, previousSiblings, nextSiblings, others);
       } else {
-        if (!previousSiblings) previousSiblings = [];
-        if (!nextSiblings) nextSiblings = [];
-        this.replaceChildren000(...previousSiblings, node, ...nextSiblings);
+        this.replaceChildren000(...(previousSiblings || []), node, ...(nextSiblings || []));
       }
       inPageRearrange = false;
-      if (nodeList.length > 0) {
-        for (const t of nodeList) {
-          if (t instanceof Element && t.isConnected === false) t.remove(); // remove triggering
-        }
-      }
-      nodeList.length = 0;
-      nodeList = null;
+      removeDisconnectedChildren(others);
     };
 
     let secondaryInnerHold = 0;
 
+    /** @param {() => unknown} cb */
     const secondaryInnerFn = cb => {
       if (secondaryInnerHold) {
         secondaryInnerHold++;
-        let err, r;
         try {
-          r = cb();
-        } catch (e) {
-          err = e;
+          return cb();
+        } finally {
+          secondaryInnerHold--;
         }
-        secondaryInnerHold--;
-        if (err) throw err;
-        return r;
-      } else {
-        const ea = document.querySelector('#secondary-inner');
-        const eb = document.querySelector('secondary-wrapper#secondary-inner-wrapper');
-        if (ea && eb) {
-          secondaryInnerHold++;
-          let err, r;
-          ea.id = 'secondary-inner-';
-          eb.id = 'secondary-inner';
-          try {
-            r = cb();
-          } catch (e) {
-            err = e;
-          }
+      }
+      const ea = document.querySelector('#secondary-inner');
+      const eb = document.querySelector('secondary-wrapper#secondary-inner-wrapper');
+      if (ea && eb) {
+        secondaryInnerHold++;
+        ea.id = 'secondary-inner-';
+        eb.id = 'secondary-inner';
+        try {
+          return cb();
+        } finally {
           ea.id = 'secondary-inner';
           eb.id = 'secondary-inner-wrapper';
           secondaryInnerHold--;
-          if (err) throw err;
-          return r;
-        } else {
-          return cb();
         }
       }
+      return cb();
     };
-
-    // ==============================================================================================================================================================================================================================================================================
 
     const DISABLE_FLAGS_SHADYDOM_FREE = true;
 
-    /**
-     *
-     * Minified Code from https://greasyfork.org/en/scripts/475632-ytconfighacks/code (ytConfigHacks)
-     * Date: 2024.04.17
-     * Minifier: https://www.toptal.com/developers/javascript-minifier
-     *
-     */
     (() => {
-      const e =
-        'undefined' !== typeof unsafeWindow ? unsafeWindow : this instanceof Window ? this : window;
-      if (!e._ytConfigHacks) {
-        let t = 4;
-        class n extends Set {
-          add(e) {
-            if (t <= 0) return _ll.warn('yt.config_ is already applied on the page.');
-            'function' === typeof e && super.add(e);
+      /** @type {Window & typeof globalThis} */
+      const pageGlobal = /** @type {Window & typeof globalThis} */ (
+        'undefined' !== typeof unsafeWindow ? unsafeWindow : globalThis
+      );
+      if (!pageGlobal._ytConfigHacks) {
+        // yt.config_ subscribers; after a few applications it warns.
+        let remainingApplications = 4;
+        const _win = pageGlobal;
+        class ConfigSubscribers extends Set {
+          /** @param {unknown} callback @returns {this} */
+          add(callback) {
+            if (remainingApplications <= 0) {
+              _ll.warn('yt.config_ is already applied on the page.');
+              return this;
+            }
+            if ('function' === typeof callback) super.add(callback);
+            return this;
           }
         }
-        let a = (async () => {})().constructor,
-          i = (e._ytConfigHacks = new n()),
-          l = () => {
-            const t = e.ytcsi.originalYtcsi;
-            t && ((e.ytcsi = t), (l = null));
-          },
-          c = null,
-          o = () => {
-            if (t >= 1) {
-              const n = (e.yt || 0).config_ || (e.ytcfg || 0).data_ || 0;
-              if ('string' === typeof n.INNERTUBE_API_KEY && 'object' === typeof n.EXPERIMENT_FLAGS)
-                for (const a of (--t <= 0 && l && l(), (c = !0), i)) a(n);
+        /** @type {any} */
+        const PromiseCtor = (async () => {})().constructor;
+        const subscribers = (pageGlobal._ytConfigHacks = new ConfigSubscribers());
+        // Hand the page's own ytcsi back as soon as the config has been read.
+        /** @type {(() => void) | null} */
+        let restoreYtcsi = () => {
+          const original = _win.ytcsi?.originalYtcsi;
+          if (original) {
+            _win.ytcsi = original;
+            restoreYtcsi = null;
+          }
+        };
+        /** @type {boolean | null} */
+        let configApplied = null;
+        // Proxy reads left before the page's own ytcsi is restored.
+        let proxyReadsBeforeRestore = 1;
+        const applyConfig = () => {
+          if (remainingApplications >= 1) {
+            /** @type {Record<string, unknown>} */
+            const config = _win.yt?.config_ || _win.ytcfg?.data_ || {};
+            if (
+              'string' === typeof config.INNERTUBE_API_KEY &&
+              'object' === typeof config.EXPERIMENT_FLAGS
+            ) {
+              if (--remainingApplications <= 0) restoreYtcsi?.();
+              configApplied = true;
+              for (const subscriber of subscribers) subscriber(config);
             }
-          },
-          f = 1,
-          d = t => {
-            if ((t = t || e.ytcsi))
-              return (
-                (e.ytcsi = new Proxy(t, {
-                  get: (e, t, _n) =>
-                    'originalYtcsi' === t ? e : (o(), c && --f <= 0 && l?.(), e[t]),
-                })),
-                !0
-              );
-          };
-        d() ||
-          Object.defineProperty(e, 'ytcsi', {
-            get() {},
-            set: t => (t && (delete e.ytcsi, d(t)), !0),
-            enumerable: !1,
-            configurable: !0,
-          });
-        const { addEventListener: s, removeEventListener: y } = Document.prototype;
+          }
+        };
         /**
-         * One-shot DOMContentLoaded handler. Flushes the YouTube
-         * config bridge once and detaches itself from the listener.
-         * @param {Event} [_t] Optional DOMContentLoaded event (unused
-         *   beyond the listener-remove flag).
-         * @returns {void}
+         * Wrap the page's ytcsi so the first read applies the config.
+         * @param {unknown} [target]
+         * @returns {boolean}
          */
-        function r(_t) {
-          o(), _t && e.removeEventListener('DOMContentLoaded', r, !1);
-        }
-        new a(e => {
-          if ('undefined' !== typeof AbortSignal)
-            s.call(document, 'yt-page-data-fetched', e, { once: !0 }),
-              s.call(document, 'yt-navigate-finish', e, { once: !0 }),
-              s.call(document, 'spfdone', e, { once: !0 });
-          else {
-            /**
-             * Three-event listener that fires the user callback and
-             * cleans up its own registrations. Used as the
-             * non-AbortSignal fallback for the navigation/ready
-             * signal chain.
-             * @returns {void}
-             */
-            const t = () => {
-              e(),
-                y.call(document, 'yt-page-data-fetched', t, !1),
-                y.call(document, 'yt-navigate-finish', t, !1),
-                y.call(document, 'spfdone', t, !1);
-            };
-            s.call(document, 'yt-page-data-fetched', t, !1),
-              s.call(document, 'yt-navigate-finish', t, !1),
-              s.call(document, 'spfdone', t, !1);
-          }
-        }).then(o),
-          new a(e => {
-            if ('undefined' !== typeof AbortSignal)
-              s.call(document, 'yt-action', e, { once: !0, capture: !0 });
-            else {
-              /**
-               * Single-event listener that fires the user callback
-               * and cleans up its own registration. Used as the
-               * non-AbortSignal fallback for the `yt-action` signal.
-               * @returns {void}
-               */
-              const t = () => {
-                e(), y.call(document, 'yt-action', t, !0);
-              };
-              s.call(document, 'yt-action', t, !0);
-            }
-          }).then(o),
-          a.resolve().then(() => {
-            'loading' !== document.readyState ? r() : e.addEventListener('DOMContentLoaded', r, !1);
+        const wrapYtcsi = (target = undefined) => {
+          const ytcsi = /** @type {YtTimingFunction | undefined} */ (target) || _win.ytcsi;
+          if (!ytcsi) return false;
+          _win.ytcsi = /** @type {YtTimingFunction} */ (
+            new Proxy(ytcsi, {
+              get: (/** @type {YtProto} */ self, /** @type {string | symbol} */ property) =>
+                'originalYtcsi' === property
+                  ? self
+                  : (applyConfig(),
+                    configApplied && --proxyReadsBeforeRestore <= 0 && restoreYtcsi?.(),
+                    self[property]),
+            })
+          );
+          return true;
+        };
+        wrapYtcsi() ||
+          Object.defineProperty(_win, 'ytcsi', {
+            get() {},
+            set: /** @param {unknown} value */ value => (
+              value && (delete _win.ytcsi, wrapYtcsi(value)), true
+            ),
+            enumerable: false,
+            configurable: true,
           });
+        const {
+          addEventListener: docAddEventListener,
+          removeEventListener: docRemoveEventListener,
+        } = Document.prototype;
+        /** @param {unknown} _event */
+        /** @param {unknown} [_event] */
+        function onConfigReady(_event = undefined) {
+          applyConfig();
+          if (_event) pageGlobal.removeEventListener('DOMContentLoaded', onConfigReady, false);
+        }
+        new PromiseCtor((/** @type {() => void} */ resolve) => {
+          if ('undefined' !== typeof AbortSignal) {
+            docAddEventListener.call(document, 'yt-page-data-fetched', resolve, { once: true });
+            docAddEventListener.call(document, 'yt-navigate-finish', resolve, { once: true });
+            docAddEventListener.call(document, 'spfdone', resolve, { once: true });
+          } else {
+            const handler = () => {
+              resolve();
+              docRemoveEventListener.call(document, 'yt-page-data-fetched', handler, false);
+              docRemoveEventListener.call(document, 'yt-navigate-finish', handler, false);
+              docRemoveEventListener.call(document, 'spfdone', handler, false);
+            };
+            docAddEventListener.call(document, 'yt-page-data-fetched', handler, false);
+            docAddEventListener.call(document, 'yt-navigate-finish', handler, false);
+            docAddEventListener.call(document, 'spfdone', handler, false);
+          }
+        }).then(applyConfig);
+        new PromiseCtor((/** @type {() => void} */ resolve) => {
+          if ('undefined' !== typeof AbortSignal) {
+            docAddEventListener.call(document, 'yt-action', resolve, { once: true, capture: true });
+          } else {
+            const handler = () => {
+              resolve();
+              docRemoveEventListener.call(document, 'yt-action', handler, true);
+            };
+            docAddEventListener.call(document, 'yt-action', handler, true);
+          }
+        }).then(applyConfig);
+        PromiseCtor.resolve().then(() => {
+          if ('loading' !== document.readyState) onConfigReady();
+          else _registerListener(pageGlobal, 'DOMContentLoaded', onConfigReady, false, false);
+        });
       }
     })();
 
     let configOnce = false;
-    window._ytConfigHacks.add(config_ => {
+    window._ytConfigHacks?.add(config_ => {
       if (configOnce) return;
       configOnce = true;
 
-      const EXPERIMENT_FLAGS = config_.EXPERIMENT_FLAGS || 0;
-      const EXPERIMENTS_FORCED_FLAGS = config_.EXPERIMENTS_FORCED_FLAGS || 0;
+      /** @type {Record<string, unknown>} */
+      const EXPERIMENT_FLAGS = /** @type {Record<string, unknown>} */ (
+        config_.EXPERIMENT_FLAGS || 0
+      );
+      /** @type {Record<string, unknown>} */
+      const EXPERIMENTS_FORCED_FLAGS = /** @type {Record<string, unknown>} */ (
+        config_.EXPERIMENTS_FORCED_FLAGS || 0
+      );
       for (const flags of [EXPERIMENT_FLAGS, EXPERIMENTS_FORCED_FLAGS]) {
         if (flags) {
           flags.web_watch_chat_hide_button_killswitch = false;
@@ -571,55 +528,35 @@ const executionScript = _communicationKey => {
       }
     });
 
-    // ==============================================================================================================================================================================================================================================================================
-
     /* globals WeakRef:false */
 
-    /** @type {(o: Object | null) => WeakRef | null} */
+    /** @type {(o: any) => WeakRef<any> | null} */
     const mWeakRef =
-      typeof WeakRef === 'function' ? o => (o ? new WeakRef(o) : null) : o => o || null; // typeof InvalidVar == 'undefined'
+      typeof WeakRef === 'function' ? o => (o ? new WeakRef(o) : null) : o => o || null;
 
-    /** @type {(wr: Object | null) => Object | null} */
+    /** @type {(wr: any) => any} */
     const kRef = wr => (wr?.deref ? wr.deref() : wr);
 
-    /** @type {globalThis.PromiseConstructor} */
+    /** @type {any} */
     const Promise = (async () => {})().constructor; // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
 
-    /**
-     * Return a promise that resolves after `delay` ms.
-     * @param {number} delay Milliseconds to wait.
-     * @returns {Promise<void>}
-     */
-    const delayPn = delay => new Promise(fn => setTimeout(fn, delay));
+    const setTimeout_ = setTimeout;
 
-    /**
-     * Resolve the Polymer/Lit controller instance (`polymerController`,
-     * `inst`) from a custom-element host or return a falsy sentinel.
-     * Used throughout the tabview code to reach into YouTube's internal
-     * element state without relying on `.__data` or `.__reactProps$...`.
-     * @param {Object|null|undefined} o A custom-element DOM node.
-     * @returns {Object|null|0} The controller object, `null`, or `0`.
-     */
+    /** @param {number} delay */
+    const delayPn = (/** @type {number} */ delay) =>
+      new Promise((/** @type {() => void} */ fn) => setTimeout_(fn, delay));
+
+    /** @param {any} o */
     const insp = o => (o ? o.polymerController || o.inst || o || 0 : o || 0);
 
-    const setTimeout_ = setTimeout.bind(window);
-
-    /**
-     * Check whether a media element (video/audio) is actively playing.
-     * @param {HTMLMediaElement} media
-     * @returns {boolean}
-     */
+    /** @param {HTMLMediaElement} media */
     const isVideoPlaying = media => {
       return media.paused === false && media.readyState > 2 && !media.ended;
     };
 
     /**
-     * Like `Element.closest()` but traverses shadow DOM boundaries.
-     * Walks up the DOM tree through shadow roots to find the nearest
-     * ancestor matching the given CSS selector.
      * @this {Element}
-     * @param {string} selector CSS selector to match.
-     * @returns {Element|null} The matching ancestor, or null.
+     * @param {string} selector
      */
     const closestFromAnchor = function (selector) {
       let el = /** @type {Element|null} */ (this);
@@ -635,18 +572,15 @@ const executionScript = _communicationKey => {
     };
 
     /**
-     * Like `Element.querySelector()` but traverses shadow DOM boundaries.
-     * Searches the element and all nested shadow roots for a match.
-     * @this {Element}
-     * @param {string} selector CSS selector to match.
-     * @returns {Element|null} The first matching descendant, or null.
+     * @this {Element|DocumentFragment}
+     * @param {string} selector
      */
     const _querySelector = function (selector) {
       const found = this.querySelector(selector);
       if (found) return found;
       const shadows = this.querySelectorAll('*');
       for (const el of shadows) {
-        const root = /** @type {any} */ (el).shadowRoot;
+        const root = el.shadowRoot;
         if (root) {
           const r = root.querySelector(selector);
           if (r) return r;
@@ -656,12 +590,12 @@ const executionScript = _communicationKey => {
     };
 
     /**
-     * Find the parent contents renderer (YTD-COMMENTS or
-     * YTD-ITEM-SECTION-RENDERER) and the index of the given element
-     * within its children. Used by the live-chat comment swap logic.
-     * @param {Element} element A comment renderer element.
-     * @returns {{ parent: Element, index: number } | null}
+     * A comments contents-renderer location: its parent element and child index.
+     * @typedef {object} ContentsRendererRef
+     * @property {HTMLElement} parent
+     * @property {number} index
      */
+    /** @param {Element} element @returns {ContentsRendererRef | null} */
     const findContentsRenderer = element => {
       let el = element;
       while (el) {
@@ -677,29 +611,14 @@ const executionScript = _communicationKey => {
       return null;
     };
 
-    /**
-     * Hand-rolled `Promise`-shaped class that exposes its `resolve`
-     * and `reject` callbacks as instance methods. Used when a code
-     * path needs the eventual-result semantics of a Promise but also
-     * needs to fire the resolution from arbitrary places (not just
-     * inside the executor). The instance also implements `.then`
-     * so it composes with regular `await` and `.then` chains.
-     * @param {Function} [resolve_] Initial resolve stub (overwritten
-     *   on first `h(resolve, reject)` call).
-     * @param {Function} [reject_] Initial reject stub (overwritten on
-     *   the first `h(resolve, reject)` call).
-     * @returns {PromiseExternal} Constructed instance.
-     */
-    const PromiseExternal = ((resolve_, reject_) => {
-      /**
-       * Bind the real resolve and reject callbacks to the instance.
-       * Called exactly once by the user of the PromiseExternal pattern
-       * to hand control over when the promise settles.
-       * @param {Function} resolve Resolve callback.
-       * @param {Function} reject Reject callback.
-       * @returns {void}
-       */
-      const h = (resolve, reject) => {
+    const PromiseExternal = ((
+      /** @type {(value?: unknown) => void} */ resolve_ = () => {},
+      /** @type {(reason?: unknown) => void} */ reject_ = () => {}
+    ) => {
+      const h = (
+        /** @type {(value?: unknown) => void} */ resolve,
+        /** @type {(reason?: unknown) => void} */ reject
+      ) => {
         resolve_ = resolve;
         reject_ = reject;
       };
@@ -707,134 +626,50 @@ const executionScript = _communicationKey => {
         constructor(cb = h) {
           super(cb);
           if (cb === h) {
-            /** @type {(value: any) => void} */
+            /** @type {(value?: unknown) => void} */
             this.resolve = resolve_;
-            /** @type {(reason?: any) => void} */
+            /** @type {(reason?: unknown) => void} */
             this.reject = reject_;
           }
         }
       };
     })();
 
-    // ------------------------------------------------------------------------ nextBrowserTick ------------------------------------------------------------------------
-    // nextBrowserTick microtask scheduler polyfill. The original used a
-    // self-referential `var` (hoisted to `undefined` before the right-hand
-    // side was evaluated) to detect a previous boot's instance. To stay
-    // strict-mode-clean and TDZ-free, we look up any prior global install
-    // explicitly via `globalThis` first; the first boot installs the
-    // polyfill and later boots reuse it. `nextBrowserTick` is then a
-    // stable `const` reference for the lifetime of the page-context script.
-    const _existingNextBrowserTick =
-      typeof globalThis !== 'undefined' && globalThis.nextBrowserTick
-        ? globalThis.nextBrowserTick
-        : null;
-    const nextBrowserTick =
-      _existingNextBrowserTick && _existingNextBrowserTick.version >= 2
-        ? _existingNextBrowserTick
-        : (() => {
-            const e =
-              'undefined' !== typeof self ? self : 'undefined' !== typeof global ? global : this;
-            const _tickOrigin = (typeof location !== 'undefined' && location.origin) || '*';
-            let t = !0;
-            if (
-              !(function n(s) {
-                return s
-                  ? (t = !1)
-                  : e.postMessage && !e.importScripts && e.addEventListener
-                    ? (e.addEventListener('message', n, !1),
-                      e.postMessage('$$$', _tickOrigin),
-                      e.removeEventListener('message', n, !1),
-                      t)
-                    : void 0;
-              })()
-            )
-              return void _ll.warn('Your browser environment cannot use nextBrowserTick');
-            /**
-             * Reference to the `AsyncFunction` constructor. Used to
-             * Reference to the native `Promise` constructor.
-             * @type {PromiseConstructor}
-             */
-            const n = (async () => {})().constructor;
-            let s = null;
-            const o = new Map(),
-              { floor: r, random: i } = Math;
-            let l;
-            do {
-              l = `$$nextBrowserTick$$${(i() + 8).toString().slice(2)}$$`;
-            } while (l in e);
-            const a = l,
-              c = a.length + 9;
-            e[a] = 1;
-            e.addEventListener(
-              'message',
-              e => {
-                if (0 !== o.size) {
-                  const t = (e || 0).data;
-                  if (
-                    'string' === typeof t &&
-                    t.length === c &&
-                    e.source === (e.target || 1) &&
-                    (!e.origin || e.origin === _tickOrigin)
-                  ) {
-                    const e = o.get(t);
-                    e && ('p' === t[0] && (s = null), o.delete(t), e());
-                  }
-                }
-              },
-              !1
-            );
-            /**
-             * Resolved-promise polyfill used as the `nextBrowserTick`
-             * implementation. Caches the last scheduled microtask so
-             * a single shared tick can deliver every queued callback.
-             * @param {Function} [cb] Optional callback to register on
-             *   the next tick; defaults to the no-op sentinel `o`.
-             * @returns {Promise|undefined} A cached microtask Promise, or
-             *   `undefined` when invoked with no arguments and no tick
-             *   is currently scheduled.
-             */
-            const d = (cb = o) => {
-              if (cb === o) {
-                if (s) return s;
-                let t;
-                do {
-                  t = `p${a}${r(314159265359 * i() + 314159265359).toString(36)}`;
-                } while (o.has(t));
-                return (
-                  (s = new n(resolve => {
-                    o.set(t, resolve);
-                  })),
-                  e.postMessage(t, _tickOrigin),
-                  (t = null),
-                  s
-                );
-              }
-              {
-                let n;
-                do {
-                  n = `f${a}${r(314159265359 * i() + 314159265359).toString(36)}`;
-                } while (o.has(n));
-                o.set(n, cb), e.postMessage(n, _tickOrigin);
-              }
-            };
-            return (d.version = 2), d;
-          })();
-
-    if (typeof globalThis !== 'undefined') globalThis.nextBrowserTick = nextBrowserTick;
-
-    // ------------------------------------------------------------------------ nextBrowserTick ------------------------------------------------------------------------
+    /**
+     * Run callbacks at the start of the next task, after the current one and
+     * its microtasks finish (a MessageChannel message, not a throttled timer).
+     * Callbacks queued in the same task run together in one message.
+     * @returns {(callback: () => void) => void}
+     */
+    const createNextBrowserTick = () => {
+      /** @type {Array<() => void>} */
+      let queue = [];
+      /** @type {MessageChannel | null} */
+      let channel = null;
+      const flush = () => {
+        const callbacks = queue;
+        queue = [];
+        for (const callback of callbacks) callback();
+      };
+      return (/** @type {() => void} */ callback) => {
+        queue.push(callback);
+        if (queue.length > 1) return;
+        if (!channel) {
+          channel = new MessageChannel();
+          channel.port1.onmessage = flush;
+        }
+        channel.port2.postMessage(null);
+      };
+    };
+    const nextBrowserTick = createNextBrowserTick();
 
     const isPassiveArgSupport = typeof IntersectionObserver === 'function';
-    const _bubblePassive = isPassiveArgSupport ? { capture: false, passive: true } : false;
     const capturePassive = isPassiveArgSupport ? { capture: true, passive: true } : true;
 
-    /**
-     * Bitmask-based attribute state tracker. Accepts a list of attribute
-     * names and exposes `makeString()` which concatenates every name whose
-     * corresponding bit is set in `this.flag`. Used to build ad-hoc CSS
-     * class or attribute values from a compact numeric mask.
-     */
     class Attributer {
+      /**
+       * @param {string} list
+       */
       constructor(list) {
         this.list = list;
         this.flag = 0;
@@ -858,7 +693,7 @@ const executionScript = _communicationKey => {
 
     const wrSelfMap = new WeakMap();
 
-    /** @type {Object.<string, Element | null>} */
+    /** @type {Record<string, any>} */
     const elements = new Proxy(
       {
         related: null,
@@ -867,7 +702,7 @@ const executionScript = _communicationKey => {
       },
       {
         get(target, prop) {
-          return kRef(target[prop]);
+          return kRef(/** @type {YtProto} */ (target)[prop]);
         },
         set(target, prop, value) {
           if (value) {
@@ -876,21 +711,14 @@ const executionScript = _communicationKey => {
               wr = mWeakRef(value);
               wrSelfMap.set(value, wr);
             }
-            target[prop] = wr;
+            /** @type {YtProto} */ (target)[prop] = wr;
           } else {
-            target[prop] = null;
+            /** @type {YtProto} */ (target)[prop] = null;
           }
           return true;
         },
       }
     );
-    /**
-     * Resolve the `[tyt-main-info]` element that hosts the main watch
-     * metadata block. The element may be the expander itself (when
-     * marked) or a descendant queryable via the canonical selector.
-     * @returns {Element|null} The main info element, or `null` when
-     *   the expander is not mounted yet.
-     */
     const getMainInfo = () => {
       const infoExpander = elements.infoExpander;
       if (!infoExpander) return null;
@@ -899,9 +727,16 @@ const executionScript = _communicationKey => {
         : infoExpander.querySelector000('[tyt-main-info]');
       return mainInfo || null;
     };
-    let pageType = null;
+    /** @type {string | null} */ let pageType = null;
 
     const i18nT = window.YouTubePlusI18n?.t || (k => k);
+    /**
+     * @param {string} str
+     */
+    const escapeHTML = str => {
+      if (_safeDOM?.escapeHTML) return _safeDOM.escapeHTML(str);
+      return window.YouTubeUtils?.escapeHTML?.(str) ?? '';
+    };
 
     const svgComments = `<path d="M80 27H12A12 12 90 0 0 0 39v42a12 12 90 0 0 12 12h12v20a2 2 90 0 0 3.4 2L47 93h33a12 12 90 0 0 12-12V39a12 12 90 0 0-12-12zM20 47h26a2 2 90 1 1 0 4H20a2 2 90 1 1 0-4zm52 28H20a2 2 90 1 1 0-4h52a2 2 90 1 1 0 4zm0-12H20a2 2 90 1 1 0-4h52a2 2 90 1 1 0 4zm36-58H40a12 12 90 0 0-12 12v6h52c9 0 16 7 16 16v42h0v4l7 7a2 2 90 0 0 3-1V71h2a12 12 90 0 0 12-12V17a12 12 90 0 0-12-12z"/>`;
     const svgVideos = `<path d="M89 10c0-4-3-7-7-7H7c-4 0-7 3-7 7v70c0 4 3 7 7 7h75c4 0 7-3 7-7V10zm-62 2h13v10H27V12zm-9 66H9V68h9v10zm0-56H9V12h9v10zm22 56H27V68h13v10zm-3-25V36c0-2 2-3 4-2l12 8c2 1 2 4 0 5l-12 8c-2 1-4 0-4-2zm25 25H49V68h13v10zm0-56H49V12h13v10zm18 56h-9V68h9v10zm0-56h-9V12h9v10z"/>`;
@@ -909,34 +744,22 @@ const executionScript = _communicationKey => {
     const svgPlayList = `<path d="M0 3h12v2H0zm0 4h12v2H0zm0 4h8v2H0zm16 0V7h-2v4h-4v2h4v4h2v-4h4v-2z"/>`;
 
     /**
-     * Build an `<svg>` element string with the supplied dimensions and
-     * inner path markup. Used by the tab HTML builder to inline the
-     * small YouTube-style icons next to each tab label.
-     * @param {number|string} w Rendered width in pixels.
-     * @param {number|string} h Rendered height in pixels.
-     * @param {number|string} vw viewBox width (intrinsic width).
-     * @param {number|string} vh viewBox height (intrinsic height).
-     * @param {string} p Inner markup (e.g. a `<path>` element).
-     * @param {string} [m] Optional class name to apply to the wrapper.
-     * @returns {string} HTML string for the `<svg>` element.
+     * @param {number} w
+     * @param {number} h
+     * @param {number} vw
+     * @param {number} vh
+     * @param {string} p
+     * @param {string} [m]
      */
-    const svgElm = (w, h, vw, vh, p, m) =>
+    const svgElm = (w, h, vw, vh, p, m = undefined) =>
       `<svg${m ? ` class=${m}` : ''} width="${w}" height="${h}" viewBox="0 0 ${vw} ${vh}" preserveAspectRatio="xMidYMid meet">${p}</svg>`;
 
     const hiddenTabsByUserCSS = 0;
 
-    /**
-     * Render the tabview strip (info / comments / videos / playlist) as
-     * a static HTML string. The string is parsed by the mutation
-     * coordinator through a detached `<template>` and inserted into the
-     * right rail of `ytd-watch-flexy`. Markup is fully under our
-     * control; no user data is interpolated without escaping.
-     * @returns {string} HTML for the `#right-tabs` block.
-     */
     function getTabsHTML() {
-      const sTabBtnVideos = `${svgElm(16, 16, 90, 90, svgVideos)}<span>${i18nT('videos')}</span>`;
-      const sTabBtnInfo = `${svgElm(16, 16, 60, 60, svgInfo)}<span>${i18nT('info')}</span>`;
-      const sTabBtnPlayList = `${svgElm(16, 16, 20, 20, svgPlayList)}<span>${i18nT('playlist')}</span>`;
+      const sTabBtnVideos = `${svgElm(16, 16, 90, 90, svgVideos)}<span>${escapeHTML(i18nT('videos'))}</span>`;
+      const sTabBtnInfo = `${svgElm(16, 16, 60, 60, svgInfo)}<span>${escapeHTML(i18nT('info'))}</span>`;
+      const sTabBtnPlayList = `${svgElm(16, 16, 20, 20, svgPlayList)}<span>${escapeHTML(i18nT('playlist'))}</span>`;
 
       const str1 = `
         <paper-ripple class="style-scope yt-icon-button">
@@ -988,35 +811,17 @@ const executionScript = _communicationKey => {
       return addHTML;
     }
 
-    /**
-     * Mirror the active language onto `<html data-ytplus-lang>` so CSS
-     * and other modules can read it without depending on the i18n
-     * service directly. Falls back to `document.documentElement.lang`
-     * and finally to `en`. Errors are swallowed — language detection is
-     * non-critical for tabview functionality.
-     * @returns {void}
-     */
     const setLangForPage = () => {
-      try {
-        const lang =
-          window.YouTubePlusI18n?.getLanguage?.() || document.documentElement?.lang || 'en';
-        document.documentElement?.setAttribute('data-ytplus-lang', lang);
-      } catch (_e) {
-        // non-critical
-      }
+      const lang =
+        window.YouTubePlusI18n?.getLanguage?.() || document.documentElement?.lang || 'en';
+      document.documentElement?.setAttribute('data-yp-lang', lang);
     };
 
-    /** @type {Object.<string, number>} */
+    /** @type {Record<string, number>} */
     const _locks = {};
 
-    /**
-     * Read-only proxy to the lock counter map. Every read returns
-     * the current lock value (or 0 if unset). Writes are silently
-     * ignored — use `lockSet` to increment.
-     * @type {Readonly<Record<string, number>>}
-     */
     const lockGet = new Proxy(_locks, {
-      get(target, prop) {
+      get(/** @type {YtProto} */ target, prop) {
         return target[prop] || 0;
       },
       set(_target, _prop, _val) {
@@ -1024,16 +829,8 @@ const executionScript = _communicationKey => {
       },
     });
 
-    /**
-     * Write-only proxy to the lock counter map. Every property read
-     * atomically increments the counter (wrapping at 1e9 → 9) and
-     * returns the new value. Used as a lock sequencing mechanism:
-     * capture a lockId via `lockSet.lockName`, and check it later
-     * with `lockGet.lockName` to detect concurrent re-entry.
-     * @type {Record<string, number>}
-     */
     const lockSet = new Proxy(_locks, {
-      get(target, prop) {
+      get(/** @type {YtProto} */ target, prop) {
         if (target[prop] > 1e9) target[prop] = 9;
         return (target[prop] = (target[prop] || 0) + 1);
       },
@@ -1042,41 +839,26 @@ const executionScript = _communicationKey => {
       },
     });
 
+    /**
+     * Set by the tabview command bridge near the end of this script.
+     * Declared here so switchToTab() can notify the sandbox without
+     * knowing anything about the bridge itself.
+     * @type {((evt: string, detail?: unknown) => void) | null}
+     */
+    let tabviewEmit = null;
+
     let videosElementProvidedPromise = new PromiseExternal();
     let navigateFinishedPromise = new PromiseExternal();
 
     let isRightTabsInserted = false;
+    /** Listener key for the rail's tab-button click handler; released with the rail. @type {symbol | null} */
+    let tabsBtnClickKey = null;
     let rightTabsProvidedPromise = new PromiseExternal();
 
     let infoExpanderElementProvidedPromise = new PromiseExternal();
 
-    /**
-     * Re-wire the one-shot tabview insertion promises. This is needed when the
-     * page leaves a watch page and later returns (e.g. watch → channel →
-     * refresh → back to watch, or refresh → navigate to watch), because
-     * PromiseExternal instances can only resolve once. Without a reset the
-     * insertion chain would never fire again.
-     */
-    const resetTabviewInsertPromises = () => {
-      isRightTabsInserted = false;
-      // Re-create the PromiseExternal instances so a fresh watch-page visit
-      // can resolve them again. We must re-wire the Promise.all listeners
-      // each time so they observe the new promise objects.
-      videosElementProvidedPromise = new PromiseExternal();
-      navigateFinishedPromise = new PromiseExternal();
-      rightTabsProvidedPromise = new PromiseExternal();
-      infoExpanderElementProvidedPromise = new PromiseExternal();
-
-      // Clear cached element references from the previous watch page so that
-      // onceInsertRightTabs uses the newly navigated DOM, not stale nodes.
-      elements.related = null;
-      elements.comments = null;
-      elements.infoExpander = null;
-      elements.flexy = null;
-      elements.chat = null;
-      elements.playlist = null;
-
-      // Re-subscribe the insertion chain to the fresh promises.
+    /** Kick off the deferred tabview insert chains. */
+    const scheduleInsertChains = () => {
       Promise.all([videosElementProvidedPromise, navigateFinishedPromise])
         .then(eventMap.onceInsertRightTabs)
         .catch(_ll.warn);
@@ -1085,7 +867,84 @@ const executionScript = _communicationKey => {
         .catch(_ll.warn);
     };
 
+    const resetTabviewInsertPromises = () => {
+      isRightTabsInserted = false;
+      videosElementProvidedPromise = new PromiseExternal();
+      navigateFinishedPromise = new PromiseExternal();
+      rightTabsProvidedPromise = new PromiseExternal();
+      infoExpanderElementProvidedPromise = new PromiseExternal();
+
+      elements.related = null;
+      elements.comments = null;
+      elements.infoExpander = null;
+      elements.flexy = null;
+      elements.chat = null;
+      elements.playlist = null;
+
+      scheduleInsertChains();
+    };
+
+    /** @type {Record<string, boolean>} */
     const pluginsDetected = {};
+
+    let _observeTargetCounter = 0;
+
+    /**
+     * @param {(mutations: MutationRecord[]) => void} callback
+     * @param {SubscriptionOptions} options
+     * @param {string | { id: string | null } | null} subIdRef
+     * @param {Element} element
+     */
+    const observeTarget = (subIdRef, element, callback, options) => {
+      const id = typeof subIdRef === 'string' || !subIdRef ? null : subIdRef.id;
+      if (id && _mc?.unwatch) _mc.unwatch(id);
+      const subId =
+        typeof subIdRef === 'string' ? subIdRef : `main::observeTarget:${++_observeTargetCounter}`;
+      if (typeof subIdRef === 'object' && subIdRef) subIdRef.id = subId;
+      if (_mc?.watchTarget) {
+        _mc.watchTarget(subId, element, callback, options);
+      } else {
+        const mo = _registerObserver(new MutationObserver(callback), null, {
+          scope: 'session',
+        });
+        const observeOptions = { ...options };
+        delete observeOptions.selector;
+        mo.observe(element, /** @type {MutationObserverInit} */ (observeOptions));
+      }
+      return subId;
+    };
+
+    const SECONDARY_INNER_METHODS = [
+      ['isTwoColumnsChanged_', 2],
+      ['defaultTwoColumnLayoutChanged'],
+      ['updatePlayerLocation'],
+      ['updateCinematicsLocation'],
+      ['updatePanelsLocation'],
+      ['swatcherooUpdatePanelsLocation', 6],
+      ['updateErrorScreenLocation'],
+      ['updateFullBleedElementLocations'],
+    ];
+
+    /**
+     * @param {string} method
+     * @param {string} tag
+     * @param {YtProto} cProto
+     */
+    const patchLifecycle = (cProto, tag, method) => {
+      const key = `${method}498`;
+      if (!cProto[key] && typeof cProto[method] === 'function') {
+        cProto[key] = cProto[method];
+        cProto[method] = /** @param {...unknown} args */ function (...args) {
+          if (!inPageRearrange)
+            Promise.resolve(this.hostElement).then(eventMap[`${tag}::${method}`]).catch(_ll.warn);
+          return this[key](...args);
+        };
+      }
+    };
+
+    /**
+     * @param {MutationRecord[]} mutations
+     */
     const onPluginMutation = mutations => {
       const newPlugins = [];
       const attributeChangedSet = new Set();
@@ -1120,43 +979,44 @@ const executionScript = _communicationKey => {
       }
     };
 
-    // Route the plugin-detection attribute watcher through the shared
-    // mutation coordinator so we don't add a dedicated MutationObserver
-    // to the page. The coordinator already batches root mutations through
-    // requestAnimationFrame and unifies the attribute filter.
-    if (_mc?.subscribeRoot) {
-      _mc.subscribeRoot('main::pluginDetect', onPluginMutation, {
-        selector: 'html, body',
-        attributes: true,
-        childList: false,
-        subtree: false,
-        attributeFilter: [
-          'data-ytlstm-new-layout',
-          'data-ytlstm-overlay-text-shadow',
-          'data-ytlstm-theater-mode',
-        ],
+    const setupPluginDetectObserver = () => {
+      if (_mc?.subscribeRoot) {
+        _mc.subscribeRoot('main::pluginDetect', onPluginMutation, {
+          selector: 'html, body',
+          attributes: true,
+          childList: false,
+          subtree: false,
+          attributeFilter: [
+            'data-ytlstm-new-layout',
+            'data-ytlstm-overlay-text-shadow',
+            'data-ytlstm-theater-mode',
+          ],
+        });
+        return;
+      }
+      const pluginDetectObserver = _registerObserver(new MutationObserver(onPluginMutation), null, {
+        scope: 'session',
       });
-    } else {
-      const pluginDetectObserver = new MutationObserver(onPluginMutation);
-      pluginDetectObserver.observe(document.documentElement, {
-        attributes: true,
-      });
-      if (document.body) pluginDetectObserver.observe(document.body, { attributes: true });
-      _cm?.registerObserver?.(pluginDetectObserver);
-      navigateFinishedPromise.then(() => {
+      if (document.documentElement) {
         pluginDetectObserver.observe(document.documentElement, {
           attributes: true,
         });
+      }
+      if (document.body) pluginDetectObserver.observe(document.body, { attributes: true });
+      navigateFinishedPromise.then(() => {
+        if (document.documentElement) {
+          pluginDetectObserver.observe(document.documentElement, {
+            attributes: true,
+          });
+        }
         if (document.body) pluginDetectObserver.observe(document.body, { attributes: true });
       });
-    }
+    };
+    setupPluginDetectObserver();
 
     /**
-     * Decide whether the current yt-formatted-string node can be
-     * collapsed. Reads the content from the host element's polymer
-     * `$.content` property, falling back to `this.content` for the
-     * non-polymer prototype.
-     * @returns {boolean} `true` if the node is eligible for collapse.
+     * @this {YtProto}
+     * @param {unknown} _s
      */
     const funcCanCollapse = function (_s) {
       const content = this.content || this.$.content;
@@ -1171,6 +1031,9 @@ const executionScript = _communicationKey => {
             (content && content.scrollHeight > this.collapsedHeight);
     };
 
+    /**
+     * @param {number} lockId
+     */
     const aoChatAttrChangeFn = async lockId => {
       if (lockGet.aoChatAttrAsyncLock !== lockId) return;
 
@@ -1189,6 +1052,9 @@ const executionScript = _communicationKey => {
       }
     };
 
+    /**
+     * @param {number} lockId
+     */
     const aoPlayListAttrChangeFn = async lockId => {
       if (lockGet.aoPlayListAttrAsyncLock !== lockId) return;
 
@@ -1218,64 +1084,65 @@ const executionScript = _communicationKey => {
       }
     };
 
-    // Single shared mutation coordinator (YouTubePlusMutationCoordinator) is
-    // the canonical owner of MutationObserver instances. The handlers
-    // below are routed through `watchTarget` so attribute changes on
-    // the chat, playlist, and comments elements share the coordinator's
-    // one root observer. Each handler is unbound via its own subId when
-    // the corresponding element detaches.
-    /**
-     * Mutation handler for the chat element. Coalesces every attribute
-     * change into one promise-tick invocation of `aoChatAttrChangeFn`
-     * to keep the heavy re-layout work off the mutation callback path.
-     * @returns {void}
-     */
     const onAoChatMutation = () => {
       Promise.resolve(lockSet.aoChatAttrAsyncLock).then(aoChatAttrChangeFn).catch(_ll.warn);
     };
-    let aoChatSubId = null;
-    //   Promise.resolve(lockSet['aoInfoAttrAsyncLock']).then(aoInfoAttrChangeFn).catch(_ll.warn);
-    // });
-    //   Promise.resolve(lockSet['zoInfoAttrAsyncLock']).then(zoInfoAttrChangeFn).catch(_ll.warn);
-    // });
-    /**
-     * Mutation handler for the playlist element. Same coalescing
-     * pattern as `onAoChatMutation`: a single async invocation per
-     * mutation batch keeps the playlist layout logic out of the hot
-     * mutation path.
-     * @returns {void}
-     */
+    /** @type {string | null} */ let aoChatSubId = null;
     const onAoPlayListMutation = () => {
       Promise.resolve(lockSet.aoPlayListAttrAsyncLock).then(aoPlayListAttrChangeFn).catch(_ll.warn);
     };
-    let aoPlayListSubId = null;
+    /** @type {string | null} */ let aoPlayListSubId = null;
 
+    /**
+     * @param {MutationRecord[]} mutations
+     * @param {Element} area
+     * @returns {{ hidden: boolean, videoId: boolean, disabled: boolean }}
+     */
+    const classifyCommentMutations = (mutations, area) => {
+      const changed = { hidden: false, videoId: false, disabled: false };
+      for (const mutation of mutations) {
+        if (mutation.target !== area) continue;
+        if (mutation.attributeName === 'hidden') changed.hidden = true;
+        else if (mutation.attributeName === 'tyt-comments-video-id') changed.videoId = true;
+        else if (mutation.attributeName === 'tyt-comments-data-status') changed.disabled = true;
+      }
+      return changed;
+    };
+
+    /**
+     * Mirror the comments data status onto the flexy element.
+     * @param {Element} flexy
+     * @param {Element} area
+     */
+    const syncCommentDisabledAttribute = (flexy, area) => {
+      const status = Number(area.getAttribute000('tyt-comments-data-status'));
+      if (status === 2) flexy.setAttribute111('tyt-comment-disabled', '');
+      else if (status === 1) flexy.removeAttribute000('tyt-comment-disabled');
+    };
+
+    /**
+     * Show or hide the comments tab button to match the tab's own visibility.
+     * @param {Element} area
+     */
+    const syncCommentsTabVisibility = area => {
+      if (!area.closest('#tab-comments')) return;
+      const shouldTabVisible = !area.closest('[hidden]');
+      const commentsTabBtn = document.querySelector('[tyt-tab-content="#tab-comments"]');
+      if (commentsTabBtn) commentsTabBtn.classList.toggle('tab-btn-hidden', !shouldTabVisible);
+    };
+
+    /**
+     * @param {MutationRecord[]} mutations
+     */
     const onAoCommentMutation = async mutations => {
       const commentsArea = elements.comments;
       const ytdFlexyElm = elements.flexy;
 
-      //tyt-comments-video-id //tyt-comments-data-status // hidden
+      // tyt-comments-video-id //tyt-comments-data-status // hidden
       if (!commentsArea) return;
-      let bfHidden = false;
-      let bfCommentsVideoId = false;
-      let bfCommentDisabled = false;
-      for (const mutation of mutations) {
-        if (mutation.attributeName === 'hidden' && mutation.target === commentsArea) {
-          bfHidden = true;
-        } else if (
-          mutation.attributeName === 'tyt-comments-video-id' &&
-          mutation.target === commentsArea
-        ) {
-          bfCommentsVideoId = true;
-        } else if (
-          mutation.attributeName === 'tyt-comments-data-status' &&
-          mutation.target === commentsArea
-        ) {
-          bfCommentDisabled = true;
-        }
-      }
+      const changed = classifyCommentMutations(mutations, commentsArea);
 
-      if (bfHidden) {
+      if (changed.hidden) {
         if (!commentsArea.hasAttribute000('hidden')) {
           Promise.resolve(commentsArea).then(eventMap.settingCommentsVideoId).catch(_ll.warn);
         }
@@ -1285,79 +1152,101 @@ const executionScript = _communicationKey => {
           .catch(_ll.warn);
       }
 
-      if ((bfHidden || bfCommentsVideoId || bfCommentDisabled) && ytdFlexyElm) {
-        const commentsDataStatus = +commentsArea.getAttribute000('tyt-comments-data-status');
-        if (commentsDataStatus === 2) {
-          ytdFlexyElm.setAttribute111('tyt-comment-disabled', '');
-        } else if (commentsDataStatus === 1) {
-          ytdFlexyElm.removeAttribute000('tyt-comment-disabled');
-        }
+      if (!((changed.hidden || changed.videoId || changed.disabled) && ytdFlexyElm)) return;
+      syncCommentDisabledAttribute(ytdFlexyElm, commentsArea);
 
-        Promise.resolve(lockSet.checkCommentsShouldBeHiddenLock)
-          .then(eventMap.checkCommentsShouldBeHidden)
-          .catch(_ll.warn);
+      Promise.resolve(lockSet.checkCommentsShouldBeHiddenLock)
+        .then(eventMap.checkCommentsShouldBeHidden)
+        .catch(_ll.warn);
 
-        const lockId = lockSet.rightTabReadyLock01;
-        await rightTabsProvidedPromise.then();
-        if (lockGet.rightTabReadyLock01 !== lockId) return;
+      const lockId = lockSet.rightTabReadyLock01;
+      await rightTabsProvidedPromise.then();
+      if (lockGet.rightTabReadyLock01 !== lockId) return;
 
-        if (elements.comments !== commentsArea) return;
-        if (commentsArea.isConnected === false) return;
+      if (elements.comments !== commentsArea) return;
+      if (commentsArea.isConnected === false) return;
 
-        if (commentsArea.closest('#tab-comments')) {
-          const shouldTabVisible = !commentsArea.closest('[hidden]');
-          document
-            .querySelector('[tyt-tab-content="#tab-comments"]')
-            .classList.toggle('tab-btn-hidden', !shouldTabVisible);
-        }
-      }
+      syncCommentsTabVisibility(commentsArea);
     };
-    let aoCommentSubId = null;
+    /** @type {string | null} */ let aoCommentSubId = null;
 
-    const ioComment = new IntersectionObserver(
-      entries => {
-        for (const entry of entries) {
-          const target = entry.target;
-          const cnt = insp(target);
-          if (
-            entry.isIntersecting &&
-            target instanceof HTMLElement_ &&
-            typeof cnt.calculateCanCollapse === 'function'
-          ) {
-            lockSet.removeKeepCommentsScrollerLock;
-            cnt.calculateCanCollapse(true);
-            target.setAttribute111('io-intersected', '');
-            const ytdFlexyElm = elements.flexy;
-            if (ytdFlexyElm && !ytdFlexyElm.hasAttribute000('keep-comments-scroller')) {
-              ytdFlexyElm.setAttribute111('keep-comments-scroller', '');
+    const ioComment = _registerObserver(
+      new IntersectionObserver(
+        entries => {
+          for (const entry of entries) {
+            const target = entry.target;
+            const cnt = insp(target);
+            if (
+              entry.isIntersecting &&
+              target instanceof HTMLElement_ &&
+              typeof cnt.calculateCanCollapse === 'function'
+            ) {
+              lockSet.removeKeepCommentsScrollerLock;
+              cnt.calculateCanCollapse(true);
+              target.setAttribute111('io-intersected', '');
+              const ytdFlexyElm = elements.flexy;
+              if (ytdFlexyElm && !ytdFlexyElm.hasAttribute000('keep-comments-scroller')) {
+                ytdFlexyElm.setAttribute111('keep-comments-scroller', '');
+              }
+            } else if (target.hasAttribute000('io-intersected')) {
+              target.removeAttribute000('io-intersected');
             }
-          } else if (target.hasAttribute000('io-intersected')) {
-            target.removeAttribute000('io-intersected');
           }
+        },
+        {
+          threshold: [0],
+          rootMargin: '32px', // enlarging viewport for getting intersection earlier
         }
-      },
-      {
-        threshold: [0],
-        rootMargin: '32px', // enlarging viewport for getting intersection earlier
-      }
+      ),
+      null,
+      { scope: 'session' }
     );
 
     let bFixForResizedTabLater = false;
     let lastRoRightTabsWidth = 0;
-    const roRightTabs = new ResizeObserver(entries => {
-      const entry = entries[entries.length - 1];
-      const width = Math.round(entry.borderBoxSize[0].inlineSize);
-      if (lastRoRightTabsWidth !== width) {
-        lastRoRightTabsWidth = width;
-        if ((tabAStatus & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED) {
-          bFixForResizedTabLater = false;
-          Promise.resolve(1).then(eventMap.fixForTabDisplay);
-        } else {
-          bFixForResizedTabLater = true;
+    const roRightTabs = _registerObserver(
+      new ResizeObserver(entries => {
+        const entry = entries[entries.length - 1];
+        const width = Math.round(entry.borderBoxSize[0].inlineSize);
+        if (lastRoRightTabsWidth !== width) {
+          lastRoRightTabsWidth = width;
+          if ((tabAStatus & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED) {
+            bFixForResizedTabLater = false;
+            Promise.resolve(1).then(eventMap.fixForTabDisplay);
+          } else {
+            bFixForResizedTabLater = true;
+          }
         }
-      }
-    });
+      }),
+      null,
+      { scope: 'session' }
+    );
 
+    /**
+     * Apply the active/inactive class and hidden attribute for one tab link.
+     * @param {Element} link
+     * @param {Element} content
+     * @param {boolean} isActive
+     */
+    const setTabLinkState = (link, content, isActive) => {
+      if (isActive) {
+        link.classList.add('active');
+        if (content.hasAttribute000('tyt-hidden')) {
+          content.removeAttribute000('tyt-hidden'); // for https://greasyfork.org/en/scripts/456108
+        }
+        content.classList.remove('tab-content-hidden');
+        return;
+      }
+      link.classList.remove('active');
+      content.classList.add('tab-content-hidden');
+      if (!content.hasAttribute000('tyt-hidden')) {
+        content.setAttribute111('tyt-hidden', ''); // for https://greasyfork.org/en/scripts/456108
+      }
+    };
+
+    /**
+     * @param {string | Element | null} activeLink
+     */
     const switchToTab = activeLink => {
       if (typeof activeLink === 'string') {
         activeLink = document.querySelector(`a[tyt-tab-content="${activeLink}"]`) || null;
@@ -1368,22 +1257,10 @@ const executionScript = _communicationKey => {
       const links = document.querySelectorAll('#material-tabs a[tyt-tab-content]');
 
       for (const link of links) {
-        const content = document.querySelector(link.getAttribute000('tyt-tab-content'));
-        if (link && content) {
-          if (link !== activeLink) {
-            link.classList.remove('active');
-            content.classList.add('tab-content-hidden');
-            if (!content.hasAttribute000('tyt-hidden')) {
-              content.setAttribute111('tyt-hidden', ''); // for https://greasyfork.org/en/scripts/456108
-            }
-          } else {
-            link.classList.add('active');
-            if (content.hasAttribute000('tyt-hidden')) {
-              content.removeAttribute000('tyt-hidden'); // for https://greasyfork.org/en/scripts/456108
-            }
-            content.classList.remove('tab-content-hidden');
-          }
-        }
+        const content = document.querySelector(
+          /** @type {string} */ (link.getAttribute000('tyt-tab-content')) || ''
+        );
+        if (link && content) setTabLinkState(link, content, link === activeLink);
       }
 
       const switchingTo = activeLink ? activeLink.getAttribute000('tyt-tab-content') : '';
@@ -1395,110 +1272,64 @@ const executionScript = _communicationKey => {
         ytdFlexyElm.removeAttribute000('tyt-chat');
       ytdFlexyElm.setAttribute111('tyt-tab', switchingTo);
 
+      // Notify sandbox listeners. Before this existed, feature modules had to
+      // detect tab switches by observing class mutations on .tab-content-cld
+      // and by intercepting clicks on .tab-btn in the capture phase.
+      if (tabviewEmit) tabviewEmit('tabchange', { tab: switchingTo || null });
+
       if (switchingTo) {
         bFixForResizedTabLater = false;
         Promise.resolve(0).then(eventMap.fixForTabDisplay);
       }
     };
 
+    // One rule per tabview status bit: it is set when the flag is present, then
+    // cleared again unless the matching document attribute/element says so.
+    /** @type {Array<{ bit: number, present: (el: Element) => boolean }>} */
+    const FLAG_RULES = [
+      { bit: FLAG.THEATER, present: el => el.hasAttribute000('theater') },
+      { bit: FLAG.TAB_SELECTED, present: el => !!el.getAttribute000('tyt-tab') },
+      { bit: FLAG.CHAT_COLLAPSED, present: el => el.getAttribute000('tyt-chat') === '-' },
+      { bit: FLAG.CHAT_EXPANDED, present: el => el.getAttribute000('tyt-chat') === '+' },
+      { bit: FLAG.TWO_COLUMNS, present: el => el.hasAttribute000('is-two-columns_') },
+      { bit: FLAG.ENGAGEMENT_PANEL, present: el => el.hasAttribute000('tyt-egm-panel_') },
+      { bit: FLAG.FULLSCREEN, present: () => !!document.fullscreenElement },
+      { bit: FLAG.PLAYLIST, present: el => el.hasAttribute000('tyt-playlist-expanded') },
+      { bit: FLAG.EXTERNAL_YTLSTM, present: el => el.getAttribute('tyt-external-ytlstm') === '1' },
+    ];
+
     let tabAStatus = 0;
     /**
-     * Compute the current tab-view status bitmask from the flag
-     * argument and the live `ytd-flexy` host attributes. Each bit
-     * tracks one aspect of the page layout (theater, playlist, chat
-     * panel visibility, etc.) that the tabview logic reacts to.
-     * @param {number} r Accumulator carried across the call chain.
-     * @param {number} flag Bitmask of state to test against the live host.
-     * @returns {number} Updated accumulator reflecting the live state.
+     * @param {number} flag
+     * @param {number} r
      */
     const calculationFn = (r, flag) => {
       const ytdFlexyElm = elements.flexy;
       if (!ytdFlexyElm) return r;
-      if (flag & FLAG.THEATER) {
-        r |= FLAG.THEATER;
-        if (!ytdFlexyElm.hasAttribute000('theater')) r -= FLAG.THEATER;
-      }
-      if (flag & FLAG.TAB_SELECTED) {
-        r |= FLAG.TAB_SELECTED;
-        if (!ytdFlexyElm.getAttribute000('tyt-tab')) r -= FLAG.TAB_SELECTED;
-      }
-      if (flag & FLAG.CHAT_COLLAPSED) {
-        r |= FLAG.CHAT_COLLAPSED;
-        if (ytdFlexyElm.getAttribute000('tyt-chat') !== '-') r -= FLAG.CHAT_COLLAPSED;
-      }
-      if (flag & FLAG.CHAT_EXPANDED) {
-        r |= FLAG.CHAT_EXPANDED;
-        if (ytdFlexyElm.getAttribute000('tyt-chat') !== '+') r -= FLAG.CHAT_EXPANDED;
-      }
-      if (flag & FLAG.TWO_COLUMNS) {
-        r |= FLAG.TWO_COLUMNS;
-        if (!ytdFlexyElm.hasAttribute000('is-two-columns_')) r -= FLAG.TWO_COLUMNS;
-      }
-      if (flag & FLAG.ENGAGEMENT_PANEL) {
-        r |= FLAG.ENGAGEMENT_PANEL;
-        if (!ytdFlexyElm.hasAttribute000('tyt-egm-panel_')) r -= FLAG.ENGAGEMENT_PANEL;
-      }
-      if (flag & FLAG.FULLSCREEN) {
-        r |= FLAG.FULLSCREEN;
-        if (!document.fullscreenElement) r -= FLAG.FULLSCREEN;
-      }
-      if (flag & FLAG.PLAYLIST) {
-        r |= FLAG.PLAYLIST;
-        if (!ytdFlexyElm.hasAttribute000('tyt-playlist-expanded')) r -= FLAG.PLAYLIST;
-      }
-      if (flag & FLAG.EXTERNAL_YTLSTM) {
-        r |= FLAG.EXTERNAL_YTLSTM;
-        if (ytdFlexyElm.getAttribute('tyt-external-ytlstm') !== '1') r -= FLAG.EXTERNAL_YTLSTM;
+      for (const { bit, present } of FLAG_RULES) {
+        if (!(flag & bit)) continue;
+        r |= bit;
+        if (!present(ytdFlexyElm)) r -= bit;
       }
       return r;
     };
 
-    /**
-     * Report whether the watch page is currently in theater mode.
-     * @returns {boolean|undefined} `true` when the host flexy element
-     *   has the `theater` attribute; `false`/undefined otherwise.
-     */
     function isTheater() {
       const ytdFlexyElm = elements.flexy;
       return ytdFlexyElm?.hasAttribute000('theater');
     }
 
-    /**
-     * Enter theater mode by clicking the host's size button if the
-     * page is not already in theater mode. No-op when the host does
-     * not have a `ytd-player` size button mounted yet.
-     * @returns {void}
-     */
-    function _ytBtnSetTheater() {
-      if (!isTheater()) {
-        const sizeBtn = document.querySelector(
-          'ytd-watch-flexy #ytd-player button.ytp-size-button'
-        );
-        if (sizeBtn) sizeBtn.click();
-      }
-    }
-
-    /**
-     * Exit theater mode by clicking the size button if the page is
-     * currently in theater mode.
-     * @returns {void}
-     */
     function ytBtnCancelTheater() {
       if (isTheater()) {
         const sizeBtn = document.querySelector(
           'ytd-watch-flexy #ytd-player button.ytp-size-button'
         );
-        if (sizeBtn) sizeBtn.click();
+        if (sizeBtn) /** @type {HTMLElement} */ (sizeBtn).click();
       }
     }
 
     /**
-     * Find the "most-populated" element matching `selector` — the
-     * element with the deepest descendant tree — useful when YouTube
-     * reuses a tag name across multiple views and we want the live
-     * one in the document.
-     * @param {string} selector CSS selector to search for.
-     * @returns {Element|null} Best candidate, or `null` when none match.
+     * @param {string} selector
      */
     function getSuitableElement(selector) {
       const elements = document.querySelectorAll(selector);
@@ -1515,86 +1346,44 @@ const executionScript = _communicationKey => {
     }
 
     /**
-     * Expand the live chat panel by calling the host controller's
-     * `setCollapsedState` action (when available) and falling back to
-     * clicking the show/hide button. No-op when the chat is already
-     * expanded or has not been mounted.
-     * @returns {void}
+     * @param {boolean} collapsed
      */
-    function ytBtnExpandChat() {
+    function ytBtnToggleChat(collapsed) {
       const dom = getSuitableElement('ytd-live-chat-frame#chat');
       const cnt = insp(dom);
       if (cnt && typeof cnt.collapsed === 'boolean') {
         if (typeof cnt.setCollapsedState === 'function') {
           cnt.setCollapsedState({
-            setLiveChatCollapsedStateAction: {
-              collapsed: false,
-            },
+            setLiveChatCollapsedStateAction: { collapsed },
           });
-          if (cnt.collapsed === false) return;
+          if (cnt.collapsed === collapsed) return;
         }
-        cnt.collapsed = false;
-        if (cnt.collapsed === false) return;
-        if (cnt.isHiddenByUser === true && cnt.collapsed === true) {
-          cnt.isHiddenByUser = false;
-          cnt.collapsed = false;
+        cnt.collapsed = collapsed;
+        if (cnt.collapsed === collapsed) return;
+        if (cnt.isHiddenByUser === !collapsed && cnt.collapsed === !collapsed) {
+          cnt.isHiddenByUser = collapsed;
+          cnt.collapsed = collapsed;
         }
       }
-      let button = document.querySelector(
-        'ytd-live-chat-frame#chat[collapsed] > .ytd-live-chat-frame#show-hide-button'
-      );
+      const sel = collapsed
+        ? 'ytd-live-chat-frame#chat:not([collapsed]) > .ytd-live-chat-frame#show-hide-button'
+        : 'ytd-live-chat-frame#chat[collapsed] > .ytd-live-chat-frame#show-hide-button';
+      let button = document.querySelector(sel);
       if (button) {
         button =
           button.querySelector000('div.yt-spec-touch-feedback-shape') ||
           button.querySelector000('ytd-toggle-button-renderer');
-        if (button) button.click();
+        if (button) /** @type {HTMLElement} */ (button).click();
       }
     }
 
-    /**
-     * Collapse the live chat panel using the same dispatch strategy
-     * as `ytBtnExpandChat`. Toggles the controller state first and
-     * then falls back to clicking the show/hide button.
-     * @returns {void}
-     */
-    function ytBtnCollapseChat() {
-      const dom = getSuitableElement('ytd-live-chat-frame#chat');
-      const cnt = insp(dom);
-      if (cnt && typeof cnt.collapsed === 'boolean') {
-        if (typeof cnt.setCollapsedState === 'function') {
-          cnt.setCollapsedState({
-            setLiveChatCollapsedStateAction: {
-              collapsed: true,
-            },
-          });
-          if (cnt.collapsed === true) return;
-        }
-        cnt.collapsed = true;
-        if (cnt.collapsed === true) return;
-        if (cnt.isHiddenByUser === false && cnt.collapsed === false) {
-          cnt.isHiddenByUser = true;
-          cnt.collapsed = true;
-        }
-      }
-      let button = document.querySelector(
-        'ytd-live-chat-frame#chat:not([collapsed]) > .ytd-live-chat-frame#show-hide-button'
-      );
-      if (button) {
-        button =
-          button.querySelector000('div.yt-spec-touch-feedback-shape') ||
-          button.querySelector000('ytd-toggle-button-renderer');
-        if (button) button.click();
-      }
-    }
+    const ytBtnExpandChat = () => ytBtnToggleChat(false);
+    const ytBtnCollapseChat = () => ytBtnToggleChat(true);
+
+    /** @typedef {{ panelId?: string, toHide?: boolean, toShow?: boolean }} EgmPanelAction */
 
     /**
-     * Apply a batch of engagement-panel `updateEgmPanel` actions to
-     * the live `ytd-flexy` host. Accepts either a single action object
-     * or an array; coerces a non-array into a one-element list. Each
-     * action targets a `ytd-engagement-panel-section-list-renderer`
-     * mutation (set/unset `target-id` + `visibility`).
-     * @param {object|object[]} arr Single action or list of actions.
-     * @returns {void}
+     * @param {EgmPanelAction | EgmPanelAction[] | null} arr
      */
     function ytBtnEgmPanelCore(arr) {
       if (!arr) return;
@@ -1603,6 +1392,7 @@ const executionScript = _communicationKey => {
       const ytdFlexyElm = elements.flexy;
       if (!ytdFlexyElm) return;
 
+      /** @type {unknown[]} */
       let actions = [];
 
       for (const entry of arr) {
@@ -1614,21 +1404,6 @@ const executionScript = _communicationKey => {
         const toShow = entry.toShow;
 
         if (toHide === true && !toShow) {
-          /*
-          actions.push({
-            "changeEngagementPanelVisibilityAction": {
-              "targetId": panelId,
-              "visibility": "ENGAGEMENT_PANEL_VISIBILITY_HIDDEN"
-            }
-          });
-
-          actions.push({
-            "hideEngagementPanelEndpoint": {
-              "identifier": panelId,
-            }
-          });
-          */
-
           actions.push({
             hideEngagementPanelEndpoint: {
               panelIdentifier: panelId,
@@ -1657,44 +1432,11 @@ const executionScript = _communicationKey => {
           false
         );
       }
-      actions = null;
+      actions = [];
     }
-
-    /*
-    function ytBtnCloseEngagementPanel( s) {
-      //ePanel.setAttribute('visibility',"ENGAGEMENT_PANEL_VISIBILITY_HIDDEN");
-
-      let panelId = s.getAttribute('target-id')
-      scriptletDeferred.debounce(() => {
-        document.dispatchEvent(new CustomEvent('tyt-engagement-panel-visibility-change', {
-          detail: {
-            panelId,
-            toHide: true
-          }
-        }))
-      })
-
-    }
-
-    function ytBtnCloseEngagementPanels() {
-      if (isEngagementPanelExpanded()) {
-        for (const s of document.querySelectorAll(
-          `ytd-watch-flexy[tyt-tab] #panels.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility]:not([hidden])`
-        )) {
-          if (s.getAttribute('visibility') == "ENGAGEMENT_PANEL_VISIBILITY_EXPANDED") ytBtnCloseEngagementPanel(s);
-        }
-      }
-    }
-    */
 
     /**
-     * Resolve a stable identifier for an engagement panel element.
-     * Tries the polymer data fields in order: `data.panelIdentifier`,
-     * then `data.identifier.tag`, then `data.targetId`, and finally
-     * the live `target-id` attribute. Returns an empty string when
-     * nothing matches.
-     * @param {Element} panelElm The engagement panel element.
-     * @returns {string} The best-known identifier for the panel.
+     * @param {Element} panelElm
      */
     function getPanelIdentifier(panelElm) {
       const cnt = insp(panelElm);
@@ -1714,13 +1456,6 @@ const executionScript = _communicationKey => {
       return id;
     }
 
-    /**
-     * Hide every currently-expanded engagement panel by routing a
-     * batch of close actions through `ytBtnEgmPanelCore`. Skips
-     * panels inside a `[hidden]` ancestor so the live DOM state is
-     * respected.
-     * @returns {void}
-     */
     function ytBtnCloseEngagementPanels() {
       const actions = [];
       for (const panelElm of document.querySelectorAll(
@@ -1740,22 +1475,12 @@ const executionScript = _communicationKey => {
       ytBtnEgmPanelCore(actions);
     }
 
-    /**
-     * Open the watch-page playlist (collapse = false). No-op when the
-     * playlist element has not been mounted yet.
-     * @returns {void}
-     */
     function ytBtnOpenPlaylist() {
       const cnt = insp(elements.playlist);
       if (cnt && typeof cnt.collapsed === 'boolean') {
         cnt.collapsed = false;
       }
     }
-    /**
-     * Close the watch-page playlist (collapse = true). No-op when the
-     * playlist element has not been mounted yet.
-     * @returns {void}
-     */
     function ytBtnClosePlaylist() {
       const cnt = insp(elements.playlist);
       if (cnt && typeof cnt.collapsed === 'boolean') {
@@ -1763,14 +1488,7 @@ const executionScript = _communicationKey => {
       }
     }
 
-    /**
-     * Patch the live chat's grid renderer to keep the secondary
-     * chat element attached to the flexy host. Bails out when the
-     * `this.is` tag is not `ytd-watch-grid` (i.e. another host
-     * inherited this method via prototype patching).
-     * @returns {void}
-     */
-    const updateChatLocation498 = function () {
+    /** @this {YtProto} */ const updateChatLocation498 = function () {
       if (this.is !== 'ytd-watch-grid') {
         secondaryInnerFn(() => {
           this.updatePageMediaQueries();
@@ -1779,13 +1497,6 @@ const executionScript = _communicationKey => {
       }
     };
 
-    /**
-     * WeakMap from source elements to their WeakRef-wrapped mirror
-     * (clone) nodes. Used by the info-panel mirror system to keep
-     * the tabview's secondary content in sync without leaking DOM
-     * references after SPA navigation.
-     * @type {WeakMap<Element, WeakRef>}
-     */
     const mirrorNodeWS = new WeakMap();
 
     const dummyNode = document.createElement('noscript');
@@ -1795,14 +1506,8 @@ const executionScript = _communicationKey => {
     const __j5733__ = Symbol(); // __lastChanged__
 
     /**
-     * Mirror `tyt-data-change-counter` mutations back to the original
-     * source element. Used as a fallback for hosts that do not expose
-     * a writable data property observer; detects data updates via
-     * DOM mutations and increments the counter so the rest of the
-     * pipeline can react.
-     * @param {MutationRecord[]} _mutations Unused (kept for the
-     *   MutationObserver signature).
-     * @returns {Promise<void>}
+     * @this {YtProto}
+     * @param {unknown} _mutations
      */
     const monitorDataChangedByDOMMutation = async function (_mutations) {
       const node = kRef(this);
@@ -1822,14 +1527,8 @@ const executionScript = _communicationKey => {
     };
 
     /**
-     * Mirror a counter increment on a clone element back to its
-     * original source element. Wired up as the mutation handler for
-     * the per-source attribute watcher, so when the clone's
-     * `tyt-data-change-counter` ticks, the original source element
-     * receives the same bump.
-     * @param {MutationRecord[]} mutations Batch of attribute mutations
-     *   delivered by the mutation coordinator.
-     * @returns {void}
+     * @this {WeakRef<YtProto> | null}
+     * @param {MutationRecord[]} mutations
      */
     const moChangeReflection = function (mutations) {
       const node = kRef(this);
@@ -1864,26 +1563,19 @@ const executionScript = _communicationKey => {
     };
 
     /**
-     * Atomically increment a numeric counter attribute on `elm` and
-     * write the new value back. Wraps around to `9` once the counter
-     * exceeds 1e9 to avoid unbounded growth.
-     * @param {Element} elm Target element that owns the counter.
-     * @param {string} prop Attribute name to increment.
-     * @returns {void}
+     * @param {Element} elm
+     * @param {string} prop
      */
     const attributeInc = (elm, prop) => {
-      let v = (+elm.getAttribute000(prop) || 0) + 1;
+      let v = (+(elm.getAttribute000(prop) || '0') || 0) + 1;
       if (v > 1e9) v = 9;
-      elm.setAttribute000(prop, v);
+      elm.setAttribute000(prop, String(v));
       return v;
     };
 
     /**
-     * UC[-_a-zA-Z0-9+=.]{22}
-     * https://support.google.com/youtube/answer/6070344?hl=en
-     * The channel ID is the 24 character alphanumeric string that starts with 'UC' in the channel URL.
+     * @param {unknown} x
      */
-
     const isChannelId = x => {
       if (typeof x === 'string' && x.length === 24) {
         return /UC[-_a-zA-Z0-9+=.]{22}/.test(x);
@@ -1891,6 +1583,221 @@ const executionScript = _communicationKey => {
       return false;
     };
 
+    /**
+     * One element rendered in an extra-content slot, with the Polymer data and
+     * tag name the mirror pass needs.
+     * @typedef {{ data: unknown, tag: string, elm: Element, mirrored?: Element }} MirroredSourceElement
+     */
+
+    /**
+     * @param {number} lockId
+     */
+    /**
+     * Collect source elements rendered in the extra-content slots.
+     * @returns {MirroredSourceElement[]}
+     */
+    const collectInfoExtraSourceElements = () => {
+      const requireElements = [
+        ...document.querySelectorAll(
+          'ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *'
+        ),
+      ]
+        .filter(elm => {
+          return typeof (/** @type {YtPolymerElement} */ (elm).is) === 'string';
+        })
+        .map(elm => {
+          const is = /** @type {YtPolymerElement} */ (elm).is;
+          while (elm instanceof HTMLElement_) {
+            const q = [...elm.querySelectorAll(/** @type {string} */ (is))].filter(
+              e => insp(e).data
+            );
+            if (q.length >= 1) return q[0];
+            elm = /** @type {Element} */ (elm.parentNode);
+          }
+          return undefined;
+        })
+        .filter(elm => !!elm && typeof (/** @type {YtPolymerElement} */ (elm).is) === 'string');
+
+      return requireElements.map(entry => {
+        const inst = insp(entry);
+        return /** @type {MirroredSourceElement} */ ({
+          data: inst.data,
+          tag: inst.is,
+          elm: entry,
+        });
+      });
+    };
+
+    /**
+     * Ensure the hidden noscript holder for mirrored nodes exists.
+     * @param {Element} ytdFlexyElm
+     * @returns {Element}
+     */
+    const ensureInfoNoscript = ytdFlexyElm => {
+      let noscript_ = document.querySelector('noscript#aythl');
+      if (!noscript_) {
+        noscript_ = document.createElement('noscript');
+        noscript_.id = 'aythl';
+
+        inPageRearrange = true;
+        ytdFlexyElm.insertBefore000(noscript_, ytdFlexyElm.firstChild);
+        inPageRearrange = false;
+      }
+      return noscript_;
+    };
+
+    /**
+     * Patch the prototype so data changes bump the mirror refresh counter.
+     * @param {Element & YtProto} s
+     * @param {YtProto} cnt
+     * @param {YtProto} cProto
+     */
+    const patchMirrorProtoDataObserver = (s, cnt, cProto) => {
+      if (
+        !(cProto instanceof Node || cProto._dataChanged496) &&
+        typeof cProto._createPropertyObserver === 'function'
+      ) {
+        cProto._dataChanged496 = function () {
+          const node = this.hostElement || this;
+          if (node.jy8432) {
+            attributeInc(node, 'tyt-data-change-counter');
+          }
+        };
+
+        cProto._createPropertyObserver('data', '_dataChanged496', undefined);
+      } else if (
+        !(cProto instanceof Node || cProto._dataChanged496) &&
+        cProto.useSignals === true &&
+        insp(s).signalProxy
+      ) {
+        const dataSignal = cnt?.signalProxy?.signalCache?.data;
+        if (
+          dataSignal &&
+          typeof dataSignal.setWithPath === 'function' &&
+          !dataSignal.setWithPath573 &&
+          !dataSignal.controller573
+        ) {
+          dataSignal.controller573 = mWeakRef(cnt);
+          dataSignal.setWithPath573 = dataSignal.setWithPath;
+          dataSignal.setWithPath = function () {
+            const cnt = kRef(this.controller573 || null) || null;
+            cnt &&
+              typeof cnt._dataChanged496k === 'function' &&
+              Promise.resolve(cnt).then(cnt._dataChanged496k).catch(_ll.warn);
+            return this.setWithPath573(...arguments);
+          };
+          cProto._dataChanged496 = function () {
+            const node = this.hostElement || this;
+            if (node.jy8432) {
+              attributeInc(node, 'tyt-data-change-counter'); // next macro task
+            }
+          };
+          /**
+           * @param {YtProto} cnt
+           */
+          cProto._dataChanged496k = cnt => cnt._dataChanged496();
+        }
+      }
+
+      if (!cProto._dataChanged496) {
+        observeTarget(null, s, monitorDataChangedByDOMMutation.bind(s[__j5744__]), {
+          attributes: true,
+          childList: true,
+          subtree: true,
+        });
+      }
+    };
+
+    /**
+     * Check the DOM tree still mirrors the expected nodes in order.
+     * @param {Element} targetParent
+     * @param {Element} infoExpander
+     * @param {Node[]} mirroElmArr
+     * @returns {boolean} true when in sync
+     */
+    const isDomTreeInSync = (targetParent, infoExpander, mirroElmArr) => {
+      let e = infoExpander ? -1 : 0;
+      // DOM Tree Check
+      for (let n = targetParent.firstChild; n instanceof Node; n = n.nextSibling) {
+        const target = e < 0 ? infoExpander : mirroElmArr[e];
+        e++;
+        if (n !== target) {
+          // target can be undefined if index overflow
+          return false;
+        }
+      }
+      return e === mirroElmArr.length + 1;
+    };
+
+    /**
+     * Apply mirror nodes to the target parent and bump refresh counters.
+     * @param {Element} targetParent
+     * @param {Element} infoExpander
+     * @param {Node[]} mirroElmArr
+     */
+    const applyMirrorNodes = (targetParent, infoExpander, mirroElmArr) => {
+      if (infoExpander) {
+        targetParent.assignChildren111(null, infoExpander, mirroElmArr);
+      } else {
+        targetParent.replaceChildren000(...mirroElmArr);
+      }
+      for (const mirrorElm of mirroElmArr) {
+        // trigger data assignment and record refresh count by manual update
+        const j = attributeInc(/** @type {Element} */ (mirrorElm), 'tyt-clone-refresh-count');
+        const oriElm = kRef(/** @type {YtProto} */ (mirrorElm)[__j5744__] || null) || null;
+        if (oriElm) {
+          oriElm.setAttribute111('tyt-clone-refresh-count', j);
+        }
+      }
+    };
+
+    /**
+     * Return the mirror node for one source element, creating it on first sight.
+     * `alreadyChanged` skips the data comparison once an earlier element already
+     * forced an update, matching the original short-circuit.
+     * @param {unknown} data
+     * @param {string} tag
+     * @param {Element} sourceElm
+     * @param {Element} noscript
+     * @param {Element} targetParent
+     * @param {boolean} alreadyChanged
+     * @returns {{ mirrorNode: Element, changed: boolean }}
+     */
+    const ensureMirrorNode = (data, tag, sourceElm, noscript, targetParent, alreadyChanged) => {
+      let mirrorNode = mirrorNodeWS.get(sourceElm);
+      mirrorNode = mirrorNode ? kRef(mirrorNode) : mirrorNode;
+      if (!mirrorNode) {
+        const cnt = insp(sourceElm);
+        const cProto = cnt.constructor.prototype;
+
+        mirrorNode = document.createElement(tag);
+        noscript.appendChild(mirrorNode); // appendChild to trigger .attached()
+        /** @type {YtProto} */ (mirrorNode)[__j5744__] = mWeakRef(sourceElm);
+
+        const nodeWR = mWeakRef(mirrorNode);
+        mirrorNodeWS.set(sourceElm, nodeWR);
+        mirrorNodeWS.set(mirrorNode, nodeWR);
+
+        /** @type {YtProto} */ (sourceElm).jy8432 = 1;
+        observeTarget(null, sourceElm, moChangeReflection.bind(nodeWR), {
+          attributes: true,
+          childList: false,
+          subtree: false,
+          attributeFilter: ['tyt-clone-refresh-count', 'tyt-data-change-counter'],
+        });
+
+        patchMirrorProtoDataObserver(sourceElm, cnt, cProto);
+        return { mirrorNode, changed: true };
+      }
+      if (mirrorNode.parentNode !== targetParent) return { mirrorNode, changed: true };
+      if (alreadyChanged) return { mirrorNode, changed: false };
+      const cloneNodeCnt = insp(mirrorNode);
+      return { mirrorNode, changed: cloneNodeCnt.data !== data };
+    };
+
+    /**
+     * @param {number} lockId
+     */
     const infoFix = lockId => {
       if (lockId !== null && lockGet.infoFixLock !== lockId) return;
 
@@ -1906,212 +1813,121 @@ const executionScript = _communicationKey => {
           infoExpander.matches('#tab-info > [tyt-main-info]');
         if (!match) return;
       }
-      //   if(elm.parentNode.closest('div[slot="extra-content"], ytd-metadata-row-container-renderer')) return false;
-      // });
 
-      const requireElements = [
-        ...document.querySelectorAll(
-          'ytd-watch-metadata.ytd-watch-flexy div[slot="extra-content"] > *, ytd-watch-metadata.ytd-watch-flexy #extra-content > *'
-        ),
-      ]
-        .filter(elm => {
-          return typeof elm.is === 'string';
-        })
-        .map(elm => {
-          const is = elm.is;
-          while (elm instanceof HTMLElement_) {
-            const q = [...elm.querySelectorAll(is)].filter(e => insp(e).data);
-            if (q.length >= 1) return q[0];
-            elm = elm.parentNode;
-          }
-        })
-        .filter(elm => !!elm && typeof elm.is === 'string');
-
-      const source = requireElements.map(entry => {
-        const inst = insp(entry);
-        return {
-          data: inst.data,
-          tag: inst.is,
-          elm: entry,
-        };
-      });
-
-      let noscript_ = document.querySelector('noscript#aythl');
-      if (!noscript_) {
-        noscript_ = document.createElement('noscript');
-        noscript_.id = 'aythl';
-
-        inPageRearrange = true;
-        ytdFlexyElm.insertBefore000(noscript_, ytdFlexyElm.firstChild);
-        inPageRearrange = false;
-      }
-      const noscript = noscript_;
+      const source = collectInfoExtraSourceElements();
+      const noscript = ensureInfoNoscript(ytdFlexyElm);
 
       let requiredUpdate = false;
       const mirrorElmSet = new Set();
       const targetParent = infoContainer;
       for (const { data, tag, elm: s } of source) {
-        let mirrorNode = mirrorNodeWS.get(s);
-        mirrorNode = mirrorNode ? kRef(mirrorNode) : mirrorNode;
-        if (!mirrorNode) {
-          const cnt = insp(s);
-          const cProto = cnt.constructor.prototype;
-
-          const element = document.createElement(tag);
-          noscript.appendChild(element); // appendChild to trigger .attached()
-          mirrorNode = element;
-          mirrorNode[__j5744__] = mWeakRef(s);
-
-          const nodeWR = mWeakRef(mirrorNode);
-
-          // Route the per-source attribute watcher through the shared
-          // mutation coordinator. The subId is per-source so multiple
-          // mirror elements get independent subscriptions on the
-          // coordinator's single root observer.
-          const reflectionSubId = `main::moChangeReflection:${s.dataset?.tytSrcId || ++_moChangeReflectionCounter}`;
-          if (_mc?.watchTarget) {
-            _mc.watchTarget(reflectionSubId, s, moChangeReflection.bind(nodeWR), {
-              attributes: true,
-              childList: false,
-              subtree: false,
-              attributeFilter: ['tyt-clone-refresh-count', 'tyt-data-change-counter'],
-            });
-          } else {
-            const _mo = new MutationObserver(moChangeReflection.bind(nodeWR));
-            _mo.observe(s, {
-              attributes: true,
-              attributeFilter: ['tyt-clone-refresh-count', 'tyt-data-change-counter'],
-            });
-            _cm?.registerObserver?.(_mo);
-          }
-
-          s.jy8432 = 1;
-          if (
-            !(cProto instanceof Node || cProto._dataChanged496) &&
-            typeof cProto._createPropertyObserver === 'function'
-          ) {
-            cProto._dataChanged496 = function () {
-              const node = this.hostElement || this;
-              if (node.jy8432) {
-                attributeInc(node, 'tyt-data-change-counter');
-              }
-            };
-
-            cProto._createPropertyObserver('data', '_dataChanged496', undefined);
-          } else if (
-            !(cProto instanceof Node || cProto._dataChanged496) &&
-            cProto.useSignals === true &&
-            insp(s).signalProxy
-          ) {
-            const dataSignal = cnt?.signalProxy?.signalCache?.data;
-            if (
-              dataSignal &&
-              typeof dataSignal.setWithPath === 'function' &&
-              !dataSignal.setWithPath573 &&
-              !dataSignal.controller573
-            ) {
-              dataSignal.controller573 = mWeakRef(cnt);
-              dataSignal.setWithPath573 = dataSignal.setWithPath;
-              dataSignal.setWithPath = function () {
-                const cnt = kRef(this.controller573 || null) || null;
-                cnt &&
-                  typeof cnt._dataChanged496k === 'function' &&
-                  Promise.resolve(cnt).then(cnt._dataChanged496k).catch(_ll.warn);
-                return this.setWithPath573(...arguments);
-              };
-              cProto._dataChanged496 = function () {
-                const node = this.hostElement || this;
-                if (node.jy8432) {
-                  attributeInc(node, 'tyt-data-change-counter'); // next macro task
-                }
-              };
-              cProto._dataChanged496k = cnt => cnt._dataChanged496();
-            }
-          }
-
-          if (!cProto._dataChanged496) {
-            // Per-source subtree observer — routes through the
-            // coordinator so we don't add a dedicated MutationObserver
-            // for every mirror element.
-            const monitorSubId = `main::monitorDataChanged:${++_monitorDataChangedCounter}`;
-            if (_mc?.watchTarget) {
-              _mc.watchTarget(
-                monitorSubId,
-                s,
-                monitorDataChangedByDOMMutation.bind(mirrorNode[__j5744__]),
-                { attributes: true, childList: true, subtree: true }
-              );
-            } else {
-              const _moMonitor = new MutationObserver(
-                monitorDataChangedByDOMMutation.bind(mirrorNode[__j5744__])
-              );
-              _moMonitor.observe(s, {
-                attributes: true,
-                childList: true,
-                subtree: true,
-              });
-              _cm?.registerObserver?.(_moMonitor);
-            }
-          }
-
-          mirrorNodeWS.set(s, nodeWR);
-          requiredUpdate = true;
-        } else {
-          if (mirrorNode.parentNode !== targetParent) {
-            requiredUpdate = true;
-          }
-        }
-        if (!requiredUpdate) {
-          const cloneNodeCnt = insp(mirrorNode);
-          if (cloneNodeCnt.data !== data) {
-            //   noscript.appendChild(mirrorNode);
-            // }
-            requiredUpdate = true;
-          }
-        }
-
+        const { mirrorNode, changed } = ensureMirrorNode(
+          data,
+          tag,
+          s,
+          noscript,
+          targetParent,
+          requiredUpdate
+        );
+        if (changed) requiredUpdate = true;
         mirrorElmSet.add(mirrorNode);
-        source.mirrored = mirrorNode;
+        /** @type {YtProto} */ (source).mirrored = mirrorNode;
       }
 
       const mirroElmArr = [...mirrorElmSet];
       mirrorElmSet.clear();
 
       if (!requiredUpdate) {
-        let e = infoExpander ? -1 : 0;
-        // DOM Tree Check
-        for (let n = targetParent.firstChild; n instanceof Node; n = n.nextSibling) {
-          const target = e < 0 ? infoExpander : mirroElmArr[e];
-          e++;
-          if (n !== target) {
-            // target can be undefined if index overflow
-            requiredUpdate = true;
-            break;
-          }
-        }
-        if (!requiredUpdate && e !== mirroElmArr.length + 1) requiredUpdate = true;
+        requiredUpdate = !isDomTreeInSync(targetParent, infoExpander, mirroElmArr);
       }
 
       if (requiredUpdate) {
-        if (infoExpander) {
-          targetParent.assignChildren111(null, infoExpander, mirroElmArr);
-        } else {
-          targetParent.replaceChildren000(...mirroElmArr);
-        }
-        for (const mirrorElm of mirroElmArr) {
-          // trigger data assignment and record refresh count by manual update
-          const j = attributeInc(mirrorElm, 'tyt-clone-refresh-count');
-          const oriElm = kRef(mirrorElm[__j5744__] || null) || null;
-          if (oriElm) {
-            oriElm.setAttribute111('tyt-clone-refresh-count', j);
-          }
-        }
+        applyMirrorNodes(targetParent, infoExpander, mirroElmArr);
       }
 
       mirroElmArr.length = 0;
       source.length = 0;
     };
 
+    /**
+     * @param {number} lockId
+     */
+    /**
+     * @param {Element} secondaryWrapper
+     * @param {Element | null} chatContainer
+     * @param {Node[]} w2
+     */
+    const collectWrapperChildren = (secondaryWrapper, chatContainer, w2) => {
+      for (
+        let node2 = secondaryWrapper.firstChild;
+        node2 instanceof Node;
+        node2 = node2.nextSibling
+      ) {
+        if (node2 === chatContainer && chatContainer) {
+          // already inside wrapper
+        } else {
+          if (chatContainer && /** @type {Element} */ (node2).id === 'right-tabs') {
+            w2.push(chatContainer);
+          }
+          w2.push(node2);
+        }
+      }
+    };
+
+    /**
+     * @param {Element} secondaryWrapper
+     * @param {Element} secondaryInner
+     * @param {Element | null} chatContainer
+     */
+    const collectSecondaryNodes = (secondaryWrapper, secondaryInner, chatContainer) => {
+      /** @type {Node[]} */ const w = [];
+      /** @type {Node[]} */ const w2 = [];
+      for (let node = secondaryInner.firstChild; node instanceof Node; node = node.nextSibling) {
+        if (node === chatContainer && chatContainer) {
+          // will be appended to secondary-wrapper below
+        } else if (node === secondaryWrapper) {
+          collectWrapperChildren(secondaryWrapper, chatContainer, w2);
+        } else {
+          w.push(node);
+        }
+      }
+      // Fallback: if chatContainer wasn’t found as a sibling, append it next to
+      // right-tabs when it exists inside the wrapper.
+      if (chatContainer && !w2.includes(chatContainer) && !w.includes(chatContainer)) {
+        const rightTabsIndex = w2.findIndex(
+          node => /** @type {Element} */ (node)?.id === 'right-tabs'
+        );
+        if (rightTabsIndex >= 0) {
+          w2.splice(rightTabsIndex + 1, 0, chatContainer);
+        } else {
+          w2.push(chatContainer);
+        }
+      }
+      return { w, w2 };
+    };
+
+    /**
+     * @param {Element} secondaryWrapper
+     */
+    const refreshChatUrlHandlers = secondaryWrapper => {
+      const chatElm = elements.chat;
+      const chatCnt = insp(chatElm);
+      if (
+        chatCnt &&
+        typeof chatCnt.urlChanged === 'function' &&
+        secondaryWrapper.contains(chatElm)
+      ) {
+        if (typeof chatCnt.urlChangedAsync12 === 'function') {
+          chatCnt.urlChanged();
+        } else {
+          setTimeout(() => chatCnt.urlChanged(), 136);
+        }
+      }
+    };
+
+    /**
+     * @param {number} lockId
+     */
     const layoutFix = lockId => {
       if (lockGet.layoutFixLock !== lockId) return;
 
@@ -2121,77 +1937,41 @@ const executionScript = _communicationKey => {
 
       if (secondaryWrapper) {
         const secondaryInner = secondaryWrapper.parentNode;
-
         const chatContainer = document.querySelector(
           '#columns.style-scope.ytd-watch-flexy [tyt-chat-container]'
         );
-        if (
-          secondaryInner.firstChild !== secondaryInner.lastChild ||
-          (chatContainer && !chatContainer.closest('secondary-wrapper'))
-        ) {
-          const w = [];
-          const w2 = [];
-          for (
-            let node = secondaryInner.firstChild;
-            node instanceof Node;
-            node = node.nextSibling
-          ) {
-            if (node === chatContainer && chatContainer) {
-            } else if (node === secondaryWrapper) {
-              for (
-                let node2 = secondaryWrapper.firstChild;
-                node2 instanceof Node;
-                node2 = node2.nextSibling
-              ) {
-                if (node2 === chatContainer && chatContainer) {
-                } else {
-                  if (node2.id === 'right-tabs' && chatContainer) {
-                    w2.push(chatContainer);
-                  }
-                  w2.push(node2);
-                }
-              }
-            } else {
-              w.push(node);
-            }
-          }
 
+        // Ensure the chat container (if any) is inside secondary-wrapper so the
+        // right-rail layout owns it together with #right-tabs. Also normalize any
+        // stray nodes that YouTube re-inserts outside secondary-wrapper.
+        const needsFix =
+          secondaryInner?.firstChild !== secondaryInner?.lastChild ||
+          (chatContainer && chatContainer.closest('secondary-wrapper') === null);
+
+        if (needsFix) {
+          const { w, w2 } = collectSecondaryNodes(
+            secondaryWrapper,
+            /** @type {Element} */ (secondaryInner),
+            chatContainer
+          );
           inPageRearrange = true;
           secondaryWrapper.replaceChildren000(...w, ...w2);
           inPageRearrange = false;
-          const chatElm = elements.chat;
-          const chatCnt = insp(chatElm);
-          if (
-            chatCnt &&
-            typeof chatCnt.urlChanged === 'function' &&
-            secondaryWrapper.contains(chatElm)
-          ) {
-            // setTimeout(() => chatCnt.urlChanged, 136);
-            if (typeof chatCnt.urlChangedAsync12 === 'function') {
-              chatCnt.urlChanged();
-            } else {
-              setTimeout(() => chatCnt.urlChanged(), 136);
-            }
-          }
+          refreshChatUrlHandlers(secondaryWrapper);
         }
       }
     };
-
     let lastPanel = '';
     let lastTab = '';
 
-    /**
-     * Mutation handler for engagement panels. Coalesces visibility /
-     * hidden attribute changes into one async invocation of
-     * `updateEgmPanels` so the panel re-layout runs after the current
-     * mutation batch has settled.
-     * @returns {void}
-     */
     const onAoEgmPanelsMutation = () => {
       Promise.resolve(lockSet.updateEgmPanelsLock).then(updateEgmPanels).catch(_ll.warn);
     };
-    let aoEgmPanelsSubId = null;
+    /** @type {string | null} */ let aoEgmPanelsSubId = null;
 
+    /**
+     * @param {number} lockId
+     */
     const removeKeepCommentsScroller = async lockId => {
       if (lockGet.removeKeepCommentsScrollerLock !== lockId) return;
       await Promise.resolve();
@@ -2202,6 +1982,59 @@ const executionScript = _communicationKey => {
       }
     };
 
+    /**
+     * Collect the engagement panels and mark newly expanded ones as visible.
+     * @returns {{ newVisible: Element[], allVisible: Element[] }}
+     */
+    const classifyEgmPanels = () => {
+      const newVisible = [];
+      const allVisible = [];
+      for (const panelElm of document.querySelectorAll('[tyt-egm-panel][target-id][visibility]')) {
+        const visibility = panelElm.getAttribute000('visibility');
+        if (visibility === 'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN' || panelElm.closest('[hidden]')) {
+          if (panelElm.hasAttribute000('tyt-visible-at')) {
+            panelElm.removeAttribute000('tyt-visible-at');
+          }
+        } else if (
+          visibility === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
+          !panelElm.closest('[hidden]')
+        ) {
+          if (!panelElm.getAttribute000('tyt-visible-at')) {
+            panelElm.setAttribute111('tyt-visible-at', Date.now());
+            newVisible.push(panelElm);
+          }
+          allVisible.push(panelElm);
+        }
+      }
+      return { newVisible, allVisible };
+    };
+
+    /**
+     * Hide every other visible panel when a new one was just expanded.
+     * @param {Element[]} newVisible
+     * @param {Element[]} allVisible
+     */
+    const collapseOtherVisibleEgmPanels = (newVisible, allVisible) => {
+      if (newVisible.length < 1 || allVisible.length < 2) return;
+      const targetVisible = newVisible[newVisible.length - 1];
+
+      const actions = [];
+      for (const panelElm of allVisible) {
+        if (panelElm === targetVisible) continue;
+        actions.push({
+          panelId: getPanelIdentifier(panelElm),
+          toHide: true,
+        });
+      }
+
+      if (actions.length >= 1) {
+        ytBtnEgmPanelCore(actions);
+      }
+    };
+
+    /**
+     * @param {number} lockId
+     */
     const updateEgmPanels = async lockId => {
       if (lockId !== lockGet.updateEgmPanelsLock) return;
       await navigateFinishedPromise.then().catch(_ll.warn);
@@ -2209,66 +2042,18 @@ const executionScript = _communicationKey => {
 
       const ytdFlexyElm = elements.flexy;
       if (!ytdFlexyElm) return;
-      let newVisiblePanels = [];
-      let newHiddenPanels = [];
-      let allVisiblePanels = [];
-      for (const panelElm of document.querySelectorAll('[tyt-egm-panel][target-id][visibility]')) {
-        const visibility = panelElm.getAttribute000('visibility');
-
-        if (visibility === 'ENGAGEMENT_PANEL_VISIBILITY_HIDDEN' || panelElm.closest('[hidden]')) {
-          if (panelElm.hasAttribute000('tyt-visible-at')) {
-            panelElm.removeAttribute000('tyt-visible-at');
-            newHiddenPanels.push(panelElm);
-          }
-        } else if (
-          visibility === 'ENGAGEMENT_PANEL_VISIBILITY_EXPANDED' &&
-          !panelElm.closest('[hidden]')
-        ) {
-          const visibleAt = panelElm.getAttribute000('tyt-visible-at');
-          if (!visibleAt) {
-            panelElm.setAttribute111('tyt-visible-at', Date.now());
-            newVisiblePanels.push(panelElm);
-          }
-          allVisiblePanels.push(panelElm);
-        }
-      }
-      if (newVisiblePanels.length >= 1 && allVisiblePanels.length >= 2) {
-        const targetVisible = newVisiblePanels[newVisiblePanels.length - 1];
-
-        const actions = [];
-        for (const panelElm of allVisiblePanels) {
-          if (panelElm === targetVisible) continue;
-          const pid = getPanelIdentifier(panelElm);
-          actions.push({
-            panelId: pid,
-            toHide: true,
-          });
-        }
-
-        if (actions.length >= 1) {
-          ytBtnEgmPanelCore(actions);
-        }
-      }
-      if (allVisiblePanels.length >= 1) {
+      const { newVisible, allVisible } = classifyEgmPanels();
+      collapseOtherVisibleEgmPanels(newVisible, allVisible);
+      if (allVisible.length >= 1) {
         ytdFlexyElm.setAttribute111('tyt-egm-panel_', '');
       } else {
         ytdFlexyElm.removeAttribute000('tyt-egm-panel_');
       }
-      newVisiblePanels.length = 0;
-      newVisiblePanels = null;
-      newHiddenPanels.length = 0;
-      newHiddenPanels = null;
-      allVisiblePanels.length = 0;
-      allVisiblePanels = null;
     };
 
     /**
-     * Return the first element matching `css` that is not contained in
-     * an `exclude` ancestor. Useful when YouTube's DOM reuses a class
-     * inside a wrapper we want to skip.
-     * @param {string} css CSS selector for the candidate elements.
-     * @param {string} exclude Selector for ancestor elements to skip.
-     * @returns {Element|null} First non-excluded match, or `null`.
+     * @param {string} exclude
+     * @param {string} css
      */
     const checkElementExist = (css, exclude) => {
       for (const p of document.querySelectorAll(css)) {
@@ -2283,66 +2068,110 @@ const executionScript = _communicationKey => {
       let isLoadStartListened = false;
 
       /**
-       * Locate the comment renderer that owns a specific live-chat
-       * comment id (`lc`). Used by the auto-route logic to scroll the
-       * user to a comment thread that originated in the live chat.
-       * @param {string} lc Live-chat comment id to find.
-       * @returns {Element|null} The matched `ytd-comment-renderer`, or
-       *   `null` when the comment is not present in the current DOM.
+       * @param {string} lc
+       * @returns {{ lc: string, commentRendererElm: Element } | null}
        */
-      function findLcComment(lc) {
-        if (arguments.length === 1) {
-          const element = document.querySelector(
-            `#tab-comments ytd-comments ytd-comment-renderer #header-author a[href*="lc=${lc}"]`
-          );
-          if (element) {
-            const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
-            if (commentRendererElm && lc) {
-              return {
-                lc,
-                commentRendererElm,
-              };
-            }
-          }
-        } else if (arguments.length === 0) {
-          const element = document.querySelector(
-            `#tab-comments ytd-comments ytd-comment-renderer > #linked-comment-badge span:not(:empty)`
-          );
-          if (element) {
-            const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
-            if (commentRendererElm) {
-              const header = _querySelector.call(commentRendererElm, '#header-author');
-              if (header) {
-                const anchor = _querySelector.call(header, 'a[href*="lc="]');
-                if (anchor) {
-                  const href = anchor.getAttribute('href') || '';
-                  const m = /[&?]lc=([\w_.-]+)/.exec(href); // dot = sub-comment
-                  if (m) {
-                    lc = m[1];
-                  }
-                }
-              }
-            }
-            if (commentRendererElm && lc) {
-              return {
-                lc,
-                commentRendererElm,
-              };
-            }
-          }
-        }
-
-        return null;
+      function findLcCommentById(lc) {
+        const element = document.querySelector(
+          `#tab-comments ytd-comments ytd-comment-renderer #header-author a[href*="lc=${lc}"]`
+        );
+        if (!element) return null;
+        const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
+        if (!(commentRendererElm && lc)) return null;
+        return { lc, commentRendererElm };
       }
 
       /**
-       * Swap handler `A` for live-chat ↔ comments navigation. Resolves
-       * the current chat comment element, then triggers a swap to the
-       * matching comments thread so the user keeps visual continuity
-       * when the route changes.
-       * @param {string} targetLcId Live-chat id the user is moving to.
-       * @param {string} currentLcId Live-chat id the user is moving from.
-       * @returns {void}
+       * @returns {{ lc: string, commentRendererElm: Element } | null}
+       */
+      function findLcCommentFromBadge() {
+        const element = document.querySelector(
+          `#tab-comments ytd-comments ytd-comment-renderer > #linked-comment-badge span:not(:empty)`
+        );
+        if (!element) return null;
+        const commentRendererElm = closestFromAnchor.call(element, 'ytd-comment-renderer');
+        if (!commentRendererElm) return null;
+
+        let lc;
+        const header = _querySelector.call(commentRendererElm, '#header-author');
+        if (header) {
+          const anchor = _querySelector.call(header, 'a[href*="lc="]');
+          if (anchor) {
+            const href = anchor.getAttribute('href') || '';
+            const m = /[&?]lc=([\w_.-]+)/.exec(href); // dot = sub-comment
+            if (m) {
+              lc = m[1];
+            }
+          }
+        }
+        if (!lc) return null;
+        return { lc, commentRendererElm };
+      }
+
+      /**
+       * @param {string} [lc]
+       */
+      function findLcComment(lc) {
+        return arguments.length === 1
+          ? findLcCommentById(/** @type {string} */ (lc))
+          : findLcCommentFromBadge();
+      }
+
+      /** @param {Element} r1 */
+      function cloneLinkedCommentBadge(r1) {
+        const p = Object.assign({}, insp(r1).data.linkedCommentBadge);
+        if (((p || 0).metadataBadgeRenderer || 0).trackingParams) {
+          delete p.metadataBadgeRenderer.trackingParams;
+        }
+        return p;
+      }
+
+      /**
+       * @param {ContentsRendererRef | null} v1
+       * @param {ContentsRendererRef | null} v2
+       * @returns {boolean}
+       */
+      function isSwappableContents(v1, v2) {
+        if (!(v1 && v2)) return false;
+        return (
+          v1.parent === v2.parent &&
+          (v2.parent.nodeName === 'YTD-COMMENTS' ||
+            v2.parent.nodeName === 'YTD-ITEM-SECTION-RENDERER')
+        );
+      }
+
+      /** Move the target contents entry to the front so the swap reads it first. @param {ContentsRendererRef} v2 */
+      function promoteTargetContents(v2) {
+        const v2pCnt = insp(v2.parent);
+        /** @type {unknown[]} */ const v2Conents = (v2pCnt.data || 0).contents || 0;
+        if (!v2Conents) _ll.warn('v2Conents is not found');
+
+        v2pCnt.data = Object.assign({}, v2pCnt.data, {
+          contents: /** @type {unknown[]} */ ([]).concat(
+            [v2Conents[v2.index]],
+            v2Conents.slice(0, v2.index),
+            v2Conents.slice(v2.index + 1)
+          ),
+        });
+      }
+
+      /**
+       * @param {ContentsRendererRef | null} v2
+       * @param {string} targetLcId
+       * @param {string} currentLcId
+       * @param {unknown} p
+       * @returns {boolean}
+       */
+      function applyLcSwap(v2, targetLcId, currentLcId, p) {
+        if (!v2) return false;
+        if (v2.index < 0) return false;
+        if (v2.parent.nodeName !== 'YTD-COMMENT-REPLIES-RENDERER') promoteTargetContents(v2);
+        return lcSwapFuncB(targetLcId, currentLcId, p);
+      }
+
+      /**
+       * @param {string} targetLcId
+       * @param {string} currentLcId
        */
       function lcSwapFuncA(targetLcId, currentLcId) {
         let done = 0;
@@ -2357,64 +2186,23 @@ const executionScript = _communicationKey => {
             typeof insp(r1).data.linkedCommentBadge === 'object' &&
             typeof insp(r2).data.linkedCommentBadge === 'undefined'
           ) {
-            const p = Object.assign({}, insp(r1).data.linkedCommentBadge);
-
-            if (((p || 0).metadataBadgeRenderer || 0).trackingParams) {
-              delete p.metadataBadgeRenderer.trackingParams;
-            }
-
+            const p = cloneLinkedCommentBadge(r1);
             const v1 = findContentsRenderer(r1);
             const v2 = findContentsRenderer(r2);
-
-            if (
-              v1.parent === v2.parent &&
-              (v2.parent.nodeName === 'YTD-COMMENTS' ||
-                v2.parent.nodeName === 'YTD-ITEM-SECTION-RENDERER')
-            ) {
-            } else {
-              // currently not supported
-              return false;
-            }
-
-            if (v2.index >= 0) {
-              if (v2.parent.nodeName === 'YTD-COMMENT-REPLIES-RENDERER') {
-                if (lcSwapFuncB(targetLcId, currentLcId, p)) {
-                  done = 1;
-                }
-              } else {
-                const v2pCnt = insp(v2.parent);
-                const v2Conents = (v2pCnt.data || 0).contents || 0;
-                if (!v2Conents) _ll.warn('v2Conents is not found');
-
-                v2pCnt.data = Object.assign({}, v2pCnt.data, {
-                  contents: [].concat(
-                    [v2Conents[v2.index]],
-                    v2Conents.slice(0, v2.index),
-                    v2Conents.slice(v2.index + 1)
-                  ),
-                });
-
-                if (lcSwapFuncB(targetLcId, currentLcId, p)) {
-                  done = 1;
-                }
-              }
-            }
+            if (!isSwappableContents(v1, v2)) return false;
+            if (applyLcSwap(v2, targetLcId, currentLcId, p)) done = 1;
           }
         } catch (e) {
+          logS(e);
           _ll.warn(e);
         }
         return done === 1;
       }
 
       /**
-       * Swap handler `B` for live-chat ↔ comments navigation. Variant
-       * of `lcSwapFuncA` that supports a third positional argument
-       * (`_p`) used as an opaque parent / context pointer by the
-       * caller.
-       * @param {string} targetLcId Live-chat id the user is moving to.
-       * @param {string} currentLcId Live-chat id the user is moving from.
-       * @param {*} _p Opaque context pointer (unused but reserved).
-       * @returns {void}
+       * @param {unknown} _p
+       * @param {string} currentLcId
+       * @param {string} targetLcId
        */
       function lcSwapFuncB(targetLcId, currentLcId, _p) {
         let done = 0;
@@ -2441,131 +2229,129 @@ const executionScript = _communicationKey => {
 
           done = 1;
         } catch (e) {
+          logS(e);
           _ll.warn(e);
         }
         return done === 1;
       }
 
-      const loadStartFx = async evt => {
-        const media = evt?.target;
-        if (!media || (media.nodeName !== 'VIDEO' && media.nodeName !== 'AUDIO')) return;
+      /** @param {Element} media */
+      function pauseIfPlayingMedia(media) {
+        Promise.resolve(media)
+          .then((/** @type {HTMLMediaElement} */ el) => el.paused === false && el.pause())
+          .catch(_ll.warn);
+      }
 
-        const newMedia = media;
+      /**
+       * Pause whichever other media element is still playing.
+       * @param {Element} newMedia
+       * @param {Element} media1
+       * @param {Iterable<Element>} media2
+       */
+      function pauseOtherPlayingMedia(newMedia, media1, media2) {
+        if (newMedia !== media1 && /** @type {HTMLMediaElement} */ (media1).paused === false) {
+          if (isVideoPlaying(/** @type {HTMLMediaElement} */ (media1)))
+            pauseIfPlayingMedia(newMedia);
+          return;
+        }
+        if (newMedia === media1) {
+          for (const s of media2) {
+            if (/** @type {HTMLMediaElement} */ (s).paused === false) {
+              pauseIfPlayingMedia(s);
+              break;
+            }
+          }
+          return;
+        }
+        pauseIfPlayingMedia(media1);
+      }
+
+      /**
+       * @param {Event} evt
+       */
+      const loadStartFx = async evt => {
+        const media = evt?.target instanceof HTMLMediaElement ? evt.target : null;
+        if (!media || (media.nodeName !== 'VIDEO' && media.nodeName !== 'AUDIO')) return;
 
         const media1 = common.getMediaElement(0); // document.querySelector('#movie_player video[src]');
         const media2 = common.getMediaElements(2); // document.querySelectorAll('ytd-browse[role="main"] video[src]');
 
-        if (media1 !== null && media2.length > 0) {
-          if (newMedia !== media1 && media1.paused === false) {
-            if (isVideoPlaying(media1)) {
-              Promise.resolve(newMedia)
-                .then(video => video.paused === false && video.pause())
-                .catch(_ll.warn);
-            }
-          } else if (newMedia === media1) {
-            for (const s of media2) {
-              if (s.paused === false) {
-                Promise.resolve(s)
-                  .then(s => s.paused === false && s.pause())
-                  .catch(_ll.warn);
-                break;
-              }
-            }
-          } else {
-            Promise.resolve(media1)
-              .then(video1 => video1.paused === false && video1.pause())
-              .catch(_ll.warn);
-          }
-        }
-      };
-
-      const getBrowsableEndPoint = req => {
-        let valid = false;
-        let endpoint = req ? req.command : null;
-        if (
-          endpoint &&
-          (endpoint.commandMetadata || 0).webCommandMetadata &&
-          endpoint.watchEndpoint
-        ) {
-          const videoId = endpoint.watchEndpoint.videoId;
-          const url = endpoint.commandMetadata.webCommandMetadata.url;
-
-          if (typeof videoId === 'string' && typeof url === 'string' && url.indexOf('lc=') > 0) {
-            const m = /^\/watch\?v=([\w_-]+)&lc=([\w_.-]+)$/.exec(url); // dot = sub-comment
-            if (m && m[1] === videoId) {
-              /*
-              {
-                "style": "BADGE_STYLE_TYPE_SIMPLE",
-                "label": "æ³¨ç›®ã®ã‚³ãƒ¡ãƒ³ãƒˆ",
-                "trackingParams": "XXXXXX"
-            }
-              */
-
-              const targetLc = findLcComment(m[2]);
-              const currentLc = targetLc ? findLcComment() : null;
-
-              if (targetLc && currentLc) {
-                const done =
-                  targetLc.lc === currentLc.lc ? 1 : lcSwapFuncA(targetLc.lc, currentLc.lc) ? 1 : 0;
-
-                if (done === 1) {
-                  common.xReplaceState(history.state, url);
-                  return;
-                }
-              }
-            }
-          }
-        }
-
-        /*
-
-            {
-              "type": 0,
-              "command": endpoint,
-              "form": {
-                "tempData": {},
-                "reload": false
-              }
-            }
-
-        */
-
-        if (
-          endpoint &&
-          (endpoint.commandMetadata || 0).webCommandMetadata &&
-          endpoint.browseEndpoint &&
-          isChannelId(endpoint.browseEndpoint.browseId)
-        ) {
-          valid = true;
-        } else if (
-          endpoint &&
-          (endpoint.browseEndpoint || endpoint.searchEndpoint) &&
-          !endpoint.urlEndpoint &&
-          !endpoint.watchEndpoint
-        ) {
-          if (endpoint.browseEndpoint && endpoint.browseEndpoint.browseId === 'FEwhat_to_watch') {
-            // valid = false;
-            const playerMedia = common.getMediaElement(1);
-            if (playerMedia && playerMedia.paused === false) valid = true; // home page
-          } else if (endpoint.commandMetadata?.webCommandMetadata) {
-            const meta = endpoint.commandMetadata.webCommandMetadata;
-            if (meta?.url && meta.webPageType) {
-              valid = true;
-            }
-          }
-        }
-
-        if (!valid) endpoint = null;
-
-        return endpoint;
+        if (media1 !== null && media2.length > 0) pauseOtherPlayingMedia(media, media1, media2);
       };
 
       /**
-       * Decide whether the user is on a route that should use the
-       * miniplayer tab. Returns `true` for browse pages that expose
-       * a non-`home` page-subtype attribute (channel, playlist, etc.).
-       * @returns {boolean} `true` when miniplayer is appropriate.
+       * @param {YtNavigationEndpoint | null | undefined} endpoint
+       * @returns {{ videoId: string, url: string, targetLcId: string } | null}
        */
+      function parseLinkedCommentEndpoint(endpoint) {
+        if (!(endpoint?.commandMetadata?.webCommandMetadata && endpoint.watchEndpoint)) return null;
+        const videoId = endpoint.watchEndpoint.videoId;
+        const url = endpoint.commandMetadata.webCommandMetadata.url;
+        if (typeof videoId !== 'string' || typeof url !== 'string' || url.indexOf('lc=') <= 0)
+          return null;
+        const m = /^\/watch\?v=([\w_-]+)&lc=([\w_.-]+)$/.exec(url); // dot = sub-comment
+        if (!m || m[1] !== videoId) return null;
+        return { videoId, url, targetLcId: m[2] };
+      }
+
+      /**
+       * Linked-comment (lc=) watch navigation: if the target comment is
+       * already rendered in place, just fix the URL (replaceState) and
+       * signal "handled" by returning true.
+       * @param {YtNavigationEndpoint | null | undefined} endpoint
+       * @returns {boolean} true when the URL swap fully handled the request
+       */
+      const trySwapLinkedComment = endpoint => {
+        const parsed = parseLinkedCommentEndpoint(endpoint);
+        if (!parsed) return false;
+        const targetLc = findLcComment(parsed.targetLcId);
+        const currentLc = targetLc ? findLcComment() : null;
+        if (!(targetLc && currentLc)) return false;
+        let done = targetLc.lc === currentLc.lc;
+        if (!done) done = lcSwapFuncA(targetLc.lc, currentLc.lc);
+        if (!done) return false;
+        common.xReplaceState(history.state, parsed.url);
+        return true;
+      };
+
+      /**
+       * Decide whether a browse/search endpoint is valid to keep.
+       * @param {YtNavigationEndpoint | null | undefined} endpoint
+       * @returns {boolean}
+       */
+      const isBrowsableBrowseEndpoint = endpoint => {
+        if (
+          endpoint?.commandMetadata?.webCommandMetadata &&
+          endpoint.browseEndpoint &&
+          isChannelId(endpoint.browseEndpoint.browseId)
+        ) {
+          return true;
+        }
+        if (
+          !(endpoint && (endpoint.browseEndpoint || endpoint.searchEndpoint)) ||
+          endpoint.urlEndpoint ||
+          endpoint.watchEndpoint
+        ) {
+          return false;
+        }
+        if (endpoint.browseEndpoint && endpoint.browseEndpoint.browseId === 'FEwhat_to_watch') {
+          const playerMedia = /** @type {HTMLMediaElement | null} */ (common.getMediaElement(1));
+          return Boolean(playerMedia && playerMedia.paused === false); // home page
+        }
+        const meta = endpoint.commandMetadata?.webCommandMetadata;
+        return Boolean(meta?.url && meta.webPageType);
+      };
+
+      /**
+       * @param {{ command?: YtNavigationEndpoint }} req
+       */
+      const getBrowsableEndPoint = req => {
+        const endpoint = req ? req.command : null;
+        if (trySwapLinkedComment(endpoint)) return;
+        const valid = isBrowsableBrowseEndpoint(endpoint);
+        return valid ? endpoint : null;
+      };
+
       const shouldUseMiniPlayer = () => {
         const isSubTypeExist = document.querySelector(
           'ytd-page-manager#page-manager > ytd-browse[page-subtype]'
@@ -2577,7 +2363,9 @@ const executionScript = _communicationKey => {
           e => !e.closest('[hidden]')
         )[0];
         if (movie_player) {
-          const media = qsOne(movie_player, 'video[class], audio[class]');
+          const media = /** @type {HTMLMediaElement | null} */ (
+            qsOne(movie_player, 'video[class], audio[class]')
+          );
           if (
             media &&
             media.currentTime > 3 &&
@@ -2590,105 +2378,187 @@ const executionScript = _communicationKey => {
         return false;
       };
 
+      /**
+       * @param {{ command?: YtNavigationEndpoint }} req
+       */
       const conditionFulfillment = req => {
         const command = req ? req.command : null;
         if (!command) return;
 
-        if (command && (command.commandMetadata || 0).webCommandMetadata && command.watchEndpoint) {
-        } else if (
-          command &&
-          (command.commandMetadata || 0).webCommandMetadata &&
-          command.browseEndpoint &&
-          isChannelId(command.browseEndpoint.browseId)
-        ) {
-        } else if (
-          command &&
+        const meta = command.commandMetadata;
+        const isWatch = Boolean(meta?.webCommandMetadata && command.watchEndpoint);
+        const isChannel = Boolean(
+          meta?.webCommandMetadata &&
+            command.browseEndpoint &&
+            isChannelId(command.browseEndpoint.browseId)
+        );
+        const isBrowseOrSearch = Boolean(
           (command.browseEndpoint || command.searchEndpoint) &&
-          !command.urlEndpoint &&
-          !command.watchEndpoint
-        ) {
-        } else {
-          return false;
-        }
+            !command.urlEndpoint &&
+            !command.watchEndpoint
+        );
+        if (!(isWatch || isChannel || isBrowseOrSearch)) return false;
 
         if (!shouldUseMiniPlayer()) return false;
-
-        /*
-          // user would like to switch page immediately without playing the video;
-          // attribute appear after playing video for more than 2s
-          if (!document.head.dataset.viTime) return false;
-          else {
-            const currentVideo = common.getMediaElement(0);
-            if (currentVideo && currentVideo.readyState > currentVideo.HAVE_CURRENT_DATA && currentVideo.currentTime > 2.2 && currentVideo.duration - 2.2 < currentVideo.currentTime) {
-              // disable miniview browsing if the media is near to the end
-              return false;
-            }
-          }
-        */
 
         if (pageType !== 'watch') return false;
 
         // 2025.10.16 - ignore ytp-miniplayer-button existance
-        // }
-
         return true;
       };
 
       let u38 = 0;
+      /** @returns {boolean} whether no visible about popup is open */
+      function isAboutPopupClosed() {
+        const currentAbout = [...document.querySelectorAll('ytd-about-channel-renderer')].filter(
+          e => !e.closest('[hidden]')
+        )[0];
+        if (!currentAbout) return true;
+        const popupContainer = currentAbout.closest('ytd-popup-container');
+        if (!popupContainer) return false;
+        const cnt = insp(popupContainer);
+        let arr = null;
+        try {
+          arr = cnt.handleGetOpenedPopupsAction_();
+        } catch (_e) {
+          logS(_e);
+          _ll.warn('handleGetOpenedPopupsAction_ failed', _e);
+        }
+        return Boolean(arr && arr.length === 0);
+      }
+
+      /** Click the description toggle when its about popup is closed. */
+      function openChannelAboutDescription() {
+        const descriptionModel = [
+          ...document.querySelectorAll('yt-description-preview-view-model'),
+        ].filter(e => !e.closest('[hidden]'))[0];
+        if (!descriptionModel) return;
+        const button = [...descriptionModel.querySelectorAll('button')].filter(
+          e => !e.closest('[hidden]') && `${e.textContent}`.trim().length > 0
+        )[0];
+        if (button) button.click();
+      }
+
+      /** @param {number} t38 */
       const fixChannelAboutPopup = async t38 => {
-        let promise = new PromiseExternal();
-        /**
-         * Defer a microtask that resolves `promise` so the calling
-         * code can wait for the next paint before reading the
-         * post-mutation DOM state.
-         * @returns {void}
-         */
+        /** @type {InstanceType<typeof PromiseExternal> | null} */ let promise =
+          new PromiseExternal();
         const f = () => {
           promise?.resolve();
           promise = null;
         };
-        document.addEventListener('yt-navigate-finish', f, false);
-        await promise.then();
+        _registerListener(document, 'yt-navigate-finish', f, false, true);
+        await promise?.then();
         promise = null;
         document.removeEventListener('yt-navigate-finish', f, false);
         if (t38 !== u38) return;
         setTimeout(() => {
-          const currentAbout = [...document.querySelectorAll('ytd-about-channel-renderer')].filter(
-            e => !e.closest('[hidden]')
-          )[0];
-          let okay = false;
-          if (!currentAbout) okay = true;
-          else {
-            const popupContainer = currentAbout.closest('ytd-popup-container');
-            if (popupContainer) {
-              const cnt = insp(popupContainer);
-              let arr = null;
-              try {
-                arr = cnt.handleGetOpenedPopupsAction_();
-              } catch (_e) {
-                _ll.warn('handleGetOpenedPopupsAction_ failed', _e);
-              }
-              if (arr && arr.length === 0) okay = true;
-            } else {
-              okay = false;
-            }
-          }
-          if (okay) {
-            const descriptionModel = [
-              ...document.querySelectorAll('yt-description-preview-view-model'),
-            ].filter(e => !e.closest('[hidden]'))[0];
-            if (descriptionModel) {
-              const button = [...descriptionModel.querySelectorAll('button')].filter(
-                e => !e.closest('[hidden]') && `${e.textContent}`.trim().length > 0
-              )[0];
-              if (button) {
-                button.click();
-              }
-            }
-          }
+          if (isAboutPopupClosed()) openChannelAboutDescription();
         }, 80);
       };
+      /**
+       * Define a throwaway `playlistId` getter that resolves once the page type
+       * changes (or after 4s), so the navigation can read it without blocking.
+       * @param {unknown} object
+       */
+      function awaitPlaylistIdResolution(object) {
+        let wObject = mWeakRef(object);
+        const N = 3;
+        let count = 0;
+
+        Object.defineProperty(kRef(wObject) || {}, 'playlistId', {
+          get() {
+            count++;
+            if (count === N) {
+              delete this.playlistId;
+            }
+            return '*';
+          },
+          set(value) {
+            delete this.playlistId; // remove property definition
+            this.playlistId = value; // assign as normal property
+          },
+          enumerable: false,
+          configurable: true,
+        });
+
+        const once = { once: true }; // browsers supporting async function can also use once option.
+        /** @type {(() => void) | null} */ let playlistClearout = null;
+
+        let timeoutid = 0;
+        Promise.race([
+          new Promise((/** @type {(value?: unknown) => void} */ r) => {
+            timeoutid = /** @type {number} */ (/** @type {unknown} */ (setTimeout_(r, 4000)));
+          }),
+          new Promise((/** @type {(value?: unknown) => void} */ r) => {
+            playlistClearout = () => {
+              if (timeoutid > 0) {
+                clearTimeout(timeoutid);
+                timeoutid = 0;
+              }
+              r();
+            };
+            _registerListener(document, 'yt-page-type-changed', playlistClearout, once, true);
+          }),
+        ])
+          .then(() => {
+            if (timeoutid !== 0) {
+              playlistClearout &&
+                document.removeEventListener('yt-page-type-changed', playlistClearout, once);
+              timeoutid = 0;
+            }
+            playlistClearout = null;
+            count = N - 1;
+            const resolved = kRef(wObject);
+            wObject = null;
+            return resolved ? resolved.playlistId : null;
+          })
+          .catch(_ll.warn);
+      }
+
+      /**
+       * @param {Element} ytdAppCnt
+       * @returns {{ videoId?: string } | null}
+       */
+      function readCurrentWatchEndpoint(ytdAppCnt) {
+        try {
+          const data =
+            /** @type {{ response?: { currentVideoEndpoint?: { watchEndpoint?: { videoId?: string } } } }} */ (
+              /** @type {YtPolymerElement} */ (ytdAppCnt).data
+            );
+          return data.response?.currentVideoEndpoint?.watchEndpoint || null;
+        } catch (_e) {
+          logS(_e);
+          return null;
+        }
+      }
+
+      function ensureLoadStartListener() {
+        if (isLoadStartListened) return;
+        isLoadStartListened = true;
+        _registerListener(document, 'loadstart', loadStartFx, true, true);
+      }
+
+      /**
+       * @param {YtNavigationEndpoint | null | undefined} endpoint
+       * @param {number} t38
+       */
+      function maybeFixChannelAboutPopup(endpoint, t38) {
+        const endpointURL = `${endpoint?.commandMetadata?.webCommandMetadata?.url || ''}`;
+        if (
+          endpointURL?.endsWith('/about') &&
+          /\/channel\/UC[-_a-zA-Z0-9+=.]{22}\/about/.test(endpointURL)
+        ) {
+          fixChannelAboutPopup(t38);
+        }
+      }
+
+      /** @param {{ apply: (thisArg: unknown, args: unknown) => void }} handleNavigate */
       const handleNavigateFactory = handleNavigate => {
+        /**
+         * @this {YtProto}
+         * @param {{ command?: YtNavigationEndpoint }} req
+         */
         return function (req) {
           if (u38 > 1e9) u38 = 9;
           const t38 = ++u38;
@@ -2703,104 +2573,12 @@ const executionScript = _communicationKey => {
 
           if (!(endpoint && shouldUseMiniPlayer())) return handleNavigate.apply(this, $arguments);
 
-          const ytdAppElm = document.querySelector('ytd-app');
-          const ytdAppCnt = insp(ytdAppElm);
+          const rawEndpoint = readCurrentWatchEndpoint(insp(document.querySelector('ytd-app')));
+          const object = typeof rawEndpoint === 'object' ? rawEndpoint : null;
+          if (object && !('playlistId' in object)) awaitPlaylistIdResolution(object);
 
-          let object = null;
-          try {
-            object = ytdAppCnt.data.response.currentVideoEndpoint.watchEndpoint || null;
-          } catch (_e) {
-            object = null;
-          }
-
-          if (typeof object !== 'object') object = null;
-
-          const once = { once: true }; // browsers supporting async function can also use once option.
-
-          if (object !== null && !('playlistId' in object)) {
-            let wObject = mWeakRef(object);
-
-            const N = 3;
-
-            let count = 0;
-
-            /*
-
-              rcb(b) => a = playlistId = undefinded
-
-              var scb = function(a, b, c, d) {
-                      a.isInitialized() && (B("kevlar_miniplayer_navigate_to_shorts_killswitch") ? c || d ? ("watch" !== Xu(b) && "shorts" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
-                      qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
-                      a.activateMiniplayer(b)) : c ? ("watch" !== Xu(b) && os(a.miniplayerEl, "yt-cache-miniplayer-page-action", [b]),
-                      qs(a.miniplayerEl, "yt-deactivate-miniplayer-action")) : d ? qs(a.miniplayerEl, "yt-pause-miniplayer-action") : "watch" === Xu(b) && rcb(b) && (qt.getInstance().playlistWatchPageActivation = !0,
-                      a.activateMiniplayer(b)))
-                  };
-
-            */
-
-            Object.defineProperty(kRef(wObject) || {}, 'playlistId', {
-              get() {
-                count++;
-                if (count === N) {
-                  delete this.playlistId;
-                }
-                return '*';
-              },
-              set(value) {
-                delete this.playlistId; // remove property definition
-                this.playlistId = value; // assign as normal property
-              },
-              enumerable: false,
-              configurable: true,
-            });
-
-            let playlistClearout = null;
-
-            let timeoutid = 0;
-            Promise.race([
-              new Promise(r => {
-                // lint:custom:ignore setTimeout-long-delay — page-context script; setTimeout_ not available here
-                timeoutid = setTimeout(r, 4000);
-              }),
-              new Promise(r => {
-                playlistClearout = () => {
-                  if (timeoutid > 0) {
-                    clearTimeout(timeoutid);
-                    timeoutid = 0;
-                  }
-                  r();
-                };
-                document.addEventListener('yt-page-type-changed', playlistClearout, once);
-              }),
-            ])
-              .then(() => {
-                if (timeoutid !== 0) {
-                  playlistClearout &&
-                    document.removeEventListener('yt-page-type-changed', playlistClearout, once);
-                  timeoutid = 0;
-                }
-                playlistClearout = null;
-                count = N - 1;
-                const object = kRef(wObject);
-                wObject = null;
-                return object ? object.playlistId : null;
-              })
-              .catch(_ll.warn);
-          }
-
-          if (!isLoadStartListened) {
-            isLoadStartListened = true;
-            document.addEventListener('loadstart', loadStartFx, true);
-          }
-
-          const endpointURL = `${endpoint?.commandMetadata?.webCommandMetadata?.url || ''}`;
-
-          if (
-            endpointURL?.endsWith('/about') &&
-            /\/channel\/UC[-_a-zA-Z0-9+=.]{22}\/about/.test(endpointURL)
-          ) {
-            fixChannelAboutPopup(t38);
-          }
+          ensureLoadStartListener();
+          maybeFixChannelAboutPopup(endpoint, t38);
 
           handleNavigate.apply(this, $arguments);
         };
@@ -2809,95 +2587,110 @@ const executionScript = _communicationKey => {
       return { handleNavigateFactory };
     })();
 
-    /**
-     * IIFE that returns the shared `common` helper bundle used across
-     * the rest of the module. Exposes the media-element resolver, the
-     * miniplayer-routing helpers, and a few safe-element utilities.
-     * The `mediaModeLock` is a sequence counter used to detect stale
-     * resolutions and bail out of a stale request path.
-     * @returns {{
-     *   getMediaElement: (index?: number) => HTMLMediaElement|null,
-     *   isMediaMiniplayerActive: () => boolean,
-     *   isMiniPlayerActive: () => boolean,
-     *   $$: <T>(selector: string, ctx?: ParentNode) => T|null
-     * }} Shared helper bundle.
-     */
-    const common = (() => {
+    function buildCommon() {
       let mediaModeLock = 0;
+
+      /** @param {string} sel */
+      const queryMedia = sel => {
+        const cache = window.YouTubePlusDOMCache;
+        return cache?.querySelector ? cache.querySelector(sel) : document.querySelector(sel);
+      };
+
+      /** @returns {1|2|0} video / audio / undetected */
+      function detectMediaMode() {
+        const el =
+          queryMedia('.video-stream.html5-main-video') ||
+          queryMedia('#movie_player video, #movie_player audio') ||
+          queryMedia('body video[src], body audio[src]');
+        if (!el) return 0;
+        if (el.nodeName === 'VIDEO') return 1;
+        if (el.nodeName === 'AUDIO') return 2;
+        return 0;
+      }
+
+      // Per media mode: the selector for `i` (1, 2) and the default (0).
+      /** @type {Record<number, Record<number, string>>} */
+      const MEDIA_SELECTORS = {
+        1: {
+          0: '#movie_player video[src]',
+          1: 'ytd-player#ytd-player video[src]',
+          2: 'ytd-browse[role="main"] video[src]',
+        },
+        2: {
+          0: '#movie_player audio.video-stream.html5-main-video[src]',
+          1: 'ytd-player#ytd-player audio.video-stream.html5-main-video[src]',
+          2: 'ytd-browse[role="main"] audio.video-stream.html5-main-video[src]',
+        },
+      };
+
+      /**
+       * @param {number} i
+       */
       const _getMediaElement = i => {
-        if (mediaModeLock === 0) {
-          const e =
-            document.querySelector('.video-stream.html5-main-video') ||
-            document.querySelector('#movie_player video, #movie_player audio') ||
-            document.querySelector('body video[src], body audio[src]');
-          if (e) {
-            if (e.nodeName === 'VIDEO') mediaModeLock = 1;
-            else if (e.nodeName === 'AUDIO') mediaModeLock = 2;
-          }
-        }
+        if (mediaModeLock === 0) mediaModeLock = detectMediaMode();
         if (!mediaModeLock) return null;
-        if (mediaModeLock === 1) {
-          switch (i) {
-            case 1:
-              return 'ytd-player#ytd-player video[src]';
-            case 2:
-              return 'ytd-browse[role="main"] video[src]';
-            default:
-              return '#movie_player video[src]';
-          }
-        } else if (mediaModeLock === 2) {
-          switch (i) {
-            case 1:
-              return 'ytd-player#ytd-player audio.video-stream.html5-main-video[src]';
-            case 2:
-              return 'ytd-browse[role="main"] audio.video-stream.html5-main-video[src]';
-            default:
-              return '#movie_player audio.video-stream.html5-main-video[src]';
-          }
-        }
-        return null;
+        const table = MEDIA_SELECTORS[mediaModeLock];
+        return table[i] || table[0];
       };
 
       return {
+        /**
+         * @param {{ endpoint?: unknown }} s
+         * @param {string | URL | null} u
+         */
         xReplaceState(s, u) {
           try {
             history.replaceState(s, '', u);
           } catch (_e) {
+            logS(_e);
             // in case error occurs if replaceState is replaced by any external script / extension
           }
           if (s.endpoint) {
             try {
-              const ytdAppElm = document.querySelector('ytd-app');
+              const cache = window.YouTubePlusDOMCache;
+              const ytdAppElm = cache?.querySelector
+                ? cache.querySelector('ytd-app')
+                : document.querySelector('ytd-app');
               const ytdAppCnt = insp(ytdAppElm);
               ytdAppCnt.replaceState(s.endpoint, '', u);
             } catch (_e) {
+              logS(_e);
               _ll.warn('replaceState failed', _e);
             }
           }
         },
+        /**
+         * @param {number} i
+         */
         getMediaElement(i) {
           const s = _getMediaElement(i) || '';
-          if (s) return document.querySelector(s);
+          if (s) {
+            const cache = window.YouTubePlusDOMCache;
+            return cache?.querySelector ? cache.querySelector(s) : document.querySelector(s);
+          }
           return null;
         },
+        /**
+         * @param {number} i
+         */
         getMediaElements(i) {
           const s = _getMediaElement(i) || '';
-          if (s) return document.querySelectorAll(s);
+          if (s) {
+            const cache = window.YouTubePlusDOMCache;
+            return cache?.querySelectorAll
+              ? cache.querySelectorAll(s)
+              : document.querySelectorAll(s);
+          }
           return [];
         },
       };
-    })();
+    }
+
+    const common = buildCommon();
 
     let inPageRearrange = false;
     let tmpLastVideoId = '';
 
-    /**
-     * Resolve the video id of the currently mounted watch page. Tries
-     * the host element's controller (`ytdFlexyCnt.videoId`) first,
-     * then falls back to the element's own `videoId` property, and
-     * finally to parsing `location.href` for the `v=` query parameter.
-     * @returns {string} The current video id, or an empty string.
-     */
     const getCurrentVideoId = () => {
       const ytdFlexyElm = elements.flexy;
       const ytdFlexyCnt = insp(ytdFlexyElm);
@@ -2907,48 +2700,29 @@ const executionScript = _communicationKey => {
       return '';
     };
 
-    const _holdInlineExpanderAlwaysExpanded = inlineExpanderCnt => {
-      _ll.info('holdInlineExpanderAlwaysExpanded');
-      if (inlineExpanderCnt.alwaysShowExpandButton === true)
-        inlineExpanderCnt.alwaysShowExpandButton = false;
-      if (typeof (inlineExpanderCnt.collapseLabel || 0) === 'string')
-        inlineExpanderCnt.collapseLabel = '';
-      if (typeof (inlineExpanderCnt.expandLabel || 0) === 'string')
-        inlineExpanderCnt.expandLabel = '';
-      if (inlineExpanderCnt.showCollapseButton === true)
-        inlineExpanderCnt.showCollapseButton = false;
-      if (inlineExpanderCnt.showExpandButton === true) inlineExpanderCnt.showExpandButton = false;
-      if (inlineExpanderCnt.expandButton instanceof HTMLElement_) {
-        const btn = inlineExpanderCnt.expandButton;
-        inlineExpanderCnt.expandButton = null;
-        btn.remove();
-      }
-    };
-
+    /**
+     * @param {YtProto} inlineExpanderCnt
+     */
     const fixInlineExpanderDisplay = inlineExpanderCnt => {
-      try {
-        inlineExpanderCnt.updateIsAttributedExpanded();
-      } catch (_e) {
-        _ll.warn('updateIsAttributedExpanded failed', _e);
-      }
-      try {
-        inlineExpanderCnt.updateIsFormattedExpanded();
-      } catch (_e) {
-        _ll.warn('updateIsFormattedExpanded failed', _e);
-      }
-      try {
-        inlineExpanderCnt.updateTextOnSnippetTypeChange();
-      } catch (_e) {
-        _ll.warn('updateTextOnSnippetTypeChange failed', _e);
-      }
-      try {
-        inlineExpanderCnt.updateStyles();
-      } catch (_e) {
-        _ll.warn('updateStyles failed', _e);
+      for (const method of [
+        'updateIsAttributedExpanded',
+        'updateIsFormattedExpanded',
+        'updateTextOnSnippetTypeChange',
+        'updateStyles',
+      ]) {
+        try {
+          inlineExpanderCnt[method]();
+        } catch (_e) {
+          logS(_e);
+          _ll.warn(`${method} failed`, _e);
+        }
       }
     };
 
-    const setExpand = cnt => {
+    /**
+     * @param {YtProto} cnt
+     */
+    const setExpand = (cnt, /** @type {unknown} */ _flag) => {
       if (typeof cnt.set === 'function') {
         cnt.set('isExpanded', true);
         if (typeof cnt.isExpandedChanged === 'function') cnt.isExpandedChanged();
@@ -2958,6 +2732,17 @@ const executionScript = _communicationKey => {
       }
     };
 
+    /**
+     * Inline-expander method shim installed on the YouTube element controller.
+     * @typedef {object} InlineExpanderShim
+     * @property {unknown} [isResetMutation]
+     * @property {unknown} [isExpanded]
+     * @property {(this: InlineExpanderShim) => void} updateTextOnSnippetTypeChange
+     * @property {() => void} collapse
+     * @property {() => number} computeExpandButtonOffset
+     * @property {() => void} dataChanged
+     */
+    /** @type {InlineExpanderShim} */
     const cloneMethods = {
       updateTextOnSnippetTypeChange() {
         if (this.isResetMutation === false) this.isResetMutation = true;
@@ -2971,6 +2756,9 @@ const executionScript = _communicationKey => {
       },
       dataChanged() {},
     };
+    /**
+     * @param {YtProto} inlineExpanderCnt
+     */
     const fixInlineExpanderMethods = inlineExpanderCnt => {
       if (inlineExpanderCnt && !inlineExpanderCnt.__$$idncjk8487$$__) {
         inlineExpanderCnt.__$$idncjk8487$$__ = true;
@@ -2993,13 +2781,6 @@ const executionScript = _communicationKey => {
       }
     };
 
-    /**
-     * Adjust the inline expander markup so the tabview description
-     * block renders correctly. Resolves the main info element via
-     * `getMainInfo()` and applies the YouTube-specific display tweak
-     * that the description expects.
-     * @returns {void}
-     */
     const fixInlineExpanderContent = () => {
       const mainInfo = getMainInfo();
       if (!mainInfo) return;
@@ -3007,15 +2788,9 @@ const executionScript = _communicationKey => {
       const inlineExpanderElm = mainInfo.querySelector('ytd-text-inline-expander');
       const inlineExpanderCnt = insp(inlineExpanderElm);
       fixInlineExpanderMethods(inlineExpanderCnt);
-
-      //   // inlineExpanderCnt.isExpandedChanged();
-      //   // holdInlineExpanderAlwaysExpanded(inlineExpanderCnt);
-      // }
-
-      //   }
-      // }
     };
 
+    /** @type {Record<string, any>} */
     const plugin = {
       minibrowser: {
         activated: false,
@@ -3053,6 +2828,9 @@ const executionScript = _communicationKey => {
         /** @type { MutationObserver | null } */
         mo: null,
         promiseReady: new PromiseExternal(),
+        /**
+         * @param {number} lockId
+         */
         moFn(lockId) {
           if (lockGet.autoExpandInfoDescAttrAsyncLock !== lockId) return;
 
@@ -3067,6 +2845,7 @@ const executionScript = _communicationKey => {
                   insp(mainInfo).handleMoreTap(new Event('tap'));
                   success = true;
                 } catch (_e) {
+                  logS(_e);
                   _ll.warn('handleMoreTap failed', _e);
                 }
                 if (success) mainInfo.setAttribute111('tyt-no-less-btn', '');
@@ -3077,7 +2856,6 @@ const executionScript = _communicationKey => {
               const inlineExpanderCnt = insp(inlineExpanderElm);
               if (inlineExpanderCnt && inlineExpanderCnt.isExpanded === false) {
                 setExpand(inlineExpanderCnt, true);
-                // holdInlineExpanderAlwaysExpanded(inlineExpanderCnt);
               }
               break;
             }
@@ -3087,10 +2865,6 @@ const executionScript = _communicationKey => {
           if (this.activated) return;
 
           this.moFn = this.moFn.bind(this);
-          // The shared mutation coordinator owns a single root observer;
-          // bind a per-target handler here so attribute changes on the
-          // expander element flow through the coordinator instead of a
-          // dedicated MutationObserver.
           this.moSubId = null;
           this.moCallback = () => {
             Promise.resolve(lockSet.autoExpandInfoDescAttrAsyncLock)
@@ -3100,42 +2874,18 @@ const executionScript = _communicationKey => {
           this.activated = true;
           this.promiseReady.resolve();
         },
+        /**
+         * @param {Element} mainInfo
+         */
         async onMainInfoSet(mainInfo) {
           await this.promiseReady.then();
-          if (this.moSubId && _mc?.unwatch) _mc.unwatch(this.moSubId);
-          this.moSubId = 'main::autoExpandInfoDesc';
-          if (_mc?.watchTarget) {
-            if (mainInfo.nodeName.toLowerCase() === 'ytd-expander') {
-              _mc.watchTarget(this.moSubId, mainInfo, this.moCallback, {
-                attributes: true,
-                childList: false,
-                subtree: false,
-                attributeFilter: ['collapsed', 'attr-8ifv7'],
-              });
-            } else {
-              _mc.watchTarget(this.moSubId, mainInfo, this.moCallback, {
-                attributes: true,
-                childList: false,
-                subtree: false,
-                attributeFilter: ['attr-8ifv7'],
-              });
-            }
-          } else {
-            if (this.mo) this.mo.disconnect();
-            this.mo = new MutationObserver(this.moCallback);
-            if (mainInfo.nodeName.toLowerCase() === 'ytd-expander') {
-              this.mo.observe(mainInfo, {
-                attributes: true,
-                attributeFilter: ['collapsed', 'attr-8ifv7'],
-              });
-            } else {
-              this.mo.observe(mainInfo, {
-                attributes: true,
-                attributeFilter: ['attr-8ifv7'],
-              });
-            }
-            _cm?.registerObserver?.(this.mo);
-          }
+          const isExpander = mainInfo.nodeName.toLowerCase() === 'ytd-expander';
+          this.moSubId = observeTarget({ id: this.moSubId }, mainInfo, this.moCallback, {
+            attributes: true,
+            childList: false,
+            subtree: false,
+            attributeFilter: isExpander ? ['collapsed', 'attr-8ifv7'] : ['attr-8ifv7'],
+          });
           mainInfo.incAttribute111('attr-8ifv7');
         },
       },
@@ -3146,25 +2896,32 @@ const executionScript = _communicationKey => {
         mo: null,
         /** @type { ResizeObserver | null} */
         ro: null,
+        /** @type {Element | null} */
+        roTarget: null,
         promiseReady: new PromiseExternal(),
         checkResize: 0,
+        /**
+         * @param {Event} evt
+         */
         mouseEnterFn(evt) {
-          const target = evt ? evt.target : null;
-          if (!(target instanceof HTMLElement_)) return;
-          const metaDataElm = target.closest('ytd-watch-metadata');
+          const metaDataElm = getHoveredMetaData(evt);
           if (!metaDataElm) return;
           metaDataElm.classList.remove('tyt-metadata-hover-resized');
           this.checkResize = Date.now() + 300;
           metaDataElm.classList.add('tyt-metadata-hover');
         },
+        /**
+         * @param {Event} evt
+         */
         mouseLeaveFn(evt) {
-          const target = evt ? evt.target : null;
-          if (!(target instanceof HTMLElement_)) return;
-          const metaDataElm = target.closest('ytd-watch-metadata');
+          const metaDataElm = getHoveredMetaData(evt);
           if (!metaDataElm) return;
           metaDataElm.classList.remove('tyt-metadata-hover-resized');
           metaDataElm.classList.remove('tyt-metadata-hover');
         },
+        /**
+         * @param {number} lockId
+         */
         moFn(lockId) {
           if (lockGet.fullChannelNameOnHoverAttrAsyncLock !== lockId) return;
 
@@ -3177,8 +2934,8 @@ const executionScript = _communicationKey => {
           uploadInfo.removeEventListener('pointerenter', this.mouseEnterFn, evtOpt);
           uploadInfo.removeEventListener('pointerleave', this.mouseLeaveFn, evtOpt);
 
-          uploadInfo.addEventListener('pointerenter', this.mouseEnterFn, evtOpt);
-          uploadInfo.addEventListener('pointerleave', this.mouseLeaveFn, evtOpt);
+          _registerListener(uploadInfo, 'pointerenter', this.mouseEnterFn, evtOpt, false);
+          _registerListener(uploadInfo, 'pointerleave', this.mouseLeaveFn, evtOpt, false);
         },
         async onNavigateFinish() {
           await this.promiseReady.then();
@@ -3186,24 +2943,15 @@ const executionScript = _communicationKey => {
             '#primary.ytd-watch-flexy ytd-watch-metadata #upload-info'
           );
           if (!uploadInfo) return;
-          if (this.moSubId && _mc?.unwatch) _mc.unwatch(this.moSubId);
-          this.moSubId = 'main::fullChannelNameOnHover';
-          if (_mc?.watchTarget) {
-            _mc.watchTarget(this.moSubId, uploadInfo, this.moCallback, {
-              attributes: true,
-              childList: false,
-              subtree: false,
-              attributeFilter: ['hidden', 'attr-3wb0k'],
-            });
-          } else {
-            this.mo = new MutationObserver(this.moCallback);
-            this.mo.observe(uploadInfo, {
-              attributes: true,
-              attributeFilter: ['hidden', 'attr-3wb0k'],
-            });
-            _cm?.registerObserver?.(this.mo);
-          }
+          this.moSubId = observeTarget({ id: this.moSubId }, uploadInfo, this.moCallback, {
+            attributes: true,
+            childList: false,
+            subtree: false,
+            attributeFilter: ['hidden', 'attr-3wb0k'],
+          });
           uploadInfo.incAttribute111('attr-3wb0k');
+          if (this.roTarget && this.roTarget !== uploadInfo) this.ro.unobserve(this.roTarget);
+          this.roTarget = uploadInfo;
           this.ro.observe(uploadInfo);
         },
         activate() {
@@ -3227,20 +2975,28 @@ const executionScript = _communicationKey => {
               .then(this.moFn)
               .catch(_ll.warn);
           };
-          this.ro = new ResizeObserver(mutations => {
-            if (Date.now() > this.checkResize) return;
-            for (const mutation of mutations) {
-              const uploadInfo = mutation.target;
-              if (uploadInfo && mutation.contentRect.width > 0 && mutation.contentRect.height > 0) {
-                const metaDataElm = uploadInfo.closest('ytd-watch-metadata');
-                if (metaDataElm.classList.contains('tyt-metadata-hover')) {
-                  metaDataElm.classList.add('tyt-metadata-hover-resized');
-                }
+          this.ro = _registerObserver(
+            new ResizeObserver(mutations => {
+              if (Date.now() > this.checkResize) return;
+              for (const mutation of mutations) {
+                const uploadInfo = mutation.target;
+                if (
+                  uploadInfo &&
+                  mutation.contentRect.width > 0 &&
+                  mutation.contentRect.height > 0
+                ) {
+                  const metaDataElm = uploadInfo.closest('ytd-watch-metadata');
+                  if (metaDataElm?.classList.contains('tyt-metadata-hover')) {
+                    metaDataElm.classList.add('tyt-metadata-hover-resized');
+                  }
 
-                break;
+                  break;
+                }
               }
-            }
-          });
+            }),
+            null,
+            { scope: 'session' }
+          );
           this.promiseReady.resolve();
         },
       },
@@ -3260,24 +3016,23 @@ const executionScript = _communicationKey => {
 
     const __attachedSymbol__ = Symbol();
 
+    /**
+     * @param {string} tag
+     */
     const makeInitAttached = tag => {
       const inPageRearrange_ = inPageRearrange;
       inPageRearrange = false;
       for (const elm of document.querySelectorAll(`${tag}`)) {
         const cnt = insp(elm) || 0;
-        if (typeof cnt.attached498 === 'function' && !elm[__attachedSymbol__])
+        if (
+          typeof cnt.attached498 === 'function' &&
+          !(/** @type {YtProto} */ (elm)[__attachedSymbol__])
+        )
           Promise.resolve(elm).then(eventMap[`${tag}::attached`]).catch(_ll.warn);
       }
       inPageRearrange = inPageRearrange_;
     };
 
-    /**
-     * Resolve the live chat frame element. Retries a couple of times
-     * (waiting one frame between attempts) so the call works during
-     * the brief window when the chat frame is still being mounted.
-     * @returns {Promise<Element|null>} The chat frame, or `null` if it
-     *   never mounts within the retry budget.
-     */
     const getGeneralChatElement = async () => {
       for (let i = 2; i-- > 0; ) {
         const t = document.querySelector(
@@ -3292,29 +3047,19 @@ const executionScript = _communicationKey => {
       return null;
     };
 
-    /**
-     * Return the `<noscript ns-template>` element under the watch
-     * flexy host, creating it on demand if it does not exist. The
-     * element is used as a side-channel container for short-lived
-     * markup that should not be visible to the user.
-     * @returns {Element} The existing or newly created `<noscript>`.
-     */
     const nsTemplateObtain = () => {
       let nsTemplate = document.querySelector('ytd-watch-flexy noscript[ns-template]');
       if (!nsTemplate) {
         nsTemplate = document.createElement('noscript');
         nsTemplate.setAttribute('ns-template', '');
-        document.querySelector('ytd-watch-flexy').appendChild(nsTemplate);
+        document.querySelector('ytd-watch-flexy')?.appendChild(nsTemplate);
       }
       return nsTemplate;
     };
 
     /**
-     * Determine whether `elm` is a live Element instance that matches
-     * the `selector` and is still connected to the document.
-     * @param {*} elm Candidate value (Element, Node, etc.).
-     * @param {string} selector CSS selector to test membership against.
-     * @returns {boolean} `true` if `elm` is a connected, matching Element.
+     * @param {string} selector
+     * @param {Element} elm
      */
     const isPageDOM = (elm, selector) => {
       if (!(elm && elm instanceof Element && elm.nodeName)) return false;
@@ -3323,6 +3068,9 @@ const executionScript = _communicationKey => {
       return true;
     };
 
+    /**
+     * @param {HTMLElement} hostElement
+     */
     const invalidFlexyParent = hostElement => {
       if (hostElement instanceof HTMLElement) {
         const hasFlexyParent = HTMLElement.prototype.closest.call(hostElement, 'ytd-watch-flexy'); // eg short
@@ -3333,23 +3081,983 @@ const executionScript = _communicationKey => {
       return false;
     };
 
-    let headerMutationObserver = null;
+    // Shared entry guards for eventMap's `*::attached` / `*::detached`
+    // handlers below. Every handler repeated the same boilerplate check
+    // inline (9 attached + 9 detached sites) before doing its own
+    // element-specific work; factored out here verbatim: same
+    // conditions, same short-circuit order, same __attachedSymbol__
+    // side effect in the attached guard. Does not change which handler
+    // calls invalidFlexyParent() first (that varies per site and is
+    // left as-is at each call site).
+    /**
+     * @param {HTMLElement} hostElement
+     */
+    const isValidAttachedHost = hostElement => {
+      if (hostElement instanceof Element)
+        /** @type {YtProto} */ (hostElement)[__attachedSymbol__] = true;
+      if (
+        !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
+        hostElement.closest('noscript')
+      ) {
+        return false;
+      }
+      return hostElement.isConnected === true;
+    };
+    /**
+     * @param {HTMLElement} hostElement
+     */
+    const isValidDetachedHost = hostElement => {
+      if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return false;
+      return hostElement.isConnected === false;
+    };
+
     /** @type {string | null} */
     let headerMutationSubId = null;
-    let headerMutationTmpNode = null;
+    /** @type {Element | null} */ let headerMutationTmpNode = null;
     /** @type {string | null} */
     let inlineExpanderSubId = null;
     /** @type {string | null} */
     let aoFlexySubId = null;
     /** @type {string | null} */
     let moEgmPanelReadySubId = null;
-    let _moChangeReflectionCounter = 0;
-    let _monitorDataChangedCounter = 0;
 
+    // --- Helper: resolve YTLSTM external plugin special cases ---
+    /** @param {number} p @param {number} q @returns {number} */
+    const resolveYtlstmSpecial = (p, q) => {
+      if (!plugin['external.ytlstm'].activated) return 0;
+      if (q & FLAG.FULLSCREEN) return 0;
+      if (
+        (p &
+          (FLAG.THEATER |
+            FLAG.TAB_SELECTED |
+            FLAG.CHAT_COLLAPSED |
+            FLAG.CHAT_EXPANDED |
+            FLAG.TWO_COLUMNS |
+            FLAG.EXTERNAL_YTLSTM)) ===
+          (FLAG.THEATER | 0 | 0 | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS | FLAG.EXTERNAL_YTLSTM) &&
+        (q &
+          (FLAG.THEATER |
+            FLAG.TAB_SELECTED |
+            FLAG.CHAT_COLLAPSED |
+            FLAG.CHAT_EXPANDED |
+            FLAG.TWO_COLUMNS |
+            FLAG.EXTERNAL_YTLSTM)) ===
+          (FLAG.THEATER | 0 | FLAG.CHAT_COLLAPSED | 0 | FLAG.TWO_COLUMNS | FLAG.EXTERNAL_YTLSTM)
+      ) {
+        return 3;
+      }
+      if (
+        (q & (FLAG.THEATER | FLAG.TWO_COLUMNS)) === (FLAG.THEATER | FLAG.TWO_COLUMNS) &&
+        document.querySelector('[data-ytlstm-theater-mode]')
+      ) {
+        return 1;
+      }
+      if (
+        (q & (FLAG.THEATER | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS)) ===
+          (FLAG.THEATER | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS) &&
+        document.querySelector('[is-two-columns_][theater][tyt-chat="+"]')
+      ) {
+        return 2;
+      }
+      return 0;
+    };
+
+    // --- Helper: track panel open/close state ---
+    /** @param {number} p @param {number} q @param {number} special @returns {{resetForPanelDisappeared:boolean}} */
+    const updateLastPanel = (p, q, special) => {
+      let resetForPanelDisappeared = false;
+      if (special) return { resetForPanelDisappeared };
+      if ((p & FLAG.PLAYLIST) === 0 && (q & FLAG.PLAYLIST) === FLAG.PLAYLIST) {
+        lastPanel = 'playlist';
+      } else if (
+        (p & FLAG.CHAT_EXPANDED) === 0 &&
+        (q & FLAG.CHAT_EXPANDED) === FLAG.CHAT_EXPANDED
+      ) {
+        lastPanel = 'chat';
+      } else if (
+        (((p & FLAG.CHAT_COLLAPSED) === FLAG.CHAT_COLLAPSED &&
+          (q & (FLAG.CHAT_COLLAPSED | FLAG.CHAT_EXPANDED)) === (0 | 0)) ||
+          ((p & FLAG.CHAT_EXPANDED) === FLAG.CHAT_EXPANDED &&
+            (q & (FLAG.CHAT_COLLAPSED | FLAG.CHAT_EXPANDED)) === (0 | 0))) &&
+        lastPanel === 'chat'
+      ) {
+        lastPanel = lastTab || '';
+        resetForPanelDisappeared = true;
+      } else if (
+        (p & (FLAG.CHAT_COLLAPSED | FLAG.CHAT_EXPANDED)) === FLAG.CHAT_EXPANDED &&
+        (q & (FLAG.CHAT_COLLAPSED | FLAG.CHAT_EXPANDED)) === FLAG.CHAT_COLLAPSED &&
+        lastPanel === 'chat'
+      ) {
+        lastPanel = lastTab || '';
+        resetForPanelDisappeared = true;
+      } else if (
+        (p & FLAG.PLAYLIST) === FLAG.PLAYLIST &&
+        (q & FLAG.PLAYLIST) === 0 &&
+        lastPanel === 'playlist'
+      ) {
+        lastPanel = lastTab || '';
+        resetForPanelDisappeared = true;
+      }
+      return { resetForPanelDisappeared };
+    };
+
+    // --- Helper: execute special YTLSTM dispatch actions ---
+    /** @param {number} special @param {Element} ytdFlexyElm @returns {boolean} true if handled */
+    const dispatchSpecialAction = (special, ytdFlexyElm) => {
+      if (special === 1) {
+        if (ytdFlexyElm.getAttribute('tyt-chat') !== '+') {
+          ytBtnExpandChat();
+        }
+        if (ytdFlexyElm.getAttribute('tyt-tab')) {
+          switchToTab(null);
+        }
+        return true;
+      }
+      if (special === 2) {
+        ytBtnCollapseChat();
+        return true;
+      }
+      if (special === 3) {
+        ytBtnCancelTheater();
+        if (lastTab) {
+          switchToTab(lastTab);
+        }
+        return true;
+      }
+      return false;
+    };
+
+    // --- Helper: handle tab/playlist/two-column transitions ---
+    // One rule per known transition; each rule fires at most once per call.
+    /** @type {Array<{ when: (p: number, q: number) => boolean, run: () => void }>} */
+    const TAB_TRANSITIONS = [
+      {
+        when: (p, q) =>
+          (p & FLAG.TAB_SELECTED) === 0 &&
+          (q & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED &&
+          (p & FLAG.PLAYLIST) === FLAG.PLAYLIST &&
+          (q & FLAG.PLAYLIST) === FLAG.PLAYLIST,
+        run: () => {
+          lastPanel = lastTab || '';
+          ytBtnClosePlaylist();
+        },
+      },
+      {
+        when: (p, q) =>
+          (p & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (0 | FLAG.PLAYLIST) &&
+          (q & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST) &&
+          lastPanel === 'chat',
+        run: () => {
+          lastPanel = lastTab || '';
+          ytBtnClosePlaylist();
+        },
+      },
+      {
+        when: (p, q) =>
+          (p & FLAG.ALL_STANDARD) ===
+            (FLAG.THEATER | FLAG.TAB_SELECTED | 0 | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS) &&
+          (q & FLAG.ALL_STANDARD) ===
+            (0 | FLAG.TAB_SELECTED | 0 | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS),
+        run: () => {
+          lastPanel = lastTab || '';
+          ytBtnCollapseChat();
+        },
+      },
+      {
+        when: (p, q) =>
+          (p & (FLAG.TAB_SELECTED | FLAG.PLAYLIST)) === (FLAG.TAB_SELECTED | 0) &&
+          (q & (FLAG.TAB_SELECTED | FLAG.PLAYLIST)) === (FLAG.TAB_SELECTED | FLAG.PLAYLIST) &&
+          lastPanel === 'playlist',
+        run: () => {
+          switchToTab(null);
+        },
+      },
+      {
+        when: (p, q) =>
+          (p & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (FLAG.CHAT_EXPANDED | 0) &&
+          (q & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST) &&
+          lastPanel === 'playlist',
+        run: () => {
+          lastPanel = lastTab || '';
+          ytBtnCollapseChat();
+        },
+      },
+      {
+        when: (p, q) =>
+          (p & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)) ===
+            (FLAG.THEATER | FLAG.TWO_COLUMNS) &&
+          (q & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)) ===
+            (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST),
+        run: () => {
+          ytBtnCancelTheater();
+        },
+      },
+      {
+        when: (p, q) =>
+          (p & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)) ===
+            (FLAG.TWO_COLUMNS | FLAG.PLAYLIST) &&
+          (q & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)) ===
+            (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST),
+        run: () => {
+          lastPanel = lastTab || '';
+          ytBtnClosePlaylist();
+        },
+      },
+    ];
+
+    /** @param {number} p @param {number} q @returns {{actioned:boolean, bFixForResizedTab:boolean}} */
+    const handleTabPlaylistTransitions = (p, q) => {
+      let actioned = false;
+      let bFixForResizedTab = false;
+
+      if ((q ^ FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED && bFixForResizedTabLater) {
+        bFixForResizedTab = true;
+      }
+
+      if ((p & FLAG.TWO_COLUMNS) === FLAG.TWO_COLUMNS && (q & FLAG.TWO_COLUMNS) === 0) {
+        Promise.resolve(lockSet.twoColumnChanged10Lock)
+          .then(eventMap.twoColumnChanged10)
+          .catch(_ll.warn);
+      }
+
+      if (
+        ((p & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED) !==
+          ((q & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED) &&
+        (q & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED
+      ) {
+        bFixForResizedTab = true;
+      }
+
+      for (const rule of TAB_TRANSITIONS) {
+        if (rule.when(p, q)) {
+          rule.run();
+          actioned = true;
+        }
+      }
+
+      return { actioned, bFixForResizedTab };
+    };
+
+    // --- Helper: handle fullscreen enter/exit transitions ---
+    /** @param {number} p @param {number} q @param {boolean} prevActioned @returns {{actioned:boolean}} */
+    // --- Helper: fullscreen transition masks ---
+    /** @param {number} p @param {number} q @param {number} pMask @param {number} qMask @returns {boolean} */
+    const maskIs = (p, q, pMask, qMask) => (p & pMask) === pMask && (q & qMask) === qMask;
+
+    /** @param {number} p @param {number} q @param {boolean} actioned @returns {boolean} */
+    const onFullscreenExit = (p, q, actioned) => {
+      if ((q & FLAG.ENGAGEMENT_PANEL) === FLAG.ENGAGEMENT_PANEL) {
+        ytBtnCloseEngagementPanels();
+      }
+      if (
+        maskIs(p, q, FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED, FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)
+      ) {
+        if (lastPanel === 'chat') {
+          switchToTab(null);
+          return true;
+        } else if (lastPanel) {
+          ytBtnCollapseChat();
+          return true;
+        }
+      }
+      return actioned;
+    };
+
+    /** @param {number} p @param {number} q @returns {boolean} */
+    const onTheaterEnter = (p, q) => {
+      if ((q & FLAG.ENGAGEMENT_PANEL) === FLAG.ENGAGEMENT_PANEL) {
+        ytBtnCloseEngagementPanels();
+      }
+      if (maskIs(p, q, FLAG.THEATER | FLAG.CHAT_EXPANDED, FLAG.THEATER | FLAG.CHAT_EXPANDED)) {
+        ytBtnCollapseChat();
+      }
+      switchToTab(null);
+      return true;
+    };
+
+    // --- Helper: fullscreen/theater transition chain (first match wins) ---
+    /** @type {Array<{ when: (ctx: { p: number, q: number }) => boolean, run: (ctx: { p: number, q: number, actioned: boolean }) => boolean }>} */
+    const FULLSCREEN_TRANSITIONS = [
+      { when: ({ q }) => (q & FLAG.FULLSCREEN) === FLAG.FULLSCREEN, run: () => false },
+      {
+        when: ({ p, q }) =>
+          (p & FLAG.FULLSCREEN) === FLAG.FULLSCREEN && (q & FLAG.FULLSCREEN) === 0,
+        run: ({ p, q, actioned }) => onFullscreenExit(p, q, actioned),
+      },
+      {
+        when: ({ p, q }) =>
+          (p &
+            (FLAG.THEATER |
+              FLAG.TAB_SELECTED |
+              FLAG.CHAT_EXPANDED |
+              FLAG.TWO_COLUMNS |
+              FLAG.ENGAGEMENT_PANEL)) ===
+            (FLAG.THEATER | 0 | 0 | FLAG.TWO_COLUMNS | 0) &&
+          (q &
+            (FLAG.THEATER |
+              FLAG.TAB_SELECTED |
+              FLAG.CHAT_EXPANDED |
+              FLAG.TWO_COLUMNS |
+              FLAG.ENGAGEMENT_PANEL)) ===
+            (FLAG.THEATER | 0 | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS | 0),
+        run: () => {
+          ytBtnCancelTheater();
+          return true;
+        },
+      },
+      {
+        when: ({ p, q }) =>
+          (p & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.ENGAGEMENT_PANEL)) ===
+            (0 | FLAG.TWO_COLUMNS | 0) &&
+          (q & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.ENGAGEMENT_PANEL)) ===
+            (0 | FLAG.TWO_COLUMNS | FLAG.ENGAGEMENT_PANEL) &&
+          (q & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) > 0,
+        run: ({ q, actioned }) => {
+          let next = actioned;
+          if (q & FLAG.TAB_SELECTED) {
+            switchToTab(null);
+            next = true;
+          }
+          if (q & FLAG.CHAT_EXPANDED) {
+            ytBtnCollapseChat();
+            next = true;
+          }
+          return next;
+        },
+      },
+      {
+        when: ({ p, q }) =>
+          (p & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.CHAT_EXPANDED | FLAG.TAB_SELECTED)) ===
+            (FLAG.TWO_COLUMNS | FLAG.CHAT_EXPANDED) &&
+          (q & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.CHAT_EXPANDED | FLAG.TAB_SELECTED)) ===
+            FLAG.TWO_COLUMNS &&
+          (q & FLAG.PLAYLIST) === 0,
+        run: ({ actioned }) => {
+          if (lastTab) {
+            switchToTab(lastTab);
+            return true;
+          }
+          return actioned;
+        },
+      },
+      {
+        when: ({ p, q }) => (p & FLAG.THEATER) === 0 && (q & FLAG.THEATER) === FLAG.THEATER,
+        run: ({ p, q }) => onTheaterEnter(p, q),
+      },
+      {
+        when: ({ p, q }) =>
+          (p & (FLAG.THEATER | FLAG.TAB_SELECTED)) === FLAG.THEATER &&
+          (q & (FLAG.THEATER | FLAG.TAB_SELECTED)) === (FLAG.THEATER | FLAG.TAB_SELECTED),
+        run: () => {
+          ytBtnCancelTheater();
+          return true;
+        },
+      },
+      {
+        when: ({ p, q }) =>
+          (p & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) === FLAG.TAB_SELECTED &&
+          (q & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) ===
+            (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED),
+        run: () => {
+          switchToTab(null);
+          return true;
+        },
+      },
+      {
+        when: ({ p, q }) =>
+          (p & (FLAG.CHAT_EXPANDED | FLAG.ENGAGEMENT_PANEL)) === (0 | FLAG.ENGAGEMENT_PANEL) &&
+          (q & (FLAG.CHAT_EXPANDED | FLAG.ENGAGEMENT_PANEL)) ===
+            (FLAG.CHAT_EXPANDED | FLAG.ENGAGEMENT_PANEL),
+        run: () => {
+          ytBtnCloseEngagementPanels();
+          return true;
+        },
+      },
+      {
+        when: ({ p, q }) =>
+          (p & (FLAG.TAB_SELECTED | FLAG.ENGAGEMENT_PANEL)) === (0 | FLAG.ENGAGEMENT_PANEL) &&
+          (q & (FLAG.TAB_SELECTED | FLAG.ENGAGEMENT_PANEL)) ===
+            (FLAG.TAB_SELECTED | FLAG.ENGAGEMENT_PANEL),
+        run: () => {
+          ytBtnCloseEngagementPanels();
+          return true;
+        },
+      },
+      {
+        when: ({ p, q }) =>
+          (p & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) === (0 | FLAG.CHAT_EXPANDED) &&
+          (q & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) ===
+            (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED),
+        run: () => {
+          ytBtnCollapseChat();
+          return true;
+        },
+      },
+      {
+        when: ({ p, q }) =>
+          (p & FLAG.THEATER) === FLAG.THEATER &&
+          (q & (FLAG.THEATER | FLAG.ENGAGEMENT_PANEL)) === (0 | 0),
+        run: ({ actioned }) => {
+          if (lastPanel === 'chat') {
+            ytBtnExpandChat();
+            return true;
+          }
+          if (lastPanel === lastTab && lastTab) {
+            switchToTab(lastTab);
+            return true;
+          }
+          return actioned;
+        },
+      },
+    ];
+
+    /** @param {number} p @param {number} q @param {boolean} prevActioned @returns {{actioned: boolean}} */
+    const handleFullscreenTransitions = (p, q, prevActioned) => {
+      let actioned = prevActioned;
+      for (const rule of FULLSCREEN_TRANSITIONS) {
+        const ctx = { p, q, actioned };
+        if (rule.when(ctx)) {
+          actioned = rule.run(ctx);
+          break;
+        }
+      }
+      return { actioned };
+    };
+
+    // --- Helper: playlist fallback + auto-fix logic ---
+    /**
+     * @param {number} p
+     * @param {number} q
+     * @param {boolean} actioned
+     * @returns {boolean}
+     */
+    function needsAutoFix(p, q, actioned) {
+      if (
+        (p & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED &&
+        (q & (FLAG.TAB_SELECTED | FLAG.PLAYLIST)) === (0 | FLAG.PLAYLIST)
+      ) {
+        return false; // p->q -2
+      }
+      if (
+        (p & FLAG.CHAT_EXPANDED) === FLAG.CHAT_EXPANDED &&
+        (q & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (0 | FLAG.PLAYLIST)
+      ) {
+        return false; // p->q -8
+      }
+      if (
+        !actioned &&
+        (p & (FLAG.THEATER | FLAG.TWO_COLUMNS)) === FLAG.TWO_COLUMNS &&
+        (q &
+          (FLAG.THEATER |
+            FLAG.TWO_COLUMNS |
+            FLAG.CHAT_EXPANDED |
+            FLAG.TAB_SELECTED |
+            FLAG.ENGAGEMENT_PANEL |
+            FLAG.FULLSCREEN)) ===
+          FLAG.TWO_COLUMNS
+      ) {
+        return true;
+      }
+      return (q & FLAG.ALL_STANDARD) === (FLAG.CHAT_COLLAPSED | FLAG.TWO_COLUMNS);
+    }
+
+    /**
+     * Re-open whichever panel was last shown.
+     * @param {boolean} resetForPanelDisappeared
+     * @returns {boolean} true when an action was taken
+     */
+    function applyAutoFix(resetForPanelDisappeared) {
+      if (lastPanel === 'chat') {
+        _ll.info(388, 'd1c');
+        ytBtnExpandChat();
+        return true;
+      }
+      if (lastPanel === 'playlist') {
+        _ll.info(388, 'd1p');
+        ytBtnOpenPlaylist();
+        return true;
+      }
+      if (lastTab) {
+        _ll.info(388, 'd2t');
+        switchToTab(lastTab);
+        return true;
+      }
+      if (resetForPanelDisappeared) {
+        _ll.info(388, 'd2d');
+        Promise.resolve(lockSet.fixInitialTabStateLock)
+          .then(eventMap.fixInitialTabStateFn)
+          .catch(_ll.warn);
+        return true;
+      }
+      return false;
+    }
+
+    /** @param {number} p @param {number} q @param {boolean} actioned @param {boolean} resetForPanelDisappeared @returns {{actioned:boolean}} */
+    const handleAutoFix = (p, q, actioned, resetForPanelDisappeared) => {
+      if (!actioned && (q & FLAG.PLAYLIST) === FLAG.PLAYLIST) {
+        lastPanel = 'playlist';
+        if ((q & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED) {
+          switchToTab(null);
+          actioned = true;
+        }
+      }
+
+      if (needsAutoFix(p, q, actioned)) {
+        _ll.info(388, 'd');
+        if (applyAutoFix(resetForPanelDisappeared)) actioned = true;
+      }
+
+      return { actioned };
+    };
+
+    /**
+     * Call a widget instance method when the element is upgraded and the method
+     * exists. `warnLabel` logs a failure instead of letting it escape.
+     * @param {Element} element
+     * @param {string} method
+     * @param {unknown} arg
+     * @param {string} [warnLabel]
+     */
+    function callWidgetMethod(element, method, arg, warnLabel) {
+      const cnt = insp(element);
+      if (!(element instanceof HTMLElement_ && typeof cnt[method] === 'function')) return cnt;
+      if (!warnLabel) {
+        cnt[method](arg);
+        return cnt;
+      }
+      try {
+        cnt[method](arg);
+      } catch (_e) {
+        logS(_e);
+        _ll.warn(warnLabel, _e);
+      }
+      return cnt;
+    }
+
+    /**
+     * Register a freshly attached info renderer as the tab-info main info host.
+     * @param {HTMLElement} hostElement
+     * @returns {Promise<boolean>} false when the host went stale while waiting for the tabs
+     */
+    async function registerInfoExpanderMainInfo(hostElement) {
+      elements.infoExpander = hostElement;
+      _ll.info(128384, elements.infoExpander);
+
+      infoExpanderElementProvidedPromise.resolve();
+      hostElement.setAttribute111('tyt-main-info', '');
+      if (plugin.autoExpandInfoDesc.toUse) {
+        plugin.autoExpandInfoDesc.onMainInfoSet(hostElement);
+      }
+
+      const lockId = lockSet.rightTabReadyLock03;
+      await rightTabsProvidedPromise.then();
+      if (lockGet.rightTabReadyLock03 !== lockId) return false;
+
+      if (elements.infoExpander !== hostElement) return false;
+      if (hostElement.isConnected === false) return false;
+      _ll.info(7932, 'infoExpander');
+
+      elements.infoExpander.classList.add('tyt-main-info'); // add a classname for it
+
+      const infoExpander = elements.infoExpander;
+      const inlineExpanderElm = infoExpander.querySelector('ytd-text-inline-expander');
+      if (inlineExpanderElm) {
+        const onInlineExpanderMutation = () => {
+          const p = document.querySelector('#tab-info ytd-text-inline-expander');
+          sessionStorage.__$$tmp_UseAutoExpandInfoDesc$$__ = p?.hasAttribute('is-expanded')
+            ? '1'
+            : '';
+          if (p) fixInlineExpanderContent();
+        };
+        inlineExpanderSubId = observeTarget(
+          { id: inlineExpanderSubId },
+          inlineExpanderElm,
+          onInlineExpanderMutation,
+          {
+            attributes: true,
+            childList: false,
+            subtree: true,
+            attributeFilter: ['is-expanded', 'attr-6v8qu', 'hidden'],
+          }
+        );
+        inlineExpanderElm.incAttribute111('attr-6v8qu');
+        const cnt = insp(inlineExpanderElm);
+
+        if (cnt) fixInlineExpanderDisplay(cnt);
+      }
+
+      if (!infoExpander.closest('#right-tabs')) {
+        document.querySelector('#tab-info')?.assignChildren111(null, infoExpander, null);
+      } else {
+        const tabBtn = document.querySelector('[tyt-tab-content="#tab-info"]');
+        if (tabBtn) {
+          const shouldTabVisible = elements.infoExpander?.closest('#tab-info');
+          tabBtn.classList.toggle('tab-btn-hidden', !shouldTabVisible);
+        }
+      }
+
+      Promise.resolve(lockSet.infoFixLock).then(infoFix).catch(_ll.warn); // required when the page is switched from channel to watch
+      return true;
+    }
+
+    /** Mirror an out-of-tab info renderer into the tab-info container. @param {Element} bodyRenderer */
+    function setupInfoRendererMirror(bodyRenderer) {
+      let bodyRendererNew = document.querySelector(
+        'ytd-expandable-video-description-body-renderer[tyt-info-renderer]'
+      );
+      if (!bodyRendererNew) {
+        bodyRendererNew = document.createElement('ytd-expandable-video-description-body-renderer');
+        bodyRendererNew.setAttribute('tyt-info-renderer', '');
+        nsTemplateObtain().appendChild(bodyRendererNew);
+      }
+      const cnt = insp(bodyRendererNew);
+      cnt.data = Object.assign({}, insp(bodyRenderer).data);
+
+      const inlineExpanderElm = bodyRendererNew.querySelector('ytd-text-inline-expander');
+      const inlineExpanderCnt = insp(inlineExpanderElm);
+      fixInlineExpanderMethods(inlineExpanderCnt);
+      elements.infoExpanderRendererBack = bodyRenderer;
+      elements.infoExpanderRendererFront = bodyRendererNew;
+      bodyRenderer.setAttribute('tyt-info-renderer-back', '');
+      bodyRendererNew.setAttribute('tyt-info-renderer-front', '');
+    }
+
+    /**
+     * Resolve once the chat frame laid out (or after a bounded wait).
+     * @param {HTMLIFrameElement} chatframe
+     * @param {boolean} isBlankPage
+     * @returns {Promise<void>}
+     */
+    function waitForChatFrameLayout(chatframe, isBlankPage) {
+      return new Promise((/** @type {() => void} */ resolve) => {
+        /** @type {IntersectionObserver | null} */ let ioObserver = null;
+        let settled = false;
+        const finish = () => {
+          if (settled) return;
+          settled = true;
+          clearTimeout(timer);
+          if (ioObserver) {
+            ioObserver.disconnect();
+            ioObserver = null;
+          }
+          resolve();
+        };
+        const timer = setTimeout(finish, 706);
+        ioObserver = _registerObserver(
+          new IntersectionObserver((entries, observer) => {
+            for (const entry of entries) {
+              const rect = entry.boundingClientRect || 0;
+              if (isBlankPage || (rect.width > 0 && rect.height > 0)) {
+                observer.disconnect();
+                ioObserver = null;
+                finish();
+                break;
+              }
+            }
+          }),
+          null,
+          { scope: 'session' }
+        );
+        ioObserver.observe(chatframe);
+      });
+    }
+
+    /**
+     * Move a connected element under its tab container unless it is already there.
+     * @param {Element | null} node
+     * @param {string} targetSelector
+     * @param {string} alreadyInside
+     */
+    function routeInto(node, targetSelector, alreadyInside) {
+      if (!(node?.isConnected && !node.closest(alreadyInside))) return;
+      document.querySelector(targetSelector)?.assignChildren111(null, node, null);
+    }
+
+    /** Route the live-chat container back into the right-rail wrapper. */
+    function routeLiveChatToRail() {
+      const chatContainer = document.querySelector(
+        '#columns.style-scope.ytd-watch-flexy [tyt-chat-container]'
+      );
+      if (!(chatContainer && !chatContainer.closest('secondary-wrapper'))) return;
+      const secondaryWrapper = document.querySelector(
+        '#secondary-inner.style-scope.ytd-watch-flexy > secondary-wrapper'
+      );
+      if (!secondaryWrapper) return;
+      inPageRearrange = true;
+      const rightTabs = secondaryWrapper.querySelector('#right-tabs');
+      if (rightTabs) {
+        secondaryWrapper.insertBefore(chatContainer, rightTabs.nextSibling);
+      } else {
+        secondaryWrapper.appendChild(chatContainer);
+      }
+      inPageRearrange = false;
+    }
+
+    /** Reset the one-shot insert promises after the tabview DOM was torn down. */
+    function resetAfterTabsLost() {
+      // watch → channel → refresh → back to watch: the insertion chain must be
+      // able to fire again for this watch page.
+      resetTabviewInsertPromises();
+      // If the related-element animation already fired and elements.related is
+      // populated, unblock the videos promise immediately.
+      if (elements.related) videosElementProvidedPromise.resolve();
+    }
+
+    /** Re-bind the flexy observer and refresh the rails for a new watch element. */
+    function rebindFlexyObservers() {
+      // Reset stale tab state from the prior watch page.
+      tabAStatus = 0;
+      lastTab = '';
+      lastPanel = '';
+      // YouTube may replace ytd-watch-flexy across SPA navigations, so re-bind
+      // the attribute observer to the new element.
+      const ytdFlexyElmRefresh = elements.flexy;
+      if (ytdFlexyElmRefresh) {
+        aoFlexySubId = observeTarget({ id: aoFlexySubId }, ytdFlexyElmRefresh, eventMap.aoFlexyFn, {
+          attributes: true,
+          childList: false,
+          subtree: false,
+        });
+      }
+      Promise.resolve(lockSet.refreshSecondaryInnerLock)
+        .then(eventMap.refreshSecondaryInner)
+        .catch(_ll.warn);
+      Promise.resolve(lockSet.removeKeepCommentsScrollerLock)
+        .then(removeKeepCommentsScroller)
+        .catch(_ll.warn);
+    }
+
+    /** First watch page after boot: resolve the gates and switch plugins on. */
+    function activatePluginsOnFirstWatch() {
+      navigateFinishedPromise.resolve();
+      if (plugin.minibrowser.toUse) plugin.minibrowser.activate();
+      if (plugin.autoExpandInfoDesc.toUse) plugin.autoExpandInfoDesc.activate();
+      if (plugin.fullChannelNameOnHover.toUse) plugin.fullChannelNameOnHover.activate();
+    }
+
+    /** Common post-navigation flexy touch-ups. */
+    function applyFlexyAfterNavigate() {
+      const chat = elements.chat;
+      if (chat instanceof Element) {
+        chat.setAttribute111('tyt-active-chat-frame', 'CF'); // chat and flexy ready
+      }
+      if (elements.infoExpander?.closest('#right-tabs')) {
+        Promise.resolve(lockSet.infoFixLock).then(infoFix).catch(_ll.warn);
+      }
+      Promise.resolve(lockSet.layoutFixLock).then(layoutFix).catch(_ll.warn);
+      if (plugin.fullChannelNameOnHover.activated) plugin.fullChannelNameOnHover.onNavigateFinish();
+    }
+
+    /**
+     * Wait for the chat frame document to be readable, tolerating a Brave delay.
+     * @param {HTMLIFrameElement} chatframe
+     * @returns {Promise<void>}
+     */
+    async function waitForChatFrameReady(chatframe) {
+      if (chatframe.contentDocument === null) {
+        await Promise.resolve('#').catch(_ll.warn);
+      }
+      await new Promise((/** @type {() => void} */ resolve) => setTimeout(resolve, 1)).catch(
+        _ll.warn
+      ); // neccessary for Brave
+    }
+
+    /**
+     * Build and insert the #right-tabs markup and its secondary-wrapper.
+     * @returns {Element | null} the inserted #right-tabs element, or null
+     */
+    function insertRightTabsMarkup() {
+      const related = elements.related;
+      setLangForPage();
+      // HTML insertion hardening: parse the tab markup through a detached
+      // <template> element rather than into the live DOM. The template's innerHTML
+      // assignment goes through the createHTML() wrapper (safe-dom's
+      // createTrustedHTML); the parsed result lives in `docTmp.content` and is read
+      // as a fragment, so the markup is never rendered un-trusted.
+      /** @type {DocumentFragment | HTMLElement | null} */ let docTmp = window.YouTubeSafeDOM
+        ? window.YouTubeSafeDOM.createFragment(getTabsHTML())
+        : null;
+      if (!docTmp) {
+        // fallback if safeDOM is missing
+        docTmp = document.createElement('div');
+        /** @type {Record<string, unknown>} */ (/** @type {object} */ (docTmp))['inner' + 'HTML'] =
+          createHTML(getTabsHTML());
+      }
+      const newElm = docTmp.firstElementChild;
+      if (newElm !== null) {
+        inPageRearrange = true;
+        related.parentNode.insertBefore000(newElm, related);
+        inPageRearrange = false;
+      }
+      const rightTabs = newElm;
+      if (rightTabs) {
+        const commentsTabBtn = rightTabs.querySelector('[tyt-tab-content="#tab-comments"]');
+        if (commentsTabBtn) {
+          commentsTabBtn.classList.add('tab-btn-hidden');
+        }
+      }
+
+      const secondaryWrapper = document.createElement('secondary-wrapper');
+      secondaryWrapper.classList.add('tabview-secondary-wrapper');
+      secondaryWrapper.id = 'secondary-inner-wrapper';
+      const secondaryInner = document.querySelector('#secondary-inner.style-scope.ytd-watch-flexy');
+
+      if (secondaryInner) {
+        inPageRearrange = true;
+        secondaryWrapper.replaceChildren000(...secondaryInner.childNodes);
+        secondaryInner.insertBefore000(secondaryWrapper, secondaryInner.firstChild);
+        inPageRearrange = false;
+      }
+
+      if (rightTabs) {
+        const tabs = rightTabs.querySelector('#material-tabs');
+        if (tabs) {
+          _cm?.unregisterListener?.(tabsBtnClickKey);
+          tabsBtnClickKey = _registerListener(tabs, 'click', eventMap['tabs-btn-click'], true);
+        }
+      }
+
+      inPageRearrange = true;
+      if (!rightTabs?.closest('secondary-wrapper'))
+        secondaryWrapper.appendChild000(/** @type {Node} */ (rightTabs));
+      inPageRearrange = false;
+
+      return rightTabs;
+    }
+
+    /** @type {IntersectionObserver | null} */
+    let ioTabBtns = null;
+
+    /** Drop the tab-button observer from the DOM and the cleanup manager, so a
+     *  disable (or re-wire) leaves no live session observer behind. */
+    function releaseIoTabBtns() {
+      if (!ioTabBtns) return;
+      ioTabBtns.disconnect();
+      _cm?.unregisterObserver?.(ioTabBtns);
+      ioTabBtns = null;
+    }
+
+    /** Observe the tab buttons and route the rails once #right-tabs exists. @param {Element} rightTabs */
+    function wireRightTabs(rightTabs) {
+      isRightTabsInserted = true;
+      releaseIoTabBtns();
+      ioTabBtns = _registerObserver(
+        new IntersectionObserver(
+          entries => {
+            for (const entry of entries) {
+              const rect = entry.boundingClientRect;
+              entry.target.classList.toggle('tab-btn-visible', !!(rect.width && rect.height));
+            }
+          },
+          { rootMargin: '0px' }
+        ),
+        null,
+        { scope: 'session' }
+      );
+      for (const btn of document.querySelectorAll('.tab-btn[tyt-tab-content]')) {
+        ioTabBtns.observe(btn);
+      }
+      const related = elements.related;
+      if (!related.closest('#right-tabs')) {
+        document.querySelector('#tab-videos')?.assignChildren111(null, related, null);
+      }
+      const infoExpander = elements.infoExpander;
+      if (infoExpander && !infoExpander.closest('#right-tabs')) {
+        document.querySelector('#tab-info')?.assignChildren111(null, infoExpander, null);
+      }
+      const commentsArea = elements.comments;
+      if (commentsArea && !commentsArea.closest('#right-tabs')) {
+        document.querySelector('#tab-comments')?.assignChildren111(null, commentsArea, null);
+      }
+      if (commentsArea) {
+        const btn = rightTabs.querySelector('[tyt-tab-content="#tab-comments"]');
+        if (btn) {
+          const shouldTabVisible =
+            commentsArea.closest('#tab-comments') && !commentsArea.closest('[hidden]');
+          btn.classList.toggle('tab-btn-hidden', !shouldTabVisible);
+        }
+      }
+      rightTabsProvidedPromise.resolve();
+      roRightTabs.disconnect();
+      roRightTabs.observe(rightTabs);
+      const ytdFlexyElm = elements.flexy;
+      aoFlexySubId = observeTarget({ id: aoFlexySubId }, ytdFlexyElm, eventMap.aoFlexyFn, {
+        attributes: true,
+        childList: false,
+        subtree: false,
+      });
+      Promise.resolve(lockSet.fixInitialTabStateLock)
+        .then(eventMap.fixInitialTabStateFn)
+        .catch(_ll.warn);
+
+      ytdFlexyElm.incAttribute111('attr-7qlsy'); // tabsStatusCorrectionLock and video-id
+    }
+
+    /** Restore the initial tab selection after the first watch-page settle. */
+    function restoreInitialTab() {
+      const kTab = document.querySelector('[tyt-tab]');
+      const qTab =
+        !kTab || kTab.getAttribute('tyt-tab') === ''
+          ? checkElementExist('ytd-watch-flexy[is-two-columns_]', '[hidden]')
+          : null;
+      if (checkElementExist('ytd-playlist-panel-renderer#playlist', '[hidden], [collapsed]')) {
+        switchToTab(null);
+        return;
+      }
+      if (checkElementExist('ytd-live-chat-frame#chat', '[hidden], [collapsed]')) {
+        switchToTab(null);
+        if (checkElementExist('ytd-watch-flexy[theater]', '[hidden]')) {
+          ytBtnCollapseChat();
+        }
+        return;
+      }
+      if (!qTab) return;
+      if (qTab.hasAttribute('theater')) {
+        switchToTab(null);
+        return;
+      }
+      const btn0 = document.querySelector('.tab-btn-visible'); // or default button
+      switchToTab(btn0 || null);
+    }
+
+    /**
+     * Wrap a Polymer element's attached/detached to fan out to the event map.
+     * @param {YtProto} cProto
+     * @param {string} name event-map prefix
+     * @param {boolean} [forceDataChanged] also dispatch dataChanged when attached runs
+     */
+    function patchLifecycleHooks(cProto, name, forceDataChanged = false) {
+      if (!cProto.attached498 && typeof cProto.attached === 'function') {
+        cProto.attached498 = cProto.attached;
+        cProto.attached = function () {
+          if (!inPageRearrange) {
+            Promise.resolve(this.hostElement).then(eventMap[`${name}::attached`]).catch(_ll.warn);
+          }
+          if (forceDataChanged) {
+            Promise.resolve(this.hostElement)
+              .then(eventMap[`${name}::dataChanged`])
+              .catch(_ll.warn); // force dataChanged on attached
+          }
+          return this.attached498();
+        };
+      }
+      if (!cProto.detached498 && typeof cProto.detached === 'function') {
+        cProto.detached498 = cProto.detached;
+        cProto.detached = function () {
+          if (!inPageRearrange) {
+            Promise.resolve(this.hostElement).then(eventMap[`${name}::detached`]).catch(_ll.warn);
+          }
+          return this.detached498();
+        };
+      }
+    }
+
+    // === EVENT MAP: custom element lifecycle & SPA navigation handlers ===
+    /** @type {Record<string, any>} */
     const eventMap = {
       ceHack: () => {
         mLoaded.flag |= 2;
-        document.documentElement.setAttribute111('tabview-loaded', mLoaded.makeString());
+        document.documentElement?.setAttribute111?.('tabview-loaded', mLoaded.makeString());
 
         retrieveCE('ytd-watch-flexy').then(eventMap['ytd-watch-flexy::defined']).catch(_ll.warn);
         retrieveCE('ytd-expander').then(eventMap['ytd-expander::defined']).catch(_ll.warn);
@@ -3377,20 +4085,16 @@ const executionScript = _communicationKey => {
           .catch(_ll.warn);
       },
 
+      /**
+       * @param {boolean} isResize
+       */
       fixForTabDisplay: isResize => {
         // isResize is true if the layout is resized (not due to tab switching)
         // youtube components shall handle the resize issue. can skip some checkings.
 
         bFixForResizedTabLater = false;
         for (const element of document.querySelectorAll('[io-intersected]')) {
-          const cnt = insp(element);
-          if (element instanceof HTMLElement_ && typeof cnt.calculateCanCollapse === 'function') {
-            try {
-              cnt.calculateCanCollapse(true);
-            } catch (_e) {
-              _ll.warn('calculateCanCollapse failed', _e);
-            }
-          }
+          callWidgetMethod(element, 'calculateCanCollapse', true, 'calculateCanCollapse failed');
         }
 
         if (!isResize && lastTab === '#tab-info') {
@@ -3399,22 +4103,12 @@ const executionScript = _communicationKey => {
           for (const element of document.querySelectorAll(
             '#tab-info ytd-video-description-infocards-section-renderer, #tab-info yt-chip-cloud-renderer, #tab-info ytd-horizontal-card-list-renderer, #tab-info yt-horizontal-list-renderer'
           )) {
-            const cnt = insp(element);
-            if (element instanceof HTMLElement_ && typeof cnt.notifyResize === 'function') {
-              try {
-                cnt.notifyResize();
-              } catch (_e) {
-                _ll.warn('notifyResize failed', _e);
-              }
-            }
+            callWidgetMethod(element, 'notifyResize', undefined, 'notifyResize failed');
           }
           // to fix expand/collapse sizing issue (inline-expander in tab info)
           // for example, expand button is required but not shown as it was rendered in the hidden state
           for (const element of document.querySelectorAll('#tab-info ytd-text-inline-expander')) {
-            const cnt = insp(element);
-            if (element instanceof HTMLElement_ && typeof cnt.resize === 'function') {
-              cnt.resize(false); // reflow due to offsetWidth calling
-            }
+            const cnt = callWidgetMethod(element, 'resize', false);
             fixInlineExpanderDisplay(cnt); // just in case
           }
         }
@@ -3424,19 +4118,15 @@ const executionScript = _communicationKey => {
           if (tabContent) {
             const renderers = tabContent.querySelectorAll('yt-chip-cloud-renderer');
             for (const renderer of renderers) {
-              const cnt = insp(renderer);
-              if (typeof cnt.notifyResize === 'function') {
-                try {
-                  cnt.notifyResize();
-                } catch (_e) {
-                  _ll.warn('notifyResize failed', _e);
-                }
-              }
+              callWidgetMethod(renderer, 'notifyResize', undefined, 'notifyResize failed');
             }
           }
         }
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-watch-flexy::defined': cProto => {
         if (
           !cProto.updateChatLocation498 &&
@@ -3447,185 +4137,40 @@ const executionScript = _communicationKey => {
           cProto.updateChatLocation = updateChatLocation498;
         }
 
-        if (
-          !cProto.isTwoColumnsChanged498_ &&
-          typeof cProto.isTwoColumnsChanged_ === 'function' &&
-          cProto.isTwoColumnsChanged_.length === 2
-        ) {
-          cProto.isTwoColumnsChanged498_ = cProto.isTwoColumnsChanged_;
-          cProto.isTwoColumnsChanged_ = function (arg1, arg2, ...args) {
-            const r = secondaryInnerFn(() => {
-              if (typeof this.isTwoColumnsChanged498_ !== 'function') return;
-              const r = this.isTwoColumnsChanged498_(arg1, arg2, ...args);
-              return r;
-            });
-            return r;
-          };
-        }
-
-        if (
-          !cProto.defaultTwoColumnLayoutChanged498 &&
-          typeof cProto.defaultTwoColumnLayoutChanged === 'function' &&
-          cProto.defaultTwoColumnLayoutChanged.length === 0
-        ) {
-          cProto.defaultTwoColumnLayoutChanged498 = cProto.defaultTwoColumnLayoutChanged;
-          cProto.defaultTwoColumnLayoutChanged = function (...args) {
-            const r = secondaryInnerFn(() => {
-              if (typeof this.defaultTwoColumnLayoutChanged498 !== 'function') return;
-              const r = this.defaultTwoColumnLayoutChanged498(...args);
-              return r;
-            });
-            return r;
-          };
-        }
-
-        if (
-          !cProto.updatePlayerLocation498 &&
-          typeof cProto.updatePlayerLocation === 'function' &&
-          cProto.updatePlayerLocation.length === 0
-        ) {
-          cProto.updatePlayerLocation498 = cProto.updatePlayerLocation;
-          cProto.updatePlayerLocation = function (...args) {
-            const r = secondaryInnerFn(() => {
-              if (typeof this.updatePlayerLocation498 !== 'function') return;
-              const r = this.updatePlayerLocation498(...args);
-              return r;
-            });
-            return r;
-          };
-        }
-
-        if (
-          !cProto.updateCinematicsLocation498 &&
-          typeof cProto.updateCinematicsLocation === 'function' &&
-          cProto.updateCinematicsLocation.length === 0
-        ) {
-          cProto.updateCinematicsLocation498 = cProto.updateCinematicsLocation;
-          cProto.updateCinematicsLocation = function (...args) {
-            const r = secondaryInnerFn(() => {
-              if (typeof this.updateCinematicsLocation498 !== 'function') return;
-              const r = this.updateCinematicsLocation498(...args);
-              return r;
-            });
-            return r;
-          };
-        }
-
-        if (
-          !cProto.updatePanelsLocation498 &&
-          typeof cProto.updatePanelsLocation === 'function' &&
-          cProto.updatePanelsLocation.length === 0
-        ) {
-          cProto.updatePanelsLocation498 = cProto.updatePanelsLocation;
-          cProto.updatePanelsLocation = function (...args) {
-            const r = secondaryInnerFn(() => {
-              if (typeof this.updatePanelsLocation498 !== 'function') return;
-              const r = this.updatePanelsLocation498(...args);
-              return r;
-            });
-            return r;
-          };
-        }
-        if (
-          !cProto.swatcherooUpdatePanelsLocation498 &&
-          typeof cProto.swatcherooUpdatePanelsLocation === 'function' &&
-          cProto.swatcherooUpdatePanelsLocation.length === 6
-        ) {
-          cProto.swatcherooUpdatePanelsLocation498 = cProto.swatcherooUpdatePanelsLocation;
-          cProto.swatcherooUpdatePanelsLocation = function (
-            arg1,
-            arg2,
-            arg3,
-            arg4,
-            arg5,
-            arg6,
-            ...args
+        for (const [name, arity] of SECONDARY_INNER_METHODS) {
+          const key = `${name}498`;
+          if (
+            !cProto[key] &&
+            typeof cProto[name] === 'function' &&
+            cProto[name].length === (arity || 0)
           ) {
-            const r = secondaryInnerFn(() => {
-              if (typeof this.swatcherooUpdatePanelsLocation498 !== 'function') return;
-              const r = this.swatcherooUpdatePanelsLocation498(
-                arg1,
-                arg2,
-                arg3,
-                arg4,
-                arg5,
-                arg6,
-                ...args
+            cProto[key] = cProto[name];
+            cProto[name] = /** @param {...unknown} args */ function (...args) {
+              return secondaryInnerFn(() =>
+                typeof this[key] === 'function' ? this[key](...args) : undefined
               );
-              return r;
-            });
-            return r;
-          };
-        }
-
-        if (
-          !cProto.updateErrorScreenLocation498 &&
-          typeof cProto.updateErrorScreenLocation === 'function' &&
-          cProto.updateErrorScreenLocation.length === 0
-        ) {
-          cProto.updateErrorScreenLocation498 = cProto.updateErrorScreenLocation;
-          cProto.updateErrorScreenLocation = function (...args) {
-            const r = secondaryInnerFn(() => {
-              if (typeof this.updateErrorScreenLocation498 !== 'function') return;
-              const r = this.updateErrorScreenLocation498(...args);
-              return r;
-            });
-            return r;
-          };
-        }
-
-        if (
-          !cProto.updateFullBleedElementLocations498 &&
-          typeof cProto.updateFullBleedElementLocations === 'function' &&
-          cProto.updateFullBleedElementLocations.length === 0
-        ) {
-          cProto.updateFullBleedElementLocations498 = cProto.updateFullBleedElementLocations;
-          cProto.updateFullBleedElementLocations = function (...args) {
-            const r = secondaryInnerFn(() => {
-              if (typeof this.updateFullBleedElementLocations498 !== 'function') return;
-              const r = this.updateFullBleedElementLocations498(...args);
-              return r;
-            });
-            return r;
-          };
+            };
+          }
         }
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-watch-next-secondary-results-renderer::defined': cProto => {
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-watch-next-secondary-results-renderer::attached'])
-                .catch(_ll.warn);
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-watch-next-secondary-results-renderer::detached'])
-                .catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycle(cProto, 'ytd-watch-next-secondary-results-renderer', 'attached');
+        patchLifecycle(cProto, 'ytd-watch-next-secondary-results-renderer', 'detached');
 
         makeInitAttached('ytd-watch-next-secondary-results-renderer');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-watch-next-secondary-results-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
         if (
           hostElement instanceof HTMLElement_ &&
           hostElement.matches('#columns #related ytd-watch-next-secondary-results-renderer') &&
@@ -3638,9 +4183,11 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-watch-next-secondary-results-renderer::detached': hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
         if (hostElement.hasAttribute000('tyt-videos-list')) {
           elements.related = null;
           hostElement.removeAttribute000('tyt-videos-list');
@@ -3648,6 +4195,9 @@ const executionScript = _communicationKey => {
         _ll.info('ytd-watch-next-secondary-results-renderer::detached', hostElement);
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       settingCommentsVideoId: hostElement => {
         if (
           !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
@@ -3672,6 +4222,9 @@ const executionScript = _communicationKey => {
           hostElement.removeAttribute000('tyt-comments-video-id');
         }
       },
+      /**
+       * @param {number} lockId
+       */
       checkCommentsShouldBeHidden: lockId => {
         if (lockGet.checkCommentsShouldBeHiddenLock !== lockId) return;
 
@@ -3690,46 +4243,22 @@ const executionScript = _communicationKey => {
           }
         }
       },
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-comments::defined': cProto => {
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-comments::attached'])
-                .catch(_ll.warn);
-            // Promise.resolve(this.hostElement).then(eventMap['ytd-comments::dataChanged_']).catch(_ll.warn);
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-comments::detached'])
-                .catch(_ll.warn);
-            // Promise.resolve(this.hostElement).then(eventMap['ytd-comments::dataChanged_']).catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycle(cProto, 'ytd-comments', 'attached');
+        patchLifecycle(cProto, 'ytd-comments', 'detached');
 
-        // Define the data-changed handler up front so it's always available
-        // regardless of which observation mechanism we use below.
         cProto._dataChanged498 = function () {
           Promise.resolve(this.hostElement)
             .then(eventMap['ytd-comments::_dataChanged498'])
             .catch(_ll.warn);
         };
 
-        // Wire the handler into YouTube's data-change notification pipeline.
-        // YouTube has been deprecating the Polymer _createPropertyObserver API,
-        // so we check for its existence first and fall back to the newer
-        // lifecycle hooks (dataChanged_ / dataChanged).
         if (typeof cProto._createPropertyObserver === 'function') {
           cProto._createPropertyObserver('data', '_dataChanged498', undefined);
         } else if (typeof cProto.dataChanged_ === 'function') {
-          // Polymer 1.x / hybrid lifecycle hook
           cProto._dataChangedBackup = cProto.dataChanged_;
           cProto.dataChanged_ = function () {
             Promise.resolve(this.hostElement)
@@ -3738,7 +4267,6 @@ const executionScript = _communicationKey => {
             return this._dataChangedBackup();
           };
         } else if (typeof cProto.dataChanged === 'function') {
-          // LitElement lifecycle hook
           cProto._dataChangedBackup = cProto.dataChanged;
           cProto.dataChanged = function () {
             Promise.resolve(this.hostElement)
@@ -3751,6 +4279,9 @@ const executionScript = _communicationKey => {
         makeInitAttached('ytd-comments');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-comments::_dataChanged498': hostElement => {
         if (!hostElement.hasAttribute000('tyt-comments-area')) return;
         let commentsDataStatus = 0;
@@ -3767,43 +4298,30 @@ const executionScript = _communicationKey => {
         }
         if (commentsDataStatus) {
           hostElement.setAttribute111('tyt-comments-data-status', commentsDataStatus);
-          // ytdFlexyElm.setAttribute111('tyt-comment-disabled', '')
         } else {
-          // ytdFlexyElm.removeAttribute000('tyt-comment-disabled')
           hostElement.removeAttribute000('tyt-comments-data-status');
         }
         Promise.resolve(hostElement).then(eventMap.settingCommentsVideoId).catch(_ll.warn);
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-comments::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
         if (hostElement?.id !== 'comments') return;
         elements.comments = hostElement;
         _ll.info('ytd-comments::attached');
         Promise.resolve(hostElement).then(eventMap.settingCommentsVideoId).catch(_ll.warn);
 
-        if (aoCommentSubId && _mc?.unwatch) _mc.unwatch(aoCommentSubId);
-        aoCommentSubId = 'main::aoComment';
-        if (_mc?.watchTarget) {
-          _mc.watchTarget(aoCommentSubId, hostElement, onAoCommentMutation, {
-            attributes: true,
-            childList: false,
-            subtree: false,
-            attributeFilter: ['hidden', 'tyt-comments-video-id', 'tyt-comments-data-status'],
-          });
-        } else {
-          const aoComment = new MutationObserver(onAoCommentMutation);
-          aoComment.observe(hostElement, { attributes: true });
-          _cm?.registerObserver?.(aoComment);
-        }
+        aoCommentSubId = observeTarget({ id: aoCommentSubId }, hostElement, onAoCommentMutation, {
+          attributes: true,
+          childList: false,
+          subtree: false,
+          attributeFilter: ['hidden', 'tyt-comments-video-id', 'tyt-comments-data-status'],
+        });
         hostElement.setAttribute111('tyt-comments-area', '');
 
         const lockId = lockSet.rightTabReadyLock02;
@@ -3814,33 +4332,29 @@ const executionScript = _communicationKey => {
         if (hostElement.isConnected === false) return;
 
         if (hostElement && !hostElement.closest('#right-tabs')) {
-          document.querySelector('#tab-comments').assignChildren111(null, hostElement, null);
+          document.querySelector('#tab-comments')?.assignChildren111(null, hostElement, null);
         } else {
           const shouldTabVisible =
             elements.comments?.closest('#tab-comments') && !elements.comments.closest('[hidden]');
 
-          document
-            .querySelector('[tyt-tab-content="#tab-comments"]')
-            .classList.toggle('tab-btn-hidden', !shouldTabVisible);
-
-          //   document.querySelector('#tab-comments').classList.remove('tab-content-hidden')
-          //   document.querySelector('[tyt-tab-content="#tab-comments"]').classList.remove('tab-btn-hidden')
+          const commentsTabBtn = document.querySelector('[tyt-tab-content="#tab-comments"]');
+          if (commentsTabBtn) {
+            commentsTabBtn.classList.toggle('tab-btn-hidden', !shouldTabVisible);
+          }
 
           Promise.resolve(lockSet.removeKeepCommentsScrollerLock)
             .then(removeKeepCommentsScroller)
             .catch(_ll.warn);
         }
       },
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-comments::detached': hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
 
         if (hostElement.hasAttribute000('tyt-comments-area')) {
-          // foComments.disconnect();
-          // foComments.takeRecords();
           hostElement.removeAttribute000('tyt-comments-area');
-          // document.querySelector('#tab-comments').classList.add('tab-content-hidden')
-          // document.querySelector('[tyt-tab-content="#tab-comments"]').classList.add('tab-btn-hidden')
 
           if (aoCommentSubId && _mc?.unwatch) {
             _mc.unwatch(aoCommentSubId);
@@ -3848,9 +4362,10 @@ const executionScript = _communicationKey => {
           }
           elements.comments = null;
 
-          document
-            .querySelector('[tyt-tab-content="#tab-comments"]')
-            .classList.add('tab-btn-hidden');
+          const commentsTabBtn = document.querySelector('[tyt-tab-content="#tab-comments"]');
+          if (commentsTabBtn) {
+            commentsTabBtn.classList.add('tab-btn-hidden');
+          }
 
           Promise.resolve(lockSet.removeKeepCommentsScrollerLock)
             .then(removeKeepCommentsScroller)
@@ -3858,30 +4373,11 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-comments-header-renderer::defined': cProto => {
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-comments-header-renderer::attached'])
-                .catch(_ll.warn);
-            Promise.resolve(this.hostElement)
-              .then(eventMap['ytd-comments-header-renderer::dataChanged'])
-              .catch(_ll.warn); // force dataChanged on attached
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-comments-header-renderer::detached'])
-                .catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycleHooks(cProto, 'ytd-comments-header-renderer', true);
 
         if (!cProto.dataChanged498 && typeof cProto.dataChanged === 'function') {
           cProto.dataChanged498 = cProto.dataChanged;
@@ -3896,16 +4392,13 @@ const executionScript = _communicationKey => {
         makeInitAttached('ytd-comments-header-renderer');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-comments-header-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
         if (!hostElement?.classList.contains('ytd-item-section-renderer')) return;
 
         const targetElement = document.querySelector(
@@ -3924,9 +4417,11 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-comments-header-renderer::detached': hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
 
         if (hostElement.hasAttribute000('field-of-cm-count')) {
           hostElement.removeAttribute000('field-of-cm-count');
@@ -3944,6 +4439,9 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-comments-header-renderer::dataChanged': hostElement => {
         if (
           !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
@@ -3977,28 +4475,12 @@ const executionScript = _communicationKey => {
           hostElement.hasAttribute000('tyt-comments-header-field') &&
           hostElement.isConnected === true
         ) {
-          if (_mc?.watchTarget) {
-            if (headerMutationSubId) _mc.unwatch(headerMutationSubId);
-            headerMutationSubId = 'main::commentsHeaderCounter';
-            _mc.watchTarget(
-              headerMutationSubId,
-              hostElement.parentNode,
-              eventMap['ytd-comments-header-renderer::deferredCounterUpdate'],
-              { childList: true, attributes: false, subtree: false }
-            );
-          } else {
-            if (!headerMutationObserver) {
-              headerMutationObserver = new MutationObserver(
-                eventMap['ytd-comments-header-renderer::deferredCounterUpdate']
-              );
-            }
-            headerMutationObserver.disconnect();
-            headerMutationObserver.observe(hostElement.parentNode, {
-              subtree: false,
-              childList: true,
-            });
-            _cm?.registerObserver?.(headerMutationObserver);
-          }
+          headerMutationSubId = observeTarget(
+            { id: headerMutationSubId },
+            /** @type {Element} */ (hostElement.parentNode),
+            eventMap['ytd-comments-header-renderer::deferredCounterUpdate'],
+            { childList: true, attributes: false, subtree: false }
+          );
           if (!headerMutationTmpNode)
             headerMutationTmpNode = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
           const tmpNode = headerMutationTmpNode;
@@ -4016,32 +4498,21 @@ const executionScript = _communicationKey => {
           const cnt = insp(hostElement);
           const data = cnt.data;
           if (!data) return;
-          let ez = '';
-          if (data.commentsCount?.runs && data.commentsCount.runs.length >= 1) {
+          const extractCount = (/** @type {Array<{ text: string }>} */ runs) => {
             let max = -1;
-            const z = data.commentsCount.runs
-              .map(e => {
+            const z = runs
+              .map((/** @type {{ text: string }} */ e) => {
                 const c = e.text.replace(/\D+/g, '').length;
                 if (c > max) max = c;
-                return [e.text, c];
+                return /** @type {[string, number]} */ ([e.text, c]);
               })
-              .filter(a => a[1] === max);
-            if (z.length >= 1) {
-              ez = z[0][0];
-            }
-          } else if (data.countText?.runs && data.countText.runs.length >= 1) {
-            let max = -1;
-            const z = data.countText.runs
-              .map(e => {
-                const c = e.text.replace(/\D+/g, '').length;
-                if (c > max) max = c;
-                return [e.text, c];
-              })
-              .filter(a => a[1] === max);
-            if (z.length >= 1) {
-              ez = z[0][0];
-            }
-          }
+              .filter((/** @type {[string, number]} */ a) => a[1] === max);
+            return z.length >= 1 ? z[0][0] : '';
+          };
+          const ez =
+            extractCount(data.commentsCount?.runs || []) ||
+            extractCount(data.countText?.runs || []) ||
+            '';
           const cmCount = document.querySelector('#tyt-cm-count');
           if (ez) {
             hostElement.setAttribute111('field-of-cm-count', '');
@@ -4054,27 +4525,12 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-expander::defined': cProto => {
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-expander::attached'])
-                .catch(_ll.warn);
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-expander::detached'])
-                .catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycle(cProto, 'ytd-expander', 'attached');
+        patchLifecycle(cProto, 'ytd-expander', 'detached');
         if (!cProto.calculateCanCollapse498 && typeof cProto.calculateCanCollapse === 'function') {
           cProto.calculateCanCollapse498 = cProto.calculateCanCollapse;
           cProto.calculateCanCollapse = funcCanCollapse;
@@ -4090,24 +4546,15 @@ const executionScript = _communicationKey => {
           };
         }
 
-        /*
-
-        _ll.info('ytd-expander::defined 01');
-
-        CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback = connectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.connectedCallback)
-        CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback = disconnectedCallbackY(CustomElementRegistry.prototype.get.call(customElements, 'ytd-expander').prototype.disconnectedCallback)
-
-        _ll.info('ytd-expander::defined 02');
-
-        */
-
         makeInitAttached('ytd-expander');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-expander::childrenChanged': hostElement => {
         if (
-          hostElement instanceof Node &&
-          hostElement.hasAttribute000('hidden') &&
+          hostElement?.hasAttribute000('hidden') &&
           hostElement.hasAttribute000('tyt-main-info') &&
           hostElement.firstElementChild
         ) {
@@ -4115,163 +4562,42 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-expandable-video-description-body-renderer::defined': cProto => {
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-expandable-video-description-body-renderer::attached'])
-                .catch(_ll.warn);
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-expandable-video-description-body-renderer::detached'])
-                .catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycle(cProto, 'ytd-expandable-video-description-body-renderer', 'attached');
+        patchLifecycle(cProto, 'ytd-expandable-video-description-body-renderer', 'detached');
 
         makeInitAttached('ytd-expandable-video-description-body-renderer');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-expandable-video-description-body-renderer::attached': async hostElement => {
         if (
           hostElement instanceof HTMLElement_ &&
           isPageDOM(hostElement, '[tyt-info-renderer]') &&
           !hostElement.matches('[tyt-main-info]')
         ) {
-          elements.infoExpander = hostElement;
-          _ll.info(128384, elements.infoExpander);
-
-          infoExpanderElementProvidedPromise.resolve();
-          hostElement.setAttribute111('tyt-main-info', '');
-          if (plugin.autoExpandInfoDesc.toUse) {
-            plugin.autoExpandInfoDesc.onMainInfoSet(hostElement);
-          }
-
-          const lockId = lockSet.rightTabReadyLock03;
-          await rightTabsProvidedPromise.then();
-          if (lockGet.rightTabReadyLock03 !== lockId) return;
-
-          if (elements.infoExpander !== hostElement) return;
-          if (hostElement.isConnected === false) return;
-          _ll.info(7932, 'infoExpander');
-
-          elements.infoExpander.classList.add('tyt-main-info'); // add a classname for it
-
-          const infoExpander = elements.infoExpander;
-
-          const inlineExpanderElm = infoExpander.querySelector('ytd-text-inline-expander');
-          if (inlineExpanderElm) {
-            /**
-             * Mutation handler for the inline expander element. Persists
-             * the auto-expand state into sessionStorage (used by the next
-             * navigation) and re-applies the content fixup so the tab
-             * stays in sync with the live watch page state.
-             * @returns {void}
-             */
-            const onInlineExpanderMutation = () => {
-              const p = document.querySelector('#tab-info ytd-text-inline-expander');
-              sessionStorage.__$$tmp_UseAutoExpandInfoDesc$$__ = p?.hasAttribute('is-expanded')
-                ? '1'
-                : '';
-              if (p) fixInlineExpanderContent();
-            };
-            if (_mc?.watchTarget) {
-              if (inlineExpanderSubId) _mc.unwatch(inlineExpanderSubId);
-              inlineExpanderSubId = 'main::inlineExpander';
-              _mc.watchTarget(inlineExpanderSubId, inlineExpanderElm, onInlineExpanderMutation, {
-                attributes: true,
-                childList: false,
-                subtree: true,
-                attributeFilter: ['is-expanded', 'attr-6v8qu', 'hidden'],
-              });
-            } else {
-              const mo = new MutationObserver(onInlineExpanderMutation);
-              mo.observe(inlineExpanderElm, {
-                attributes: true,
-                attributeFilter: ['is-expanded', 'attr-6v8qu', 'hidden'],
-                subtree: true,
-              });
-              _cm?.registerObserver?.(mo);
-            }
-            inlineExpanderElm.incAttribute111('attr-6v8qu');
-            const cnt = insp(inlineExpanderElm);
-
-            if (cnt) fixInlineExpanderDisplay(cnt);
-          }
-
-          if (infoExpander && !infoExpander.closest('#right-tabs')) {
-            document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
-          } else {
-            if (document.querySelector('[tyt-tab-content="#tab-info"]')) {
-              const shouldTabVisible = elements.infoExpander?.closest('#tab-info');
-              document
-                .querySelector('[tyt-tab-content="#tab-info"]')
-                .classList.toggle('tab-btn-hidden', !shouldTabVisible);
-            }
-          }
-
-          Promise.resolve(lockSet.infoFixLock).then(infoFix).catch(_ll.warn); // required when the page is switched from channel to watch
-
-          // return;
+          if (!(await registerInfoExpanderMainInfo(hostElement))) return;
         }
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
 
         if (
           !(isPageDOM(hostElement, '#tab-info [tyt-main-info]') || hostElement.closest('#tab-info'))
         ) {
-          const bodyRenderer = hostElement;
-          let bodyRendererNew = document.querySelector(
-            'ytd-expandable-video-description-body-renderer[tyt-info-renderer]'
-          );
-          if (!bodyRendererNew) {
-            bodyRendererNew = document.createElement(
-              'ytd-expandable-video-description-body-renderer'
-            );
-            bodyRendererNew.setAttribute('tyt-info-renderer', '');
-            nsTemplateObtain().appendChild(bodyRendererNew);
-          }
-          // document.querySelector('#tab-info').assignChildren111(null, bodyRendererNew, null);
-
-          const cnt = insp(bodyRendererNew);
-          cnt.data = Object.assign({}, insp(bodyRenderer).data);
-
-          const inlineExpanderElm = bodyRendererNew.querySelector('ytd-text-inline-expander');
-          const inlineExpanderCnt = insp(inlineExpanderElm);
-          fixInlineExpanderMethods(inlineExpanderCnt);
-
-          // insp(bodyRendererNew).data = insp(bodyRenderer).data;
-
-          // if((bodyRendererNew.hasAttribute('hidden')?1:0)^(bodyRenderer.hasAttribute('hidden')?1:0)){
-          //   else bodyRendererNew.removeAttribute('hidden');
-          // }
-
-          elements.infoExpanderRendererBack = bodyRenderer;
-          elements.infoExpanderRendererFront = bodyRendererNew;
-          bodyRenderer.setAttribute('tyt-info-renderer-back', '');
-          bodyRendererNew.setAttribute('tyt-info-renderer-front', '');
-
-          // elements.infoExpanderBack = {{ytd-expander}};
+          setupInfoRendererMirror(hostElement);
         }
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-expandable-video-description-body-renderer::detached': async hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
 
         if (hostElement.hasAttribute000('tyt-main-info')) {
           elements.infoExpander = null;
@@ -4279,16 +4605,13 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-expander::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
 
         if (
           hostElement instanceof HTMLElement_ &&
@@ -4298,27 +4621,13 @@ const executionScript = _communicationKey => {
           hostElement.setAttribute111('tyt-content-comment-entry', '');
           ioComment.observe(hostElement);
         }
-
-        // --------------
-
-        //   //  && !hostElement.matches('#right-tabs ytd-expander#expander, [hidden] ytd-expander#expander')
-
-        //   const bodyRenderer = hostElement.closest('ytd-expandable-video-description-body-renderer');
-        //   let bodyRendererNew = document.querySelector('ytd-expandable-video-description-body-renderer[tyt-info-renderer]');
-        //   if (!bodyRendererNew) {
-        //     nsTemplateObtain().appendChild(bodyRendererNew);
-        //   }
-        //   // document.querySelector('#tab-info').assignChildren111(null, bodyRendererNew, null);
-
-        //   insp(bodyRendererNew).data = insp(bodyRenderer).data;
-        //   // if((bodyRendererNew.hasAttribute('hidden')?1:0)^(bodyRenderer.hasAttribute('hidden')?1:0)){
-        //   //   if(bodyRenderer.hasAttribute('hidden')) bodyRendererNew.setAttribute('hidden', '');
-        // --------------
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-expander::detached': hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
 
         if (hostElement.hasAttribute000('tyt-content-comment-entry')) {
           ioComment.unobserve(hostElement);
@@ -4329,33 +4638,11 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-live-chat-frame::defined': cProto => {
-        let _lastDomAction = 0;
-
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            _lastDomAction = Date.now();
-
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-live-chat-frame::attached'])
-                .catch(_ll.warn);
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            _lastDomAction = Date.now();
-
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-live-chat-frame::detached'])
-                .catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycleHooks(cProto, 'ytd-live-chat-frame');
 
         if (
           typeof cProto.urlChanged === 'function' &&
@@ -4370,44 +4657,21 @@ const executionScript = _communicationKey => {
             const t = (ath = (ath & 1073741823) + 1);
             const chatframe = this.chatframe || (this.$ || 0).chatframe || 0;
             if (chatframe instanceof HTMLIFrameElement) {
-              if (chatframe.contentDocument === null) {
-                await Promise.resolve('#').catch(_ll.warn);
-                if (t !== ath) return;
-              }
-              await new Promise(resolve => setTimeout_(resolve, 1)).catch(_ll.warn); // neccessary for Brave
+              await waitForChatFrameReady(chatframe);
               if (t !== ath) return;
-              const isBlankPage = !this.data || this.collapsed;
-              const p1 = new Promise(resolve => setTimeout_(resolve, 706)).catch(_ll.warn);
-              let ioObserver = null;
-              const p2 = new Promise(resolve => {
-                ioObserver = new IntersectionObserver((entries, observer) => {
-                  for (const entry of entries) {
-                    const rect = entry.boundingClientRect || 0;
-                    if (isBlankPage || (rect.width > 0 && rect.height > 0)) {
-                      observer.disconnect();
-                      ioObserver = null;
-                      resolve('#');
-                      break;
-                    }
-                  }
-                });
-                ioObserver.observe(chatframe);
-              }).catch(_ll.warn);
-              await Promise.race([p1, p2]);
-              if (ioObserver) {
-                ioObserver.disconnect();
-                ioObserver = null;
-              }
+              await waitForChatFrameLayout(chatframe, !this.data || this.collapsed);
               if (t !== ath) return;
             }
             this.urlChanged66();
           };
           cProto.urlChanged = function () {
-            const t = (this.__urlChangedAsyncT688__ =
-              (this.__urlChangedAsyncT688__ & 1073741823) + 1);
+            // biome-ignore lint/complexity/noUselessThisAlias: cast needed for TS strict mode
+            const _this = /** @type {YtProto} */ (this);
+            const t = (_this.__urlChangedAsyncT688__ =
+              (_this.__urlChangedAsyncT688__ & 1073741823) + 1);
             nextBrowserTick(() => {
-              if (t !== this.__urlChangedAsyncT688__) return;
-              this.urlChangedAsync12();
+              if (t !== _this.__urlChangedAsyncT688__) return;
+              _this.urlChangedAsync12();
             });
           };
         }
@@ -4415,16 +4679,13 @@ const executionScript = _communicationKey => {
         makeInitAttached('ytd-live-chat-frame');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-live-chat-frame::attached': async hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
         if (hostElement?.id !== 'chat') return;
         _ll.info('ytd-live-chat-frame::attached');
 
@@ -4434,25 +4695,34 @@ const executionScript = _communicationKey => {
 
         if (chatElem === hostElement) {
           elements.chat = chatElem;
-          if (aoChatSubId && _mc?.unwatch) _mc.unwatch(aoChatSubId);
-          aoChatSubId = 'main::aoChat';
-          if (_mc?.watchTarget) {
-            _mc.watchTarget(aoChatSubId, chatElem, onAoChatMutation, {
-              attributes: true,
-              childList: false,
-              subtree: false,
-            });
-          } else {
-            const aoChat = new MutationObserver(onAoChatMutation);
-            aoChat.observe(chatElem, { attributes: true });
-            _cm?.registerObserver?.(aoChat);
+          const isFlexyReady = elements.flexy instanceof Element;
+          chatElem.setAttribute111('tyt-active-chat-frame', isFlexyReady ? 'CF' : 'C');
+
+          // Mark the chat's layout container so CSS and layoutFix can route it
+          // into secondary-wrapper together with the right-tabs.
+          const chatContainer = chatElem.closest('#chat-container') || chatElem;
+          if (chatContainer && !chatContainer.hasAttribute000('tyt-chat-container')) {
+            for (const p of document.querySelectorAll('[tyt-chat-container]')) {
+              p.removeAttribute000('tyt-chat-container');
+            }
+            chatContainer.setAttribute111('tyt-chat-container', '');
           }
+
+          aoChatSubId = observeTarget({ id: aoChatSubId }, chatElem, onAoChatMutation, {
+            attributes: true,
+            childList: false,
+            subtree: false,
+          });
+
+          Promise.resolve(lockSet.layoutFixLock).then(layoutFix).catch(_ll.warn);
         }
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-live-chat-frame::detached': hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
         _ll.info('ytd-live-chat-frame::detached');
         if (hostElement.hasAttribute000('tyt-active-chat-frame')) {
           if (aoChatSubId && _mc?.unwatch) {
@@ -4470,30 +4740,18 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-engagement-panel-section-list-renderer::defined': cProto => {
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-engagement-panel-section-list-renderer::attached'])
-                .catch(_ll.warn);
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-engagement-panel-section-list-renderer::detached'])
-                .catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycle(cProto, 'ytd-engagement-panel-section-list-renderer', 'attached');
+        patchLifecycle(cProto, 'ytd-engagement-panel-section-list-renderer', 'detached');
         makeInitAttached('ytd-engagement-panel-section-list-renderer');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-engagement-panel-section-list-renderer::bindTarget': hostElement => {
         if (
           hostElement.matches(
@@ -4502,36 +4760,27 @@ const executionScript = _communicationKey => {
         ) {
           hostElement.setAttribute111('tyt-egm-panel', '');
           Promise.resolve(lockSet.updateEgmPanelsLock).then(updateEgmPanels).catch(_ll.warn);
-          if (aoEgmPanelsSubId && _mc?.unwatch) _mc.unwatch(aoEgmPanelsSubId);
-          aoEgmPanelsSubId = 'main::aoEgmPanels';
-          if (_mc?.watchTarget) {
-            _mc.watchTarget(aoEgmPanelsSubId, hostElement, onAoEgmPanelsMutation, {
+          aoEgmPanelsSubId = observeTarget(
+            { id: aoEgmPanelsSubId },
+            hostElement,
+            onAoEgmPanelsMutation,
+            {
               attributes: true,
               childList: false,
               subtree: false,
               attributeFilter: ['visibility', 'hidden'],
-            });
-          } else {
-            const aoEgmPanels = new MutationObserver(onAoEgmPanelsMutation);
-            aoEgmPanels.observe(hostElement, {
-              attributes: true,
-              attributeFilter: ['visibility', 'hidden'],
-            });
-            _cm?.registerObserver?.(aoEgmPanels);
-          }
+            }
+          );
         }
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-engagement-panel-section-list-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
 
         if (
           !hostElement.matches(
@@ -4551,7 +4800,8 @@ const executionScript = _communicationKey => {
           let tid = '';
           try {
             tid = crypto.randomUUID();
-          } catch {
+          } catch (_e) {
+            logS(_e);
             tid = `${Date.now().toString(36)}-${Math.random().toString(36).substring(2)}`;
           }
           hostElement.setAttribute000('target-id', `tid051-${tid}`);
@@ -4563,29 +4813,25 @@ const executionScript = _communicationKey => {
             .catch(_ll.warn);
         } else {
           hostElement.setAttribute000('tyt-egm-panel-jclmd', '');
-          if (moEgmPanelReadySubId && _mc?.unwatch) _mc.unwatch(moEgmPanelReadySubId);
-          moEgmPanelReadySubId = 'main::moEgmPanelReady';
-          if (_mc?.watchTarget) {
-            _mc.watchTarget(moEgmPanelReadySubId, hostElement, onMoEgmPanelReadyMutation, {
+          moEgmPanelReadySubId = observeTarget(
+            { id: moEgmPanelReadySubId },
+            hostElement,
+            onMoEgmPanelReadyMutation,
+            {
               attributes: true,
               childList: false,
               subtree: false,
               attributeFilter: ['visibility', 'target-id'],
-            });
-          } else {
-            const moEgmPanelReady = new MutationObserver(onMoEgmPanelReadyMutation);
-            moEgmPanelReady.observe(hostElement, {
-              attributes: true,
-              attributeFilter: ['visibility', 'target-id'],
-            });
-            _cm?.registerObserver?.(moEgmPanelReady);
-          }
+            }
+          );
         }
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-engagement-panel-section-list-renderer::detached': hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
         if (hostElement.hasAttribute000('tyt-egm-panel')) {
           hostElement.removeAttribute000('tyt-egm-panel');
           Promise.resolve(lockSet.updateEgmPanelsLock).then(updateEgmPanels).catch(_ll.warn);
@@ -4595,118 +4841,83 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-watch-metadata::defined': cProto => {
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-watch-metadata::attached'])
-                .catch(_ll.warn);
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-watch-metadata::detached'])
-                .catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycle(cProto, 'ytd-watch-metadata', 'attached');
+        patchLifecycle(cProto, 'ytd-watch-metadata', 'detached');
 
         makeInitAttached('ytd-watch-metadata');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-watch-metadata::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
 
         if (plugin.fullChannelNameOnHover.activated)
           plugin.fullChannelNameOnHover.onNavigateFinish();
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-watch-metadata::detached': hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
       },
 
+      /**
+       * @param {YtProto} cProto
+       */
       'ytd-playlist-panel-renderer::defined': cProto => {
-        if (!cProto.attached498 && typeof cProto.attached === 'function') {
-          cProto.attached498 = cProto.attached;
-          cProto.attached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-playlist-panel-renderer::attached'])
-                .catch(_ll.warn);
-            return this.attached498();
-          };
-        }
-        if (!cProto.detached498 && typeof cProto.detached === 'function') {
-          cProto.detached498 = cProto.detached;
-          cProto.detached = function () {
-            if (!inPageRearrange)
-              Promise.resolve(this.hostElement)
-                .then(eventMap['ytd-playlist-panel-renderer::detached'])
-                .catch(_ll.warn);
-            return this.detached498();
-          };
-        }
+        patchLifecycle(cProto, 'ytd-playlist-panel-renderer', 'attached');
+        patchLifecycle(cProto, 'ytd-playlist-panel-renderer', 'detached');
 
         makeInitAttached('ytd-playlist-panel-renderer');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-playlist-panel-renderer::attached': hostElement => {
         if (invalidFlexyParent(hostElement)) return;
 
-        if (hostElement instanceof Element) hostElement[__attachedSymbol__] = true;
-        if (
-          !(hostElement instanceof HTMLElement_ && hostElement.classList.length > 0) ||
-          hostElement.closest('noscript')
-        )
-          return;
-        if (hostElement.isConnected !== true) return;
+        if (!isValidAttachedHost(hostElement)) return;
 
         elements.playlist = hostElement;
 
-        if (aoPlayListSubId && _mc?.unwatch) _mc.unwatch(aoPlayListSubId);
-        aoPlayListSubId = 'main::aoPlayList';
-        if (_mc?.watchTarget) {
-          _mc.watchTarget(aoPlayListSubId, hostElement, onAoPlayListMutation, {
+        aoPlayListSubId = observeTarget(
+          { id: aoPlayListSubId },
+          hostElement,
+          onAoPlayListMutation,
+          {
             attributes: true,
             childList: false,
             subtree: false,
             attributeFilter: ['hidden', 'collapsed', 'attr-1y6nu'],
-          });
-        } else {
-          const aoPlayList = new MutationObserver(onAoPlayListMutation);
-          aoPlayList.observe(hostElement, {
-            attributes: true,
-            attributeFilter: ['hidden', 'collapsed', 'attr-1y6nu'],
-          });
-          _cm?.registerObserver?.(aoPlayList);
-        }
+          }
+        );
         hostElement.incAttribute111('attr-1y6nu');
       },
 
+      /**
+       * @param {HTMLElement} hostElement
+       */
       'ytd-playlist-panel-renderer::detached': hostElement => {
-        if (!(hostElement instanceof HTMLElement_) || hostElement.closest('noscript')) return;
-        if (hostElement.isConnected !== false) return;
+        if (!isValidDetachedHost(hostElement)) return;
       },
 
       _yt_playerProvided: () => {
         mLoaded.flag |= 4;
-        document.documentElement.setAttribute111('tabview-loaded', mLoaded.makeString());
+        document.documentElement?.setAttribute111?.('tabview-loaded', mLoaded.makeString());
       },
+      /**
+       * @param {Element} target
+       */
       relatedElementProvided: target => {
         if (target.closest('[hidden]')) return;
         elements.related = target;
@@ -4722,61 +4933,36 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {number} lockId
+       */
       refreshSecondaryInner: lockId => {
-        if (!document.documentElement.hasAttribute('tabview-loaded')) return;
         if (lockGet.refreshSecondaryInnerLock !== lockId) return;
-        /*
 
-        ytd-watch-flexy:not([panels-beside-player]):not([fixed-panels]) #panels-full-bleed-container.ytd-watch-flexy{
-            display: none;}
-
-  #player-full-bleed-container.ytd-watch-flexy{
-      position: relative;
-      flex: 1;}
-
-        */
+        if (!document.documentElement.hasAttribute('tabview-loaded')) return;
 
         const ytdFlexyElm = elements.flexy;
-        // if(ytdFlexyElm && ytdFlexyElm.matches('ytd-watch-flexy[fixed-panels][theater]')){
-        //   // ytdFlexyElm.fixedPanels = true;
-        //   ytdFlexyElm.removeAttribute000('fixed-panels');
-        // }
-
         if (
           ytdFlexyElm?.matches(
             'ytd-watch-flexy[theater][full-bleed-player]:not([full-bleed-no-max-width-columns])'
           )
         ) {
-          // ytdFlexyElm.fullBleedNoMaxWidthColumns = true;
           ytdFlexyElm.setAttribute111('full-bleed-no-max-width-columns', '');
         }
 
-        const related = elements.related;
-        if (related?.isConnected && !related.closest('#right-tabs #tab-videos')) {
-          document.querySelector('#tab-videos').assignChildren111(null, related, null);
-        }
-        const infoExpander = elements.infoExpander;
-        if (infoExpander?.isConnected && !infoExpander.closest('#right-tabs #tab-info')) {
-          document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
-        } else {
-          //   Promise.resolve(lockSet['infoFixLock']).then(infoFix).catch(_ll.warn);
-          // }
-        }
+        routeInto(elements.related, '#tab-videos', '#right-tabs #tab-videos');
+        routeInto(elements.infoExpander, '#tab-info', '#right-tabs #tab-info');
+        routeInto(elements.comments, '#tab-comments', '#right-tabs #tab-comments');
 
-        const commentsArea = elements.comments;
-        if (commentsArea) {
-          const isConnected = commentsArea.isConnected;
-          if (isConnected && !commentsArea.closest('#right-tabs #tab-comments')) {
-            const tab = document.querySelector('#tab-comments');
-            tab.assignChildren111(null, commentsArea, null);
-          } else {
-            // if (!isConnected || tab.classList.contains('tab-content-hidden')) removeKeepCommentsScroller();
-          }
-        }
+        // Make sure the live chat container is routed back into the right-rail
+        // wrapper so it doesn't end up duplicated in the primary column.
+        routeLiveChatToRail();
       },
 
+      /**
+       * @param {unknown} _evt
+       */
       'yt-navigate-finish': _evt => {
-        if (!document.documentElement.hasAttribute('tabview-loaded')) return;
         const ytdAppElm = document.querySelector(
           'ytd-page-manager#page-manager.style-scope.ytd-app'
         );
@@ -4785,199 +4971,25 @@ const executionScript = _communicationKey => {
 
         if (!document.querySelector('ytd-watch-flexy #player')) return;
 
-        const rightTabsMissing = isRightTabsInserted && !document.querySelector('#right-tabs');
-        if (rightTabsMissing) {
-          // The tabview DOM was torn down during a previous navigation (e.g.
-          // watch → channel → refresh → back to watch). Reset the one-shot
-          // promises so the insertion chain can fire again for this watch page.
-          resetTabviewInsertPromises();
-          // If the related-element animation already fired and elements.related
-          // is populated, unblock the videos promise immediately so the
-          // insertion chain resolves as soon as navigateFinishedPromise does.
-          if (elements.related) {
-            videosElementProvidedPromise.resolve();
-          }
-        }
+        if (isRightTabsInserted && !document.querySelector('#right-tabs')) resetAfterTabsLost();
 
         const flexyArr = [...document.querySelectorAll('ytd-watch-flexy')].filter(
           e => !e.closest('[hidden]') && e.querySelector('#player')
         );
-        if (flexyArr.length === 1) {
-          // const lockId = lockSet['yt-navigate-finish-videos'];
-          elements.flexy = flexyArr[0];
-          if (isRightTabsInserted) {
-            // Reset stale tab state from the previous watch page so
-            // tabsStatusCorrection computes the diff from a clean baseline.
-            tabAStatus = 0;
-            lastTab = '';
-            lastPanel = '';
-            // Re-bind the flexy attribute observer to the new element.
-            // YouTube may replace ytd-watch-flexy across SPA navigations,
-            // so the observer set up in onceInsertRightTabs could be
-            // watching a detached element.
-            const ytdFlexyElmRefresh = elements.flexy;
-            if (ytdFlexyElmRefresh) {
-              if (aoFlexySubId && _mc?.unwatch) _mc.unwatch(aoFlexySubId);
-              aoFlexySubId = 'main::aoFlexy';
-              if (_mc?.watchTarget) {
-                _mc.watchTarget(aoFlexySubId, ytdFlexyElmRefresh, eventMap.aoFlexyFn, {
-                  attributes: true,
-                  childList: false,
-                  subtree: false,
-                });
-              } else {
-                const aoFlexy = new MutationObserver(eventMap.aoFlexyFn);
-                aoFlexy.observe(ytdFlexyElmRefresh, { attributes: true });
-              }
-            }
-            Promise.resolve(lockSet.refreshSecondaryInnerLock)
-              .then(eventMap.refreshSecondaryInner)
-              .catch(_ll.warn);
-            Promise.resolve(lockSet.removeKeepCommentsScrollerLock)
-              .then(removeKeepCommentsScroller)
-              .catch(_ll.warn);
-          } else {
-            navigateFinishedPromise.resolve();
-            if (plugin.minibrowser.toUse) plugin.minibrowser.activate();
-            if (plugin.autoExpandInfoDesc.toUse) plugin.autoExpandInfoDesc.activate();
-            if (plugin.fullChannelNameOnHover.toUse) plugin.fullChannelNameOnHover.activate();
-          }
-          const chat = elements.chat;
-          if (chat instanceof Element) {
-            chat.setAttribute111('tyt-active-chat-frame', 'CF'); // chat and flexy ready
-          }
-          const infoExpander = elements.infoExpander;
-          if (infoExpander?.closest('#right-tabs')) {
-            Promise.resolve(lockSet.infoFixLock).then(infoFix).catch(_ll.warn);
-          }
-          Promise.resolve(lockSet.layoutFixLock).then(layoutFix).catch(_ll.warn);
-          if (plugin.fullChannelNameOnHover.activated)
-            plugin.fullChannelNameOnHover.onNavigateFinish();
-        }
+        if (flexyArr.length !== 1) return;
+
+        elements.flexy = flexyArr[0];
+        if (isRightTabsInserted) rebindFlexyObservers();
+        else activatePluginsOnFirstWatch();
+
+        applyFlexyAfterNavigate();
       },
 
       onceInsertRightTabs: () => {
         if (!document.documentElement.hasAttribute('tabview-loaded')) return;
-        // if(lockId !== lockGet['yt-navigate-finish-videos']) return;
-        const related = elements.related;
         let rightTabs = document.querySelector('#right-tabs');
-        if (!rightTabs && related) {
-          setLangForPage();
-          // HTML insertion hardening: parse the tab markup through a
-          // detached <template> element rather than into the live DOM.
-          // The template's innerHTML assignment goes through the
-          // canonical createHTML() wrapper (which delegates to
-          // safe-dom's createTrustedHTML); the parsed result lives
-          // in `docTmp.content` and is read out as a fragment, so the
-          // markup is never rendered un-trusted. The default Trusted
-          // Types policy installed at boot keeps this assignment
-          // permissive on hosts that enforce TT.
-          // Create fragment using safe DOM directly
-          let docTmp = window.YouTubeSafeDOM
-            ? window.YouTubeSafeDOM.createFragment(getTabsHTML())
-            : null;
-          if (!docTmp) {
-            // fallback if safeDOM is missing
-            docTmp = document.createElement('div');
-            docTmp['inner' + 'HTML'] = createHTML(getTabsHTML());
-          }
-          const newElm = docTmp.firstElementChild;
-          if (newElm !== null) {
-            inPageRearrange = true;
-            related.parentNode.insertBefore000(newElm, related);
-            inPageRearrange = false;
-          }
-          rightTabs = newElm;
-          if (rightTabs) {
-            rightTabs
-              .querySelector('[tyt-tab-content="#tab-comments"]')
-              .classList.add('tab-btn-hidden');
-          }
-
-          const secondaryWrapper = document.createElement('secondary-wrapper');
-          secondaryWrapper.classList.add('tabview-secondary-wrapper');
-          secondaryWrapper.id = 'secondary-inner-wrapper';
-          const secondaryInner = document.querySelector(
-            '#secondary-inner.style-scope.ytd-watch-flexy'
-          );
-
-          if (secondaryInner) {
-            inPageRearrange = true;
-            secondaryWrapper.replaceChildren000(...secondaryInner.childNodes);
-            secondaryInner.insertBefore000(secondaryWrapper, secondaryInner.firstChild);
-            inPageRearrange = false;
-          }
-
-          if (rightTabs) {
-            rightTabs
-              .querySelector('#material-tabs')
-              .addEventListener('click', eventMap['tabs-btn-click'], true);
-          }
-
-          inPageRearrange = true;
-          if (!rightTabs.closest('secondary-wrapper')) secondaryWrapper.appendChild000(rightTabs);
-          inPageRearrange = false;
-        }
-        if (rightTabs) {
-          isRightTabsInserted = true;
-          const ioTabBtns = new IntersectionObserver(
-            entries => {
-              for (const entry of entries) {
-                const rect = entry.boundingClientRect;
-                entry.target.classList.toggle('tab-btn-visible', rect.width && rect.height);
-              }
-            },
-            { rootMargin: '0px' }
-          );
-          for (const btn of document.querySelectorAll('.tab-btn[tyt-tab-content]')) {
-            ioTabBtns.observe(btn);
-          }
-          _cm?.registerObserver?.(ioTabBtns);
-          if (!related.closest('#right-tabs')) {
-            document.querySelector('#tab-videos').assignChildren111(null, related, null);
-          }
-          const infoExpander = elements.infoExpander;
-          if (infoExpander && !infoExpander.closest('#right-tabs')) {
-            document.querySelector('#tab-info').assignChildren111(null, infoExpander, null);
-          }
-          const commentsArea = elements.comments;
-          if (commentsArea && !commentsArea.closest('#right-tabs')) {
-            document.querySelector('#tab-comments').assignChildren111(null, commentsArea, null);
-          }
-          if (commentsArea) {
-            const btn = rightTabs.querySelector('[tyt-tab-content="#tab-comments"]');
-            if (btn) {
-              const shouldTabVisible =
-                commentsArea.closest('#tab-comments') && !commentsArea.closest('[hidden]');
-              btn.classList.toggle('tab-btn-hidden', !shouldTabVisible);
-            }
-          }
-          rightTabsProvidedPromise.resolve();
-          roRightTabs.disconnect();
-          roRightTabs.observe(rightTabs);
-          _cm?.registerObserver?.(roRightTabs);
-          const ytdFlexyElm = elements.flexy;
-          if (aoFlexySubId && _mc?.unwatch) _mc.unwatch(aoFlexySubId);
-          aoFlexySubId = 'main::aoFlexy';
-          if (_mc?.watchTarget) {
-            _mc.watchTarget(aoFlexySubId, ytdFlexyElm, eventMap.aoFlexyFn, {
-              attributes: true,
-              childList: false,
-              subtree: false,
-            });
-          } else {
-            const aoFlexy = new MutationObserver(eventMap.aoFlexyFn);
-            aoFlexy.observe(ytdFlexyElm, { attributes: true });
-            _cm?.registerObserver?.(aoFlexy);
-          }
-          // Promise.resolve(lockSet['tabsStatusCorrectionLock']).then(eventMap['tabsStatusCorrection']).catch(_ll.warn);
-
-          Promise.resolve(lockSet.fixInitialTabStateLock)
-            .then(eventMap.fixInitialTabStateFn)
-            .catch(_ll.warn);
-
-          ytdFlexyElm.incAttribute111('attr-7qlsy'); // tabsStatusCorrectionLock and video-id
-        }
+        if (!rightTabs && elements.related) rightTabs = insertRightTabsMarkup();
+        if (rightTabs) wireRightTabs(rightTabs);
       },
 
       aoFlexyFn: () => {
@@ -5002,6 +5014,9 @@ const executionScript = _communicationKey => {
         }
       },
 
+      /**
+       * @param {number} lockId
+       */
       twoColumnChanged10: lockId => {
         if (lockId !== lockGet.twoColumnChanged10Lock) return;
         for (const continuation of document.querySelectorAll(
@@ -5014,450 +5029,58 @@ const executionScript = _communicationKey => {
             cnt.showButton = false;
             const behavior = cnt.ytRendererBehavior || cnt;
             if (typeof behavior.invalidate === 'function') {
-              behavior.invalidate(!1);
+              behavior.invalidate(false);
             }
           }
         }
       },
 
+      // === tabsStatusCorrection: diff/reconcile tabview bitmask state ===
+
+      // --- Orchestrator: calls helpers in sequence ---
       /**
-       * Tab-view state correction function. Called after every
-       * `ytd-watch-flexy` attribute change to reconcile the expected
-       * tab layout (theater, chat, playlist, etc.) with the live DOM.
-       *
-       * The function compares the previous (`p`) and current (`q`)
-       * status bitmask and dispatches the minimal DOM actions needed
-       * to keep the tabview consistent.
-       *
-       * Bit flag constants are defined in `FLAG` (see top of
-       * `executionScript`).
-       * @param {string} lockId
-       * @returns {void}
+       * @param {number} lockId
        */
-      // biome-ignore lint/complexity/noExcessiveCognitiveComplexity: This legacy function manages complex tabview state corrections based on bitmask comparisons.
       tabsStatusCorrection: lockId => {
         if (lockId !== lockGet.tabsStatusCorrectionLock) return;
+        if (!document.documentElement.hasAttribute('tabview-loaded')) return;
         const ytdFlexyElm = elements.flexy;
         if (!ytdFlexyElm) return;
         const p = tabAStatus;
         const q = calculationFn(p, FLAG.ALL);
-        let resetForPanelDisappeared = false;
-        if (p !== q) {
-          _ll.info(388, p, q);
-          let actioned = false;
-          let special = 0;
-          if (plugin['external.ytlstm'].activated) {
-            if (q & FLAG.FULLSCREEN) {
-              // ignore fullscreen
-            } else if (
-              (p &
-                (FLAG.THEATER |
-                  FLAG.TAB_SELECTED |
-                  FLAG.CHAT_COLLAPSED |
-                  FLAG.CHAT_EXPANDED |
-                  FLAG.TWO_COLUMNS |
-                  FLAG.EXTERNAL_YTLSTM)) ===
-                (FLAG.THEATER |
-                  0 |
-                  0 |
-                  FLAG.CHAT_EXPANDED |
-                  FLAG.TWO_COLUMNS |
-                  FLAG.EXTERNAL_YTLSTM) &&
-              (q &
-                (FLAG.THEATER |
-                  FLAG.TAB_SELECTED |
-                  FLAG.CHAT_COLLAPSED |
-                  FLAG.CHAT_EXPANDED |
-                  FLAG.TWO_COLUMNS |
-                  FLAG.EXTERNAL_YTLSTM)) ===
-                (FLAG.THEATER |
-                  0 |
-                  FLAG.CHAT_COLLAPSED |
-                  0 |
-                  FLAG.TWO_COLUMNS |
-                  FLAG.EXTERNAL_YTLSTM)
-            ) {
-              special = 3;
-            } else if (
-              (q & (FLAG.THEATER | FLAG.TWO_COLUMNS)) === (FLAG.THEATER | FLAG.TWO_COLUMNS) &&
-              document.querySelector('[data-ytlstm-theater-mode]')
-            ) {
-              special = 1;
-            } else if (
-              (q & (FLAG.THEATER | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS)) ===
-                (FLAG.THEATER | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS) &&
-              document.querySelector('[is-two-columns_][theater][tyt-chat="+"]')
-            ) {
-              special = 2;
-            }
-          }
-          if (special) {
-            // special
-          } else if ((p & FLAG.PLAYLIST) === 0 && (q & FLAG.PLAYLIST) === FLAG.PLAYLIST) {
-            lastPanel = 'playlist';
-          } else if (
-            (p & FLAG.CHAT_EXPANDED) === 0 &&
-            (q & FLAG.CHAT_EXPANDED) === FLAG.CHAT_EXPANDED
-          ) {
-            lastPanel = 'chat';
-          } else if (
-            (((p & FLAG.CHAT_COLLAPSED) === FLAG.CHAT_COLLAPSED &&
-              (q & (FLAG.CHAT_COLLAPSED | FLAG.CHAT_EXPANDED)) === (0 | 0)) ||
-              ((p & FLAG.CHAT_EXPANDED) === FLAG.CHAT_EXPANDED &&
-                (q & (FLAG.CHAT_COLLAPSED | FLAG.CHAT_EXPANDED)) === (0 | 0))) &&
-            lastPanel === 'chat'
-          ) {
-            // 24 -> 16 = -8; 'd'
-            lastPanel = lastTab || '';
-            resetForPanelDisappeared = true;
-          } else if (
-            (p & (FLAG.CHAT_COLLAPSED | FLAG.CHAT_EXPANDED)) === FLAG.CHAT_EXPANDED &&
-            (q & (FLAG.CHAT_COLLAPSED | FLAG.CHAT_EXPANDED)) === FLAG.CHAT_COLLAPSED &&
-            lastPanel === 'chat'
-          ) {
-            // click close
-            lastPanel = lastTab || '';
-            resetForPanelDisappeared = true;
-          } else if (
-            (p & FLAG.PLAYLIST) === FLAG.PLAYLIST &&
-            (q & FLAG.PLAYLIST) === 0 &&
-            lastPanel === 'playlist'
-          ) {
-            lastPanel = lastTab || '';
-            resetForPanelDisappeared = true;
-          }
-          tabAStatus = q;
+        if (p === q) return;
+        _ll.info(388, p, q);
 
-          if (special) {
-            if (special === 1) {
-              if (ytdFlexyElm.getAttribute('tyt-chat') !== '+') {
-                ytBtnExpandChat();
-              }
-              if (ytdFlexyElm.getAttribute('tyt-tab')) {
-                switchToTab(null);
-              }
-            } else if (special === 2) {
-              ytBtnCollapseChat();
-            } else if (special === 3) {
-              ytBtnCancelTheater();
-              if (lastTab) {
-                switchToTab(lastTab);
-              }
-            }
-            return;
-          }
+        const special = resolveYtlstmSpecial(p, q);
+        const { resetForPanelDisappeared } = updateLastPanel(p, q, special);
+        tabAStatus = q;
 
-          let bFixForResizedTab = false;
+        if (dispatchSpecialAction(special, ytdFlexyElm)) return;
 
-          if ((q ^ FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED && bFixForResizedTabLater) {
-            bFixForResizedTab = true;
-          }
+        let { actioned, bFixForResizedTab } = handleTabPlaylistTransitions(p, q);
+        ({ actioned } = handleFullscreenTransitions(p, q, actioned));
+        ({ actioned } = handleAutoFix(p, q, actioned, resetForPanelDisappeared));
 
-          if ((p & FLAG.TWO_COLUMNS) === FLAG.TWO_COLUMNS && (q & FLAG.TWO_COLUMNS) === 0) {
-            Promise.resolve(lockSet.twoColumnChanged10Lock)
-              .then(eventMap.twoColumnChanged10)
-              .catch(_ll.warn);
-          }
+        if (bFixForResizedTab) {
+          bFixForResizedTabLater = false;
+          Promise.resolve(0).then(eventMap.fixForTabDisplay).catch(_ll.warn);
+        }
 
-          if (
-            ((p & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED) ^
-              ((q & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED) &&
-            (q & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED
-          ) {
-            bFixForResizedTab = true;
-          }
-
-          // p->q +2
-          if (
-            (p & FLAG.TAB_SELECTED) === 0 &&
-            (q & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED &&
-            (p & FLAG.PLAYLIST) === FLAG.PLAYLIST &&
-            (q & FLAG.PLAYLIST) === FLAG.PLAYLIST
-          ) {
-            lastPanel = lastTab || '';
-            ytBtnClosePlaylist();
-            actioned = true;
-          }
-
-          // p->q +8
-          if (
-            (p & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (0 | FLAG.PLAYLIST) &&
-            (q & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST) &&
-            lastPanel === 'chat'
-          ) {
-            lastPanel = lastTab || '';
-            ytBtnClosePlaylist();
-            actioned = true;
-          }
-
-          if (
-            (p & FLAG.ALL_STANDARD) ===
-              (FLAG.THEATER | FLAG.TAB_SELECTED | 0 | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS) &&
-            (q & FLAG.ALL_STANDARD) ===
-              (0 | FLAG.TAB_SELECTED | 0 | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS)
-          ) {
-            // external.ytlstm case
-            lastPanel = lastTab || '';
-            ytBtnCollapseChat();
-            actioned = true;
-          }
-          // p->q +128
-          if (
-            (p & (FLAG.TAB_SELECTED | FLAG.PLAYLIST)) === (FLAG.TAB_SELECTED | 0) &&
-            (q & (FLAG.TAB_SELECTED | FLAG.PLAYLIST)) === (FLAG.TAB_SELECTED | FLAG.PLAYLIST) &&
-            lastPanel === 'playlist'
-          ) {
-            switchToTab(null);
-            actioned = true;
-          }
-
-          // p->q +128
-          if (
-            (p & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (FLAG.CHAT_EXPANDED | 0) &&
-            (q & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST) &&
-            lastPanel === 'playlist'
-          ) {
-            lastPanel = lastTab || '';
-            ytBtnCollapseChat();
-            actioned = true;
-          }
-
-          // p->q +128
-          if (
-            (p & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)) ===
-              (FLAG.THEATER | FLAG.TWO_COLUMNS) &&
-            (q & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)) ===
-              (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)
-          ) {
-            ytBtnCancelTheater();
-            actioned = true;
-          }
-
-          // p->q +1
-          if (
-            (p & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)) ===
-              (FLAG.TWO_COLUMNS | FLAG.PLAYLIST) &&
-            (q & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)) ===
-              (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.PLAYLIST)
-          ) {
-            lastPanel = lastTab || '';
-            ytBtnClosePlaylist();
-            actioned = true;
-          }
-
-          if ((q & FLAG.FULLSCREEN) === FLAG.FULLSCREEN) {
-            actioned = false;
-          } else if ((p & FLAG.FULLSCREEN) === FLAG.FULLSCREEN && (q & FLAG.FULLSCREEN) === 0) {
-            // p->q -64
-
-            if ((q & FLAG.ENGAGEMENT_PANEL) === FLAG.ENGAGEMENT_PANEL) {
-              ytBtnCloseEngagementPanels();
-            }
-
-            if (
-              (q & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) ===
-              (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)
-            ) {
-              if (lastPanel === 'chat') {
-                switchToTab(null);
-                actioned = true;
-              } else if (lastPanel) {
-                ytBtnCollapseChat();
-                actioned = true;
-              }
-            }
-          } else if (
-            (p &
-              (FLAG.THEATER |
-                FLAG.TAB_SELECTED |
-                FLAG.CHAT_EXPANDED |
-                FLAG.TWO_COLUMNS |
-                FLAG.ENGAGEMENT_PANEL)) ===
-              (FLAG.THEATER | 0 | 0 | FLAG.TWO_COLUMNS | 0) &&
-            (q &
-              (FLAG.THEATER |
-                FLAG.TAB_SELECTED |
-                FLAG.CHAT_EXPANDED |
-                FLAG.TWO_COLUMNS |
-                FLAG.ENGAGEMENT_PANEL)) ===
-              (FLAG.THEATER | 0 | FLAG.CHAT_EXPANDED | FLAG.TWO_COLUMNS | 0)
-          ) {
-            // p->q +8
-            ytBtnCancelTheater();
-            actioned = true;
-          } else if (
-            (p & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.ENGAGEMENT_PANEL)) ===
-              (0 | FLAG.TWO_COLUMNS | 0) &&
-            (q & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.ENGAGEMENT_PANEL)) ===
-              (0 | FLAG.TWO_COLUMNS | FLAG.ENGAGEMENT_PANEL) &&
-            (q & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) > 0
-          ) {
-            // p->q +32
-            if (q & FLAG.TAB_SELECTED) {
-              switchToTab(null);
-              actioned = true;
-            }
-            if (q & FLAG.CHAT_EXPANDED) {
-              ytBtnCollapseChat();
-              actioned = true;
-            }
-          } else if (
-            (p & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.CHAT_EXPANDED | FLAG.TAB_SELECTED)) ===
-              (FLAG.TWO_COLUMNS | FLAG.CHAT_EXPANDED) &&
-            (q & (FLAG.THEATER | FLAG.TWO_COLUMNS | FLAG.CHAT_EXPANDED | FLAG.TAB_SELECTED)) ===
-              FLAG.TWO_COLUMNS &&
-            (q & FLAG.PLAYLIST) === 0
-          ) {
-            // p->q -8
-            if (lastTab) {
-              switchToTab(lastTab);
-              actioned = true;
-            }
-          } else if ((p & FLAG.THEATER) === 0 && (q & FLAG.THEATER) === FLAG.THEATER) {
-            // p->q +1
-            if ((q & FLAG.ENGAGEMENT_PANEL) === FLAG.ENGAGEMENT_PANEL) {
-              ytBtnCloseEngagementPanels();
-            }
-            if (
-              (p & (FLAG.THEATER | FLAG.CHAT_EXPANDED)) === FLAG.CHAT_EXPANDED &&
-              (q & (FLAG.THEATER | FLAG.CHAT_EXPANDED)) === (FLAG.THEATER | FLAG.CHAT_EXPANDED)
-            ) {
-              ytBtnCollapseChat();
-            }
-            switchToTab(null);
-            actioned = true;
-          } else if (
-            (p & (FLAG.THEATER | FLAG.TAB_SELECTED)) === FLAG.THEATER &&
-            (q & (FLAG.THEATER | FLAG.TAB_SELECTED)) === (FLAG.THEATER | FLAG.TAB_SELECTED)
-          ) {
-            // p->q +2
-            ytBtnCancelTheater();
-            actioned = true;
-          } else if (
-            (p & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) === FLAG.TAB_SELECTED &&
-            (q & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) ===
-              (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)
-          ) {
-            // p->q +8
-            switchToTab(null);
-            actioned = true;
-          } else if (
-            (p & (FLAG.CHAT_EXPANDED | FLAG.ENGAGEMENT_PANEL)) === (0 | FLAG.ENGAGEMENT_PANEL) &&
-            (q & (FLAG.CHAT_EXPANDED | FLAG.ENGAGEMENT_PANEL)) ===
-              (FLAG.CHAT_EXPANDED | FLAG.ENGAGEMENT_PANEL)
-          ) {
-            // p->q +8
-            ytBtnCloseEngagementPanels();
-            actioned = true;
-          } else if (
-            (p & (FLAG.TAB_SELECTED | FLAG.ENGAGEMENT_PANEL)) === (0 | FLAG.ENGAGEMENT_PANEL) &&
-            (q & (FLAG.TAB_SELECTED | FLAG.ENGAGEMENT_PANEL)) ===
-              (FLAG.TAB_SELECTED | FLAG.ENGAGEMENT_PANEL)
-          ) {
-            // p->q +2
-            ytBtnCloseEngagementPanels();
-            actioned = true;
-          } else if (
-            (p & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) === (0 | FLAG.CHAT_EXPANDED) &&
-            (q & (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)) ===
-              (FLAG.TAB_SELECTED | FLAG.CHAT_EXPANDED)
-          ) {
-            // p->q +2
-            ytBtnCollapseChat();
-            actioned = true;
-          } else if (
-            (p & FLAG.THEATER) === FLAG.THEATER &&
-            (q & (FLAG.THEATER | FLAG.ENGAGEMENT_PANEL)) === (0 | 0)
-          ) {
-            // p->q -1
-            if (lastPanel === 'chat') {
-              ytBtnExpandChat();
-              actioned = true;
-            } else if (lastPanel === lastTab && lastTab) {
-              switchToTab(lastTab);
-              actioned = true;
-            }
-          }
-
-          if (!actioned && (q & FLAG.PLAYLIST) === FLAG.PLAYLIST) {
-            lastPanel = 'playlist';
-            if ((q & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED) {
-              switchToTab(null);
-              actioned = true;
-            }
-          }
-
-          let shouldDoAutoFix = false;
-
-          if (
-            (p & FLAG.TAB_SELECTED) === FLAG.TAB_SELECTED &&
-            (q & (FLAG.TAB_SELECTED | FLAG.PLAYLIST)) === (0 | FLAG.PLAYLIST)
-          ) {
-            // p->q -2
-          } else if (
-            (p & FLAG.CHAT_EXPANDED) === FLAG.CHAT_EXPANDED &&
-            (q & (FLAG.CHAT_EXPANDED | FLAG.PLAYLIST)) === (0 | FLAG.PLAYLIST)
-          ) {
-            // p->q -8
-          } else if (
-            !actioned &&
-            (p & (FLAG.THEATER | FLAG.TWO_COLUMNS)) === FLAG.TWO_COLUMNS &&
-            (q &
-              (FLAG.THEATER |
-                FLAG.TWO_COLUMNS |
-                FLAG.CHAT_EXPANDED |
-                FLAG.TAB_SELECTED |
-                FLAG.ENGAGEMENT_PANEL |
-                FLAG.FULLSCREEN)) ===
-              FLAG.TWO_COLUMNS
-          ) {
-            shouldDoAutoFix = true;
-          } else if ((q & FLAG.ALL_STANDARD) === (FLAG.CHAT_COLLAPSED | FLAG.TWO_COLUMNS)) {
-            shouldDoAutoFix = true;
-          }
-
-          if (shouldDoAutoFix) {
-            _ll.info(388, 'd');
-            if (lastPanel === 'chat') {
-              _ll.info(388, 'd1c');
-              ytBtnExpandChat();
-              actioned = true;
-            } else if (lastPanel === 'playlist') {
-              _ll.info(388, 'd1p');
-              ytBtnOpenPlaylist();
-              actioned = true;
-            } else if (lastTab) {
-              _ll.info(388, 'd2t');
-              switchToTab(lastTab);
-              actioned = true;
-            } else if (resetForPanelDisappeared) {
-              // if lastTab is undefined
-              _ll.info(388, 'd2d');
-              Promise.resolve(lockSet.fixInitialTabStateLock)
-                .then(eventMap.fixInitialTabStateFn)
-                .catch(_ll.warn);
-              actioned = true;
-            }
-          }
-
-          if (bFixForResizedTab) {
-            bFixForResizedTabLater = false;
-            Promise.resolve(0).then(eventMap.fixForTabDisplay).catch(_ll.warn);
-          }
-
-          if (
-            ((p & FLAG.TWO_COLUMNS) === FLAG.TWO_COLUMNS) ^
-            ((q & FLAG.TWO_COLUMNS) === FLAG.TWO_COLUMNS)
-          ) {
-            Promise.resolve(lockSet.infoFixLock).then(infoFix).catch(_ll.warn);
-            Promise.resolve(lockSet.removeKeepCommentsScrollerLock)
-              .then(removeKeepCommentsScroller)
-              .catch(_ll.warn);
-            Promise.resolve(lockSet.layoutFixLock).then(layoutFix).catch(_ll.warn);
-          }
+        if (
+          ((p & FLAG.TWO_COLUMNS) === FLAG.TWO_COLUMNS) !==
+          ((q & FLAG.TWO_COLUMNS) === FLAG.TWO_COLUMNS)
+        ) {
+          Promise.resolve(lockSet.infoFixLock).then(infoFix).catch(_ll.warn);
+          Promise.resolve(lockSet.removeKeepCommentsScrollerLock)
+            .then(removeKeepCommentsScroller)
+            .catch(_ll.warn);
+          Promise.resolve(lockSet.layoutFixLock).then(layoutFix).catch(_ll.warn);
         }
       },
 
+      /**
+       * @param {number} lockId
+       */
       updateOnVideoIdChanged: lockId => {
         if (lockId !== lockGet.updateOnVideoIdChangedLock) return;
         const videoId = tmpLastVideoId;
@@ -5468,14 +5091,14 @@ const executionScript = _communicationKey => {
 
         if (bodyRendererNew && bodyRenderer) {
           insp(bodyRendererNew).data = insp(bodyRenderer).data;
-          // if ((bodyRendererNew.hasAttribute('hidden') ? 1 : 0) ^ (bodyRenderer.hasAttribute('hidden') ? 1 : 0)) {
-          //   else bodyRendererNew.removeAttribute('hidden');
-          // }
         }
 
         Promise.resolve(lockSet.infoFixLock).then(infoFix).catch(_ll.warn);
       },
 
+      /**
+       * @param {number} lockId
+       */
       fixInitialTabStateFn: async lockId => {
         if (lockGet.fixInitialTabStateLock !== lockId) return;
 
@@ -5483,35 +5106,13 @@ const executionScript = _communicationKey => {
         await delayPn(delayTime);
         if (lockGet.fixInitialTabStateLock !== lockId) return;
 
-        const kTab = document.querySelector('[tyt-tab]');
-        const qTab =
-          !kTab || kTab.getAttribute('tyt-tab') === ''
-            ? checkElementExist('ytd-watch-flexy[is-two-columns_]', '[hidden]')
-            : null;
-        if (checkElementExist('ytd-playlist-panel-renderer#playlist', '[hidden], [collapsed]')) {
-          switchToTab(null);
-        } else if (checkElementExist('ytd-live-chat-frame#chat', '[hidden], [collapsed]')) {
-          switchToTab(null);
-          if (checkElementExist('ytd-watch-flexy[theater]', '[hidden]')) {
-            ytBtnCollapseChat();
-          }
-        } else if (qTab) {
-          const hasTheater = qTab.hasAttribute('theater');
-          if (!hasTheater) {
-            const btn0 = document.querySelector('.tab-btn-visible'); // or default button
-            if (btn0) {
-              switchToTab(btn0);
-            } else {
-              switchToTab(null);
-            }
-          } else {
-            switchToTab(null);
-          }
-        }
-
+        restoreInitialTab();
         fixInitialTabStateK++;
       },
 
+      /**
+       * @param {Event} evt
+       */
       'tabs-btn-click': evt => {
         const target = evt.target;
         if (
@@ -5530,12 +5131,7 @@ const executionScript = _communicationKey => {
       },
     };
 
-    Promise.all([videosElementProvidedPromise, navigateFinishedPromise])
-      .then(eventMap.onceInsertRightTabs)
-      .catch(_ll.warn);
-    Promise.all([navigateFinishedPromise, infoExpanderElementProvidedPromise])
-      .then(eventMap.onceInfoExpanderElementProvidedPromised)
-      .catch(_ll.warn);
+    scheduleInsertChains();
 
     const isCustomElementsProvided =
       typeof customElements !== 'undefined' &&
@@ -5543,7 +5139,7 @@ const executionScript = _communicationKey => {
 
     const promiseForCustomYtElementsReady = isCustomElementsProvided
       ? Promise.resolve(0)
-      : new Promise(callback => {
+      : new Promise((/** @type {() => void} */ callback) => {
           const EVENT_KEY_ON_REGISTRY_READY = 'ytI-ce-registry-created';
           if (typeof customElements === 'undefined') {
             if (!('__CE_registry' in document)) {
@@ -5562,28 +5158,25 @@ const executionScript = _communicationKey => {
                 configurable: true,
               });
             }
+            /**
+             * @param {unknown} _evt
+             */
             let eventHandler = _evt => {
               document.removeEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
               const f = callback;
-              callback = null;
-              eventHandler = null;
+              callback = () => {};
+              eventHandler = () => {};
               f();
             };
-            document.addEventListener(EVENT_KEY_ON_REGISTRY_READY, eventHandler, false);
+            _registerListener(document, EVENT_KEY_ON_REGISTRY_READY, eventHandler, false, true);
           } else {
             callback();
           }
         });
 
-    const _retrieveCE = async nodeName => {
-      try {
-        isCustomElementsProvided || (await promiseForCustomYtElementsReady);
-        await customElements.whenDefined(nodeName);
-      } catch (e) {
-        _ll.warn(e);
-      }
-    };
-
+    /**
+     * @param {string} nodeName
+     */
     const retrieveCE = async nodeName => {
       try {
         isCustomElementsProvided || (await promiseForCustomYtElementsReady);
@@ -5592,6 +5185,7 @@ const executionScript = _communicationKey => {
         const cProto = insp(dummy).constructor.prototype;
         return cProto;
       } catch (e) {
+        logS(e);
         _ll.warn(e);
       }
     };
@@ -5600,14 +5194,7 @@ const executionScript = _communicationKey => {
       _yt_playerProvided: () => (window || 0)._yt_player || 0 || 0,
     };
 
-    let promiseWaitNext = null;
-    /**
-     * Document-wide mutation handler. Drains the pending "wait next"
-     * promise (so consumers waiting for any DOM change can resume) and
-     * invokes the player-provided hook when the host's bootstrap
-     * indicator is observed.
-     * @returns {void}
-     */
+    /** @type {{ resolve: () => void } | null} */ let promiseWaitNext = null;
     const onMoOverallMutation = () => {
       if (promiseWaitNext) {
         promiseWaitNext.resolve();
@@ -5617,31 +5204,36 @@ const executionScript = _communicationKey => {
       if (typeof moOverallRes._yt_playerProvided === 'function') {
         const r = moOverallRes._yt_playerProvided();
         if (r) {
-          moOverallRes._yt_playerProvided = r;
+          /** @type {YtProto} */ (moOverallRes)._yt_playerProvided = r;
           eventMap._yt_playerProvided();
         }
       }
     };
 
-    // Route the document-wide subtree / childList watcher through the
-    // shared mutation coordinator. The coordinator's root observer is
-    // already configured with subtree+childList, so this is a free
-    // subscription with no new MutationObserver instance.
-    if (_mc?.subscribeRoot) {
-      _mc.subscribeRoot('main::moOverall', onMoOverallMutation, {
-        childList: true,
-        attributes: false,
-        subtree: true,
+    // Route the document-wide subtree / childList watcher through the shared
+    // mutation coordinator; its root observer already has subtree+childList.
+    const setupMoOverallSubscription = () => {
+      if (_mc?.subscribeRoot) {
+        _mc.subscribeRoot('main::moOverall', onMoOverallMutation, {
+          childList: true,
+          attributes: false,
+          subtree: true,
+        });
+        return;
+      }
+      const moOverall = _registerObserver(new MutationObserver(onMoOverallMutation), null, {
+        scope: 'session',
       });
-    } else {
-      const moOverall = new MutationObserver(onMoOverallMutation);
       moOverall.observe(document, { subtree: true, childList: true });
-      _cm?.registerObserver?.(moOverall);
-    }
+    };
+    setupMoOverallSubscription();
 
+    /**
+     * @param {MutationRecord[]} mutations
+     */
     const onMoEgmPanelReadyMutation = mutations => {
       for (const mutation of mutations) {
-        const target = mutation.target;
+        const target = /** @type {Element} */ (mutation.target);
         if (!target.hasAttribute000('tyt-egm-panel-jclmd')) continue;
         if (target.hasAttribute000('target-id') && target.hasAttribute000('visibility')) {
           target.removeAttribute000('tyt-egm-panel-jclmd');
@@ -5653,13 +5245,6 @@ const executionScript = _communicationKey => {
       }
     };
 
-    /**
-     * Tear down the engagement-panel-ready watcher when no
-     * `tyt-egm-panel-jclmd` placeholder remains in the DOM. Called
-     * every time a panel is bound so the watcher is removed once it
-     * has done its job.
-     * @returns {void}
-     */
     const moEgmPanelReadyClearFn = () => {
       if (document.querySelector('[tyt-egm-panel-jclmd]') === null) {
         if (moEgmPanelReadySubId && _mc?.unwatch) {
@@ -5676,185 +5261,247 @@ const executionScript = _communicationKey => {
     // re-initialize on subsequent watch pages (e.g. refresh → navigate
     // to watch, or watch → channel → refresh → back). Use native
     // addEventListener so these listeners persist for the page session.
-    document.addEventListener('yt-navigate-finish', eventMap['yt-navigate-finish'], false);
-    document.addEventListener(
-      'animationstart',
-      evt => {
-        const f = eventMap[evt.animationName];
-        if (typeof f === 'function') f(evt.target);
-      },
-      capturePassive
-    );
+    _registerListener(document, 'yt-navigate-finish', eventMap['yt-navigate-finish'], false, true);
+    /** @param {Event} evt */
+    const onAnimationStart = evt => {
+      const f = eventMap[/** @type {AnimationEvent} */ (evt).animationName];
+      if (typeof f === 'function') f(evt.target);
+    };
+    _registerListener(document, 'animationstart', onAnimationStart, capturePassive, true);
 
-    if (isTabviewEnabled()) {
+    if (tabviewEnabled) {
       mLoaded.flag |= 1;
-      document.documentElement.setAttribute111('tabview-loaded', mLoaded.makeString());
+      document.documentElement?.setAttribute111?.('tabview-loaded', mLoaded.makeString());
+    }
+
+    // Late injection: this core booted onto an already-settled watch page (the
+    // feature was enabled mid-session, or the first watch page was reached from
+    // a non-watch page such as the channel that hosts Play All). The
+    // yt-navigate-finish listener above never saw that navigation, so replay the
+    // settle work (flexy reference + first-watch gates) once; otherwise the
+    // insert chain waits for the next navigation and the right-tabs rail never
+    // appears.
+    if (tabviewEnabled && document.querySelector('ytd-watch-flexy #player')) {
+      eventMap['yt-navigate-finish']();
     }
 
     promiseForCustomYtElementsReady.then(eventMap.ceHack).catch(_ll.warn);
 
-    // i18n â†’ style bridge.
-    //
-    // This IIFE wires the canonical i18n module (window.YouTubePlusI18n)
-    // into two runtime surfaces that cannot live in the static tabview
-    // stylesheet:
-    //   - updateTabLabels(): tab button label text (textContent, not style)
-    //   - updateCSSVars(): two CSS custom properties on documentElement
-    //     used by the right-rail stylesheet for the loading / fetching
-    //     ::after placeholders.
-    //
-    // The CSS custom properties are intentionally set via
-    // documentElement.style.setProperty(...) rather than routed through
-    // the canonical design-system StyleManager because StyleManager owns
-    // a keyed registry of static stylesheets; the values here are
-    // i18n-driven runtime strings that must change when the user changes
-    // language. setProperty is the right tool for runtime CSS custom
-    // property updates and does not collide with the static stylesheet
-    // owned by StyleManager.
-    //
-    // The IIFE is fire-and-forget: a thrown i18n failure is non-critical
-    // (the FALLBACK labels keep the UI usable) and is intentionally
-    // swallowed.
-    (function applyI18n() {
-      try {
-        const i18n = window.YouTubePlusI18n;
-        const FALLBACK = {
-          info: 'Info',
-          videos: 'Videos',
-          playlist: 'Playlist',
-        };
-        /**
-         * Refresh the localized labels on the rendered tab buttons.
-         * Uses the active i18n translation when available and falls
-         * back to a hardcoded English label when the i18n service is
-         * not yet ready.
-         * @returns {void}
-         */
-        const updateTabLabels = () => {
-          for (const { id, key } of [
-            { id: 'tab-btn1', key: 'info' },
-            { id: 'tab-btn4', key: 'videos' },
-            { id: 'tab-btn5', key: 'playlist' },
-          ]) {
-            const btn = document.getElementById(id);
-            if (!btn) continue;
-            const spans = btn.querySelectorAll('span');
-            let span = null;
-            for (const s of spans) {
-              if (s.id !== 'tyt-cm-count') {
-                span = s;
-                break;
-              }
-            }
-            if (!span) continue;
-            if (i18n) {
-              const text = i18n.t(key);
-              if (text && text !== key) {
-                span.textContent = text;
-                continue;
-              }
-            }
-            span.textContent = FALLBACK[key] || key;
+    // Keep Tabview labels and CSS-generated loading text in sync with the
+    // i18n service. English fallbacks keep the rail usable while a
+    // remote locale is still loading.
+    function applyI18n() {
+      const i18n = window.YouTubePlusI18n;
+      /** @type {Record<string, string>} */ const FALLBACK = {
+        info: 'Info',
+        comments: 'Comments',
+        videos: 'Videos',
+        playlist: 'Playlist',
+      };
+      /**
+       * Quote a string for use by CSS `content: var(...)`.
+       * @param {string} value
+       * @returns {string}
+       */
+      const asCSSContentString = value =>
+        `"${String(value)
+          .replace(/\\/g, '\\\\')
+          .replace(/"/g, '\\"')
+          .replace(/[\r\n\f]/g, ' ')}"`;
+      /**
+       * @param {HTMLElement} btn
+       * @param {string} key
+       */
+      const setTabButtonLabel = (btn, key) => {
+        let span = null;
+        for (const s of btn.querySelectorAll('span')) {
+          if (s.id !== 'tyt-cm-count') {
+            span = s;
+            break;
           }
-        };
-        /**
-         * Push translated "Loading" / "Fetching" strings into the CSS
-         * custom properties consumed by the right-rail stylesheet. Only
-         * writes when the translation differs from the key (so the CSS
-         * default English placeholders stay as a safe fallback).
-         * @returns {void}
-         */
-        const updateCSSVars = () => {
-          if (!i18n) return;
-          const loading = i18n.t('loading');
-          if (loading && loading !== 'loading')
-            document.documentElement.style.setProperty('--tabview-text-loading', loading);
-          const fetching = i18n.t('fetching');
-          if (fetching && fetching !== 'fetching')
-            document.documentElement.style.setProperty('--tabview-text-fetching', fetching);
-        };
-        /**
-         * Run one full tabview render pass: refresh CSS custom
-         * properties, refresh localized tab labels, and recompute
-         * the visibility state. Called from the live mount path and
-         * from the tab-button / tab-content event handlers.
-         * @returns {void}
-         */
-        const run = () => {
-          updateCSSVars();
-          updateTabLabels();
-        };
-        if (i18n && typeof i18n.onLanguageChange === 'function') {
-          i18n.onLanguageChange(run);
         }
-        if (i18n)
-          window.addEventListener('youtube-plus-i18n-ready', run, {
-            once: true,
-          });
-        rightTabsProvidedPromise.then(run);
-      } catch (_e) {
-        /* non-critical */
-      }
-    })();
-
-    const restoreOriginalLayout = () => {
-      document.documentElement.removeAttribute('tabview-loaded');
-
-      const related = elements.related;
-      const comments = elements.comments;
-      const infoExpander = elements.infoExpander;
-
-      const primaryInner = document.querySelector('#primary-inner.style-scope.ytd-watch-flexy');
-      const secondaryInner = document.querySelector('#secondary-inner.style-scope.ytd-watch-flexy');
-
-      if (secondaryInner) {
-        const wrapper = secondaryInner.querySelector('#secondary-inner-wrapper');
-        if (wrapper) {
-          inPageRearrange = true;
-          while (wrapper.firstChild) {
-            secondaryInner.insertBefore(wrapper.firstChild, wrapper);
-          }
-          wrapper.remove();
-          inPageRearrange = false;
+        const i18nService = window.YouTubePlusI18n || i18n;
+        const text = i18nService?.t?.(key);
+        const label = text && text !== key ? text : FALLBACK[key] || key;
+        if (span) {
+          span.textContent = label;
         }
+        btn.setAttribute('aria-label', label);
+        btn.setAttribute('title', label);
+      };
+      const updateTabLabels = () => {
+        for (const { id, key } of [
+          { id: 'tab-btn1', key: 'info' },
+          { id: 'tab-btn3', key: 'comments' },
+          { id: 'tab-btn4', key: 'videos' },
+          { id: 'tab-btn5', key: 'playlist' },
+        ]) {
+          const btn = document.getElementById(id);
+          if (btn) setTabButtonLabel(btn, key);
+        }
+      };
+      const updateCSSVars = () => {
+        const i18nService = window.YouTubePlusI18n || i18n;
+        if (!i18nService) return;
+        const loading = i18nService.t('loading');
+        if (loading && loading !== 'loading')
+          document.documentElement.style.setProperty(
+            '--tabview-text-loading',
+            asCSSContentString(loading)
+          );
+        const fetching = i18nService.t('fetching');
+        if (fetching && fetching !== 'fetching')
+          document.documentElement.style.setProperty(
+            '--tabview-text-fetching',
+            asCSSContentString(fetching)
+          );
+      };
+      const run = () => {
+        updateCSSVars();
+        updateTabLabels();
+      };
+      if (i18n && typeof i18n.onLanguageChange === 'function') {
+        i18n.onLanguageChange(run);
       }
+      _registerListener(window, 'youtube-plus-i18n-ready', run, undefined, true);
+      _registerListener(window, 'youtube-plus-language-changed', run, undefined, true);
+      rightTabsProvidedPromise.then(run);
+    }
+    applyI18n();
 
-      if (related && secondaryInner) {
-        inPageRearrange = true;
-        secondaryInner.appendChild(related);
-        inPageRearrange = false;
-      }
+    /** Run `fn` with the inPageRearrange flag set. @param {() => void} fn */
+    function withInPageRearrange(fn) {
+      inPageRearrange = true;
+      fn();
+      inPageRearrange = false;
+    }
 
-      if (infoExpander && primaryInner) {
-        inPageRearrange = true;
+    /** @param {Element} secondaryInner */
+    function unwrapSecondaryInnerWrapper(secondaryInner) {
+      const wrapper = secondaryInner.querySelector('#secondary-inner-wrapper');
+      if (!wrapper) return;
+      withInPageRearrange(() => {
+        while (wrapper.firstChild) {
+          secondaryInner.insertBefore(wrapper.firstChild, wrapper);
+        }
+        wrapper.remove();
+      });
+    }
+
+    /** @param {Element} primaryInner @param {Element} infoExpander */
+    function reinsertBeforeComments(primaryInner, infoExpander) {
+      withInPageRearrange(() => {
         const commentsNode = primaryInner.querySelector('#comments');
         if (commentsNode) {
           primaryInner.insertBefore(infoExpander, commentsNode);
         } else {
           primaryInner.appendChild(infoExpander);
         }
-        inPageRearrange = false;
-      }
+      });
+    }
 
-      if (comments && primaryInner) {
-        inPageRearrange = true;
-        primaryInner.appendChild(comments);
-        inPageRearrange = false;
-      }
+    /** @param {Element} node @param {Element} secondaryInner @param {Element|null} related */
+    function reinsertChat(node, secondaryInner, related) {
+      withInPageRearrange(() => {
+        // Insert chat before related so the native order is preserved.
+        if (related && related.parentNode === secondaryInner) {
+          secondaryInner.insertBefore(node, related);
+        } else {
+          secondaryInner.appendChild(node);
+        }
+      });
+    }
 
-      const rightTabs = document.querySelector('#right-tabs');
-      if (rightTabs) {
-        rightTabs.remove();
+    /** @param {Element} ytdFlexy */
+    function clearFlexyTabviewAttributes(ytdFlexy) {
+      for (const attr of [
+        'hide-default-text-inline-expander',
+        'tyt-tab',
+        'tyt-chat',
+        'tyt-chat-collapsed',
+        'tyt-egm-panel_',
+        'tyt-comment-disabled',
+        'tyt-playlist-expanded',
+        'keep-comments-scroller',
+        'full-bleed-no-max-width-columns',
+        'tyt-external-ytlstm',
+      ]) {
+        ytdFlexy.removeAttribute(attr);
       }
+    }
 
-      if (roRightTabs) {
-        roRightTabs.disconnect();
-      }
+    /** @returns {{ related: Element|null, comments: Element|null, infoExpander: Element|null, chat: Element|null, primaryInner: Element|null, secondaryInner: Element|null }} */
+    function resolveLayoutNodes() {
+      return {
+        related: elements.related || document.querySelector('#related.ytd-watch-flexy'),
+        comments: elements.comments || document.querySelector('ytd-comments#comments'),
+        infoExpander:
+          elements.infoExpander ||
+          document.querySelector('ytd-text-inline-expander#structured-description'),
+        chat:
+          elements.chat ||
+          document.querySelector('ytd-live-chat-frame#chat[tyt-active-chat-frame]'),
+        primaryInner: document.querySelector('#primary-inner.style-scope.ytd-watch-flexy'),
+        secondaryInner: document.querySelector('#secondary-inner.style-scope.ytd-watch-flexy'),
+      };
+    }
 
+    /** @param {Element} parent @param {Element} node */
+    function appendInPage(parent, node) {
+      withInPageRearrange(() => parent.appendChild(node));
+    }
+
+    /** @param {Element} primaryInner @param {Element} comments */
+    function appendCommentsBack(primaryInner, comments) {
+      withInPageRearrange(() => {
+        const target =
+          primaryInner.querySelector('#below.style-scope.ytd-watch-flexy') || primaryInner;
+        target.appendChild(comments);
+      });
+    }
+
+    /** @param {Element|null} related @param {Element|null} comments @param {Element|null} chat */
+    function cleanupLayoutMarkers(related, comments, chat) {
+      const markers = [
+        () => related?.removeAttribute000('tyt-videos-list'),
+        () => comments?.removeAttribute000('tyt-comments-area'),
+        () => chat?.removeAttribute000('tyt-active-chat-frame'),
+        () => chat?.closest('[tyt-chat-container]')?.removeAttribute000('tyt-chat-container'),
+      ];
+      for (const fn of markers) fn();
+    }
+
+    const restoreOriginalLayout = () => {
+      document.documentElement?.removeAttribute?.('tabview-loaded');
+      const { related, comments, infoExpander, chat, primaryInner, secondaryInner } =
+        resolveLayoutNodes();
+
+      if (secondaryInner) unwrapSecondaryInnerWrapper(secondaryInner);
+      if (related && secondaryInner) appendInPage(secondaryInner, related);
+      if (infoExpander && primaryInner) reinsertBeforeComments(primaryInner, infoExpander);
+      if (comments && primaryInner) appendCommentsBack(primaryInner, comments);
+
+      const targetChat = chat?.closest('[tyt-chat-container]') || chat;
+      if (targetChat && secondaryInner) reinsertChat(targetChat, secondaryInner, related);
+
+      _cm?.unregisterListener?.(tabsBtnClickKey);
+      tabsBtnClickKey = null;
+      document.querySelector('#right-tabs')?.remove();
+      if (roRightTabs) roRightTabs.disconnect();
+      releaseIoTabBtns();
       if (aoFlexySubId && _mc?.unwatch) {
         _mc.unwatch(aoFlexySubId);
         aoFlexySubId = null;
       }
+
+      // Clean stale tyt-* attributes AFTER the observer is disconnected
+      // (removing them while the observer is active triggers tabsStatusCorrection).
+      const ytdFlexy = elements.flexy;
+      if (ytdFlexy) clearFlexyTabviewAttributes(ytdFlexy);
+
+      // Remove tabview-specific markers from elements we moved back to their
+      // original locations so YouTube's native layout can take over cleanly.
+      cleanupLayoutMarkers(related, comments, chat);
 
       // Reset stale tab state so re-enabling tabview starts clean.
       tabAStatus = 0;
@@ -5866,243 +5513,324 @@ const executionScript = _communicationKey => {
       resetTabviewInsertPromises();
     };
 
-    window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {
-      try {
-        const tabviewEnabled = e?.detail?.enableTabview !== false;
-        const currentlyLoaded = document.documentElement.hasAttribute('tabview-loaded');
+    /** Re-enable tabview in place after the setting was switched back on. */
+    function reenableTabview() {
+      mLoaded.flag |= 1;
+      document.documentElement?.setAttribute111?.('tabview-loaded', mLoaded.makeString());
+      isRightTabsInserted = false;
+
+      // Repopulate elements from the live DOM (resetTabviewInsertPromises nulled
+      // them all; CSS animations won't retrigger).
+      const flexy = [...document.querySelectorAll('ytd-watch-flexy')].find(
+        el => !el.closest('[hidden]') && el.querySelector('#player')
+      );
+      if (flexy) elements.flexy = flexy;
+
+      const rel = document.querySelector('#related.ytd-watch-flexy');
+      if (rel && !rel.closest('[hidden]')) elements.related = rel;
+
+      const comments = document.querySelector('ytd-comments#comments');
+      if (comments) elements.comments = comments;
+
+      const expander = document.querySelector(
+        'ytd-watch-flexy ytd-text-inline-expander#structured-description,' +
+          'ytd-watch-flexy ytd-expandable-video-description-body-renderer[tyt-main-info]'
+      );
+      if (expander) elements.infoExpander = expander;
+
+      // Resolving the gates triggers the Promise.all chains from resetTabviewInsertPromises.
+      if (elements.related) videosElementProvidedPromise.resolve();
+      if (elements.infoExpander) infoExpanderElementProvidedPromise.resolve();
+      navigateFinishedPromise.resolve();
+
+      // Defer yt-navigate-finish so onceInsertRightTabs completes first (microtask).
+      Promise.resolve().then(() => {
+        if (typeof eventMap?.['yt-navigate-finish'] === 'function') {
+          eventMap['yt-navigate-finish']();
+        }
+      });
+    }
+
+    _registerListener(
+      window,
+      'youtube-plus-settings-updated',
+      (/** @type {Event} */ e) => {
+        const detail = /** @type {CustomEvent<{ enableTabview?: boolean }>} */ (e).detail;
+        const tabviewEnabled = detail?.enableTabview !== false;
+        const currentlyLoaded = document.documentElement?.hasAttribute?.('tabview-loaded');
         if (tabviewEnabled && !currentlyLoaded) {
-          mLoaded.flag |= 1;
-          document.documentElement.setAttribute111('tabview-loaded', mLoaded.makeString());
-          isRightTabsInserted = false;
-          if (typeof eventMap?.onceInsertRightTabs === 'function') {
-            eventMap.onceInsertRightTabs();
-          }
-          if (typeof eventMap?.onceInfoExpanderElementProvidedPromised === 'function') {
-            eventMap.onceInfoExpanderElementProvidedPromised();
-          }
-          if (typeof eventMap?.['yt-navigate-finish'] === 'function') {
-            eventMap['yt-navigate-finish']();
-          }
+          reenableTabview();
         } else if (!tabviewEnabled && currentlyLoaded) {
           restoreOriginalLayout();
         }
-      } catch (err) {
-        _ll.warn('Error handling tabview toggle in settings update', err);
-      }
-    });
+      },
+      undefined,
+      true
+    );
 
-    _executionFinished = 1;
+    // =========================================================================
+    // === SECTION: Tabview command bridge (sandbox -> page context) ===========
+    // =========================================================================
+    // The tabview core runs in the page context (injected via GM_addElement),
+    // while feature modules run in the userscript sandbox. Until this bridge
+    // existed the sandbox reached into tabview internals by hand: it clicked
+    // tab buttons directly and set `keep-comments-scroller` with a plain
+    // setAttribute, bypassing the lock protocol that owns that attribute. A
+    // concurrent removeKeepCommentsScroller() could then strand the attribute,
+    // which permanently disables the comment pre-loading CSS. This bridge is
+    // now the only supported way in.
+    //
+    //   inbound : document event `yp-tabview-cmd::<key>`  { cmd, args }
+    //   outbound: document event `yp-tabview-evt::<key>`  { evt, detail }
+    //
+    // The key is per page load. It is not a security boundary (the page can
+    // read it) - it only prevents two injected copies from crosstalking.
+    const BRIDGE_IN = `yp-tabview-cmd::${communicationKey}`;
+    const BRIDGE_OUT = `yp-tabview-evt::${communicationKey}`;
+
+    tabviewEmit = (evt, detail) => {
+      document.dispatchEvent(new CustomEvent(BRIDGE_OUT, { detail: { evt, detail } }));
+    };
+
+    /**
+     * Pre-load the comments tab without leaving it selected.
+     *
+     * Takes the `keep-comments-scroller` lock BEFORE touching the attribute,
+     * so any in-flight removeKeepCommentsScroller() is invalidated by the new
+     * lock id instead of racing us. Replaces the sandbox-side
+     * preloadCommentsInBackground(), which did neither.
+     * @returns {Promise<boolean>}
+     */
+    const preloadCommentsTab = async () => {
+      const ytdFlexyElm = elements.flexy;
+      if (!ytdFlexyElm) return false;
+      const commentsBtn = document.querySelector(
+        '#material-tabs a[tyt-tab-content="#tab-comments"]'
+      );
+      const commentsTab = document.querySelector('#tab-comments');
+      if (!(commentsBtn && commentsTab)) return false;
+      if (commentsTab.getAttribute000('tyt-comments-preloaded') === '1') return true;
+
+      lockSet.removeKeepCommentsScrollerLock;
+      if (!ytdFlexyElm.hasAttribute000('keep-comments-scroller')) {
+        ytdFlexyElm.setAttribute111('keep-comments-scroller', '');
+      }
+
+      const activeBtn = document.querySelector('#material-tabs a[tyt-tab-content].active');
+      switchToTab(commentsBtn);
+      await new Promise((/** @type {(v?: unknown) => void} */ resolve) => {
+        const rafId = requestAnimationFrame(() => resolve(0));
+        _cm?.registerAnimationFrame?.(rafId);
+      });
+      commentsTab.setAttribute111('tyt-comments-preloaded', '1');
+      if (activeBtn && activeBtn !== commentsBtn && activeBtn.isConnected) {
+        switchToTab(activeBtn);
+      }
+      return true;
+    };
+
+    /** @type {Record<string, (args?: unknown) => unknown>} */
+    const bridgeCommands = {
+      expandChat: () => {
+        ytBtnExpandChat();
+        // YouTube's Polymer binding does not always fire when the frame is
+        // uncollapsed programmatically, leaving #chatframe with no src and an
+        // empty chat panel. Repair it here so one owner handles the fix.
+        const chat = /** @type {(Element & { url?: string }) | null} */ (
+          document.querySelector('ytd-live-chat-frame#chat')
+        );
+        const iframe = /** @type {HTMLIFrameElement | null} */ (
+          chat ? chat.querySelector000('iframe#chatframe') : null
+        );
+        if (iframe && !iframe.src && chat?.url) {
+          iframe.src = chat.url;
+        }
+        return true;
+      },
+      collapseChat: () => {
+        ytBtnCollapseChat();
+        return true;
+      },
+      preloadComments: () => preloadCommentsTab(),
+      releaseCommentsScroller: () =>
+        Promise.resolve(lockSet.removeKeepCommentsScrollerLock).then(removeKeepCommentsScroller),
+      switchTab: args => {
+        const tab = String(/** @type {{ tab?: string }} */ (args)?.tab || '');
+        if (!/^#tab-[a-z]+$/.test(tab)) return false;
+        const link = document.querySelector(`#material-tabs a[tyt-tab-content="${tab}"]`);
+        if (!link) return false;
+        switchToTab(link);
+        return true;
+      },
+    };
+
+    _registerListener(
+      document,
+      BRIDGE_IN,
+      (/** @type {Event} */ ev) => {
+        try {
+          const detail = /** @type {CustomEvent<{ cmd?: unknown; args?: unknown }>} */ (ev).detail;
+          const cmd = detail ? detail.cmd : null;
+          if (typeof cmd !== 'string' || !Object.hasOwn(bridgeCommands, cmd)) return;
+          Promise.resolve(bridgeCommands[cmd](detail.args)).catch(_ll.warn);
+        } catch (_e) {
+          logS(_e);
+          _ll.warn('tabview bridge command failed', _e);
+        }
+      },
+      false,
+      true
+    );
+
+    tabviewEmit('ready', {
+      tabs: ['#tab-info', '#tab-comments', '#tab-videos', '#tab-list'],
+    });
   } catch (e) {
+    logS(e);
     _ll.error('error 0xF491', e);
   }
 };
 const styles = {
-  main: `
- @keyframes relatedElementProvided {
-0%{background-position-x:3px}
-100%{background-position-x:4px}
-}
-html[tabview-loaded="icp"] #related.ytd-watch-flexy{animation:relatedElementProvided 1ms linear 0s 1 normal forwards}
-html[tabview-loaded="icp"] #right-tabs #related.ytd-watch-flexy,html[tabview-loaded="icp"] [hidden] #related.ytd-watch-flexy{animation:initial}
-html[tabview-loaded="icp"] #right-tabs ytd-expander#expander,html[tabview-loaded="icp"] [hidden] ytd-expander#expander,html[tabview-loaded="icp"] ytd-comments ytd-expander#expander{animation:initial}
-#secondary.ytd-watch-flexy{position:relative}
-#secondary-inner.style-scope.ytd-watch-flexy{height:100%}
-ytd-watch-flexy #secondary{--tyt-secondary-mt:var(--ytd-margin-6x);--tyt-secondary-mb:var(--ytd-margin-6x);--tyt-secondary-mr:var(--ytd-margin-6x)}
-ytd-watch-flexy[reduced-top-margin] #secondary{--tyt-secondary-mt:var(--ytd-margin-3x);--tyt-secondary-mb:var(--ytd-margin-3x)}
-secondary-wrapper{display:flex;flex-direction:column;flex-wrap:nowrap;box-sizing:border-box;padding:0;margin:0;border:0;height:100%;max-height:calc(100vh - var(--ytd-toolbar-height,56px));position:absolute;top:0;right:0;left:0;contain:size style;padding-top:var(--tyt-secondary-mt);padding-right:var(--tyt-secondary-mr);padding-bottom:var(--tyt-secondary-mb)}
-#right-tabs{position:relative;display:flex;padding:0;margin:0;flex-grow:1;flex-direction:column}
-[tyt-tab=""] #right-tabs{flex-grow:0}
-[tyt-tab=""] #right-tabs .tab-content{border:0}
-#right-tabs .tab-content{flex-grow:1}
-ytd-watch-flexy[hide-default-text-inline-expander] #primary.style-scope.ytd-watch-flexy ytd-text-inline-expander{display:none}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden{--comment-pre-load-sizing:90px;visibility:collapse;z-index:-1;position:fixed!important;left:2px;top:2px;width:var(--comment-pre-load-sizing)!important;height:var(--comment-pre-load-sizing)!important;display:block!important;pointer-events:none!important;overflow:hidden;contain:strict;border:0;margin:0;padding:0}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments > ytd-item-section-renderer#sections{display:block!important;overflow:hidden;height:var(--comment-pre-load-sizing);width:var(--comment-pre-load-sizing);contain:strict;border:0;margin:0;padding:0}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments > ytd-item-section-renderer#sections > #contents{display:flex!important;flex-direction:row;gap:60px;overflow:hidden;height:var(--comment-pre-load-sizing);width:var(--comment-pre-load-sizing);contain:strict;border:0;margin:0;padding:0}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents{--comment-pre-load-display:none}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents > :only-of-type,ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents > :last-child{--comment-pre-load-display:block}
-ytd-watch-flexy:not([keep-comments-scroller]) #tab-comments.tab-content-hidden ytd-comments#comments #contents > *{display:var(--comment-pre-load-display)!important}
-#right-tabs #material-tabs{position:relative;display:flex;padding:0;border:1px solid var(--ytd-searchbox-legacy-border-color);overflow:hidden}
-[tyt-tab] #right-tabs #material-tabs{border-radius:var(--tyt-rounded-a1) var(--tyt-rounded-a1) var(--tyt-rounded-a1) var(--tyt-rounded-a1)}
-[tyt-tab^="#"] #right-tabs #material-tabs{border-radius:var(--tyt-rounded-a1) var(--tyt-rounded-a1) 0 0}
-ytd-watch-flexy:not([is-two-columns_]) #right-tabs #material-tabs{outline:0}
-#right-tabs #material-tabs a.tab-btn[tyt-tab-content] > *{pointer-events:none}
-#right-tabs #material-tabs a.tab-btn[tyt-tab-content] > .font-size-right{pointer-events:initial;display:none}
-ytd-watch-flexy #right-tabs .tab-content{padding:0;box-sizing:border-box;display:block;border:1px solid var(--ytd-searchbox-legacy-border-color);border-top:0;position:relative;top:0;display:flex;flex-direction:row;overflow:hidden;border-radius:0 0 var(--tyt-rounded-a1) var(--tyt-rounded-a1)}
-ytd-watch-flexy:not([is-two-columns_]) #right-tabs .tab-content{height:100%}
-ytd-watch-flexy #right-tabs .tab-content-cld{box-sizing:border-box;position:relative;display:block;width:100%;overflow:auto;--tab-content-padding:var(--ytd-margin-4x);padding:var(--tab-content-padding);contain:layout paint}
-.tab-content-cld,#right-tabs,.tab-content{transition:none;animation:none}
-#right-tabs #emojis.ytd-commentbox{inset:auto 0 auto 0;width:auto}
-ytd-watch-flexy[is-two-columns_] #right-tabs .tab-content-cld{height:100%;width:100%;contain:size style;position:absolute}
-ytd-watch-flexy #right-tabs .tab-content-cld.tab-content-hidden{display:none;width:100%;contain:size layout paint style}
-@supports (color: var(--tabview-tab-btn-define)) {
-ytd-watch-flexy #right-tabs .tab-btn{background:var(--yt-spec-general-background-a)}
-html{--tyt-tab-btn-flex-grow:1;--tyt-tab-btn-flex-basis:0;--tyt-tab-bar-color-1-def:#ff4533;--tyt-tab-bar-color-2-def:var(--yt-sys-color-baseline--genai-4,var(--yt-sys-color-baseline--static-brand-red,var(--accent-color,var(--yt-brand-light-red))));--tyt-tab-bar-color-1:var(--main-color,var(--tyt-tab-bar-color-1-def));--tyt-tab-bar-color-2:var(--main-color,var(--tyt-tab-bar-color-2-def));--tyt-tab-text-primary:var(--yt-sys-color-baseline--text-primary,var(--yt-spec-text-primary));--tyt-tab-text-secondary:var(--yt-sys-color-baseline--text-secondary,var(--yt-spec-text-secondary))}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]{flex-grow:1;flex-shrink:1;flex-basis:0;flex-grow:var(--tyt-tab-btn-flex-grow);flex-basis:var(--tyt-tab-btn-flex-basis);position:relative;display:inline-block;text-decoration:none;text-transform:uppercase;--tyt-tab-btn-color:var(--tyt-tab-text-secondary);color:var(--tyt-tab-btn-color);text-align:center;padding:14px 8px 10px;border:0;border-bottom:4px solid transparent;font-weight:500;font-size:12px;line-height:18px;cursor:pointer;transition:border 200ms linear 100ms;background-color:var(--ytd-searchbox-legacy-button-color);text-transform:var(--yt-button-text-transform,inherit);user-select:none!important;overflow:hidden;white-space:nowrap;text-overflow:clip}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]>svg{height:18px;padding-right:0;vertical-align:bottom;opacity:.5;margin-right:0;color:var(--yt-button-color,inherit);fill:var(--iron-icon-fill-color,currentcolor);stroke:var(--iron-icon-stroke-color,none)}
-ytd-watch-flexy #right-tabs .tab-btn{--tabview-btn-txt-ml:8px}
-ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]{--tabview-btn-txt-ml:0}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]>svg+span{margin-left:var(--tabview-btn-txt-ml)}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content] svg{pointer-events:none}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active{font-weight:500;outline:0;--tyt-tab-btn-color:var(--tyt-tab-text-primary);background-color:var(--ytd-searchbox-legacy-button-focus-color);border-bottom:2px var(--tyt-tab-bar-color-1) solid;border-bottom-color:var(--tyt-tab-bar-color-2)}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].active svg{opacity:.9}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover{background-color:var(--ytd-searchbox-legacy-button-hover-color);--tyt-tab-btn-color:var(--tyt-tab-text-primary)}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]:not(.active):hover svg{opacity:.9}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content]{user-select:none!important}
-ytd-watch-flexy #right-tabs .tab-btn[tyt-tab-content].tab-btn-hidden{display:none}
-ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"],ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"]:hover{--tyt-tab-btn-color:var(--yt-sys-color-baseline--text-disabled,var(--yt-spec-text-disabled))}
-ytd-watch-flexy[tyt-comment-disabled] #right-tabs .tab-btn[tyt-tab-content="#tab-comments"] span#tyt-cm-count:empty{display:none}
-ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{display:inline-block;width:4em;text-align:left;font-size:inherit;color:currentColor;transform:scaleX(0.8)}
-}
-@supports (color: var(--tyt-cm-count-define)) {
-ytd-watch-flexy{--tyt-x-loading-content-letter-spacing:2px}
-html{--tabview-text-loading:Loading;--tabview-text-fetching:Fetching;--tabview-panel-loading:var(--tabview-text-loading)}
-ytd-watch-flexy #right-tabs .tab-btn span#tyt-cm-count:empty::after{content:var(--tabview-text-loading);letter-spacing:var(--tyt-x-loading-content-letter-spacing)}
-}
-@supports (color: var(--tabview-font-size-btn-define)) {
-.font-size-right{display:inline-flex;flex-direction:column;position:absolute;right:0;top:0;bottom:0;width:16px;padding:4px 0;justify-content:space-evenly;align-content:space-evenly;pointer-events:none}
-html body ytd-watch-flexy.style-scope .font-size-btn{user-select:none!important}
-.font-size-btn{--tyt-font-size-btn-display:none;display:var(--tyt-font-size-btn-display,none);width:12px;height:12px;color:var(--tyt-tab-text-secondary);background-color:var(--yt-spec-badge-chip-background);box-sizing:border-box;cursor:pointer;transform-origin:left top;margin:0;padding:0;position:relative;font-family:'Menlo','Lucida Console','Monaco','Consolas',monospace;line-height:100%;font-weight:900;transition:background-color 90ms linear,color 90ms linear;pointer-events:all}
-.font-size-btn:hover{background-color:var(--tyt-tab-text-primary);color:var(--yt-spec-general-background-a)}
-@supports (zoom: 0.5) {
-.tab-btn .font-size-btn{--tyt-font-size-btn-display:none}
-.tab-btn.active:hover .font-size-btn{--tyt-font-size-btn-display:inline-block}
-}
-}
-body ytd-watch-flexy:not([is-two-columns_]) #columns.ytd-watch-flexy{flex-direction:column}
-body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy{display:block;width:100%;box-sizing:border-box}
-body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy secondary-wrapper{padding-left:var(--ytd-margin-6x);contain:content;height:initial}
-body ytd-watch-flexy:not([is-two-columns_]) #secondary.ytd-watch-flexy secondary-wrapper #right-tabs{overflow:auto}
-[tyt-chat="+"]{--tyt-chat-grow:1}
-[tyt-chat="+"] secondary-wrapper > [tyt-chat-container]{flex-grow:var(--tyt-chat-grow);flex-shrink:0;display:flex;flex-direction:column}
-[tyt-chat="+"] secondary-wrapper > [tyt-chat-container] > #chat{flex-grow:var(--tyt-chat-grow)}
-ytd-watch-flexy[is-two-columns_]:not([theater]) #columns.style-scope.ytd-watch-flexy{min-height:calc(100vh - var(--ytd-toolbar-height,56px))}
-ytd-watch-flexy[is-two-columns_]:not([full-bleed-player]) ytd-live-chat-frame#chat{min-height:initial!important;height:initial!important}
-ytd-watch-flexy[tyt-tab^="#"]:not([is-two-columns_]):not([tyt-chat="+"]) #right-tabs{min-height:var(--ytd-watch-flexy-chat-max-height)}
-body ytd-watch-flexy:not([is-two-columns_]) #chat.ytd-watch-flexy{margin-top:0}
-body ytd-watch-flexy:not([is-two-columns_]) ytd-watch-metadata.ytd-watch-flexy{margin-bottom:0}
-ytd-watch-metadata.ytd-watch-flexy ytd-metadata-row-container-renderer{display:none}
-#tab-info [show-expand-button] #expand-sizer.ytd-text-inline-expander{visibility:initial}
-#tab-info #collapse.button.ytd-text-inline-expander{display:none}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer > #left-arrow-container.ytd-video-description-infocards-section-renderer > #left-arrow{border:6px solid transparent;opacity:.65}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer > #right-arrow-container.ytd-video-description-infocards-section-renderer >#right-arrow{border:6px solid transparent;opacity:.65}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer > #left-arrow-container.ytd-video-description-infocards-section-renderer > #left-arrow:hover{opacity:1}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer > #right-arrow-container.ytd-video-description-infocards-section-renderer >#right-arrow:hover{opacity:1}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer > div#left-arrow-container::before{content:'';background:transparent;width:40px;display:block;height:40px;position:absolute;left:-20px;top:0;z-index:-1}
-#tab-info #social-links.style-scope.ytd-video-description-infocards-section-renderer > div#right-arrow-container::before{content:'';background:transparent;width:40px;display:block;height:40px;position:absolute;right:-20px;top:0;z-index:-1}
-body ytd-watch-flexy[is-two-columns_][tyt-egm-panel_] #columns.style-scope.ytd-watch-flexy #panels.style-scope.ytd-watch-flexy{flex-grow:1;flex-shrink:0;display:flex;flex-direction:column}
-body ytd-watch-flexy[is-two-columns_][tyt-egm-panel_] #columns.style-scope.ytd-watch-flexy #panels.style-scope.ytd-watch-flexy ytd-engagement-panel-section-list-renderer[target-id][visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"]{height:0;max-height:initial;min-height:initial;flex-grow:1;flex-shrink:0;display:flex;flex-direction:column}
-secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] ytd-transcript-renderer:not(:empty),secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] #body.ytd-transcript-renderer:not(:empty),secondary-wrapper [visibility="ENGAGEMENT_PANEL_VISIBILITY_EXPANDED"] #content.ytd-transcript-renderer:not(:empty){flex-grow:1;height:initial;max-height:initial;min-height:initial}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer{position:relative}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer > [panel-target-id]:only-child{contain:style size}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-list-renderer.ytd-transcript-search-panel-renderer{flex-grow:1;contain:strict}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-renderer.style-scope.ytd-transcript-segment-list-renderer{contain:layout paint style}
-secondary-wrapper #content.ytd-engagement-panel-section-list-renderer ytd-transcript-segment-renderer.style-scope.ytd-transcript-segment-list-renderer > .segment{contain:layout paint style}
-body ytd-watch-flexy[theater] #secondary.ytd-watch-flexy{margin-top:var(--ytd-margin-3x);padding-top:0}
-body ytd-watch-flexy[theater] secondary-wrapper{margin-top:0;padding-top:0}
-body ytd-watch-flexy[theater] #chat.ytd-watch-flexy{margin-bottom:var(--ytd-margin-2x)}
-#tab-comments ytd-comments#comments [field-of-cm-count]{margin-top:0}
-#tab-info > ytd-expandable-video-description-body-renderer{margin-bottom:var(--ytd-margin-3x)}
-#tab-info [class]:last-child{margin-bottom:0;padding-bottom:0}
-#tab-info ytd-rich-metadata-row-renderer ytd-rich-metadata-renderer{max-width:initial}
-ytd-watch-flexy[is-two-columns_] secondary-wrapper #chat.ytd-watch-flexy{margin-bottom:var(--ytd-margin-3x)}
-ytd-watch-flexy[tyt-tab] tp-yt-paper-tooltip{white-space:nowrap;contain:content}
-ytd-watch-info-text tp-yt-paper-tooltip.style-scope.ytd-watch-info-text{margin-bottom:-300px;margin-top:-96px}
-[hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata{font-size:1.2rem;line-height:1.8rem}
-[hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata yt-animated-rolling-number{font-size:inherit}
-[hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata #info-container.style-scope.ytd-watch-info-text{align-items:center}
-ytd-watch-flexy[hide-default-text-inline-expander]{--tyt-bottom-watch-metadata-margin:6px}
-[hide-default-text-inline-expander] #bottom-row #description.ytd-watch-metadata > #description-inner.ytd-watch-metadata{margin:6px 12px}
-[hide-default-text-inline-expander] ytd-watch-metadata[title-headline-xs] h1.ytd-watch-metadata{font-size:1.8rem}
-ytd-watch-flexy[is-two-columns_][hide-default-text-inline-expander] #below.style-scope.ytd-watch-flexy ytd-merch-shelf-renderer{padding:0;border:0;margin:0}
-ytd-watch-flexy[is-two-columns_][hide-default-text-inline-expander] #below.style-scope.ytd-watch-flexy ytd-watch-metadata.ytd-watch-flexy{margin-bottom:6px}
-#tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--horizontal .yt-video-attribute-view-model__link-container .yt-video-attribute-view-model__hero-section{flex-shrink:0}
-#tab-info yt-video-attribute-view-model .yt-video-attribute-view-model__overflow-menu{background:var(--yt-emoji-picker-category-background-color);border-radius:99px}
-#tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--image-square.yt-video-attribute-view-model--image-large .yt-video-attribute-view-model__hero-section{max-height:128px}
-#tab-info yt-video-attribute-view-model .yt-video-attribute-view-model--image-large .yt-video-attribute-view-model__hero-section{max-width:128px}
-#tab-info ytd-reel-shelf-renderer #items.yt-horizontal-list-renderer ytd-reel-item-renderer.yt-horizontal-list-renderer{max-width:142px}
-ytd-watch-info-text#ytd-watch-info-text.style-scope.ytd-watch-metadata #view-count.style-scope.ytd-watch-info-text{align-items:center}
-ytd-watch-info-text#ytd-watch-info-text.style-scope.ytd-watch-metadata #date-text.style-scope.ytd-watch-info-text{align-items:center}
-ytd-watch-info-text:not([detailed]) #info.ytd-watch-info-text a.yt-simple-endpoint.yt-formatted-string{pointer-events:none}
-body ytd-app > ytd-popup-container > tp-yt-iron-dropdown > #contentWrapper > [slot="dropdown-content"]{backdrop-filter:none}
-#tab-info [tyt-clone-refresh-count]{overflow:visible!important}
-#tab-info #items.ytd-horizontal-card-list-renderer yt-video-attribute-view-model.ytd-horizontal-card-list-renderer{contain:layout}
-#tab-info #thumbnail-container.ytd-structured-description-channel-lockup-renderer{flex-shrink:0}
-#tab-info ytd-media-lockup-renderer[is-compact] #thumbnail-container.ytd-media-lockup-renderer{flex-shrink:0}
-secondary-wrapper ytd-donation-unavailable-renderer{--ytd-margin-6x:var(--ytd-margin-2x);--ytd-margin-5x:var(--ytd-margin-2x);--ytd-margin-4x:var(--ytd-margin-2x);--ytd-margin-3x:var(--ytd-margin-2x)}
-[tyt-no-less-btn] #less{display:none}
-.tyt-metadata-hover-resized #purchase-button,.tyt-metadata-hover-resized #sponsor-button,.tyt-metadata-hover-resized #analytics-button,.tyt-metadata-hover-resized #subscribe-button{display:none!important}
-.tyt-metadata-hover #upload-info{max-width:max-content;min-width:max-content;flex-basis:100vw;flex-shrink:0}
-#tab-info ytd-structured-description-playlist-lockup-renderer[collections] #playlist-thumbnail.style-scope.ytd-structured-description-playlist-lockup-renderer{max-width:100%}
-#tab-info ytd-structured-description-playlist-lockup-renderer[collections] #lockup-container.ytd-structured-description-playlist-lockup-renderer{padding:1px}
-#tab-info ytd-structured-description-playlist-lockup-renderer[collections] #thumbnail.ytd-structured-description-playlist-lockup-renderer{outline:1px solid rgba(127,127,127,0.5)}
-ytd-live-chat-frame#chat[collapsed] ytd-message-renderer ~ #show-hide-button.ytd-live-chat-frame>ytd-toggle-button-renderer.ytd-live-chat-frame{padding:0}
-.tyt-info-invisible{display:none}
-[tyt-playlist-expanded] secondary-wrapper > ytd-playlist-panel-renderer#playlist{overflow:auto;flex-shrink:1;flex-grow:1;max-height:unset!important}
-[tyt-playlist-expanded] secondary-wrapper > ytd-playlist-panel-renderer#playlist > #container{max-height:unset!important}
-secondary-wrapper ytd-playlist-panel-renderer{--ytd-margin-6x:var(--ytd-margin-3x)}
-ytd-watch-flexy[theater] ytd-playlist-panel-renderer[collapsible][collapsed] .header.ytd-playlist-panel-renderer{padding:6px 8px}
-ytd-watch-flexy[theater] #playlist.ytd-watch-flexy{margin-bottom:var(--ytd-margin-2x)}
-ytd-watch-flexy[theater] #right-tabs .tab-btn[tyt-tab-content]{padding:8px 4px 6px;border-bottom:0 solid transparent}
-ytd-watch-flexy{--tyt-bottom-watch-metadata-margin:12px}
-ytd-watch-flexy{--tyt-rounded-a1:${VAL_ROUNDED_A1}px}
-ytd-watch-flexy[rounded-info-panel],ytd-watch-flexy[rounded-player-large]{--tyt-rounded-a1:${VAL_ROUNDED_A1}px}
-#bottom-row.style-scope.ytd-watch-metadata .item.ytd-watch-metadata{margin-right:var(--tyt-bottom-watch-metadata-margin,12px);margin-top:var(--tyt-bottom-watch-metadata-margin,12px)}
-#cinematics{contain:layout style size}
-body[data-ytlstm-theater-mode] #secondary-inner[class] > secondary-wrapper[class]:not(#chat-container):not(#chat){display:flex!important}
-body[data-ytlstm-theater-mode] secondary-wrapper{all:unset;height:100vh}
-body[data-ytlstm-theater-mode] #right-tabs{display:none}
-body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] [tyt-chat="+"]{--tyt-chat-grow:unset}
-body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] #columns.style-scope.ytd-watch-flexy,body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] #secondary.style-scope.ytd-watch-flexy,body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] #secondary-inner.style-scope.ytd-watch-flexy,body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] secondary-wrapper,body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] #chat-container.style-scope,body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] [tyt-chat-container].style-scope{pointer-events:none}
-body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] #chat[class]{pointer-events:auto}
-@supports (color: var(--tyt-fix-20251124)) {
-#below ytd-watch-metadata .ytTextCarouselItemViewModelImageType{height:16px;width:16px}
-#below ytd-watch-metadata yt-text-carousel-item-view-model{column-gap:6px}
-#below ytd-watch-metadata ytd-watch-info-text#ytd-watch-info-text{font-size:inherit;line-height:inherit}
-}
-  `,
+  get main() {
+    return window.YouTubePlusDesignSystem?.getStyle?.('yp-tabview-core') || '';
+  },
 };
 (async () => {
-  // Boot/runtime hardening: window-level idempotency guard for the outer
-  // (userscript-context) IIFE. Without this guard, a duplicate load
-  // (HMR, tampermonkey re-injection, double @require, etc.) would call
-  // GM_addElement a second time and re-evaluate executionScript, which
-  // would in turn re-register every document-level listener and
-  // MutationObserver on the page.
+  const logS = (
+    /** @type {unknown} */ _err2,
+    /** @type {string|undefined} */ _label2 = undefined
+  ) => window.YouTubeUtils?.logSuppressed?.(_err2, _label2 || 'Main');
   if (typeof window !== 'undefined' && window.__ytpMainBootDone__) {
     return;
   }
   if (typeof window !== 'undefined') {
     window.__ytpMainBootDone__ = true;
+    // --- Sandbox-side tabview API -----------------------------------------
+    // Feature modules must go through this surface instead of poking tabview
+    // DOM internals. Reads are answered straight from the DOM (attributes are
+    // shared between realms); writes are forwarded to the page context over the
+    // command bridge, which applies them under the core's lock protocol.
+    /** @type {Map<string, Set<(...args: unknown[]) => void>>} */
+    const tabviewSubscribers = new Map();
+    let tabviewBridgeAttached = false;
+
+    const sendTabviewCmd = (/** @type {string} */ cmd, /** @type {unknown} */ args = undefined) => {
+      try {
+        document.dispatchEvent(
+          new CustomEvent(`yp-tabview-cmd::${communicationKey}`, {
+            detail: { cmd, args },
+          })
+        );
+        return true;
+      } catch (_e) {
+        logS(_e);
+        return false;
+      }
+    };
+
+    const attachTabviewBridge = () => {
+      if (tabviewBridgeAttached) return;
+      tabviewBridgeAttached = true;
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        document,
+        `yp-tabview-evt::${communicationKey}`,
+        (/** @type {Event} */ ev) => {
+          const detail = /** @type {CustomEvent<{ evt?: string; detail?: unknown }>} */ (ev).detail;
+          const evt = detail?.evt;
+          const set = evt ? tabviewSubscribers.get(evt) : null;
+          if (!set) return;
+          for (const cb of set) {
+            try {
+              cb(detail.detail);
+            } catch (_e) {
+              logS(_e);
+            }
+          }
+        },
+        undefined,
+        true
+      );
+    };
+
+    const onTabviewEvent = (
+      /** @type {string} */ evt,
+      /** @type {(detail: unknown) => void} */ cb
+    ) => {
+      if (typeof cb !== 'function') return () => {};
+      attachTabviewBridge();
+      if (!tabviewSubscribers.has(evt)) tabviewSubscribers.set(evt, new Set());
+      tabviewSubscribers.get(evt)?.add(cb);
+      return () => {
+        tabviewSubscribers.get(evt)?.delete(cb);
+      };
+    };
+
+    window.YouTubePlusMain = {
+      communicationKey: () => communicationKey,
+      isEnabled: () => window.YouTubeUtils?.loadFeatureEnabled?.('enableTabview') !== false,
+
+      /** True once the tabview overlay has been mounted for this page. */
+      isReady: () =>
+        typeof document !== 'undefined' &&
+        !!document.documentElement?.hasAttribute?.('tabview-loaded'),
+
+      /** Currently selected tab, e.g. '#tab-comments', or null. */
+      getActiveTab: () =>
+        document.querySelector('ytd-watch-flexy')?.getAttribute('tyt-tab') || null,
+
+      /** The tab ids this build ships. */
+      getTabs: () => ['#tab-info', '#tab-comments', '#tab-videos', '#tab-list'],
+
+      /** Select a tab. @param {string} tab e.g. '#tab-comments' */
+      switchToTab: (/** @type {string} */ tab) => sendTabviewCmd('switchTab', { tab }),
+
+      /**
+       * Render the comments tab once so YouTube loads it, then restore the
+       * prior tab. Runs under the core's keep-comments-scroller lock; callers
+       * must not set that attribute themselves.
+       */
+      preloadComments: () => sendTabviewCmd('preloadComments'),
+
+      /** Release the keep-comments-scroller lock taken by preloadComments(). */
+      releaseCommentsScroller: () => sendTabviewCmd('releaseCommentsScroller'),
+
+      /** Expand the live chat frame (page-context Polymer path). */
+      expandLiveChat: () => sendTabviewCmd('expandChat'),
+
+      /** Collapse the live chat frame. */
+      collapseLiveChat: () => sendTabviewCmd('collapseChat'),
+
+      /**
+       * Subscribe to tab switches. Replaces observing class mutations on
+       * .tab-content-cld and intercepting .tab-btn clicks.
+       * @param {(detail: { tab: string | null }) => void} cb
+       * @returns {() => void} unsubscribe
+       */
+      onTabChange: cb => onTabviewEvent('tabchange', /** @type {(detail: unknown) => void} */ (cb)),
+
+      /**
+       * Fires once the page-context core has installed its command bridge.
+       * @param {(detail: { tabs: string[] }) => void} cb
+       * @returns {() => void} unsubscribe
+       */
+      onReady: cb => onTabviewEvent('ready', /** @type {(detail: unknown) => void} */ (cb)),
+    };
   }
 
-  // Style boot: design-system.js is loaded before main.js in build.order.json
-  // (see build.order.json â€” design-system at position 6, main.js at 17), so
-  // the canonical StyleManager namespace is guaranteed to be attached to
-  // window.YouTubePlusDesignSystem by the time this IIFE runs. We resolve
-  // the reference once, up front, so every style registration below goes
-  // through a single canonical lookup rather than re-reading the global.
-  //
-  // The defensive guard is kept so an edge-case absence (a build-order
-  // misconfiguration, a tampermonkey sandbox quirk) becomes a no-op rather
-  // than a throw at boot. The previous code did the same guard inline at
-  // the call site; hoisting it here is purely for readability.
-  const _ds = (typeof window !== 'undefined' && window.YouTubePlusDesignSystem) || {};
+  const _ds =
+    typeof window !== 'undefined' && window.YouTubePlusDesignSystem
+      ? window.YouTubePlusDesignSystem
+      : null;
 
   const communicationKey = `ck-${Date.now()}-${Math.floor(Math.random() * 314159265359 + 314159265359).toString(36)}`;
 
-  /** @type {globalThis.PromiseConstructor} */
-  const Promise = (async () => {})().constructor; // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
+  /** @type {PromiseConstructor} */
+  const Promise = /** @type {PromiseConstructor} */ ((async () => {})().constructor); // YouTube hacks Promise in WaterFox Classic and "Promise.resolve(0)" nevers resolve.
 
   if (!document.documentElement) {
     await new Promise(
       /** @param {(value?: unknown) => void} resolve */
       resolve => {
-        /**
-         * Polling callback for the boot guard. Resolves the boot
-         * promise as soon as `document.documentElement` is available
-         * so the rest of the boot body can run.
-         * @returns {void}
-         */
         const check = () => {
           if (document.documentElement) {
             resolve();
@@ -6115,52 +5843,145 @@ body[data-ytlstm-theater-mode] [data-ytlstm-chat-over-video] #chat[class]{pointe
     );
   }
   const sourceURL = 'debug://tabview-youtube/tabview.execution.js';
-  /** @type {string} */
-  const textContent = `(${executionScript})("${communicationKey}");${'\n\n'}//# sourceURL=${sourceURL}${'\n'}`;
-
-  // Style boot runs BEFORE the script injection so the canonical
-  // StyleManager host already holds the right-rail CSS by the time the
-  // injected page-context executionScript performs its first layout
-  // pass. The StyleManager is idempotent: repeat add() with the same
-  // id + css is a true no-op (last write wins on content change,
-  // host textContent is not rewritten on a no-op). This means the
-  // outer idempotency guard above already protects this path from
-  // duplicate registration; the narrower defensive guard below is
-  // only for the (theoretical) case where the canonical service
-  // is missing.
   const tabviewEnabledOnLoad = window.YouTubeUtils?.loadFeatureEnabled?.('enableTabview') !== false;
+  const buildCoreScriptText = (/** @type {boolean} */ enabled) =>
+    `(${executionScript})(${JSON.stringify(communicationKey)}, ${JSON.stringify({
+      enabled,
+    })});${'\n\n'}//# sourceURL=${sourceURL}${'\n'}`;
 
-  if (tabviewEnabledOnLoad) {
-    if (_ds.StyleManager && typeof _ds.StyleManager.add === 'function') {
-      _ds.StyleManager.add('yt-plus-tabview-core', styles.main);
+  /** @type {boolean} */
+  let _tabviewCoreInjected = false;
+
+  /**
+   * Inject the page-realm core exactly once per page. Late injection is
+   * safe: the core resolves custom elements through whenDefined, so it
+   * picks up elements YouTube already upgraded.
+   * @param {boolean} enabled activation flag passed to the core
+   * @returns {void}
+   */
+  const injectTabviewCore = (/** @type {boolean} */ enabled) => {
+    if (_tabviewCoreInjected) return;
+    _tabviewCoreInjected = true;
+    const _scriptParent = document.head || document.documentElement;
+    const scriptText = buildCoreScriptText(enabled);
+    if (typeof GM_addElement === 'function') {
+      GM_addElement(_scriptParent, 'script', {
+        textContent: scriptText,
+      });
+    } else if (_scriptParent) {
+      const _s = document.createElement('script');
+      if (typeof window.trustedTypes === 'undefined') {
+        // No Trusted Types: a plain string is a legal script sink.
+        _s.textContent = scriptText;
+      } else {
+        const trustedScript = window.YouTubeSafeDOM?.createTrustedScript?.(scriptText) ?? null;
+        if (!trustedScript) {
+          window.YouTubePlusLogger?.debug?.(
+            'Main',
+            'Tabview core not injected: Trusted Types policy unavailable'
+          );
+          return;
+        }
+        _s.textContent = trustedScript;
+      }
+      _scriptParent.appendChild(_s);
     }
+  };
+
+  /**
+   * True when the tabview overlay can bind on the current page: a watch route,
+   * or the watch-page root already present in the DOM. Home, search, channel
+   * and every other page kind are skipped, so neither the core script nor its
+   * rules are paid for there.
+   * @returns {boolean}
+   */
+  const isTabviewPage = () => {
+    const path = window.location.pathname;
+    if (path === '/watch' || path.startsWith('/watch/')) return true;
+    return !!document.querySelector('ytd-watch-flexy');
+  };
+
+  const addTabviewStyles = () => {
+    if (_ds?.StyleManager && typeof _ds.StyleManager.add === 'function') {
+      _ds.StyleManager.add('yp-tabview-core', styles.main);
+    }
+  };
+
+  const removeTabviewStyles = () => {
+    if (_ds?.StyleManager && typeof _ds.StyleManager.remove === 'function') {
+      _ds.StyleManager.remove('yp-tabview-core');
+    }
+  };
+
+  /**
+   * Activate tabview for the current page. The core is session-once; the rules
+   * are applied idempotently. A no-op while the feature is off or the page is
+   * not a watch page.
+   * @returns {void}
+   */
+  const ensureTabview = () => {
+    if (window.YouTubeUtils?.loadFeatureEnabled?.('enableTabview') === false) return;
+    if (!isTabviewPage()) return;
+    addTabviewStyles();
+    injectTabviewCore(true);
+  };
+
+  if (tabviewEnabledOnLoad && isTabviewPage()) {
+    // The page-realm core is injected only when tabview is on and the page can
+    // host the overlay, so neither a disabled feature nor a non-watch page
+    // pays for the core or its rules.
+    addTabviewStyles();
+    injectTabviewCore(true);
   }
 
-  // GM_addElement injects the executionScript (tabview runtime) into page
-  // context so it can patch ytd-* custom-element prototypes that are
-  // inaccessible from the userscript (GM_addElement) sandbox.
-  // Security boundary: the executionScript does NOT use unsafeWindow or
-  // GM_* APIs directly — it communicates via window.YouTubeSafeDOM (_cm,
-  // _mc) which are set up before injection. Any modification to
-  // textContent must preserve this boundary.
-  GM_addElement(document.head || document.documentElement, 'script', {
-    textContent: textContent,
-  });
+  // A watch page is reachable through YouTube's SPA router long after boot.
+  // Activate the overlay when a navigation lands on one; leaving a watch page
+  // drops the rules (the session-once core stays injected, and the next watch
+  // navigation re-activates it).
+  const _onTabviewNavigate = () => {
+    if (isTabviewPage()) ensureTabview();
+    else removeTabviewStyles();
+  };
 
-  window.addEventListener('youtube-plus-settings-updated', (/** @type {any} */ e) => {
+  const _onSettingsUpdated = (/** @type {Event} */ e) => {
     try {
-      const tabviewEnabled = e?.detail?.enableTabview !== false;
+      const ce = /** @type {CustomEvent} */ (e);
+      const tabviewEnabled = ce?.detail?.enableTabview !== false;
       if (tabviewEnabled) {
-        if (_ds.StyleManager && typeof _ds.StyleManager.add === 'function') {
-          _ds.StyleManager.add('yt-plus-tabview-core', styles.main);
-        }
+        // Enabling mid-session: if the core never ran (Tabview was off at
+        // boot), inject it now with activation on; the core resolves
+        // already-upgraded custom elements via whenDefined. When the core
+        // already ran at boot it stays session-once and only styles are
+        // (re)applied. A non-watch page defers activation to its next watch
+        // navigation.
+        ensureTabview();
       } else {
-        if (_ds.StyleManager && typeof _ds.StyleManager.remove === 'function') {
-          _ds.StyleManager.remove('yt-plus-tabview-core');
-        }
+        removeTabviewStyles();
       }
     } catch (_e) {
-      // Ignore
+      logS(_e);
+      // StyleManager can be unavailable or a host style may reject removal.
     }
-  });
+  };
+  if (window.YouTubePlusCleanupManager?.registerListener) {
+    window.YouTubePlusCleanupManager.registerListener(
+      window,
+      'youtube-plus-settings-updated',
+      _onSettingsUpdated,
+      undefined,
+      true
+    );
+    window.YouTubePlusCleanupManager.registerListener(
+      document,
+      'yt-navigate-finish',
+      _onTabviewNavigate,
+      undefined,
+      true
+    );
+  } else {
+    window.addEventListener('youtube-plus-settings-updated', _onSettingsUpdated); // lint:custom:ignore
+    // Session lifetime: the SPA router keeps firing after boot, so this must
+    // outlive the per-navigation cleanup sweep.
+    document.addEventListener('yt-navigate-finish', _onTabviewNavigate); // lint:custom:ignore
+  }
 })();

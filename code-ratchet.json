@@ -1,0 +1,326 @@
+{
+  "totals": {
+    "complexity": 0,
+    "catches": 414,
+    "anyTypes": 9,
+    "clones": 0,
+    "slop": 0
+  },
+  "files": {
+    "src/adblocker.js": {
+      "complexity": 0,
+      "catches": 3,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/animations.js": {
+      "complexity": 0,
+      "catches": 0,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/basic.js": {
+      "complexity": 0,
+      "catches": 4,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/cleanup-manager.js": {
+      "complexity": 0,
+      "catches": 21,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/comment.js": {
+      "complexity": 0,
+      "catches": 3,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/design-system.js": {
+      "complexity": 0,
+      "catches": 16,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/dom-cache.js": {
+      "complexity": 0,
+      "catches": 3,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/download.js": {
+      "complexity": 0,
+      "catches": 75,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/endscreen.js": {
+      "complexity": 0,
+      "catches": 1,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/enhanced.js": {
+      "complexity": 0,
+      "catches": 15,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/error-boundary.js": {
+      "complexity": 0,
+      "catches": 5,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/event-delegation.js": {
+      "complexity": 0,
+      "catches": 4,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/feature-registry.js": {
+      "complexity": 0,
+      "catches": 13,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/host-policy.js": {
+      "complexity": 0,
+      "catches": 0,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/i18n.js": {
+      "complexity": 0,
+      "catches": 21,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/logger.js": {
+      "complexity": 0,
+      "catches": 3,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/main.js": {
+      "complexity": 0,
+      "catches": 18,
+      "anyTypes": 9,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/modal-download-handlers.js": {
+      "complexity": 0,
+      "catches": 4,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/modal-handlers.js": {
+      "complexity": 0,
+      "catches": 4,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/music.js": {
+      "complexity": 0,
+      "catches": 1,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/mutation-coordinator.js": {
+      "complexity": 0,
+      "catches": 8,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/performance-mode.js": {
+      "complexity": 0,
+      "catches": 2,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/performance.js": {
+      "complexity": 0,
+      "catches": 5,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/pip.js": {
+      "complexity": 0,
+      "catches": 22,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/playall.js": {
+      "complexity": 0,
+      "catches": 8,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/playlist-search.js": {
+      "complexity": 0,
+      "catches": 2,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/report.js": {
+      "complexity": 0,
+      "catches": 6,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/safe-dom.js": {
+      "complexity": 0,
+      "catches": 3,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/screenshot.js": {
+      "complexity": 0,
+      "catches": 1,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/settings-helpers.js": {
+      "complexity": 0,
+      "catches": 4,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/settings-modal.js": {
+      "complexity": 0,
+      "catches": 9,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/settings-store.js": {
+      "complexity": 0,
+      "catches": 17,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/shorts.js": {
+      "complexity": 0,
+      "catches": 2,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/speedcontrol.js": {
+      "complexity": 0,
+      "catches": 3,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/stats.js": {
+      "complexity": 0,
+      "catches": 21,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/thumbnail.js": {
+      "complexity": 0,
+      "catches": 6,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/time.js": {
+      "complexity": 0,
+      "catches": 17,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/timecode.js": {
+      "complexity": 0,
+      "catches": 8,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/update.js": {
+      "complexity": 0,
+      "catches": 10,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/utils.js": {
+      "complexity": 0,
+      "catches": 15,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/voting.js": {
+      "complexity": 0,
+      "catches": 23,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "src/zoom.js": {
+      "complexity": 0,
+      "catches": 8,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "types/index.d.ts": {
+      "complexity": 0,
+      "catches": 0,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "types/settings-modal-context.d.ts": {
+      "complexity": 0,
+      "catches": 0,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    },
+    "types/youtube.d.ts": {
+      "complexity": 0,
+      "catches": 0,
+      "anyTypes": 0,
+      "clones": 0,
+      "slop": 0
+    }
+  }
+}

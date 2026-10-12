@@ -1,85 +1,32 @@
 # Dependencies
 node_modules/
-yarn.lock
-pnpm-lock.yaml
 
-# Build outputs
-dist/
-youtube.user.js
-*.user.js
-youtube.user.unoptimized.js
-youtube.user.js.map
+# Build artifacts
+youtube.user*.js
+youtube.user*.js.map
 bundle-size-report.json
-innerHTML-usage.txt
+release-manifest.json
+.build-cache.json
 
-# IDE and editors
-.vscode/
-.idea/
-*.sublime-*
-*.swp
-*.swo
-*~
-.project
-.classpath
-.settings/
-
-# Logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-lerna-debug.log*
-
-# Testing
+# Test and analysis artifacts
 coverage/
-.nyc_output/
-*.lcov
-.jest-cache/
 test-results/
 e2e/
 e2e-report/
-
-# Environment
-.env
-.env.local
-.env.*.local
-
-# Temporary files
-*.tmp
-*.temp
-.cache/
-.build-cache.json
-docs/
-
-# OS files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
-
-# Optional documentation build artifacts
-GREASYFORK_PUBLISH.md
-GREASYFORK_PUBLISH en.md
-youtube.user.js
-
-# Linting/analysis outputs
-*.sarif
-audit*.json
-audit*.txt
-*-out.txt
-*_out.txt
-final_summary.txt
-tests_output.txt
 innerHTML-usage.txt
-AUDIT_REPORT.md
 biome-results.json
+*.log
 
-# Backup files
-*.bak
-*.backup
+# Local code-intelligence state
+.serena/
+graphify-out/
 
-# End-to-end testing
-# Keep source tests and config tracked
+# Agent working for test — local only, never part of the repository
+AGENTS.md
+
+# Local temporary output
+dist/
+coverage-temp/
+*.tmp
+test/*-diag.txt
+docs/

@@ -3,6 +3,19 @@
  * Provides bulk delete functionality and comment management tools for YouTube
  * @module CommentManager
  */
+// Shared listener helper for both comment IIFEs (same file, same realm). It
+// resolves YouTubeUtils at call time; `utils.js` and `cleanup-manager.js` load
+// before this module, so the manager is available when it runs.
+/**
+ * @param {EventTarget} target
+ * @param {string} event
+ * @param {EventListener} handler
+ * @param {AddEventListenerOptions} [options]
+ * @returns {symbol | null}
+ */
+function registerListenerSafe(target, event, handler, options) {
+  return window.YouTubeUtils.cleanupManager.registerListener(target, event, handler, options);
+}
 (function () {
   /**
    * Translation helper - uses centralized i18n system
@@ -11,6 +24,8 @@
    * @returns {string} Translated string
    */
   const U = window.YouTubeUtils;
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'CommentTranslate');
   const { t, logger: commentLogger } = U?.helpers ?? {};
 
   /**
@@ -59,12 +74,7 @@
   };
 
   const COMMENT_HISTORY_URL = (() => {
-    let lang = 'en';
-    try {
-      lang = U.getLanguage();
-    } catch (_e) {
-      U.logSuppressed(_e, 'Comment');
-    }
+    const lang = U.getLanguage() || 'en';
     return `https://myactivity.google.com/page?hl=${encodeURIComponent(lang)}&utm_medium=web&utm_source=youtube&page=youtube_comments`;
   })();
 
@@ -74,57 +84,20 @@
   };
 
   const isMyActivityCommentsPage = () => {
-    try {
-      if (!isTrustedMyActivityHost()) return false;
-      const params = new URLSearchParams(location.search || '');
-      return params.get('page') === 'youtube_comments';
-    } catch (_e) {
-      return false;
-    }
+    if (!isTrustedMyActivityHost()) return false;
+    const params = new URLSearchParams(location.search || '');
+    return params.get('page') === 'youtube_comments';
   };
 
-  const isMyActivityHost = () => {
-    try {
-      return isTrustedMyActivityHost();
-    } catch (_e) {
-      return false;
-    }
-  };
+  const isMyActivityHost = () => isTrustedMyActivityHost();
 
   const canRunCommentManagerRuntime = isMyActivityHost();
 
-  /**
-   * @param {EventTarget} target
-   * @param {string} event
-   * @param {EventListener} handler
-   * @param {AddEventListenerOptions} [options]
-   * @returns {symbol | null}
-   */
-  const registerListenerSafe = (target, event, handler, options) => {
-    try {
-      if (U?.cleanupManager) {
-        return U.cleanupManager.registerListener(target, event, handler, options);
-      }
-    } catch (_e) {
-      U.logSuppressed(_e, 'Comment');
-    }
-    try {
-      target.addEventListener(event, handler, options);
-    } catch (_e) {
-      U.logSuppressed(_e, 'Comment');
-    }
-    return null;
-  };
-
   /** @param {string} cssText */
   const addStyleBlock = cssText => {
-    try {
-      const StyleManager = U?.StyleManager;
-      if (StyleManager && typeof StyleManager.add === 'function') {
-        StyleManager.add('comment-delete-styles', cssText);
-      }
-    } catch (e) {
-      commentLogger?.warn?.('CommentManager', 'Failed to inject comment delete styles', e);
+    const StyleManager = U?.StyleManager;
+    if (StyleManager && typeof StyleManager.add === 'function') {
+      StyleManager.add('comment-delete-styles', cssText);
     }
   };
 
@@ -132,17 +105,17 @@
   const settings = {
     load: () => {
       try {
-        const saved = localStorage.getItem(CONFIG.storageKey);
+        const saved = U.storage?.getItem(CONFIG.storageKey);
         if (saved) CONFIG.enabled = JSON.parse(saved).enabled ?? true;
       } catch (_e) {
-        U.logSuppressed(_e, 'Comment');
+        logS(_e);
       }
     },
     save: () => {
       try {
-        localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
+        U.storage?.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
       } catch (_e) {
-        U.logSuppressed(_e, 'Comment');
+        logS(_e);
       }
     },
   };
@@ -156,48 +129,8 @@
   /** @param {string} sel */
   const $$ = sel => U.$$(sel);
 
-  /**
-   * Log error with error boundary integration
-   * @param {string} context - Error context
-   * @param {Error|string|unknown} error - Error object or message
-   */
-  const logError = (context, error) => {
-    const errorObj = error instanceof Error ? error : new Error(String(error));
-    if (window.YouTubePlusErrorBoundary) {
-      window.YouTubePlusErrorBoundary.logError(errorObj, { context });
-    } else {
-      commentLogger?.error?.('CommentManager', context, error);
-    }
-  };
-
-  /**
-   * Wraps function with error boundary protection
-   * @template {Function} T
-   * @param {T} fn - Function to wrap
-   * @param {string} context - Error context for debugging
-   * @returns {T} Wrapped function
-   */
-  // Use shared withErrorBoundary from YouTubePlusErrorBoundary
-  const withErrorBoundary = (fn, context) => {
-    if (window.YouTubePlusErrorBoundary?.withErrorBoundary) {
-      return /** @type {any} */ (
-        window.YouTubePlusErrorBoundary.withErrorBoundary(
-          /** @type {(...args: unknown[]) => unknown} */ (/** @type {unknown} */ (fn)),
-          'CommentManager'
-        )
-      );
-    }
-    /** @param {...any} args */
-    const fallback = (...args) => {
-      try {
-        return fn(...args);
-      } catch (e) {
-        logError(context, e);
-        return null;
-      }
-    };
-    return /** @type {any} */ (fallback);
-  };
+  /** Shared error-boundary wrapper for this module's flows. */
+  const withErrorBoundary = U.createWithErrorBoundary('CommentManager');
 
   /**
    * Add checkboxes to comment elements for selection
@@ -220,22 +153,21 @@
       const commentElement =
         button.closest('[class*="comment"]') || button.closest('[role="article"]') || parent;
 
-      if (commentElement && commentElement instanceof Element) {
-        if (!commentElement.hasAttribute('data-comment-text')) {
-          commentElement.setAttribute(
-            'data-comment-text',
-            (commentElement.textContent || '').toLowerCase()
-          );
-        }
-      }
-
       const checkbox = document.createElement('input');
       checkbox.type = 'checkbox';
-      checkbox.className = `${CONFIG.classes.checkbox} ytp-plus-settings-checkbox`;
+      checkbox.className = `${CONFIG.classes.checkbox} yp-settings-checkbox`;
       checkbox.setAttribute('aria-label', t('selectComment'));
 
-      checkbox.addEventListener('change', updateDeleteButtonState);
-      checkbox.addEventListener('click', e => e.stopPropagation());
+      registerListenerSafe(
+        checkbox,
+        'change',
+        /** @type {EventListener} */ (updateDeleteButtonState)
+      );
+      registerListenerSafe(
+        checkbox,
+        'click',
+        /** @type {EventListener} */ (e => e.stopPropagation())
+      );
 
       // Optimized positioning
       const dateElement = commentElement?.querySelector
@@ -280,15 +212,15 @@
     title.textContent = t('commentManager');
 
     const collapseButton = document.createElement('button');
-    collapseButton.className = `${CONFIG.classes.close} ytp-plus-settings-close`;
+    collapseButton.className = `${CONFIG.classes.close} yp-settings-close`;
     collapseButton.setAttribute('type', 'button');
     collapseButton.setAttribute('aria-expanded', String(!state.panelCollapsed));
     collapseButton.setAttribute('aria-label', t('togglePanel'));
     U.renderTemplateClone(
       collapseButton,
       `
-        <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+          <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
         </svg>
       `
     );
@@ -302,10 +234,16 @@
       panel.classList.toggle('is-collapsed', collapsed);
     };
 
-    collapseButton.addEventListener('click', () => {
-      state.panelCollapsed = !state.panelCollapsed;
-      togglePanelState(state.panelCollapsed);
-    });
+    registerListenerSafe(
+      collapseButton,
+      'click',
+      /** @type {EventListener} */ (
+        () => {
+          state.panelCollapsed = !state.panelCollapsed;
+          togglePanelState(state.panelCollapsed);
+        }
+      )
+    );
 
     header.append(title, collapseButton);
 
@@ -325,7 +263,7 @@
       button.className = `${CONFIG.classes.button} ${className}`;
       if (options.id) button.id = options.id;
       if (options.disabled) button.disabled = true;
-      button.addEventListener('click', onClick);
+      registerListenerSafe(button, 'click', /** @type {EventListener} */ (onClick));
       return button;
     };
 
@@ -337,12 +275,16 @@
     );
 
     const selectAllButton = createActionButton(t('selectAll'), CONFIG.classes.buttonPrimary, () => {
-      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = true));
+      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => {
+        /** @type {HTMLInputElement} */ (cb).checked = true;
+      });
       updateDeleteButtonState();
     });
 
     const clearAllButton = createActionButton(t('clearAll'), CONFIG.classes.buttonSuccess, () => {
-      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => (cb.checked = false));
+      $$(`.${CONFIG.classes.checkbox}`).forEach(cb => {
+        /** @type {HTMLInputElement} */ (cb).checked = false;
+      });
       updateDeleteButtonState();
     });
 
@@ -366,7 +308,9 @@
     const deleteAllButton = $(`.${CONFIG.classes.deleteButton}`);
     if (!(deleteAllButton instanceof HTMLButtonElement)) return;
 
-    const hasChecked = Array.from($$(`.${CONFIG.classes.checkbox}`)).some(cb => cb.checked);
+    const hasChecked = Array.from($$(`.${CONFIG.classes.checkbox}`)).some(
+      cb => /** @type {HTMLInputElement} */ (cb).checked
+    );
     deleteAllButton.disabled = !hasChecked;
     deleteAllButton.style.opacity = hasChecked ? '1' : '0.6';
   }, 'updateDeleteButtonState');
@@ -374,10 +318,21 @@
   /**
    * Delete selected comments with confirmation
    */
-  const deleteSelectedComments = withErrorBoundary(() => {
-    const checkedBoxes = Array.from($$(`.${CONFIG.classes.checkbox}`)).filter(cb => cb.checked);
+  const deleteSelectedComments = withErrorBoundary(async () => {
+    const checkedBoxes = Array.from($$(`.${CONFIG.classes.checkbox}`)).filter(
+      cb => /** @type {HTMLInputElement} */ (cb).checked
+    );
 
-    if (!(checkedBoxes.length && confirm(`Delete ${checkedBoxes.length} comment(s)?`))) return;
+    if (!checkedBoxes.length) return;
+
+    // own focus-trapped dialog instead of the page-blocking
+    // native confirm; the message goes through the dictionary interpolation.
+    const confirmed = await U.confirmDialog({
+      message: t('deleteCommentsConfirm', { count: checkedBoxes.length }),
+      confirmLabel: t('confirm'),
+      cancelLabel: t('cancel'),
+    });
+    if (!confirmed) return;
 
     state.isProcessing = true;
     checkedBoxes.forEach((checkbox, index) => {
@@ -386,7 +341,7 @@
           checkbox.nextElementSibling ||
           checkbox.parentElement?.querySelector(CONFIG.selectors.deleteButtons) ||
           null;
-        deleteButton?.click();
+        /** @type {HTMLElement | null} */ (deleteButton)?.click();
       }, index * CONFIG.deleteDelay);
     });
 
@@ -418,42 +373,7 @@
    * Add enhanced CSS styles for comment manager UI
    */
   const addStyles = withErrorBoundary(() => {
-    const styles = `
-  .${CONFIG.classes.checkboxAnchor}{position:relative;display:inline-flex;align-items:center;gap:8px;width:auto;}
-        .${CONFIG.classes.checkboxFloating}{position:absolute;top:-4px;right:-32px;margin:0;}
-        /* Panel styled to match shorts feedback: glassmorphism, rounded corners, soft shadow */
-        .${CONFIG.classes.panel}{position:fixed;top:50%;right:24px;transform:translateY(-50%);display:flex;flex-direction:column;gap:14px;z-index:10000;padding:16px 18px;background:var(--yt-glass-bg);border:1.5px solid var(--yt-glass-border);border-radius:20px;box-shadow:var(--yt-glass-shadow);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%);min-width:220px;max-width:300px;color:var(--yt-text-primary);transition:transform .22s cubic-bezier(.4,0,.2,1),opacity .22s,box-shadow .2s}
-        html[data-ytp-theme="light"] .${CONFIG.classes.panel},html:not([dark]):not([data-ytp-theme="dark"]) .${CONFIG.classes.panel}{background:var(--yt-glass-bg);}
-        .${CONFIG.classes.header}{display:flex;align-items:center;justify-content:space-between;gap:12px;}
-        .${CONFIG.classes.panel}.is-collapsed{padding:14px 18px;}
-        .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.title}{font-weight:500;opacity:.85;}
-        .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.close}{transform:rotate(45deg);}
-        .${CONFIG.classes.panel}.is-collapsed .${CONFIG.classes.actions}{display:none!important;}
-        .${CONFIG.classes.title}{font-size:15px;font-weight:600;letter-spacing:.3px;}
-        .${CONFIG.classes.close}{background:transparent;border:none;cursor:pointer;padding:6px;border-radius:12px;display:flex;align-items:center;justify-content:center;color:var(--yt-text-primary);transition:transform .2s cubic-bezier(0.2,0,0,1),color .2s cubic-bezier(0.2,0,0,1);}
-        .${CONFIG.classes.close}:hover{transform:rotate(90deg) scale(1.05);color:var(--yt-accent);}
-        .${CONFIG.classes.close}:active{transform:rotate(90deg) scale(0.96) !important;}
-        .${CONFIG.classes.actions}{display:flex;flex-direction:column;gap:10px;}
-        .${CONFIG.classes.actions}.is-hidden{display:none!important;}
-        .${CONFIG.classes.button}{padding:12px 16px;border-radius:var(--yt-radius-md);border:1px solid var(--yt-glass-border);cursor:pointer;font-size:13px;font-weight:500;background:var(--yt-button-bg);color:var(--yt-text-primary);transition:background-color .2s cubic-bezier(0.2,0,0,1),border-color .2s cubic-bezier(0.2,0,0,1),color .2s cubic-bezier(0.2,0,0,1),transform .1s cubic-bezier(0.2,0,0,1),box-shadow .2s cubic-bezier(0.2,0,0,1);text-align:center;}
-        .${CONFIG.classes.button}:disabled{opacity:.5;cursor:not-allowed;}
-        .${CONFIG.classes.button}:not(:disabled):hover{transform:translateY(-1px);box-shadow:var(--yt-shadow);}
-        .${CONFIG.classes.button}:not(:disabled):active{transform:scale(0.96) !important;}
-        .${CONFIG.classes.buttonDanger}{background:var(--yt-danger-soft);border-color:var(--yt-danger-border);color:var(--yt-danger-text);}
-        .${CONFIG.classes.buttonPrimary}{background:var(--yt-primary-soft);border-color:var(--yt-primary-border);color:var(--yt-primary-text);}
-        .${CONFIG.classes.buttonSuccess}{background:var(--yt-success-soft);border-color:var(--yt-success);color:var(--yt-success);}
-        .${CONFIG.classes.buttonDanger}:not(:disabled):hover{background:var(--yt-danger-soft-hover);}
-        .${CONFIG.classes.buttonPrimary}:not(:disabled):hover{background:var(--yt-primary-soft-hover);}
-        .${CONFIG.classes.buttonSuccess}:not(:disabled):hover{background:var(--yt-success-soft-hover);}
-         @media(max-width:1280px){
-          .${CONFIG.classes.panel}{top:auto;bottom:24px;transform:none;right:16px;}
-        }
-        @media(max-width:768px){
-          .${CONFIG.classes.panel}{position:fixed;left:16px;right:16px;bottom:16px;top:auto;transform:none;max-width:none;}
-          .${CONFIG.classes.actions}{flex-direction:row;flex-wrap:wrap;}
-          .${CONFIG.classes.button}{flex:1;min-width:140px;}
-        }
-      `;
+    const styles = window.YouTubePlusDesignSystem?.getStyle?.('comment-delete-styles') || '';
     addStyleBlock(styles);
   }, 'addStyles');
 
@@ -461,31 +381,39 @@
    * Attach click handler to the static Comment Manager button in settings modal
    */
   const attachSettingsHandler = () => {
-    try {
-      const btn = document.getElementById('open-comment-history-page');
-      if (!btn) return;
-      if (btn.dataset.handlerAttached) return;
-      btn.dataset.handlerAttached = 'true';
-      btn.addEventListener('click', () => {
-        window.open(COMMENT_HISTORY_URL, '_blank');
-      });
-    } catch (_e) {
-      // non-critical
-    }
+    const btn = document.getElementById('open-comment-history-page');
+    if (!btn) return;
+    if (btn.dataset.handlerAttached) return;
+    btn.dataset.handlerAttached = 'true';
+    registerListenerSafe(
+      btn,
+      'click',
+      /** @type {EventListener} */ (
+        () => {
+          if (typeof U?.openSafe === 'function') {
+            U.openSafe(COMMENT_HISTORY_URL, '_blank');
+          } else {
+            window.open(COMMENT_HISTORY_URL, '_blank', 'noopener,noreferrer');
+          }
+        }
+      )
+    );
   };
 
   const initSettingsIntegration = () => {
     if (state.settingsIntegrationInitialized) return;
     state.settingsIntegrationInitialized = true;
 
-    document.addEventListener('youtube-plus-settings-modal-opened', () => {
+    registerListenerSafe(document, 'youtube-plus-settings-modal-opened', () => {
       attachSettingsHandler();
     });
 
     /** @param {Event} e */
     const handleExperimentalNavClick = e => {
       const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
+      const navItem = /** @type {HTMLElement | null} */ (
+        target?.closest?.('.yp-settings-nav-item')
+      );
       if (navItem?.dataset?.section === 'experimental') {
         attachSettingsHandler();
       }
@@ -527,7 +455,13 @@
 
     // Initial setup
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', initializeScript);
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        document,
+        'DOMContentLoaded',
+        initializeScript,
+        undefined,
+        true
+      );
     } else {
       initializeScript();
     }
@@ -595,24 +529,55 @@
       scheduleInit();
     }
   }
+
+  window.YouTubePlusComment ||= /** @type {YouTubePlusComment} */ ({});
+  // Test-only surface: internal manager steps live here, not on the facade
+  // root, so the public API stays limited to observable behavior.
+  U?.exposeTestHooks?.(window.YouTubePlusComment, {
+    isMyActivityCommentsPage,
+    isTrustedMyActivityHost,
+    isMyActivityHost,
+    settings,
+    CONFIG,
+    addCheckboxes,
+    addControlButtons,
+    deleteSelectedComments,
+    updateDeleteButtonState,
+  });
 })();
 
 // Comment Translation Button
 // Restores the "Translate to ..." button that YouTube removed from comments.
 (function () {
   const U = window.YouTubeUtils;
+  // The translate button belongs to YouTube comment threads, not to the
+  // myactivity comment-history page.
+  if (window.YouTubePlusHostPolicy?.hostClass?.() === 'myactivity') return;
   const t = U?.t || (k => k);
   const logger = U?.logger || null;
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'Comment');
 
-  const TRANSLATE_BTN_CLASS = 'ytp-comment-translate-btn';
-  const TRANSLATED_ATTR = 'data-ytp-translated';
-  const ORIGINAL_ATTR = 'data-ytp-original-text';
-  const SETTINGS_KEY = U?.SETTINGS_KEY || 'youtube_plus_settings';
+  const TRANSLATE_BTN_CLASS = 'yp-comment-translate-btn';
+  const TRANSLATED_ATTR = 'data-yp-translated';
+  const ORIGINAL_ATTR = 'data-yp-original-text';
+  const TRANSLATE_STYLE_ID = 'yp-comment-translate-styles';
+  const TRANSLATE_WATCH_ID = 'comment::translateComments';
   const _setSafeHTML = U?.setSafeHTML;
   const setTimeout_ = setTimeout;
 
+  // FeatureLifecycle contract (feature-registry.js): translateCtx exists only
+  // while the setting is on; every translate resource is released with it.
+  /** @type {YouTubePlusFeatureContext | null} */
+  let translateCtx = null;
   /** @type {string | null} */
   let translateObserver = null;
+  /** @type {(() => void) | null} */
+  let processRelease = null;
+  // Translation requests started from a button click; aborted when the
+  // feature stops so a late response cannot reach the page.
+  /** @type {Set<AbortController>} */
+  const translateAbortControllers = new Set();
 
   const $ = (/** @type {string} */ sel) => U.$(sel);
   const $$ = (/** @type {string} */ sel) => U.$$(sel);
@@ -620,7 +585,7 @@
   /** @type {Record<string, string>} */
   const LANG_MAP = {
     ng: 'en',
-    // Canonical BCP 47 codes
+    // BCP 47 language codes
     'zh-CN': 'zh-CN',
     'zh-TW': 'zh-TW',
     ko: 'ko',
@@ -673,7 +638,8 @@
     vi: 'vi',
   };
 
-  const toGoogleLang = (/** @type {any} */ code) => {
+  /** @param {unknown} code */
+  const toGoogleLang = code => {
     if (!code) return 'en';
     const lower = String(code).toLowerCase();
     if (LANG_MAP[lower]) return LANG_MAP[lower];
@@ -681,31 +647,61 @@
     return LANG_MAP[base] || base || 'en';
   };
 
-  const getUserLanguage = () => {
-    try {
-      return toGoogleLang(U?.getLanguage?.());
-    } catch (_e) {
-      return toGoogleLang(navigator.language) || 'en';
+  const getUserLanguage = () => toGoogleLang(U?.getLanguage?.());
+
+  /** Upper bound on the translated text accepted from the service. */
+  const TRANSLATE_MAX_LENGTH = 5000;
+
+  /**
+   * Extract the translated text from a Google Translate payload. Returns null
+   * when the shape is not the expected nested array of segments, a segment is
+   * not a string, or the joined text is longer than the limit.
+   * @param {unknown} data
+   * @returns {string | null}
+   */
+  const parseTranslatePayload_ = data => {
+    if (!Array.isArray(data)) return null;
+    const segments = data[0];
+    if (!Array.isArray(segments) || segments.length === 0) return null;
+    let out = '';
+    for (const segment of segments) {
+      if (!Array.isArray(segment) || typeof segment[0] !== 'string') return null;
+      out += segment[0];
     }
+    if (out.length > TRANSLATE_MAX_LENGTH) return null;
+    return out;
   };
 
-  const translateText = async (/** @type {string} */ text, /** @type {string} */ targetLang) => {
+  /**
+   * Fetch a translation. An optional external abort signal (the feature's
+   * per-request controller) is relayed onto the internal request signal.
+   */
+  const translateText = async (
+    /** @type {string} */ text,
+    /** @type {string} */ targetLang,
+    /** @type {AbortSignal | null} */ externalSignal = null
+  ) => {
     const controller = new AbortController();
+    const terminateRequest = () => controller.abort();
+    if (externalSignal) {
+      if (externalSignal.aborted) controller.abort();
+      else externalSignal.addEventListener('abort', terminateRequest, { once: true });
+    }
     const timerId = setTimeout_(() => controller.abort(), 8000);
     try {
       const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=auto&tl=${encodeURIComponent(targetLang)}&dt=t&q=${encodeURIComponent(text)}`;
       const resp = await fetch(url, { signal: controller.signal });
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const data = await resp.json();
-      if (Array.isArray(data) && Array.isArray(data[0])) {
-        return data[0].map((/** @type {any} */ s) => s?.[0] || '').join('');
-      }
+      return parseTranslatePayload_(data);
     } catch (e) {
-      if (/** @type {any} */ (e)?.name !== 'AbortError') {
+      logS(e);
+      if (/** @type {{ name?: string } | null} */ (e)?.name !== 'AbortError') {
         logger?.warn?.('CommentTranslate', 'Translation failed', e);
       }
     } finally {
       clearTimeout(timerId);
+      externalSignal?.removeEventListener?.('abort', terminateRequest);
     }
     return null;
   };
@@ -713,59 +709,18 @@
   const getTranslateLabel = () => t('translateComment');
   const getShowOriginalLabel = () => t('showOriginal');
 
-  const injectStyles = (() => {
-    let injected = false;
-    return () => {
-      if (injected) return;
-      injected = true;
-      const css = `
-        .${TRANSLATE_BTN_CLASS}{
-          display:inline-flex;align-items:center;gap:4px;
-          background:none;border:none;cursor:pointer;
-          color:var(--yt-text-secondary);
-          font-size:1.2rem;line-height:1.8rem;font-weight:400;
-          padding:4px 0;margin-top:4px;
-          font-family:'Roboto','Arial',sans-serif;
-          transition:color .2s;
-        }
-        .${TRANSLATE_BTN_CLASS}:hover{color:var(--yt-text-primary);}
-        .${TRANSLATE_BTN_CLASS}[disabled]{opacity:.5;cursor:wait;}
-        .${TRANSLATE_BTN_CLASS} svg{flex-shrink:0;}
-      `;
-      try {
-        const StyleManager = U?.StyleManager;
-        if (StyleManager && typeof StyleManager.add === 'function') {
-          StyleManager.add('ytp-comment-translate-styles', css);
-        }
-      } catch (e) {
-        logger?.warn?.('CommentTranslate', 'Failed to inject translate styles', e);
-      }
-    };
-  })();
+  const translateIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>`;
 
-  const translateIcon = `<svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M12.87 15.07l-2.54-2.51.03-.03A17.52 17.52 0 0014.07 6H17V4h-7V2H8v2H1v2h11.17C11.5 7.92 10.44 9.75 9 11.35 8.07 10.32 7.3 9.19 6.69 8h-2c.73 1.63 1.73 3.17 2.98 4.56l-5.09 5.02L4 19l5-5 3.11 3.11.76-2.04zM18.5 10h-2L12 22h2l1.12-3h4.75L21 22h2l-4.5-12zm-2.62 7l1.62-4.33L19.12 17h-3.24z"/></svg>`;
-
-  const isCommentTranslateEnabled = (settings = null) => {
-    try {
-      const currentSettings =
-        settings ||
-        /** @type {any} */ (window).youtubePlus?.settings ||
-        (() => {
-          const store = /** @type {any} */ (window).YouTubePlusSettingsStore;
-          if (store && typeof store.load === 'function') {
-            return store.load();
-          }
-          const parsed = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
-          return parsed && typeof parsed === 'object' ? parsed : {};
-        })();
-      return currentSettings?.enableCommentTranslate !== false;
-    } catch (_e) {
-      return true;
-    }
-  };
-
+  /**
+   * Drop every translate button and restore the original untranslated text
+   * on translated comments. Each button's click registration is released
+   * together with the element.
+   */
   const removeTranslateButtons = () => {
-    $$(`.${TRANSLATE_BTN_CLASS}`).forEach(btn => btn.remove());
+    $$(`.${TRANSLATE_BTN_CLASS}`).forEach(btn => {
+      window.YouTubePlusCleanupManager?.disconnectForElement?.(btn);
+      btn.remove();
+    });
     $$(`[${TRANSLATED_ATTR}][${ORIGINAL_ATTR}]`).forEach(node => {
       const original = node.getAttribute(ORIGINAL_ATTR);
       if (original) node.textContent = original;
@@ -780,7 +735,15 @@
     translateObserver = null;
   };
 
-  const addTranslateButton = (/** @type {Element} */ commentEl) => {
+  /**
+   * Insert a translate button for one comment thread. The button and its
+   * click listener belong to the running feature and go when it stops; a
+   * late response cannot touch the page after that.
+   * @param {Element} commentEl
+   */
+  const addTranslateButton = commentEl => {
+    const group = translateCtx;
+    if (!group) return;
     if (commentEl.querySelector(`.${TRANSLATE_BTN_CLASS}`)) return;
 
     const contentEl = commentEl.querySelector(
@@ -800,42 +763,51 @@
     btn.className = TRANSLATE_BTN_CLASS;
     btn.type = 'button';
     _setSafeHTML?.(btn, `${translateIcon} ${getTranslateLabel()}`);
-    btn.setAttribute('aria-label', getTranslateLabel());
+    const translateClick = /** @type {EventListener} */ (
+      async e => {
+        e.preventDefault();
+        e.stopPropagation();
 
-    btn.addEventListener('click', async e => {
-      e.preventDefault();
-      e.stopPropagation();
+        if (contentEl.hasAttribute(TRANSLATED_ATTR)) {
+          const original = contentEl.getAttribute(ORIGINAL_ATTR);
+          if (original) {
+            contentEl.textContent = original;
+            contentEl.removeAttribute(TRANSLATED_ATTR);
+            _setSafeHTML?.(btn, `${translateIcon} ${getTranslateLabel()}`);
+            btn.setAttribute('aria-label', getTranslateLabel());
+          }
+          return;
+        }
 
-      if (contentEl.hasAttribute(TRANSLATED_ATTR)) {
-        const original = contentEl.getAttribute(ORIGINAL_ATTR);
-        if (original) {
-          contentEl.textContent = original;
-          contentEl.removeAttribute(TRANSLATED_ATTR);
+        btn.disabled = true;
+        _setSafeHTML?.(btn, `${translateIcon} ...`);
+
+        const originalText = contentEl.textContent || '';
+        const abort = new AbortController();
+        translateAbortControllers.add(abort);
+        const translated = await translateText(originalText, userLang, abort.signal);
+        translateAbortControllers.delete(abort);
+
+        // Once the owner context is gone (stopped, or a restart replaced it),
+        // or the button left the DOM, the response must not touch the page.
+        if (!(group.active && group === translateCtx && btn.isConnected)) return;
+
+        if (translated && translated !== originalText) {
+          contentEl.setAttribute(ORIGINAL_ATTR, originalText);
+          contentEl.setAttribute(TRANSLATED_ATTR, 'true');
+          contentEl.textContent = translated;
+          _setSafeHTML?.(btn, `${translateIcon} ${getShowOriginalLabel()}`);
+          btn.setAttribute('aria-label', getShowOriginalLabel());
+        } else {
           _setSafeHTML?.(btn, `${translateIcon} ${getTranslateLabel()}`);
           btn.setAttribute('aria-label', getTranslateLabel());
         }
-        return;
+        btn.disabled = false;
       }
-
-      btn.disabled = true;
-      _setSafeHTML?.(btn, `${translateIcon} ...`);
-
-      const originalText = contentEl.textContent || '';
-      const translated = await translateText(originalText, userLang);
-
-      if (translated && translated !== originalText) {
-        contentEl.setAttribute(ORIGINAL_ATTR, originalText);
-        contentEl.setAttribute(TRANSLATED_ATTR, 'true');
-        contentEl.textContent = translated;
-        _setSafeHTML?.(btn, `${translateIcon} ${getShowOriginalLabel()}`);
-        btn.setAttribute('aria-label', getShowOriginalLabel());
-      } else {
-        _setSafeHTML?.(btn, `${translateIcon} ${getTranslateLabel()}`);
-        btn.setAttribute('aria-label', getTranslateLabel());
-      }
-
-      btn.disabled = false;
-    });
+    );
+    // Feature-owned click registration: it stays with the button through the
+    // per-navigation sweep and is released when the feature stops.
+    group.listen(btn, 'click', translateClick);
 
     const actionBar = commentEl.querySelector(
       '#action-buttons, ytd-comment-action-buttons-renderer, #toolbar'
@@ -845,9 +817,11 @@
     } else {
       contentEl.after(btn);
     }
+    group.own(btn);
   };
 
   const processComments = () => {
+    if (!translateCtx) return;
     const commentSelectors = [
       'ytd-comment-view-model',
       'ytd-comment-renderer',
@@ -860,84 +834,102 @@
     }
   };
 
-  /** @type {ReturnType<typeof setTimeout> | null} */
-  let processTimeout = null;
+  /** Debounce button processing through the feature's timer budget. */
   const scheduleProcess = () => {
-    if (processTimeout) clearTimeout(processTimeout);
-    processTimeout = setTimeout_(processComments, 300);
+    const ctx = translateCtx;
+    if (!ctx) return;
+    processRelease?.();
+    processRelease = ctx.timeout(processComments, 300);
   };
 
-  const startTranslateFeature = (settings = null) => {
-    if (!isCommentTranslateEnabled(settings)) {
-      stopTranslateObserver();
-      removeTranslateButtons();
-      return;
+  /**
+   * Detect comment nodes appearing in a mutation batch.
+   * @param {MutationRecord[]} mutations
+   * @returns {boolean}
+   */
+  const mutationHasNewComments = mutations => {
+    for (const m of mutations) {
+      for (const node of m.addedNodes) {
+        if (!(node instanceof Element)) continue;
+        if (
+          node.matches?.(
+            'ytd-comment-view-model, ytd-comment-renderer, ytd-comment-thread-renderer'
+          ) ||
+          node.querySelector?.('ytd-comment-view-model, ytd-comment-renderer, #content-text')
+        ) {
+          return true;
+        }
+      }
     }
+    return false;
+  };
 
-    injectStyles();
+  /** Re-process comments after SPA navigation; lazy comment loads flow through the watch. */
+  const handleNavigate = () => {
+    const isVideoPage = location.pathname === '/watch' || location.pathname.startsWith('/shorts/');
+    if (!isVideoPage) return;
+    scheduleProcess();
+  };
+
+  /** @param {YouTubePlusFeatureContext} ctx */
+  const startTranslate = ctx => {
+    translateCtx = ctx;
+    ctx.onDispose(() => {
+      for (const controller of translateAbortControllers) controller.abort();
+      translateAbortControllers.clear();
+    });
+    ctx.style(
+      TRANSLATE_STYLE_ID,
+      window.YouTubePlusDesignSystem?.getStyle?.(TRANSLATE_STYLE_ID) || ''
+    );
     processComments();
-
-    if (translateObserver) return;
 
     const commentsContainer = $('#comments, #tab-comments, #content');
     const target = commentsContainer || document.body;
     const coordinator = window.YouTubePlusMutationCoordinator;
     if (coordinator?.watchTarget) {
-      translateObserver = 'comment::translateComments';
+      translateObserver = TRANSLATE_WATCH_ID;
+      ctx.onDispose(() => stopTranslateObserver());
       coordinator.watchTarget(
         translateObserver,
         target,
         (/** @type {MutationRecord[]} */ mutations) => {
-          let hasNewComments = false;
-          for (const m of mutations) {
-            for (const node of m.addedNodes) {
-              if (!(node instanceof Element)) continue;
-              if (
-                node.matches?.(
-                  'ytd-comment-view-model, ytd-comment-renderer, ytd-comment-thread-renderer'
-                ) ||
-                node.querySelector?.('ytd-comment-view-model, ytd-comment-renderer, #content-text')
-              ) {
-                hasNewComments = true;
-                break;
-              }
-            }
-            if (hasNewComments) break;
-          }
-          if (hasNewComments) scheduleProcess();
+          if (mutationHasNewComments(mutations)) scheduleProcess();
         },
         { childList: true, attributes: false, subtree: true }
       );
     }
+
+    ctx.listen(window, 'yt-navigate-finish', handleNavigate, { passive: true });
   };
 
-  const scheduleInit = () => {
-    const isVideoPage = location.pathname === '/watch' || location.pathname.startsWith('/shorts/');
-    if (!isVideoPage) return;
-
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(() => startTranslateFeature(), { timeout: 3000 });
-    } else {
-      setTimeout_(startTranslateFeature, 1500);
-    }
-  };
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', scheduleInit, { once: true });
-  } else {
-    scheduleInit();
-  }
-
-  window.addEventListener('yt-navigate-finish', scheduleInit, {
-    passive: true,
-  });
-  window.addEventListener('youtube-plus-settings-updated', e => {
-    const detail = /** @type {any} */ (e)?.detail;
-    if (isCommentTranslateEnabled(detail)) {
-      startTranslateFeature(detail);
-      return;
-    }
+  const stopTranslate = () => {
     stopTranslateObserver();
     removeTranslateButtons();
+    processRelease = null;
+    translateCtx = null;
+  };
+
+  const commentTranslateFeature = window.YouTubePlusFeatureRegistry?.FeatureLifecycle?.define?.({
+    id: 'commentTranslate',
+    settingsKey: 'enableCommentTranslate',
+    // Translation buttons belong to comment sections on video pages only.
+    routes: ['watch', 'shorts'],
+    start: startTranslate,
+    stop: stopTranslate,
+  });
+
+  // Starts the feature when its setting is on, then follows the setting.
+  U.onDomReady(() => commentTranslateFeature?.sync());
+
+  // The translate IIFE may run before the manager IIFE, so its hook call
+  // carries the existing bag with it.
+  window.YouTubePlusComment ||= /** @type {YouTubePlusComment} */ ({});
+  const facade = window.YouTubePlusComment;
+  U?.exposeTestHooks?.(facade, {
+    ...facade.testHooks,
+    addTranslateButton,
+    processComments,
+    removeTranslateButtons,
   });
 })();

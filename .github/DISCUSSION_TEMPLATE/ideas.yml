@@ -1,0 +1,42 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share an idea for YouTube+ and get feedback from the community. Explain the need; implementation details are optional.
+        To report something that is already broken, use [Issues](https://github.com/diorhc/YTP/issues/new/choose).
+  - type: textarea
+    id: body
+    attributes:
+      label: Your idea
+      description: Describe the situation you want to improve and how you would like it to work.
+      placeholder: |
+        What gets in your way?
+        ...
+
+        What should YouTube+ do instead?
+        ...
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Feature area
+      options:
+        - Player controls
+        - Downloads / capture
+        - Timecodes / resume playback
+        - Tabview / layout / themes
+        - Playlists / comments
+        - Statistics
+        - Shorts
+        - YouTube Music
+        - Other / not sure
+    validations:
+      required: false
+  - type: textarea
+    id: context
+    attributes:
+      label: Examples or alternatives
+      description: Add screenshots, links, a use case or another approach if useful.
+    validations:
+      required: false

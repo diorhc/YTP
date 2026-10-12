@@ -1,10 +1,40 @@
-// Update Checker — LazyLoader registered as 'update'.
+// Update Checker: LazyLoader registered as 'update'.
 //
 // Responsibility: check for new YTP releases on GitHub, display a
 //   notification banner, and manage the dismiss/snooze state.
-// Public surface: none (self-contained IIFE, registered via LazyLoader).
+// Public surface: window.YouTubePlusUpdate.
 (function () {
   const setTimeout_ = setTimeout.bind(window);
+
+  /**
+   * @typedef {Object} UpdateConfig
+   * @property {boolean} enabled
+   * @property {number} checkInterval
+   * @property {string} updateUrl
+   * @property {string} currentVersion
+   * @property {string} storageKey
+   * @property {number} notificationDuration
+   * @property {string} autoInstallUrl
+   * @property {boolean} autoInstallOnCheck
+   * @property {boolean} showNotificationIcon
+   */
+
+  /**
+   * @typedef {Object} UpdateDetails
+   * @property {string | null} version
+   * @property {string} description
+   * @property {string} downloadUrl
+   * @property {string} [changelog]
+   */
+
+  /**
+   * @typedef {Object} UpdateState
+   * @property {number} lastCheck
+   * @property {string} lastVersion
+   * @property {boolean} updateAvailable
+   * @property {boolean} checkInProgress
+   * @property {UpdateDetails | null} updateDetails
+   */
 
   /**
    * @param {string} id
@@ -74,49 +104,65 @@
   const t = window.YouTubeUtils?.t || ((/** @type {string} */ key) => key || '');
   const updateLogger = window.YouTubeUtils?.logger || null;
   const U = window.YouTubeUtils;
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'Update');
+
   const byId = window.YouTubeUtils.byId;
 
   // Language helper delegating to global i18n when available
   const getLanguage = () => window.YouTubeUtils.getLanguage();
 
-  /** @type {any} */
+  /** @type {UpdateConfig} */
   const UPDATE_CONFIG = {
     enabled: true,
     checkInterval: 24 * 60 * 60 * 1000, // 24 hours
     updateUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.meta.js',
-    currentVersion: '2.5.2',
-    storageKey: 'youtube_plus_update_check',
+    // From the userscript metadata (GM_info), never a hardcoded literal.
+    currentVersion: U?.getScriptVersion?.() ?? 'dev',
+    storageKey: 'ytp_update_check_v1',
     notificationDuration: 8000,
     autoInstallUrl: 'https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js',
-    // If true, attempt to automatically initiate installation when an update is found
-    // NOTE: This will try to open the install URL (GM_openInTab / window.open / navigation).
-    // Keep disabled by default for safety; enable only if you want auto-install behavior.
+    // If true, automatically initiate installation when an update is found. This
+    // opens the install URL (GM_openInTab / window.open / navigation); default off.
     autoInstallOnCheck: false,
     // When false, hide the small SVG icon shown at the left of update notifications
     // Set to `true` to show the icon again.
     showNotificationIcon: false,
   };
 
+  /** The pre-standalone-key name of the update-check payload. */
+  const LEGACY_UPDATE_STORAGE_KEY = 'youtube_plus_update_check';
+
+  /**
+   * Read the stored update payload, migrating the legacy localStorage key once.
+   * @returns {string|null}
+   */
+  const readUpdateSettingsRaw_ = () => {
+    const current = window.YouTubePlusSettingsStore?.readGmKey?.(UPDATE_CONFIG.storageKey) ?? null;
+    if (current) return current;
+    const legacy = U?.storage?.getItem?.(LEGACY_UPDATE_STORAGE_KEY) ?? null;
+    if (!legacy) return null;
+    window.YouTubePlusSettingsStore?.writeGmKey?.(UPDATE_CONFIG.storageKey, legacy);
+    return legacy;
+  };
+
   const windowRef = typeof window === 'undefined' ? null : window;
   const GM_namespace = windowRef?.GM || null;
-  const GM_info_safe = windowRef?.GM_info || null;
   const GM_openInTab_safe = (() => {
     if (windowRef) {
       if (typeof windowRef.GM_openInTab === 'function') {
         return windowRef.GM_openInTab.bind(windowRef);
       }
       if (GM_namespace?.openInTab) {
-        return GM_namespace.openInTab.bind(GM_namespace);
+        return /** @type {(url: string, options?: { active?: boolean; insert?: boolean; setParent?: boolean }) => unknown} */ (
+          GM_namespace.openInTab
+        ).bind(GM_namespace);
       }
     }
     return null;
   })();
 
-  if (GM_info_safe?.script?.version) {
-    UPDATE_CONFIG.currentVersion = GM_info_safe.script.version;
-  }
-
-  /** @type {any} */
+  /** @type {UpdateState} */
   const updateState = {
     lastCheck: 0,
     lastVersion: UPDATE_CONFIG.currentVersion,
@@ -155,79 +201,23 @@
     return '';
   };
 
-  // Pluralization helper for time units (available to this module)
-  /**
-   * Get Russian plural form index
-   * @param {number} num - Number to check
-   * @returns {number} Form index (0, 1, or 2)
-   */
-  function getRussianPluralIndex(num) {
-    const mod10 = num % 10;
-    const mod100 = num % 100;
-
-    if (mod10 === 1 && mod100 !== 11) return 0;
-    if (mod10 >= 2 && mod10 <= 4 && !(mod100 >= 12 && mod100 <= 14)) return 1;
-    return 2;
-  }
-
-  /**
-   * Get plural forms for a unit in Russian
-   * @param {string} unit - Time unit
-   * @returns {string[]} Array of forms
-   */
-  function getRussianForms(unit) {
-    return (
-      {
-        day: ['день', 'дня', 'дней'],
-        hour: ['час', 'часа', 'часов'],
-        minute: ['минута', 'минуты', 'минут'],
-      }[unit] || ['дней', 'дней', 'дней']
-    );
-  }
-
-  /**
-   * Get plural forms for a unit in English
-   * @param {string} unit - Time unit
-   * @returns {string[]} Array of forms
-   */
-  function getEnglishForms(unit) {
-    return (
-      {
-        day: ['day', 'days'],
-        hour: ['hour', 'hours'],
-        minute: ['minute', 'minutes'],
-      }[unit] || ['minutes', 'minutes']
-    );
-  }
-
-  function pluralizeTime(/** @type {any} */ n, /** @type {any} */ unit) {
-    const lang = getLanguage();
+  function pluralizeTime(/** @type {number} */ n, /** @type {'day' | 'hour' | 'minute'} */ unit) {
     const num = Math.abs(Number(n)) || 0;
-
-    if (lang === 'ru') {
-      const forms = getRussianForms(unit);
-      const idx = getRussianPluralIndex(num);
-      return `${num} ${forms[idx]}`;
-    }
-
-    // English (default)
-    const enForms = getEnglishForms(unit);
-    return `${num} ${num === 1 ? enForms[0] : enForms[1]}`;
+    if (unit === 'day') return t('daysAgo', { n: num });
+    if (unit === 'hour') return t('hoursAgo', { n: num });
+    return t('minutesAgo', { n: num });
   }
 
   // Optimized utilities
-  /** @type {any} */
   const utils = {
     /**
-     * Load update settings from localStorage with validation
+     * Load update settings from storage with validation
      * @returns {void}
      */
     loadSettings: () => {
       try {
-        const saved = localStorage.getItem(UPDATE_CONFIG.storageKey);
-        if (!saved) {
-          return;
-        }
+        const saved = readUpdateSettingsRaw_();
+        if (!saved) return;
 
         const parsed = JSON.parse(saved);
 
@@ -264,12 +254,13 @@
           }
         }
       } catch (e) {
+        logS(e);
         updateLogger?.error?.('Update', 'Failed to load update settings', e);
       }
     },
 
     /**
-     * Save update settings to localStorage
+     * Save update settings to storage
      * @returns {void}
      */
     saveSettings: () => {
@@ -281,8 +272,12 @@
           updateDetails: updateState.updateDetails,
         };
 
-        localStorage.setItem(UPDATE_CONFIG.storageKey, JSON.stringify(dataToSave));
+        window.YouTubePlusSettingsStore?.writeGmKey?.(
+          UPDATE_CONFIG.storageKey,
+          JSON.stringify(dataToSave)
+        );
       } catch (e) {
+        logS(e);
         updateLogger?.error?.('Update', 'Failed to save update settings', e);
       }
     },
@@ -300,11 +295,11 @@
         return 0;
       }
 
-      const normalize = (/** @type {any} */ v) =>
+      const normalize = (/** @type {string} */ v) =>
         v
           .replace(/[^\d.]/g, '')
           .split('.')
-          .map((/** @type {any} */ n) => parseInt(n, 10) || 0);
+          .map(n => parseInt(n, 10) || 0);
       const [parts1, parts2] = [normalize(v1), normalize(v2)];
       const maxLength = Math.max(parts1.length, parts2.length);
 
@@ -319,10 +314,10 @@
 
     /**
      * Parse metadata from update script with validation
-     * @param {string} text - Metadata text
-     * @returns {any} Parsed metadata with version, description, downloadUrl
+     * @param {unknown} text - Metadata text
+     * @returns {UpdateDetails} Parsed metadata with version, description, downloadUrl
      */
-    parseMetadata: (/** @type {any} */ text) => {
+    parseMetadata: (/** @type {unknown} */ text) => {
       // Normalize null/undefined/empty responses silently; only treat genuinely
       // unexpected payloads (non-string, oversized) as errors worth logging.
       if (text === null || text === undefined || text === '') {
@@ -332,20 +327,29 @@
           downloadUrl: UPDATE_CONFIG.autoInstallUrl,
         };
       }
-      if (typeof text !== 'string') {
-        if (typeof text?.responseText === 'string') {
-          text = text.responseText;
-        } else {
-          updateLogger?.debug?.('Update', `Skipping non-string metadata payload: ${typeof text}`);
-          return {
-            version: null,
-            description: '',
-            downloadUrl: UPDATE_CONFIG.autoInstallUrl,
-          };
-        }
+      /** @type {string} */
+      let rawText = '';
+      if (typeof text === 'string') {
+        rawText = text;
+      } else if (
+        text &&
+        typeof text === 'object' &&
+        'responseText' in text &&
+        typeof (/** @type {{ responseText?: unknown }} */ (text).responseText) === 'string'
+      ) {
+        rawText = /** @type {string} */ (
+          /** @type {{ responseText: string }} */ (text).responseText
+        );
+      } else {
+        updateLogger?.debug?.('Update', `Skipping non-string metadata payload: ${typeof text}`);
+        return {
+          version: null,
+          description: '',
+          downloadUrl: UPDATE_CONFIG.autoInstallUrl,
+        };
       }
-      if (text.length > 100000) {
-        updateLogger?.debug?.('Update', `Skipping oversized metadata payload: ${text.length}`);
+      if (rawText.length > 100000) {
+        updateLogger?.debug?.('Update', `Skipping oversized metadata payload: ${rawText.length}`);
         return {
           version: null,
           description: '',
@@ -353,7 +357,7 @@
         };
       }
 
-      const normalized = String(text || '').replace(/\r/g, '');
+      const normalized = rawText.replace(/\r/g, '');
       if (!(normalized.includes('==UserScript==') || normalized.includes('@version'))) {
         updateLogger?.debug?.('Update', 'Skipping non-userscript metadata response');
         return {
@@ -389,7 +393,7 @@
       };
     },
 
-    formatTimeAgo: (/** @type {any} */ timestamp) => {
+    formatTimeAgo: (/** @type {number | null | undefined} */ timestamp) => {
       if (!timestamp) return t('never');
       const diffMs = Date.now() - timestamp;
       const diffDays = Math.floor(diffMs / 86400000);
@@ -403,32 +407,39 @@
     },
 
     showNotification: (
-      /** @type {any} */ text,
-      /** @type {any} */ type = 'info',
-      /** @type {any} */ duration = 3000
+      /** @type {string} */ text,
+      /** @type {string} */ type = 'info',
+      /** @type {number} */ duration = 3000
     ) => {
-      try {
-        YouTubeUtils.NotificationManager.show(text, { type, duration });
-      } catch (error) {
-        window.YouTubeUtils &&
-          /** @type {any} */ (YouTubeUtils).logger?.debug?.(
-            `[YouTube+] ${type.toUpperCase()}:`,
-            text,
-            error
-          );
-      }
+      YouTubeUtils.NotificationManager.show(text, { type, duration });
     },
   };
+  /**
+   * Validate update URL
+   * @param {string} url - URL to validate
+   * @throws {Error} If URL is invalid
+   */
+  const validateUpdateUrl = (/** @type {string} */ url) => {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'https:') {
+      throw new Error('Update URL must use HTTPS');
+    }
+    if (!parsedUrl.hostname.includes('greasyfork.org')) {
+      throw new Error('Update URL must be from greasyfork.org');
+    }
+  };
+
   /**
    * Validate update download URL for security
    * @param {string} downloadUrl - URL to validate
    * @returns {{valid: boolean, error: string|null}} Validation result
    */
-  const validateDownloadUrl = (/** @type {any} */ downloadUrl) => {
+  const validateDownloadUrl = (/** @type {string} */ downloadUrl) => {
     if (!downloadUrl || typeof downloadUrl !== 'string') {
       return { valid: false, error: 'Invalid download URL for installation' };
     }
 
+    // `new URL` rejects malformed input text.
     try {
       const parsedUrl = new URL(downloadUrl);
       const allowedDomains = ['update.greasyfork.org', 'greasyfork.org'];
@@ -446,68 +457,66 @@
 
       return { valid: true, error: null };
     } catch (error) {
+      logS(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
       return {
         valid: false,
-        error: `Invalid URL format: ${/** @type {any} */ (error).message}`,
+        error: `Invalid URL format: ${errorMessage}`,
       };
     }
   };
 
   /**
    * Mark update as dismissed in session storage
-   * @param {Object} details - Update details
+   * @param {UpdateDetails | null | undefined} details - Update details
    */
-  const markUpdateDismissed = (/** @type {any} */ details) => {
+  const markUpdateDismissed = (/** @type {UpdateDetails | null | undefined} */ details) => {
     if (details?.version && typeof details.version === 'string') {
       try {
         sessionStorage.setItem('update_dismissed', details.version);
       } catch (err) {
+        logS(err);
         updateLogger?.error?.('Update', 'Failed to persist dismissal state', err);
       }
     }
   };
 
   /**
-   * Try different methods to open update URL
+   * Open the update URL in a new tab only. Reports whether a tab was
+   * requested; the current tab is never navigated, so a blocked popup cannot
+   * replace the page the user is on.
    * @param {string} url - URL to open
    * @returns {boolean} Success status
    */
-  const tryOpenUpdateUrl = (/** @type {any} */ url) => {
-    // Method 1: GM_openInTab
+  const tryOpenUpdateUrl = (/** @type {string} */ url) => {
+    // Method 1: GM_openInTab (the GM api rejects in odd managers)
     if (GM_openInTab_safe) {
       try {
         GM_openInTab_safe(url, { active: true, insert: true, setParent: true });
         return true;
       } catch (gmError) {
+        logS(gmError);
         updateLogger?.error?.('Update', 'GM_openInTab update install failed', gmError);
       }
     }
 
-    // Method 2: window.open
-    try {
-      const popup = window.open(url, '_blank', 'noopener');
-      if (popup) return true;
-    } catch (popupError) {
-      updateLogger?.error?.('Update', 'window.open update install failed', popupError);
+    // Method 2: a new tab through the scheme-checked helper, which reports
+    // whether the URL was allowed.
+    if (typeof U?.openSafe === 'function') {
+      return U.openSafe(url, '_blank');
     }
-
-    // Method 3: Navigate
-    try {
-      window.location.assign(url);
-      return true;
-    } catch (navigationError) {
-      updateLogger?.error?.('Update', 'Navigation to update URL failed', navigationError);
-    }
-
-    return false;
+    window.open(url, '_blank', 'noopener,noreferrer');
+    return true;
   };
 
   /**
    * Install update with URL validation
-   * @param {Object} details - Update details containing downloadUrl and version
+   * @param {UpdateDetails | null} [details=updateState.updateDetails] - Update details containing downloadUrl and version
    * @returns {boolean} True if installation initiated successfully
    */
-  const installUpdate = (/** @type {any} */ details = updateState.updateDetails) => {
+  const installUpdate = (
+    /** @type {UpdateDetails | null} */ details = updateState.updateDetails
+  ) => {
     const downloadUrl = details?.downloadUrl || UPDATE_CONFIG.autoInstallUrl;
 
     // Validate URL
@@ -526,28 +535,9 @@
     return success;
   };
 
-  const UPDATE_NOTIFICATION_CSS = `
-    .update-notification-card{z-index:10001;max-width:360px;background:var(--yt-notification-bg);padding:16px 18px;border-radius:var(--yt-radius-lg);color:var(--yt-text-primary);box-shadow:var(--yt-shadow);border:1px solid var(--yt-glass-border);-webkit-backdrop-filter:var(--yt-glass-blur);backdrop-filter:var(--yt-glass-blur);animation:slideInFromBottom .4s ease-out}
-    .update-notification-layout{position:relative;display:flex;align-items:flex-start;gap:12px}
-    .update-notification-icon-wrap{background:var(--yt-glass-bg);border-radius:var(--yt-radius-xs);padding:10px;flex-shrink:0;border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur)}
-    .update-notification-content{flex:1;min-width:0}
-    .update-notification-title{font-weight:600;font-size:15px;margin-bottom:4px}
-    .update-notification-version{font-size:13px;opacity:.9;margin-bottom:8px}
-    .update-changelog-line{font-size:12px;opacity:.85;margin-bottom:6px}
-    .update-changelog-header{font-size:12px;font-weight:600;opacity:.95;margin-bottom:6px}
-    .update-changelog-box{font-size:12px;line-height:1.4;max-height:120px;overflow-y:auto;padding:8px;background:var(--yt-overlay-deep);border-radius:6px;border:1px solid var(--yt-surface-overlay-border);white-space:normal}
-    .update-changelog-fallback{font-size:12px;opacity:.85;margin-bottom:12px}
-    .update-notification-actions{display:flex;gap:8px}
-    .update-install-btn{background:var(--yt-accent);color:#fff;border:none;padding:8px 16px;border-radius:var(--yt-radius-xs);cursor:pointer;font-size:13px;font-weight:700;transition:transform .15s ease;box-shadow:0 6px 18px var(--yt-danger-ghost);backdrop-filter:var(--yt-glass-blur)}
-    .update-install-btn:active{transform:scale(0.96) !important;}
-    .update-dismiss-btn{background:var(--yt-button-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);padding:8px 12px;border-radius:var(--yt-radius-xs);cursor:pointer;font-size:13px;transition:background-color .12s ease, transform .12s ease, border-color .12s ease, color .12s ease;}
-    .update-dismiss-btn:active{transform:scale(0.96) !important;}
-    .update-close-btn{position:absolute;top:-8px;right:-8px;width:28px;height:28px;border-radius:50%;border:1px solid var(--yt-glass-border);cursor:pointer;display:flex;align-items:center;justify-content:center;font-size:16px;line-height:1;background:var(--yt-button-bg);color:var(--yt-text-primary);transition:background-color .18s ease, transform .18s ease;}
-    .update-close-btn:active{transform:scale(0.96) !important;}
-  `;
-
   // Enhanced update notification
-  const showUpdateNotification = (/** @type {any} */ updateDetails) => {
+  /** @param {UpdateDetails} updateDetails */
+  const showUpdateNotification = (/** @type {UpdateDetails} */ updateDetails) => {
     // Optionally render notification icon (can be disabled via config)
     const iconHtml = UPDATE_CONFIG.showNotificationIcon
       ? `<div class="update-notification-icon-wrap">
@@ -564,8 +554,9 @@
     notification.setAttribute('aria-label', t('updateAvailableTitle'));
 
     injectStyles(
-      'yt-plus-update-notification-styles',
-      UPDATE_NOTIFICATION_CSS + (window.YouTubePlusStyleResources?.update || '')
+      'yp-update-notification-styles',
+      (window.YouTubePlusDesignSystem?.getStyle?.('yp-update-notification-styles') || '') +
+        (window.YouTubePlusStyleResources?.update || '')
     );
 
     window.YouTubeUtils.renderTemplateClone(
@@ -585,13 +576,8 @@
                       const header = t('changelogHeader');
 
                       // Prefer fetched changelog, fall back to metadata description.
-                      // SECURITY: do NOT use a regex sanitizer here — the canonical
-                      // YouTubeSafeDOM policy (Trusted Types + DOM allowlist) is the
-                      // single source of truth. We treat `raw` as plain text and
-                      // escape it via textContent; the surrounding `renderTemplateClone`
-                      // still re-parses the result through the policy as a defence in
-                      // depth. The previous regex sanitizer failed on unterminated
-                      // tags / nested markup and gave a false sense of safety.
+                      // SECURITY: `raw` is escaped via textContent and re-parsed
+                      // through YouTubeSafeDOM; regex sanitizers break on nested tags.
                       const safeDom = window.YouTubeSafeDOM;
                       const rawText =
                         updateDetails.changelog && updateDetails.changelog.length > 0
@@ -602,8 +588,8 @@
                         .replace(/<\/(p|div|li)>/gi, '\n')
                         .replace(/\r\n?/g, '\n');
 
-                      const escapeHtml = /** @type {(s: any) => string} */ (
-                        /** @type {any} */ s =>
+                      const escapeHtml = /** @type {(s: string) => string} */ (
+                        s =>
                           typeof safeDom?.escapeHTML === 'function' ? safeDom.escapeHTML(s) : ''
                       );
 
@@ -641,77 +627,133 @@
       _container = document.createElement('div');
       _container.id = _containerId;
       _container.className = 'youtube-enhancer-notification-container';
-      try {
-        document.body.appendChild(_container);
-      } catch (_e) {
-        document.body.appendChild(notification);
-      }
+      document.body.appendChild(_container);
     }
-    try {
-      _container.insertBefore(notification, _container.firstChild);
-    } catch (_e) {
-      document.body.appendChild(notification);
-    }
+    _container.insertBefore(notification, _container.firstChild);
 
     const removeNotification = () => {
       // use explicit slide-out animation so it exits downward like the entry
-      /** @type {any} */ (notification).style.animation = 'slideOutToBottom 0.35s ease-in forwards';
-      setTimeout_(() => notification.remove(), 360);
+      notification.style.animation = 'slideOutToBottom 0.35s ease-in forwards';
+      window.YouTubeUtils?.cleanupManager?.timeout?.(() => notification.remove(), 360);
     };
 
     // Event handlers
     const installBtn = notification.querySelector('#update-install-btn');
     if (installBtn) {
-      installBtn.addEventListener('click', () => {
-        const success = installUpdate(updateDetails);
-        if (success) {
-          removeNotification();
-          setTimeout_(() => utils.showNotification(t('installing')), 500);
-        } else {
-          utils.showNotification(t('manualInstallHint'), 'error', 5000);
-          window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
-        }
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        installBtn,
+        'click',
+        () => {
+          const success = installUpdate(updateDetails);
+          if (success) {
+            removeNotification();
+            window.YouTubeUtils?.cleanupManager?.timeout?.(
+              () => utils.showNotification(t('installing')),
+              500
+            );
+          } else {
+            utils.showNotification(t('manualInstallHint'), 'error', 5000);
+            U?.openSafe
+              ? U.openSafe('https://greasyfork.org/en/scripts/537017-youtube', '_blank')
+              : window.open(
+                  'https://greasyfork.org/en/scripts/537017-youtube',
+                  '_blank',
+                  'noopener'
+                );
+          }
+        },
+        undefined,
+        false
+      );
     }
 
     const dismissBtn = notification.querySelector('#update-dismiss-btn');
     if (dismissBtn) {
-      dismissBtn.addEventListener('click', () => {
-        if (updateDetails?.version) {
-          sessionStorage.setItem('update_dismissed', updateDetails.version);
-        }
-        removeNotification();
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        dismissBtn,
+        'click',
+        () => {
+          if (updateDetails?.version) {
+            sessionStorage.setItem('update_dismissed', updateDetails.version);
+          }
+          removeNotification();
+        },
+        undefined,
+        false
+      );
     }
 
     const closeBtn = notification.querySelector('#update-close-btn');
     if (closeBtn) {
-      closeBtn.addEventListener('click', () => {
-        if (updateDetails?.version) {
-          sessionStorage.setItem('update_dismissed', updateDetails.version);
-        }
-        removeNotification();
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        closeBtn,
+        'click',
+        () => {
+          if (updateDetails?.version) {
+            sessionStorage.setItem('update_dismissed', updateDetails.version);
+          }
+          removeNotification();
+        },
+        undefined,
+        false
+      );
     }
 
     // Auto-dismiss
-    setTimeout_(() => {
+    window.YouTubeUtils?.cleanupManager?.timeout?.(() => {
       if (notification.isConnected) removeNotification();
     }, UPDATE_CONFIG.notificationDuration);
   };
 
   /**
-   * Validate update URL
-   * @param {string} url - URL to validate
-   * @throws {Error} If URL is invalid
+   * Fetch remote text through GM_xmlhttpRequest when available, falling
+   * back to fetch with an abort timeout. Transport aborts keep raw timers:
+   * they must fire even across navigation sweeps.
+   * @param {string} url
+   * @param {Record<string, string>} headers
+   * @param {string} timeoutLabel prefix for timeout/error messages
+   * @returns {Promise<string>} Response body text
    */
-  const validateUpdateUrl = (/** @type {any} */ url) => {
-    const parsedUrl = new URL(url);
-    if (parsedUrl.protocol !== 'https:') {
-      throw new Error('Update URL must use HTTPS');
+  const fetchRemoteText = async (url, headers, timeoutLabel) => {
+    if (typeof GM_xmlhttpRequest !== 'undefined') {
+      return new Promise((resolve, reject) => {
+        const timeoutId = setTimeout_(() => reject(new Error(`${timeoutLabel} timeout`)), 10000);
+        GM_xmlhttpRequest({
+          method: 'GET',
+          url,
+          timeout: 10000,
+          headers,
+          onload: (/** @type {GMResponseLike} */ response) => {
+            clearTimeout(timeoutId);
+            if (response.status >= 200 && response.status < 300)
+              resolve(/** @type {string} */ (response.responseText));
+            else reject(new Error(`HTTP ${response.status}: ${response.statusText || ''}`));
+          },
+          onerror: (/** @type {unknown} */ e) => {
+            clearTimeout(timeoutId);
+            reject(new Error(`Network error: ${e}`));
+          },
+          ontimeout: () => {
+            clearTimeout(timeoutId);
+            reject(new Error(`${timeoutLabel} timeout`));
+          },
+        });
+      });
     }
-    if (!parsedUrl.hostname.includes('greasyfork.org')) {
-      throw new Error('Update URL must be from greasyfork.org');
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout_(() => controller.abort(), 10000);
+    try {
+      const res = await fetch(url, {
+        method: 'GET',
+        cache: 'no-cache',
+        signal: controller.signal,
+        headers,
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+      return await res.text();
+    } finally {
+      clearTimeout(timeoutId);
     }
   };
 
@@ -722,82 +764,35 @@
    * @param {string} [url=UPDATE_CONFIG.updateUrl] - URL to fetch metadata from
    * @returns {Promise<string>} Metadata text
    */
-  const fetchUpdateMetadata = async (url = UPDATE_CONFIG.updateUrl) => {
-    // Use GM_xmlhttpRequest if available to avoid CORS issues.
-    const fetchMeta = async (/** @type {any} */ requestUrl) => {
-      if (typeof GM_xmlhttpRequest !== 'undefined') {
-        return new Promise((resolve, reject) => {
-          const timeoutId = setTimeout_(() => reject(new Error('Update check timeout')), 10000);
-          GM_xmlhttpRequest({
-            method: 'GET',
-            url: requestUrl,
-            timeout: 10000,
-            headers: {
-              Accept: 'text/plain',
-              'User-Agent': 'YouTube+ UpdateChecker',
-            },
-            onload: (/** @type {any} */ response) => {
-              clearTimeout(timeoutId);
-              if (response.status >= 200 && response.status < 300) resolve(response.responseText);
-              else reject(new Error(`HTTP ${response.status}: ${response.statusText}`));
-            },
-            onerror: (/** @type {any} */ e) => {
-              clearTimeout(timeoutId);
-              reject(new Error(`Network error: ${e}`));
-            },
-            ontimeout: () => {
-              clearTimeout(timeoutId);
-              reject(new Error('Update check timeout'));
-            },
-          });
-        });
-      }
-
-      // Fallback to fetch with AbortController timeout
-      const controller = new AbortController();
-      const timeoutId = setTimeout_(() => controller.abort(), 10000);
-      try {
-        const res = await fetch(requestUrl, {
-          method: 'GET',
-          cache: 'no-cache',
-          signal: controller.signal,
-          headers: {
-            Accept: 'text/plain',
-            'User-Agent': 'YouTube+ UpdateChecker',
-          },
-        });
-        if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`);
-        return await res.text();
-      } finally {
-        clearTimeout(timeoutId);
-      }
-    };
-
-    return fetchMeta(url);
-  };
+  const fetchUpdateMetadata = (url = UPDATE_CONFIG.updateUrl) =>
+    fetchRemoteText(
+      url,
+      { Accept: 'text/plain', 'User-Agent': 'YouTube+ UpdateChecker' },
+      'Update check'
+    );
 
   /**
    * Handle update availability check results
-   * @param {Object} updateDetails - Update details object
+   * @param {UpdateDetails} updateDetails - Update details object
    * @param {boolean} force - Whether check was forced
    */
-  const handleUpdateResult = (/** @type {any} */ updateDetails, /** @type {any} */ force) => {
+  const handleUpdateResult = (
+    /** @type {UpdateDetails} */ updateDetails,
+    /** @type {boolean} */ force
+  ) => {
     const shouldShowNotification =
       updateState.updateAvailable &&
       (force || sessionStorage.getItem('update_dismissed') !== updateDetails.version);
 
     if (shouldShowNotification) {
       showUpdateNotification(updateDetails);
-      window.YouTubeUtils &&
-        /** @type {any} */ (YouTubeUtils).logger?.debug?.(
-          `YouTube + Update available: ${updateDetails.version}`
-        );
+      window.YouTubeUtils?.logger?.debug?.(`YouTube + Update available: ${updateDetails.version}`);
       return;
     }
 
     if (force) {
       const message = updateState.updateAvailable
-        ? t('updateAvailableMsg').replace('{version}', updateDetails.version)
+        ? t('updateAvailableMsg').replace('{version}', updateDetails.version || '')
         : t('upToDateMsg').replace('{version}', UPDATE_CONFIG.currentVersion);
       utils.showNotification(message);
     }
@@ -805,15 +800,17 @@
 
   /**
    * Determine if error is transient and retryable
-   * @param {Error} error - Error object
+   * @param {unknown} error - Error object
    * @returns {boolean} True if error is transient
    */
-  const isTransientError = (/** @type {any} */ error) => {
+  const isTransientError = (/** @type {unknown} */ error) => {
+    if (!error || typeof error !== 'object') return false;
+    const err = /** @type {{ name?: string; message?: string }} */ (error);
     return !!(
-      error.name === 'AbortError' ||
-      error.name === 'NetworkError' ||
-      error.message?.includes('fetch') ||
-      error.message?.includes('network')
+      err.name === 'AbortError' ||
+      err.name === 'NetworkError' ||
+      err.message?.includes('fetch') ||
+      err.message?.includes('network')
     );
   };
 
@@ -822,105 +819,74 @@
    * @param {string} version - Version to fetch changelog for
    * @returns {Promise<string>} Changelog text
    */
-  const fetchChangelog = async (/** @type {any} */ version) => {
+  const fetchChangelog = async (/** @type {string} */ version) => {
     try {
       const lang = getLanguage();
       const url = `https://greasyfork.org/${lang}/scripts/537017-youtube/versions`;
-
-      const fetchPage = async (/** @type {any} */ requestUrl) => {
-        if (typeof GM_xmlhttpRequest !== 'undefined') {
-          return new Promise((resolve, reject) => {
-            const timeoutId = setTimeout_(
-              () => reject(new Error('Changelog fetch timeout')),
-              10000
-            );
-            GM_xmlhttpRequest({
-              method: 'GET',
-              url: requestUrl,
-              timeout: 10000,
-              headers: { Accept: 'text/html' },
-              onload: (/** @type {any} */ response) => {
-                clearTimeout(timeoutId);
-                if (response.status >= 200 && response.status < 300) resolve(response.responseText);
-                else reject(new Error(`HTTP ${response.status}`));
-              },
-              onerror: (/** @type {any} */ _e) => {
-                clearTimeout(timeoutId);
-                reject(new Error('Network error'));
-              },
-              ontimeout: () => {
-                clearTimeout(timeoutId);
-                reject(new Error('Timeout'));
-              },
-            });
-          });
-        }
-
-        const controller = new AbortController();
-        const timeoutId = setTimeout_(() => controller.abort(), 10000);
-        try {
-          const res = await fetch(requestUrl, {
-            method: 'GET',
-            cache: 'no-cache',
-            signal: controller.signal,
-            headers: { Accept: 'text/html' },
-          });
-          if (!res.ok) throw new Error(`HTTP ${res.status}`);
-          return await res.text();
-        } finally {
-          clearTimeout(timeoutId);
-        }
-      };
-
-      const html = await fetchPage(url);
+      const html = await fetchRemoteText(url, { Accept: 'text/html' }, 'Changelog fetch');
 
       // Parse changelog from HTML
       // Look for version link followed by changelog span
-      // Structure: <a ...>v2.5.2</a> ... <span class="version-changelog">...</span>
+      // Structure: <a ...>vX.Y.Z</a> ... <span class="version-changelog">...</span>
       const domParser = typeof window.DOMParser === 'function' ? new window.DOMParser() : null;
       if (domParser) {
-        try {
-          const doc = domParser.parseFromString(html, 'text/html');
-          const versionText = String(version || '').trim();
-          const anchors = Array.from(doc.querySelectorAll('a'));
-          const matchingLink = anchors.find(anchor => {
-            const linkText = String(anchor.textContent || '').trim();
-            return (
-              linkText === versionText ||
-              linkText === `v${versionText}` ||
-              linkText.includes(versionText)
-            );
-          });
+        // Trusted Types: the plain-string sink throws under
+        // `require-trusted-types-for 'script'`, so route the fetched HTML
+        // through the policy (the allowlist keeps the markup this reads).
+        const safeChangelogHtml = window.YouTubeSafeDOM?.createTrustedHTML?.(html) ?? html;
+        const doc = domParser.parseFromString(safeChangelogHtml, 'text/html');
+        const versionText = String(version || '').trim();
+        const anchors = Array.from(doc.querySelectorAll('a'));
+        const matchingLink = anchors.find(anchor => {
+          const linkText = String(anchor.textContent || '').trim();
+          return (
+            linkText === versionText ||
+            linkText === `v${versionText}` ||
+            linkText.includes(versionText)
+          );
+        });
 
-          const container =
-            matchingLink?.closest('li, article, section, div') ||
-            matchingLink?.parentElement ||
-            null;
-          const changelogNode =
-            container?.querySelector('.version-changelog') ||
-            (matchingLink?.nextElementSibling?.matches?.('.version-changelog')
-              ? matchingLink.nextElementSibling
-              : null);
+        const container =
+          matchingLink?.closest('li, article, section, div') || matchingLink?.parentElement || null;
+        const changelogNode =
+          container?.querySelector('.version-changelog') ||
+          (matchingLink?.nextElementSibling?.matches?.('.version-changelog')
+            ? matchingLink.nextElementSibling
+            : null);
 
-          const changelogText = String(changelogNode?.textContent || '').trim();
-          if (changelogText) {
-            return changelogText
-              .split('\n')
-              .map(line => line.trim())
-              .filter(line => line.length > 0)
-              .join('\n');
-          }
-        } catch (_e) {
-          /* fall through to empty result */
+        const changelogText = String(changelogNode?.textContent || '').trim();
+        if (changelogText) {
+          return changelogText
+            .split('\n')
+            .map(line => line.trim())
+            .filter(line => line.length > 0)
+            .join('\n');
         }
       }
 
       return '';
     } catch (error) {
-      updateLogger?.warn?.(
-        'Update',
-        `Failed to fetch changelog: ${/** @type {any} */ (error).message}`
-      );
+      logS(error);
+      const errorMessage = error instanceof Error ? error.message : String(error);
+      updateLogger?.warn?.('Update', `Failed to fetch changelog: ${errorMessage}`);
+      return '';
+    }
+  };
+
+  /**
+   * Fetch changelog for a given version safely
+   * @param {string} version
+   * @returns {Promise<string>}
+   */
+  const fetchVersionChangelog = async version => {
+    try {
+      const changelog = await fetchChangelog(version);
+      return typeof changelog === 'string' && changelog.length > 0 ? changelog : '';
+    } catch (changelogErr) {
+      logS(changelogErr);
+      const changelogMessage =
+        changelogErr instanceof Error ? changelogErr.message : String(changelogErr);
+      updateLogger?.warn?.('Update', `Failed to fetch changelog: ${changelogMessage}`);
       return '';
     }
   };
@@ -928,11 +894,11 @@
   /**
    * Retrieve update details trying primary metadata endpoint first and
    * falling back to the auto-install .user.js URL when necessary.
-   * @returns {Promise<any>} Parsed updateDetails object
+   * @returns {Promise<UpdateDetails>} Parsed updateDetails object
    */
   const retrieveUpdateDetails = async () => {
     // Attempt primary metadata fetch
-    let metaText = await fetchUpdateMetadata(UPDATE_CONFIG.updateUrl);
+    const metaText = await fetchUpdateMetadata(UPDATE_CONFIG.updateUrl);
     let details = utils.parseMetadata(metaText);
 
     if (!details.version) {
@@ -941,33 +907,16 @@
         const fallbackDetails = utils.parseMetadata(fallbackText);
         if (fallbackDetails.version) {
           details = fallbackDetails;
-          metaText = fallbackText;
         }
       } catch (fallbackErr) {
-        updateLogger?.warn?.(
-          'Update',
-          `Fallback metadata fetch failed: ${/** @type {any} */ (fallbackErr).message}`
-        );
+        logS(fallbackErr);
+        const fallbackMessage =
+          fallbackErr instanceof Error ? fallbackErr.message : String(fallbackErr);
+        updateLogger?.warn?.('Update', `Fallback metadata fetch failed: ${fallbackMessage}`);
       }
     }
 
-    // Fetch changelog from GreasyFork versions page and store separately
-    if (details.version) {
-      try {
-        const changelog = await fetchChangelog(details.version);
-        // Keep original metadata description but expose fetched changelog on a separate property
-        details.changelog = typeof changelog === 'string' && changelog.length > 0 ? changelog : '';
-      } catch (changelogErr) {
-        updateLogger?.warn?.(
-          'Update',
-          `Failed to fetch changelog: ${/** @type {any} */ (changelogErr).message}`
-        );
-        details.changelog = '';
-      }
-    } else {
-      details.changelog = '';
-    }
-
+    details.changelog = details.version ? await fetchVersionChangelog(details.version) : '';
     return details;
   };
 
@@ -980,9 +929,10 @@
   /**
    * Check if update check should proceed
    * @param {boolean} force - Force update check
+   * @param {number} now - Current timestamp
    * @returns {boolean} True if should proceed
    */
-  const shouldCheckForUpdates = (/** @type {any} */ force, /** @type {any} */ now) => {
+  const shouldCheckForUpdates = (/** @type {boolean} */ force, /** @type {number} */ now) => {
     if (!UPDATE_CONFIG.enabled || updateState.checkInProgress) {
       return false;
     }
@@ -990,43 +940,42 @@
   };
 
   /**
-   * Validate update configuration
+   * Validate the update configuration; throws on a bad URL (the caller's
+   * catch owns the logging/retry).
    * @returns {boolean} True if valid
-   * @throws {Error} If configuration is invalid
    */
   const validateUpdateConfiguration = () => {
-    try {
-      validateUpdateUrl(UPDATE_CONFIG.updateUrl);
-      return true;
-    } catch (urlError) {
-      updateLogger?.error?.('Update', 'Invalid update URL configuration', urlError);
-      throw urlError;
-    }
+    validateUpdateUrl(UPDATE_CONFIG.updateUrl);
+    return true;
   };
 
   /**
    * Process successful update details
-   * @param {Object} updateDetails - Update details
+   * @param {UpdateDetails} updateDetails - Update details
    * @param {boolean} force - Force flag
    * @param {number} now - Current timestamp
    * @returns {void}
    */
   const processUpdateDetails = (
-    /** @type {any} */ updateDetails,
-    /** @type {any} */ force,
-    /** @type {any} */ now
+    /** @type {UpdateDetails} */ updateDetails,
+    /** @type {boolean} */ force,
+    /** @type {number} */ now
   ) => {
     updateState.lastCheck = now;
-    updateState.lastVersion = updateDetails.version;
+    updateState.lastVersion = updateDetails.version || UPDATE_CONFIG.currentVersion;
     updateState.updateDetails = updateDetails;
 
-    const comparison = utils.compareVersions(UPDATE_CONFIG.currentVersion, updateDetails.version);
+    const comparison = utils.compareVersions(
+      UPDATE_CONFIG.currentVersion,
+      updateDetails.version || ''
+    );
     updateState.updateAvailable = comparison < 0;
 
     handleUpdateResult(updateDetails, force);
     utils.saveSettings();
 
-    // Auto-install if configured and update wasn't dismissed
+    // Auto-install if configured and update wasn't dismissed; reads
+    // sessionStorage (which can be blocked in sandboxed documents).
     if (updateState.updateAvailable && UPDATE_CONFIG.autoInstallOnCheck) {
       try {
         const dismissed = sessionStorage.getItem('update_dismissed');
@@ -1035,11 +984,7 @@
           if (started) {
             // Persist that we've acted on this update so we don't keep reopening it
             markUpdateDismissed(updateDetails);
-            try {
-              utils.showNotification(t('installing'));
-            } catch (_e) {
-              U.logSuppressed(_e, 'Update');
-            }
+            utils.showNotification(t('installing'));
           } else {
             updateLogger?.warn?.(
               'Update',
@@ -1048,6 +993,7 @@
           }
         }
       } catch (e) {
+        logS(e);
         updateLogger?.error?.('Update', 'Auto-installation failed', e);
       }
     }
@@ -1058,7 +1004,7 @@
    * @param {boolean} force - Force flag
    * @returns {void}
    */
-  const handleMissingUpdateInfo = (/** @type {any} */ force) => {
+  const handleMissingUpdateInfo = (/** @type {boolean} */ force) => {
     updateState.updateAvailable = false;
     if (force) {
       utils.showNotification(
@@ -1071,31 +1017,36 @@
 
   /**
    * Handle retry logic for update check
-   * @param {Error} error - Error object
+   * @param {unknown} error - Error object
    * @param {boolean} force - Force flag
    * @param {number} retryCount - Current retry count
    * @returns {Promise<void>}
    */
   const handleUpdateRetry = async (
-    /** @type {any} */ error,
-    /** @type {any} */ force,
-    /** @type {any} */ retryCount
+    /** @type {unknown} */ error,
+    /** @type {boolean} */ force,
+    /** @type {number} */ retryCount
   ) => {
     const MAX_RETRIES = 2;
     const RETRY_DELAY = 2000;
+    const errorMessage = error instanceof Error ? error.message : String(error);
 
     if (isTransientError(error) && retryCount < MAX_RETRIES) {
       updateLogger?.warn?.(
         'Update',
-        `Retry ${retryCount + 1}/${MAX_RETRIES} after error: ${error.message}`
+        `Retry ${retryCount + 1}/${MAX_RETRIES} after error: ${errorMessage}`
       );
-      await new Promise(resolve => setTimeout_(resolve, RETRY_DELAY * 2 ** retryCount));
+      await /** @type {Promise<void>} */ (
+        new Promise(resolve => {
+          YouTubeUtils?.cleanupManager?.timeout?.(() => resolve(), RETRY_DELAY * 2 ** retryCount);
+        })
+      );
       return checkForUpdates(force, retryCount + 1);
     }
 
     updateLogger?.error?.('Update', 'Check failed after retries', error);
     if (force) {
-      utils.showNotification(t('updateCheckFailed').replace('{msg}', error.message), 'error', 4000);
+      utils.showNotification(t('updateCheckFailed').replace('{msg}', errorMessage), 'error', 4000);
     }
   };
 
@@ -1124,43 +1075,16 @@
         handleMissingUpdateInfo(force);
       }
     } catch (error) {
+      logS(error);
       await handleUpdateRetry(error, force, retryCount);
     } finally {
       updateState.checkInProgress = false;
     }
   };
 
-  const UPDATE_SETTINGS_CSS = `
-    .update-settings-card{padding:16px;margin-top:20px;border-radius:12px;background:var(--yt-surface-overlay-subtle);border:1px solid var(--yt-surface-overlay-border);-webkit-backdrop-filter:blur(10px) saturate(120%);backdrop-filter:blur(10px) saturate(120%);box-shadow:0 6px 20px var(--yt-update-card-shadow)}
-    .update-settings-header{display:flex;align-items:center;gap:12px;margin-bottom:12px}
-    .update-settings-title{margin:0;font-size:16px;font-weight:600;color:var(--yt-spec-text-primary)}
-    .update-settings-status-card{display:grid;grid-template-columns:1fr auto;gap:16px;align-items:center;padding:16px;background:var(--yt-surface-overlay-subtle);border-radius:10px;margin-bottom:16px}
-    .update-settings-version-row{display:flex;align-items:center;gap:8px;margin-bottom:4px}
-    .update-settings-label{font-size:14px;font-weight:600;color:var(--yt-spec-text-primary)}
-    .update-settings-pill{font-size:13px;font-weight:600;color:var(--yt-spec-text-primary);padding:3px 10px;background:var(--yt-surface-overlay-soft);border-radius:12px;border:1px solid var(--yt-glass-border)}
-    .update-settings-meta{font-size:12px;color:var(--yt-spec-text-secondary)}
-    .update-settings-meta-strong{font-weight:500}
-    .update-settings-latest{color:var(--yt-update-available-text);font-weight:600}
-    .update-status-col{display:flex;flex-direction:column;align-items:flex-end;gap:8px}
-    .update-status-badge{display:flex;align-items:center;gap:8px;padding:6px 12px;border-radius:20px}
-    .update-status-badge--available{background:linear-gradient(135deg,var(--yt-danger-soft),var(--yt-danger-border));border:1px solid var(--yt-danger-card-border)}
-    .update-status-badge--ok{background:linear-gradient(135deg,var(--yt-success-soft),var(--yt-success-soft-hover));border:1px solid var(--yt-success-accent-soft)}
-    .update-status-dot{width:6px;height:6px;border-radius:50%}
-    .update-status-dot--available{background:var(--yt-update-available-dot);animation:pulse 2s infinite}
-    .update-status-dot--ok{background:var(--yt-success-accent)}
-    .update-status-text{font-size:11px;font-weight:600;text-transform:uppercase;letter-spacing:.5px}
-    .update-status-text--available{color:var(--yt-update-available-text)}
-    .update-status-text--ok{color:var(--yt-success-accent)}
-    .update-install-inline-btn{background:linear-gradient(135deg,var(--yt-update-install-bg-start),var(--yt-update-install-bg-end));color:#fff;border:none;padding:8px 16px;border-radius:8px;cursor:pointer;font-size:12px;font-weight:600;transition:background-color .3s ease, transform .15s cubic-bezier(0.2,0,0,1), box-shadow .3s ease;box-shadow:0 4px 12px var(--yt-update-install-shadow)}
-    .update-install-inline-btn:active{transform:scale(0.96) !important;}
-    .update-settings-actions{display:flex;gap:12px}
-    .update-check-btn{flex:1;padding:12px;font-size:13px;font-weight:600;display:inline-flex;align-items:center;justify-content:center;gap:6px}
-    .update-refresh-icon{display:inline-block;vertical-align:middle;flex-shrink:0}
-  `;
-
   // Optimized settings UI
   const addUpdateSettings = () => {
-    const aboutSection = document.querySelector('.ytp-plus-settings-section[data-section="about"]');
+    const aboutSection = document.querySelector('.yp-settings-section[data-section="about"]');
     if (!(aboutSection instanceof HTMLElement)) return;
     if (aboutSection.querySelector('.update-settings-container')) return;
 
@@ -1170,8 +1094,9 @@
     const lastCheckTime = utils.formatTimeAgo(updateState.lastCheck);
 
     injectStyles(
-      'yt-plus-update-settings-styles',
-      UPDATE_SETTINGS_CSS + (window.YouTubePlusStyleResources?.update || '')
+      'yp-update-settings-styles',
+      (window.YouTubePlusDesignSystem?.getStyle?.('yp-update-settings-styles') || '') +
+        (window.YouTubePlusStyleResources?.update || '')
     );
 
     window.YouTubeUtils.renderTemplateClone(
@@ -1224,13 +1149,13 @@
         </div>
 
         <div class="update-settings-actions">
-            <button class="ytp-plus-button ytp-plus-button-primary update-check-btn" id="manual-update-check">
+            <button class="yp-button yp-button-primary update-check-btn" id="manual-update-check">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="update-refresh-icon">
               <path d="M21.5 2v6h-6M2.5 22v-6h6M19.13 11.48A10 10 0 0 0 12 2C6.48 2 2 6.48 2 12c0 .34.02.67.05 1M4.87 12.52A10 10 0 0 0 12 22c5.52 0 10-4.48 10-10 0-.34-.02-.67-.05-1"/>
             </svg>
             ${t('checkForUpdates')}
           </button>
-          <button class="ytp-plus-button update-open-page-btn" id="open-update-page">
+          <button class="yp-button update-open-page-btn" id="open-update-page">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
               <polyline points="15,3 21,3 21,9"/>
@@ -1244,36 +1169,35 @@
     aboutSection.appendChild(updateContainer);
 
     // Keep custom About actions/footer below update card.
-    try {
-      const aboutActions = aboutSection.querySelector('.ytp-plus-about-actions');
-      const aboutFooter = aboutSection.querySelector('.ytp-plus-about-footer');
-      if (aboutActions) aboutSection.appendChild(aboutActions);
-      if (aboutFooter) aboutSection.appendChild(aboutFooter);
-    } catch (_e) {
-      U.logSuppressed(_e, 'Update');
-    }
+    const aboutActions = aboutSection.querySelector('.yp-about-actions');
+    const aboutFooter = aboutSection.querySelector('.yp-about-footer');
+    if (aboutActions) aboutSection.appendChild(aboutActions);
+    if (aboutFooter) aboutSection.appendChild(aboutFooter);
 
     // Event listeners with optimization
-    const attachClickHandler = (/** @type {any} */ id, /** @type {any} */ handler) => {
+    const attachClickHandler = (
+      /** @type {string} */ id,
+      /** @type {(evt: Event) => void} */ handler
+    ) => {
       const element = byId(id);
       if (element) YouTubeUtils.cleanupManager.registerListener(element, 'click', handler);
     };
 
     // Destructure event parameter to prefer destructuring
-    attachClickHandler('manual-update-check', async (/** @type {any} */ evt) => {
+    attachClickHandler('manual-update-check', async (/** @type {Event} */ evt) => {
       const button =
-        evt.currentTarget instanceof HTMLElement
+        evt.currentTarget instanceof HTMLButtonElement
           ? evt.currentTarget
           : evt.target instanceof Element
-            ? /** @type {HTMLElement|null} */ (evt.target.closest('#manual-update-check'))
+            ? evt.target.closest('button#manual-update-check')
             : null;
-      if (!button) return;
+      if (!(button instanceof HTMLButtonElement)) return;
       setManualCheckButtonContent(button, t('checkingForUpdates'), true);
       button.disabled = true;
 
       await checkForUpdates(true);
 
-      setTimeout_(() => {
+      window.YouTubeUtils?.cleanupManager?.timeout?.(() => {
         setManualCheckButtonContent(button, t('checkForUpdates'), false);
         button.disabled = false;
       }, 1000);
@@ -1285,13 +1209,17 @@
         utils.showNotification(t('installing'));
       } else {
         utils.showNotification(t('manualInstallHint'), 'error', 5000);
-        window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
+        U?.openSafe
+          ? U.openSafe('https://greasyfork.org/en/scripts/537017-youtube', '_blank')
+          : window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank', 'noopener');
       }
     });
 
     attachClickHandler('open-update-page', () => {
       utils.showNotification(t('updatePageFallback'));
-      window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank');
+      U?.openSafe
+        ? U.openSafe('https://greasyfork.org/en/scripts/537017-youtube', '_blank')
+        : window.open('https://greasyfork.org/en/scripts/537017-youtube', '_blank', 'noopener');
     });
   };
 
@@ -1302,9 +1230,12 @@
    */
   const setupUpdateChecks = () => {
     // Initial check with delay
-    setTimeout_(() => checkForUpdates(), 3000);
+    window.YouTubeUtils?.cleanupManager?.timeout?.(() => checkForUpdates(), 3000);
 
-    const globalObject = /** @type {any} */ (typeof window !== 'undefined' ? window : globalThis);
+    const globalObject =
+      /** @type {typeof globalThis & { __ytpUpdateCheckIntervalId?: ReturnType<typeof setInterval> }} */ (
+        typeof window !== 'undefined' ? window : globalThis
+      );
     const previousIntervalId = globalObject.__ytpUpdateCheckIntervalId;
     if (previousIntervalId) {
       clearInterval(previousIntervalId);
@@ -1313,17 +1244,16 @@
       }
     }
 
-    // Periodic checks - register interval in cleanupManager
+    // Periodic checks: one registration in session scope. The id must not land
+    // in the page-scope set, or per-navigation cleanup would clear it early.
     const intervalId = setInterval(() => checkForUpdates(), UPDATE_CONFIG.checkInterval);
+    window.YouTubePlusCleanupManager?.registerInterval?.(intervalId, {
+      scope: 'session',
+    });
     globalObject.__ytpUpdateCheckIntervalId = intervalId;
-    YouTubeUtils.cleanupManager.registerInterval(intervalId);
-    if (YouTubeUtils.cleanupManager?.registerListener) {
-      YouTubeUtils.cleanupManager.registerListener(window, 'beforeunload', () =>
-        clearInterval(intervalId)
-      );
-    } else {
-      window.addEventListener('beforeunload', () => clearInterval(intervalId));
-    }
+    YouTubeUtils.cleanupManager?.registerListener?.(window, 'beforeunload', () =>
+      clearInterval(intervalId)
+    );
   };
 
   /**
@@ -1332,17 +1262,13 @@
    */
   const setupSettingsObserver = () => {
     const handler = () => {
-      setTimeout_(addUpdateSettings, 100);
+      window.YouTubeUtils?.cleanupManager?.timeout?.(addUpdateSettings, 100);
     };
-    if (YouTubeUtils.cleanupManager?.registerListener) {
-      YouTubeUtils.cleanupManager.registerListener(
-        document,
-        'youtube-plus-settings-modal-opened',
-        handler
-      );
-    } else {
-      document.addEventListener('youtube-plus-settings-modal-opened', handler);
-    }
+    YouTubeUtils.cleanupManager?.registerListener?.(
+      document,
+      'youtube-plus-settings-modal-opened',
+      handler
+    );
   };
 
   /**
@@ -1350,11 +1276,11 @@
    * @returns {void}
    */
   const setupAboutClickHandler = () => {
-    const clickHandler = (/** @type {any} */ evt) => {
-      const el = /** @type {HTMLElement} */ (/** @type {any} */ (evt).target);
-      const navItem = el.closest('.ytp-plus-settings-nav-item');
-      if (navItem?.dataset?.section === 'about') {
-        setTimeout_(addUpdateSettings, 50);
+    const clickHandler = (/** @type {Event} */ evt) => {
+      const target = evt.target instanceof Element ? evt.target : null;
+      const navItem = target?.closest('.yp-settings-nav-item');
+      if (navItem instanceof HTMLElement && navItem.dataset.section === 'about') {
+        window.YouTubeUtils?.cleanupManager?.timeout?.(addUpdateSettings, 50);
       }
     };
 
@@ -1369,17 +1295,13 @@
    * @returns {void}
    */
   const logInitialization = () => {
-    try {
-      if (window.YouTubeUtils && /** @type {any} */ (YouTubeUtils).logger?.debug) {
-        /** @type {any} */ (YouTubeUtils).logger.debug('YouTube + Update Checker initialized', {
-          version: UPDATE_CONFIG.currentVersion,
-          enabled: UPDATE_CONFIG.enabled,
-          lastCheck: new Date(updateState.lastCheck).toLocaleString(),
-          updateAvailable: updateState.updateAvailable,
-        });
-      }
-    } catch (_e) {
-      U.logSuppressed(_e, 'Update');
+    if (updateLogger?.debug) {
+      updateLogger.debug('YouTube + Update Checker initialized', {
+        version: UPDATE_CONFIG.currentVersion,
+        enabled: UPDATE_CONFIG.enabled,
+        lastCheck: new Date(updateState.lastCheck).toLocaleString(),
+        updateAvailable: updateState.updateAvailable,
+      });
     }
   };
 
@@ -1400,15 +1322,21 @@
     // `setupSettingsObserver` only fires on the *next* modal-open
     // event, so without this direct call the section would stay
     // empty until the modal is closed and reopened.
-    if (document.querySelector('.ytp-plus-settings-section[data-section="about"]')) {
-      setTimeout_(addUpdateSettings, 0);
+    if (document.querySelector('.yp-settings-section[data-section="about"]')) {
+      window.YouTubeUtils?.cleanupManager?.timeout?.(addUpdateSettings, 0);
     }
     logInitialization();
   };
 
   const startUpdateRuntime = () => {
     if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', init, { once: true });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        document,
+        'DOMContentLoaded',
+        init,
+        { once: true },
+        true
+      );
     } else {
       init();
     }
@@ -1420,20 +1348,35 @@
   // registered after the About tab is activated, causing a race
   // condition where opening the modal before clicking About would
   // miss the event.
-  document.addEventListener('youtube-plus-settings-modal-opened', () => {
-    if (!_initDone) {
-      init();
-    } else {
-      setTimeout_(addUpdateSettings, 100);
-    }
-  });
+  window.YouTubePlusCleanupManager?.registerListener?.(
+    document,
+    'youtube-plus-settings-modal-opened',
+    () => {
+      if (!_initDone) {
+        init();
+      } else {
+        window.YouTubeUtils?.cleanupManager?.timeout?.(addUpdateSettings, 100);
+      }
+    },
+    undefined,
+    true
+  );
 
-  // Update is a section-gated hot module — its only consumer is
-  // the "About" tab of the settings modal. We do not need a
-  // route-gated runtime because the update check is only useful
-  // when the user is looking at the version info. Opening the
-  // "About" section fires the section-activated event, which
-  // triggers the runtime.
+  const publicAPI = {
+    compareVersions: utils.compareVersions,
+    parseMetadata: utils.parseMetadata,
+    formatTimeAgo: utils.formatTimeAgo,
+    loadSettings: utils.loadSettings,
+    saveSettings: utils.saveSettings,
+    checkForUpdates,
+    UPDATE_CONFIG,
+    updateState,
+    init,
+  };
+  window.YouTubePlusUpdate = publicAPI;
+
+  // Section-gated: the only consumer is the "About" tab. Opening it fires the
+  // section-activated event, which starts the runtime; no route gate is needed.
   if (window.YouTubeUtils?.onSectionActive) {
     window.YouTubeUtils.onSectionActive('about', startUpdateRuntime);
   } else if (typeof window !== 'undefined') {

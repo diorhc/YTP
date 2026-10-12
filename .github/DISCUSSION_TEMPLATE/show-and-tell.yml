@@ -1,0 +1,26 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Show how you use YouTube+: your layout, settings, shortcuts or workflow. Share enough detail for others to try it.
+  - type: textarea
+    id: description
+    attributes:
+      label: What are you sharing?
+      placeholder: 'My YouTube+ setup and what I use it for...'
+    validations:
+      required: true
+  - type: textarea
+    id: setup
+    attributes:
+      label: How to try it
+      description: List the settings, theme, shortcuts or integration steps involved.
+    validations:
+      required: false
+  - type: textarea
+    id: screenshots
+    attributes:
+      label: Screenshots or demo
+      description: Drop images here or add a link to a short demonstration.
+    validations:
+      required: false

@@ -1,13 +1,27 @@
 /**
  * @jest-environment jsdom
+ *
+ * Tests exercise the real event-delegation.js service on
+ * window.YouTubePlusEventDelegation. Earlier versions of this file only tested
+ * locally wired addEventListener snippets; now every assertion uses the real
+ * delegator surface.
  */
 
-describe('Enhanced Module - Event Delegation', () => {
+// Ensure the real event-delegation.js module is loaded in the jsdom environment.
+// Required inside beforeEach so the facade re-inits after the global
+// afterEach in test/setup.js wipes window.YouTubePlus* keys.
+describe('Enhanced Module - Event Delegation (real)', () => {
   beforeEach(() => {
+    jest.resetModules();
+    require('../src/event-delegation.js');
     document.body.innerHTML = '';
     localStorage.clear();
-    jest.spyOn(console, 'error').mockImplementation(() => {});
-    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {
+      /* mock */
+    });
+    jest.spyOn(console, 'warn').mockImplementation(() => {
+      /* mock */
+    });
   });
 
   afterEach(() => {
@@ -15,63 +29,63 @@ describe('Enhanced Module - Event Delegation', () => {
   });
 
   describe('Play All Button Delegation', () => {
-    test('should use event delegation for play all buttons on mobile', () => {
-      // Create parent container
+    test('real delegator invokes handler for play all buttons on mobile', () => {
       const parent = document.createElement('div');
       parent.id = 'test-parent';
       document.body.appendChild(parent);
 
-      // Add play all button
       const btn = document.createElement('a');
-      btn.className = 'ytp-btn';
+      btn.className = 'yp-btn';
       btn.href = '/playlist?list=test';
       parent.appendChild(btn);
 
-      // Set delegation flag
-      parent.setAttribute('data-ytp-delegated', 'true');
-
-      // Add event listener
       const mockNavigate = jest.fn();
-      parent.addEventListener('click', event => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        const btn = target.closest('.ytp-btn');
-        if (btn instanceof HTMLAnchorElement && btn.href) {
-          event.preventDefault();
-          mockNavigate(btn.href);
+      window.YouTubePlusEventDelegation.on(
+        parent,
+        'click',
+        '.yp-btn',
+        /** @param {MouseEvent} event */ event => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const button = target.closest('.yp-btn');
+          if (button instanceof HTMLAnchorElement && button.href) {
+            event.preventDefault();
+            mockNavigate(button.href);
+          }
         }
-      });
+      );
 
-      // Simulate click
       btn.click();
 
-      // Verify delegation works
-      expect(parent.hasAttribute('data-ytp-delegated')).toBe(true);
       expect(mockNavigate).toHaveBeenCalled();
       expect(mockNavigate.mock.calls[0][0]).toContain('playlist?list=test');
     });
 
-    test('should use event delegation for desktop buttons', () => {
+    test('real delegator invokes handler for desktop buttons', () => {
       const parent = document.createElement('div');
-      parent.setAttribute('data-ytp-delegated', 'true');
       document.body.appendChild(parent);
 
       const btn = document.createElement('a');
-      btn.className = 'ytp-play-all-btn';
+      btn.className = 'yp-play-all-btn';
       btn.href = '/playlist?list=testlist';
       parent.appendChild(btn);
 
       const mockNavigate = jest.fn();
-      parent.addEventListener('click', event => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        const btn = target.closest('.ytp-play-all-btn:not(.ytp-unsupported)');
-        if (btn instanceof HTMLAnchorElement && btn.href) {
-          event.preventDefault();
-          event.stopPropagation();
-          mockNavigate(btn.href);
+      window.YouTubePlusEventDelegation.on(
+        parent,
+        'click',
+        '.yp-play-all-btn:not(.yp-unsupported)',
+        /** @param {MouseEvent} event */ event => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const button = target.closest('.yp-play-all-btn:not(.yp-unsupported)');
+          if (button instanceof HTMLAnchorElement && button.href) {
+            event.preventDefault();
+            event.stopPropagation();
+            mockNavigate(button.href);
+          }
         }
-      });
+      );
 
       btn.click();
 
@@ -79,26 +93,30 @@ describe('Enhanced Module - Event Delegation', () => {
       expect(mockNavigate.mock.calls[0][0]).toContain('playlist?list=testlist');
     });
 
-    test('should not trigger on unsupported buttons', () => {
+    test('real delegator does not trigger on unsupported buttons', () => {
       const parent = document.createElement('div');
-      parent.setAttribute('data-ytp-delegated', 'true');
       document.body.appendChild(parent);
 
       const btn = document.createElement('a');
-      btn.className = 'ytp-play-all-btn ytp-unsupported';
+      btn.className = 'yp-play-all-btn yp-unsupported';
       btn.href = 'https://github.com/issue/39';
       parent.appendChild(btn);
 
       const mockNavigate = jest.fn();
-      parent.addEventListener('click', event => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        const btn = target.closest('.ytp-play-all-btn:not(.ytp-unsupported)');
-        if (btn instanceof HTMLAnchorElement && btn.href) {
-          event.preventDefault();
-          mockNavigate(btn.href);
+      window.YouTubePlusEventDelegation.on(
+        parent,
+        'click',
+        '.yp-play-all-btn:not(.yp-unsupported)',
+        /** @param {MouseEvent} event */ event => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const button = target.closest('.yp-play-all-btn:not(.yp-unsupported)');
+          if (button instanceof HTMLAnchorElement && button.href) {
+            event.preventDefault();
+            mockNavigate(button.href);
+          }
         }
-      });
+      );
 
       btn.click();
 
@@ -107,10 +125,9 @@ describe('Enhanced Module - Event Delegation', () => {
   });
 
   describe('Random Play Button Delegation', () => {
-    test('should delegate random popover link clicks', () => {
+    test('real delegator handles random popover link clicks', () => {
       const popover = document.createElement('div');
-      popover.className = 'ytp-random-popover';
-      popover.setAttribute('data-ytp-delegated', 'true');
+      popover.className = 'yp-random-popover';
       document.body.appendChild(popover);
 
       const link = document.createElement('a');
@@ -119,16 +136,21 @@ describe('Enhanced Module - Event Delegation', () => {
       popover.appendChild(link);
 
       const mockNavigate = jest.fn();
-      popover.addEventListener('click', event => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        const link = target.closest('a');
-        if (link instanceof HTMLAnchorElement && link.href) {
-          event.preventDefault();
-          event.stopPropagation();
-          mockNavigate(link.href);
+      window.YouTubePlusEventDelegation.on(
+        popover,
+        'click',
+        'a',
+        /** @param {MouseEvent} event */ event => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const a = target.closest('a');
+          if (a instanceof HTMLAnchorElement && a.href) {
+            event.preventDefault();
+            event.stopPropagation();
+            mockNavigate(a.href);
+          }
         }
-      });
+      );
 
       link.click();
 
@@ -137,45 +159,61 @@ describe('Enhanced Module - Event Delegation', () => {
       expect(mockNavigate.mock.calls[0][0]).toContain('ytp-random=prefer-newest');
     });
 
-    test('should handle mouseleave on random popover', () => {
+    test('real delegator can be removed with off', () => {
       const popover = document.createElement('div');
-      popover.className = 'ytp-random-popover';
-      popover.removeAttribute('hidden');
+      popover.className = 'yp-random-popover';
       document.body.appendChild(popover);
 
-      popover.addEventListener('mouseleave', () => {
-        popover.setAttribute('hidden', '');
-      });
+      const link = document.createElement('a');
+      link.href = '/playlist?list=test';
+      popover.appendChild(link);
 
-      const event = new MouseEvent('mouseleave', { bubbles: true });
-      popover.dispatchEvent(event);
+      const mockNavigate = jest.fn();
+      const handler = /** @param {MouseEvent} event */ event => {
+        const target = event.target;
+        if (!(target instanceof Element)) return;
+        const a = target.closest('a');
+        if (a instanceof HTMLAnchorElement && a.href) {
+          event.preventDefault();
+          mockNavigate(a.href);
+        }
+      };
 
-      expect(popover.hasAttribute('hidden')).toBe(true);
+      window.YouTubePlusEventDelegation.on(popover, 'click', 'a', handler);
+      window.YouTubePlusEventDelegation.off(popover, 'click', 'a', handler);
+
+      link.click();
+
+      expect(mockNavigate).not.toHaveBeenCalled();
     });
   });
 
   describe('Random Video Link Delegation', () => {
-    test('should mark and delegate video links with random play', () => {
+    test('real delegator marks and delegates video links with random play', () => {
       const container = document.createElement('div');
       container.id = 'playlist-container';
-      container.setAttribute('data-ytp-random-delegated', 'true');
       document.body.appendChild(container);
 
       const link = document.createElement('a');
       link.href = '/watch?v=testVideoId&list=testList';
-      link.setAttribute('data-ytp-random-link', 'true');
+      link.setAttribute('data-yp-random-link', 'true');
       container.appendChild(link);
 
       const mockNavigate = jest.fn();
-      container.addEventListener('click', event => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        const link = target.closest('a[data-ytp-random-link]');
-        if (link instanceof HTMLAnchorElement && link.href) {
-          event.preventDefault();
-          mockNavigate(link.href);
+      window.YouTubePlusEventDelegation.on(
+        container,
+        'click',
+        'a[data-yp-random-link]',
+        /** @param {MouseEvent} event */ event => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const a = target.closest('a[data-yp-random-link]');
+          if (a instanceof HTMLAnchorElement && a.href) {
+            event.preventDefault();
+            mockNavigate(a.href);
+          }
         }
-      });
+      );
 
       link.click();
 
@@ -184,13 +222,12 @@ describe('Enhanced Module - Event Delegation', () => {
       expect(mockNavigate.mock.calls[0][0]).toContain('list=testList');
     });
 
-    test('should only process links with data-ytp-random-link attribute', () => {
+    test('real delegator only processes links with data-yp-random-link attribute', () => {
       const container = document.createElement('div');
-      container.setAttribute('data-ytp-random-delegated', 'true');
       document.body.appendChild(container);
 
       const randomLink = document.createElement('a');
-      randomLink.setAttribute('data-ytp-random-link', 'true');
+      randomLink.setAttribute('data-yp-random-link', 'true');
       randomLink.href = '/watch?v=random';
       container.appendChild(randomLink);
 
@@ -199,15 +236,20 @@ describe('Enhanced Module - Event Delegation', () => {
       container.appendChild(normalLink);
 
       const mockNavigate = jest.fn();
-      container.addEventListener('click', event => {
-        const target = event.target;
-        if (!(target instanceof Element)) return;
-        const link = target.closest('a[data-ytp-random-link]');
-        if (link instanceof HTMLAnchorElement && link.href) {
-          event.preventDefault();
-          mockNavigate(link.href);
+      window.YouTubePlusEventDelegation.on(
+        container,
+        'click',
+        'a[data-yp-random-link]',
+        /** @param {MouseEvent} event */ event => {
+          const target = event.target;
+          if (!(target instanceof Element)) return;
+          const a = target.closest('a[data-yp-random-link]');
+          if (a instanceof HTMLAnchorElement && a.href) {
+            event.preventDefault();
+            mockNavigate(a.href);
+          }
         }
-      });
+      );
 
       normalLink.click();
       expect(mockNavigate).not.toHaveBeenCalled();
@@ -219,26 +261,27 @@ describe('Enhanced Module - Event Delegation', () => {
   });
 
   describe('Event Delegation Best Practices', () => {
-    test('should prevent duplicate delegation setup', () => {
+    test('real delegator supports multiple handlers for the same selector', () => {
       const parent = document.createElement('div');
       document.body.appendChild(parent);
 
-      expect(parent.hasAttribute('data-ytp-delegated')).toBe(false);
+      const button = document.createElement('button');
+      button.className = 'target-button';
+      parent.appendChild(button);
 
-      // First setup
-      if (!parent.hasAttribute('data-ytp-delegated')) {
-        parent.setAttribute('data-ytp-delegated', 'true');
-        parent.addEventListener('click', () => {});
-      }
+      const first = jest.fn();
+      const second = jest.fn();
 
-      expect(parent.hasAttribute('data-ytp-delegated')).toBe(true);
+      window.YouTubePlusEventDelegation.on(parent, 'click', '.target-button', first);
+      window.YouTubePlusEventDelegation.on(parent, 'click', '.target-button', second);
 
-      // Attempt second setup - should be prevented
-      const shouldSetup = !parent.hasAttribute('data-ytp-delegated');
-      expect(shouldSetup).toBe(false);
+      button.click();
+
+      expect(first).toHaveBeenCalled();
+      expect(second).toHaveBeenCalled();
     });
 
-    test('should use closest() for event target matching', () => {
+    test('real delegator uses closest() for event target matching', () => {
       const container = document.createElement('div');
       document.body.appendChild(container);
 
@@ -252,14 +295,19 @@ describe('Enhanced Module - Event Delegation', () => {
 
       /** @type {Element | null} */
       let clickedElement = null;
-      container.addEventListener('click', event => {
-        const eventTarget = event.target;
-        if (!(eventTarget instanceof Element)) return;
-        const target = eventTarget.closest('.target-button');
-        if (target) {
-          clickedElement = target;
+      window.YouTubePlusEventDelegation.on(
+        container,
+        'click',
+        '.target-button',
+        /** @param {MouseEvent} event */ event => {
+          const eventTarget = event.target;
+          if (!(eventTarget instanceof Element)) return;
+          const target = eventTarget.closest('.target-button');
+          if (target) {
+            clickedElement = target;
+          }
         }
-      });
+      );
 
       // Click on span inside button
       span.click();

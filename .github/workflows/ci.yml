@@ -1,327 +1,96 @@
-name: CI/CD Pipeline
+name: Check and release
 
 on:
   push:
-    branches: [main, develop]
+    branches: [main]
+    tags: ['v*']
   pull_request:
-    branches: [main, develop]
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  group: check-${{ github.ref }}
+  cancel-in-progress: ${{ !startsWith(github.ref, 'refs/tags/') }}
 
 jobs:
-  test:
-    name: Test & Build (Node ${{ matrix.node-version }})
+  code-quality:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        node-version: ["20", "22"]
-    env:
-      HUSKY: "0"
-
+    timeout-minutes: 20
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          fetch-depth: 0
-
-      - name: Setup Node.js ${{ matrix.node-version }}
-        uses: actions/setup-node@v5
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Local-only paths must not be in the pushed tree
+        run: node scripts/check-push-scope.js --ref HEAD
+      - name: Types
+        run: npm run typecheck && npm run typecheck:scripts
+      - name: Lint and formatting
+        run: npm run lint && npm run lint:tools
+      - name: Unused files and dependencies
+        run: npm run knip
+      - name: Locale parity and i18n audit
+        run: npm run check:locales
+      - name: Custom rules (comment slop, duplicate helpers)
+        run: node scripts/lint-custom-rules.js
+      - name: Ratchets (code, CSS, facade)
+        run: npm run check:code-ratchet && npm run check:css-ratchet && npm run check:facade-usage
+      - name: Version consistency
+        run: node scripts/check-version-consistency.js
+      - name: Build the release candidate
+        run: npm run build:release
+      - name: Verify the release bytes
+        run: npm run release:verify
+      - uses: actions/upload-artifact@330a01c490aca151604b8cf639adc76d48f6c5d4 # v5.0.0
+        if: startsWith(github.ref, 'refs/tags/')
         with:
-          node-version: ${{ matrix.node-version }}
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run Biome lint
-        run: npm run lint
-
-      - name: Run Biome format check
-        run: npm run format:check
-
-      - name: Run CSP compatibility check
-        run: npm run lint:csp
-
-      - name: Run custom lint rules
-        run: npm run lint:custom
-
-      - name: Run knip strict
-        run: npm run knip:strict
-
-      - name: Run type checking
-        run: npm run typecheck
-
-      - name: Check for hardcoded secrets
-        run: |
-          echo "Checking for potential secrets..."
-          FOUND_SECRETS=0
-          if grep -r "api[_-]key\s*=\s*['\"]" src/ --include="*.js" -i 2>/dev/null; then
-            echo "⚠️ WARNING: Potential API key found"
-            FOUND_SECRETS=1
-          fi
-          if grep -r "token\s*=\s*['\"][a-zA-Z0-9]{20,}" src/ --include="*.js" -i 2>/dev/null; then
-            echo "⚠️ WARNING: Potential token found"
-            FOUND_SECRETS=1
-          fi
-          if [ $FOUND_SECRETS -eq 0 ]; then
-            echo "✅ Secret check passed"
-          else
-            echo "⚠️ Potential secrets found (non-blocking)"
-          fi
-
-      - name: Safety net check (dangerous patterns)
-        run: |
-          echo "Checking for dangerous patterns..."
-          if grep -rE "innerHTML\s*=\s*[^'\"\`]" src/ --include="*.js" | grep -v "innerHTML = ''" | grep -v "createSafeHTML" | grep -v "//"; then
-            echo "⚠️ WARNING: Potentially unsafe innerHTML usage found"
-            echo "Use YouTubeSafeDOM.setHTML() instead"
-          else
-            echo "✅ innerHTML usage is safe"
-          fi
-
-          if [ ! -f "src/safe-dom.js" ]; then
-            echo "❌ ERROR: safe-dom.js not found"
-            exit 1
-          fi
-          echo "✅ Security utilities validated"
-
-      - name: Run security audit
-        run: npm audit --audit-level=high
-
-      - name: Run unit tests with coverage
-        run: npm run test:ci
-        env:
-          NODE_OPTIONS: --max_old_space_size=4096
-
-      - name: Upload coverage to Codecov
-        uses: codecov/codecov-action@v5
-        continue-on-error: true
-        with:
-          file: ./coverage/lcov.info
-          flags: unittests
-          name: codecov-umbrella
-
-      - name: Build userscript (production)
-        run: npm run build:production
-
-      - name: Check bundle size
-        run: npm run size:check
-
-      - name: Upload build artifact
-        uses: actions/upload-artifact@v5
-        with:
-          name: userscript
-          path: youtube.user.js
-          retention-days: 30
-
-  release:
-    name: Create Release
-    needs: [test, code-quality, e2e]
-    runs-on: ubuntu-latest
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
-    env:
-      HUSKY: "0"
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Build userscript (optimized)
-        run: npm run build:optimized
-
-      - name: Build userscript (minified)
-        run: npm run build:minify -- --out youtube.user.min.js
-
-      - name: Get version from package.json
-        id: package-version
-        run: echo "VERSION=$(node -p "require('./package.json').version")" >> $GITHUB_OUTPUT
-
-      - name: Check if tag exists
-        id: check-tag
-        run: |
-          git fetch --tags
-          if git rev-parse "v${{ steps.package-version.outputs.VERSION }}" >/dev/null 2>&1; then
-            echo "TAG_EXISTS=true" >> $GITHUB_OUTPUT
-            echo "⚠️ Tag v${{ steps.package-version.outputs.VERSION }} already exists, skipping release"
-          else
-            echo "TAG_EXISTS=false" >> $GITHUB_OUTPUT
-            echo "✓ Tag v${{ steps.package-version.outputs.VERSION }} does not exist, will create release"
-          fi
-
-      - name: Verify build artifacts
-        if: steps.check-tag.outputs.TAG_EXISTS == 'false'
-        run: |
-          MISSING=0
-          if [ ! -f "youtube.user.js" ]; then
-            echo "✗ youtube.user.js not found"
-            MISSING=1
-          fi
-          if [ ! -f "youtube.user.min.js" ]; then
-            echo "✗ youtube.user.min.js not found"
-            MISSING=1
-          fi
-          if [ $MISSING -ne 0 ]; then
-            exit 1
-          fi
-          echo "✓ Build artifacts verified"
-          ls -lh youtube.user.js youtube.user.min.js
-
-      - name: Extract changelog for this version
-        if: steps.check-tag.outputs.TAG_EXISTS == 'false'
-        id: changelog
-        run: |
-          VERSION="${{ steps.package-version.outputs.VERSION }}"
-          # Extract section between this version header and the next version header
-          CHANGELOG=$(awk "/^## .*v${VERSION}/{found=1; next} /^## .*v[0-9]/{if(found) exit} found{print}" CHANGELOG.md 2>/dev/null || echo "")
-          if [ -z "$CHANGELOG" ]; then
-            CHANGELOG="No changelog entry for v${VERSION}."
-          fi
-          # Use EOF delimiter to preserve multiline content
-          echo "body<<CHANGELOG_EOF" >> $GITHUB_OUTPUT
-          echo "$CHANGELOG" >> $GITHUB_OUTPUT
-          echo "CHANGELOG_EOF" >> $GITHUB_OUTPUT
-
-      - name: Create Release
-        if: steps.check-tag.outputs.TAG_EXISTS == 'false'
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ steps.package-version.outputs.VERSION }}
-          name: Release v${{ steps.package-version.outputs.VERSION }}
-          body: |
-            ## YouTube+ v${{ steps.package-version.outputs.VERSION }}
-
-            ${{ steps.changelog.outputs.body }}
-          files: |
+          name: release-assets
+          if-no-files-found: error
+          path: |
             youtube.user.js
             youtube.user.min.js
-          draft: false
-          prerelease: false
-          generate_release_notes: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            release-manifest.json
 
-  code-quality:
-    name: Code Quality Analysis
+  security:
     runs-on: ubuntu-latest
-    env:
-      HUSKY: "0"
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Dependency advisories
+        run: npm run security
+      - name: Static security scans (innerHTML, secrets)
+        run: node scripts/security-innerhtml-scan.js && node scripts/check-secrets.js
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [code-quality, security]
+    runs-on: ubuntu-latest
     permissions:
-      checks: write
-      contents: read
-      security-events: write
-
+      contents: write
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5.1.0
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5.0.0
         with:
-          fetch-depth: 0
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v5
+          node-version: '24'
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5.0.0
         with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        run: npm ci
-
-      - name: Run Biome lint with JSON output
-        run: |
-          npx biome check --no-errors-on-unmatched "src/**/*.js" "build.js" --reporter=json > biome-results.json || true
-        continue-on-error: true
-
-      - name: Check Biome results file exists
-        id: check_biome
-        run: |
-          if [ -f biome-results.json ]; then echo "exists=true" >> $GITHUB_OUTPUT; else echo "exists=false" >> $GITHUB_OUTPUT; fi
-
-      - name: Upload Biome results
-        if: steps.check_biome.outputs.exists == 'true'
-        uses: actions/upload-artifact@v5
-        with:
-          name: biome-results
-          path: biome-results.json
-          retention-days: 30
-
-  e2e:
-    name: E2E Tests
-    runs-on: ubuntu-latest
-    if: always() && (github.event_name == 'push' || github.event_name == 'pull_request')
-    env:
-      HUSKY: "0"
-
-    steps:
-      - name: Check if e2e tests exist
-        id: check-e2e
-        run: |
-          if [ -d "e2e" ] && [ "$(ls -A e2e 2>/dev/null)" ]; then
-            echo "exists=true" >> $GITHUB_OUTPUT
-          else
-            echo "exists=false" >> $GITHUB_OUTPUT
-            echo "No e2e tests found, skipping"
-          fi
-
-      - name: Checkout code
-        if: steps.check-e2e.outputs.exists == 'true'
-        uses: actions/checkout@v5
-
-      - name: Setup Node.js
-        if: steps.check-e2e.outputs.exists == 'true'
-        uses: actions/setup-node@v5
-        with:
-          node-version: "22"
-          cache: "npm"
-
-      - name: Install dependencies
-        if: steps.check-e2e.outputs.exists == 'true'
-        run: npm ci
-
-      - name: Install Playwright browsers
-        if: steps.check-e2e.outputs.exists == 'true'
-        run: npx playwright install --with-deps chromium
-
-      - name: Build userscript (required for E2E)
-        if: steps.check-e2e.outputs.exists == 'true'
-        run: npm run build:production
-
-      - name: Run Playwright E2E tests
-        if: steps.check-e2e.outputs.exists == 'true'
-        run: npx playwright test --reporter=list --project=chromium
-
-      - name: Upload E2E report
-        if: steps.check-e2e.outputs.exists == 'true' && always()
-        uses: actions/upload-artifact@v5
-        with:
-          name: playwright-report
-          path: e2e-report/
-          retention-days: 7
-        continue-on-error: true
-
-  dependency-review:
-    name: Dependency Review
-    runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request'
-
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v5
-
-      - name: Dependency Review
-        uses: actions/dependency-review-action@v4
-        with:
-          fail-on-severity: moderate
-          allow-licenses: MIT, Apache-2.0, BSD-2-Clause, BSD-3-Clause, ISC, 0BSD
+          name: release-assets
+          path: dist
+      - name: Verify tag and release bytes
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: node scripts/release.js verify --dir dist --tag "$RELEASE_TAG"
+      - name: Publish verified GitHub assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release create "$RELEASE_TAG" --verify-tag --generate-notes dist/youtube.user.js dist/youtube.user.min.js dist/release-manifest.json

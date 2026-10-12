@@ -1,0 +1,21 @@
+{
+  "total": 56,
+  "byFunction": {
+    "logS": 37,
+    "escapeHTML": 3,
+    "sanitizeHTML": 2,
+    "getVideoId": 3,
+    "getCurrentVideoId": 5,
+    "registerListenerSafe": 3,
+    "positionDropdown": 3
+  },
+  "canonicalOwners": {
+    "logS": "src/utils.js",
+    "escapeHTML": "src/safe-dom.js",
+    "sanitizeHTML": "src/safe-dom.js",
+    "getVideoId": "src/utils.js",
+    "getCurrentVideoId": "src/utils.js",
+    "registerListenerSafe": "src/utils.js",
+    "positionDropdown": "src/feature-registry.js"
+  }
+}

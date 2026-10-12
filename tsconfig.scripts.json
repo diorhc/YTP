@@ -1,0 +1,24 @@
+{
+  "//": "Type-check for the developer scripts only. They run under Node, so the DOM library is intentionally absent; the runtime bundle keeps its own strict check in tsconfig.json.",
+  "compilerOptions": {
+    "allowJs": true,
+    "checkJs": true,
+    "noEmit": true,
+    "moduleResolution": "node16",
+    "module": "Node16",
+    "target": "ES2022",
+    "lib": ["ES2023"],
+    "types": ["node"],
+    "strict": true,
+    "noImplicitAny": false,
+    "strictNullChecks": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "noFallthroughCasesInSwitch": true
+  },
+  "include": ["scripts/**/*.js"],
+  "exclude": ["node_modules", "test-results", "coverage"]
+}

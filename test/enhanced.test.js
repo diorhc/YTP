@@ -4,288 +4,259 @@
 
 describe('Enhanced Tabviews Module', () => {
   beforeEach(() => {
+    jest.resetModules();
     // Reset DOM
     document.body.innerHTML = '';
     document.head.innerHTML = '';
     // Clear localStorage
     localStorage.clear();
     // Mock console methods to avoid noise
-    jest.spyOn(console, 'error').mockImplementation(() => {});
-    jest.spyOn(console, 'warn').mockImplementation(() => {});
+    jest.spyOn(console, 'error').mockImplementation(() => {
+      /* mock */
+    });
+    jest.spyOn(console, 'warn').mockImplementation(() => {
+      /* mock */
+    });
+
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(sel => document.querySelector(sel)),
+        $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
+        byId: jest.fn(id => document.getElementById(id)),
+        t: jest.fn(key => key || ''),
+        createWithErrorBoundary: _name => fn => fn,
+        setSafeHTML: jest.fn((el, html) => {
+          el.innerHTML = html;
+        }),
+        getLanguage: jest.fn(() => 'en'),
+        loadFeatureEnabled: jest.fn(() => true),
+        debounce: jest.fn(fn => Object.assign(fn, { cancel: jest.fn(), destroy: jest.fn() })),
+        throttle: jest.fn(fn => fn),
+        cleanupManager: {
+          registerInterval: jest.fn(id => id),
+          registerTimeout: jest.fn(id => id),
+          registerObserver: jest.fn(obs => obs),
+          registerListener: jest.fn(),
+          register: jest.fn(),
+          cleanup: jest.fn(),
+          registerAnimationFrame: jest.fn(id => id),
+          getListenerStats: jest.fn(() => ({ active: 0, registeredTotal: 0 })),
+        },
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+        SETTINGS_KEY: 'youtube_plus_settings',
+        logSuppressed: jest.fn(),
+        logError: jest.fn(),
+        createElement: jest.fn((tag, props, children) => {
+          const el = document.createElement(tag);
+          if (props)
+            Object.entries(props).forEach(([k, v]) => {
+              el[k] = v;
+            });
+          if (children)
+            children.forEach(c => {
+              if (typeof c === 'string') el.textContent = c;
+              else el.appendChild(c);
+            });
+          return el;
+        }),
+        whenRelevant: jest.fn(() => ({ active: false, check: jest.fn(), dispose: jest.fn() })),
+        renderTemplateClone: jest.fn((el, html) => {
+          el.innerHTML = html;
+        }),
+        waitForElement: jest.fn(() => Promise.resolve(null)),
+        onDomReady: jest.fn(cb => {
+          if (typeof cb === 'function') cb();
+        }),
+      },
+    });
+
+    Object.defineProperty(window, 'YouTubePlusLogger', {
+      configurable: true,
+      writable: true,
+      value: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    });
+
+    Object.defineProperty(window, 'YouTubePlusDesignSystem', {
+      configurable: true,
+      writable: true,
+      value: {
+        StyleManager: window.YouTubeUtils.StyleManager,
+        getStyle: jest.fn(() => ''),
+      },
+    });
+
+    Object.defineProperty(window, 'YouTubePlusMutationCoordinator', {
+      configurable: true,
+      writable: true,
+      value: {
+        subscribeRoot: jest.fn(() => 'sub-id'),
+        unsubscribe: jest.fn(),
+        watchTarget: jest.fn(),
+        unwatch: jest.fn(),
+      },
+    });
+
+    Object.defineProperty(window, 'YouTubePlusEventDelegation', {
+      configurable: true,
+      writable: true,
+      value: { on: jest.fn(), off: jest.fn() },
+    });
+
+    Object.defineProperty(window, 'YouTubePlusStyleResources', {
+      configurable: true,
+      writable: true,
+      value: { enhanced: '', update: '' },
+    });
+
+    global.mockLocation({
+      hostname: 'www.youtube.com',
+      pathname: '/watch',
+      href: 'https://www.youtube.com/watch?v=test',
+    });
+
+    require('../src/enhanced.js');
   });
 
   afterEach(() => {
     jest.restoreAllMocks();
   });
 
-  describe('Scroll-to-Top Button', () => {
-    test('should add custom styles to document head', () => {
-      const stylesBefore = document.getElementById('custom-styles');
-      expect(stylesBefore).toBeNull();
-
-      // Trigger module initialization by simulating the module code
-      const style = document.createElement('style');
-      style.id = 'custom-styles';
-      document.head.appendChild(style);
-
-      const stylesAfter = document.getElementById('custom-styles');
-      expect(stylesAfter).not.toBeNull();
-      if (!stylesAfter) throw new Error('custom styles not created');
-      expect(stylesAfter.tagName).toBe('STYLE');
+  describe('Scroll-to-Top Button (real facade)', () => {
+    test('getUniversalScrollContainer returns a scrollable element on watch page', () => {
+      const container = window.YouTubePlusEnhanced.getUniversalScrollContainer();
+      expect(container).toBeInstanceOf(Element);
     });
 
-    test('should not add duplicate styles', () => {
-      const style1 = document.createElement('style');
-      style1.id = 'custom-styles';
-      document.head.appendChild(style1);
-
-      const style2 = document.createElement('style');
-      style2.id = 'custom-styles';
-
-      // Should not add duplicate
-      const existing = document.getElementById('custom-styles');
-      if (!existing) {
-        document.head.appendChild(style2);
-      }
-
-      const allStyles = document.querySelectorAll('#custom-styles');
-      expect(allStyles.length).toBe(1);
+    test('isTabviewEnabled reflects default enabled state', () => {
+      expect(window.YouTubePlusEnhanced.isTabviewEnabled()).toBe(true);
     });
 
-    test('should create button with correct attributes', () => {
-      const rightTabs = document.createElement('div');
-      rightTabs.id = 'right-tabs';
-      document.body.appendChild(rightTabs);
-
-      const button = document.createElement('button');
-      button.id = 'right-tabs-top-button';
-      button.className = 'top-button';
-      button.title = 'Scroll to top';
-      button.setAttribute('aria-label', 'Scroll to top');
-
-      rightTabs.appendChild(button);
-
-      const createdButton = document.getElementById('right-tabs-top-button');
-      expect(createdButton).not.toBeNull();
-      if (!createdButton) throw new Error('button was not created');
-      expect(createdButton.className).toBe('top-button');
-      expect(createdButton.getAttribute('aria-label')).toBe('Scroll to top');
+    test('formatCompactNumber formats view counts via real helper', () => {
+      expect(window.YouTubePlusEnhanced.formatCompactNumber(0)).toBe('0');
+      expect(window.YouTubePlusEnhanced.formatCompactNumber(999)).toBe('999');
+      expect(window.YouTubePlusEnhanced.formatCompactNumber(1000)).toBe('1K');
+      expect(window.YouTubePlusEnhanced.formatCompactNumber(1500000)).toBe('1.5M');
     });
 
-    test('should toggle visibility based on scroll position', () => {
-      const button = document.createElement('button');
-      button.id = 'right-tabs-top-button';
-      button.className = 'top-button';
-      document.body.appendChild(button);
-
-      // Mock scroll container
-      const scrollContainer = document.createElement('div');
-      Object.defineProperty(scrollContainer, 'scrollTop', {
-        writable: true,
-        value: 150,
+    test('getVideoIdForDislike extracts video ID from watch URL', () => {
+      global.mockLocation({
+        href: 'https://www.youtube.com/watch?v=abc123XYZ',
+        pathname: '/watch',
+        search: '?v=abc123XYZ',
       });
+      expect(window.YouTubePlusEnhanced.getVideoIdForDislike()).toBe('abc123XYZ');
+    });
 
-      // Simulate handleScroll
-      if (scrollContainer.scrollTop > 100) {
-        button.classList.add('visible');
-      } else {
-        button.classList.remove('visible');
-      }
-
-      expect(button.classList.contains('visible')).toBe(true);
-
-      // Scroll to top
-      Object.defineProperty(scrollContainer, 'scrollTop', {
-        writable: true,
-        value: 50,
+    test('getVideoIdForDislike extracts video ID from shorts URL', () => {
+      global.mockLocation({
+        href: 'https://www.youtube.com/shorts/shortId456',
+        pathname: '/shorts/shortId456',
       });
-
-      if (scrollContainer.scrollTop > 100) {
-        button.classList.add('visible');
-      } else {
-        button.classList.remove('visible');
-      }
-
-      expect(button.classList.contains('visible')).toBe(false);
-    });
-
-    test('should handle scroll event with debouncing', done => {
-      const mockFn = jest.fn();
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let timeoutId = null;
-
-      // Simple debounce implementation
-      /** @param {() => void} fn @param {number} delay */
-      const debounce = (fn, delay) => {
-        return () => {
-          if (timeoutId !== null) clearTimeout(timeoutId);
-          timeoutId = setTimeout(() => fn(), delay);
-        };
-      };
-
-      const debouncedFn = debounce(mockFn, 100);
-
-      debouncedFn();
-      debouncedFn();
-      debouncedFn();
-
-      expect(mockFn).not.toHaveBeenCalled();
-
-      setTimeout(() => {
-        expect(mockFn).toHaveBeenCalledTimes(1);
-        done();
-      }, 150);
+      expect(window.YouTubePlusEnhanced.getVideoIdForDislike()).toBe('shortId456');
     });
   });
 
-  describe('Accessibility', () => {
-    test('button should have aria-label', () => {
-      const button = document.createElement('button');
-      button.setAttribute('aria-label', 'Scroll to top');
-      document.body.appendChild(button);
-
-      expect(button.getAttribute('aria-label')).toBe('Scroll to top');
+  describe('Accessibility (real facade)', () => {
+    test('getUniversalScrollContainer returns a real DOM element (not null)', () => {
+      const container = window.YouTubePlusEnhanced.getUniversalScrollContainer();
+      expect(container).not.toBeNull();
     });
 
-    test('button should be keyboard accessible', () => {
-      const button = document.createElement('button');
-      button.id = 'right-tabs-top-button';
-      document.body.appendChild(button);
-
-      const clickHandler = jest.fn();
-      button.addEventListener('click', clickHandler);
-      button.click();
-
-      expect(clickHandler).toHaveBeenCalled();
+    test('resolveMusicContainers returns an array on non-music pages', () => {
+      const containers = window.YouTubePlusEnhanced.resolveMusicContainers();
+      expect(Array.isArray(containers)).toBe(true);
     });
   });
 
-  describe('Performance', () => {
-    test('should use passive event listeners for scroll', () => {
-      const tab = document.createElement('div');
-      tab.className = 'tab-content-cld';
-
-      const mockHandler = jest.fn();
-      tab.addEventListener('scroll', mockHandler, { passive: true });
-
-      const event = new Event('scroll');
-      tab.dispatchEvent(event);
-
-      expect(mockHandler).toHaveBeenCalled();
+  describe('Performance (real facade)', () => {
+    test('invalidateMusicContainersCache allows re-query after DOM change', () => {
+      const first = window.YouTubePlusEnhanced.resolveMusicContainers();
+      window.YouTubePlusEnhanced.invalidateMusicContainersCache();
+      const layout = document.createElement('ytmusic-app-layout');
+      document.body.appendChild(layout);
+      const second = window.YouTubePlusEnhanced.resolveMusicContainers();
+      expect(second.length).toBeGreaterThanOrEqual(first.length);
     });
 
-    test('should batch DOM operations', () => {
-      const elements = [];
-      for (let i = 0; i < 5; i++) {
-        const el = document.createElement('div');
-        el.className = 'ytp-ce-element';
-        document.body.appendChild(el);
-        elements.push(el);
-      }
-
-      // Batch remove
-      const batchSize = 20;
-      const len = Math.min(elements.length, batchSize);
-      let removed = 0;
-
-      for (let i = 0; i < len; i++) {
-        elements[i].remove();
-        removed++;
-      }
-
-      expect(removed).toBe(5);
-      expect(document.querySelectorAll('.ytp-ce-element').length).toBe(0);
+    test('isTabviewEnabled is idempotent across multiple calls', () => {
+      const first = window.YouTubePlusEnhanced.isTabviewEnabled();
+      const second = window.YouTubePlusEnhanced.isTabviewEnabled();
+      expect(first).toBe(second);
     });
   });
 
-  describe('Internationalization', () => {
-    test('should support multiple languages', () => {
-      const i18n = {
-        en: { scrollToTop: 'Scroll to top' },
-        ru: { scrollToTop: 'Прокрутить вверх' },
-      };
+  describe('Internationalization (real facade)', () => {
+    test('t() is wired and returns keys via YouTubeUtils.t mock', () => {
+      expect(window.YouTubeUtils.t('scrollToTop')).toBe('scrollToTop');
+    });
 
-      const getLanguage = () => {
-        const htmlLang = document.documentElement.lang || 'en';
-        if (htmlLang.startsWith('ru')) return 'ru';
-        return 'en';
-      };
-
-      document.documentElement.lang = 'en';
-      expect(i18n[getLanguage()].scrollToTop).toBe('Scroll to top');
-
-      document.documentElement.lang = 'ru';
-      expect(i18n[getLanguage()].scrollToTop).toBe('Прокрутить вверх');
+    test('getLanguage returns the mocked language', () => {
+      expect(window.YouTubeUtils.getLanguage()).toBe('en');
     });
   });
 
   describe('Return YouTube Dislike Integration', () => {
-    test('should extract video ID correctly from different sources', () => {
-      const getVideoIdForDislikeMock = (urlStr, mockDoc) => {
-        try {
-          const urlObj = new URL(urlStr);
-          const pathname = urlObj.pathname || '';
-          if (pathname.startsWith('/shorts/')) return pathname.slice(8);
-          if (pathname.startsWith('/clip/')) {
-            const meta = mockDoc.querySelector("meta[itemprop='videoId'], meta[itemprop='identifier']");
-            return meta?.getAttribute('content') || null;
-          }
-          let v = urlObj.searchParams.get('v');
-          if (v) return v;
+    test('should extract video ID correctly from different sources via real helper', () => {
+      global.mockLocation({
+        href: 'https://www.youtube.com/watch?v=tiFJmVhkF_s',
+        pathname: '/watch',
+        search: '?v=tiFJmVhkF_s',
+      });
+      expect(window.YouTubePlusEnhanced.getVideoIdForDislike()).toBe('tiFJmVhkF_s');
 
-          const watchFlexy = mockDoc.querySelector('ytd-watch-flexy');
-          if (watchFlexy) {
-            v = watchFlexy.getAttribute('video-id');
-            if (v) return v;
-          }
-
-          const moviePlayer = mockDoc.getElementById('movie_player');
-          if (moviePlayer && typeof moviePlayer.getVideoData === 'function') {
-            v = moviePlayer.getVideoData()?.video_id;
-            if (v) return v;
-          }
-
-          const metaVideoId = mockDoc.querySelector("meta[itemprop='videoId']");
-          if (metaVideoId) {
-            v = metaVideoId.getAttribute('content');
-            if (v) return v;
-          }
-
-          return null;
-        } catch (_e) {
-          return null;
-        }
-      };
-
-      const mockDoc = document.implementation.createHTMLDocument();
-
-      expect(getVideoIdForDislikeMock('https://www.youtube.com/watch?v=tiFJmVhkF_s', mockDoc)).toBe('tiFJmVhkF_s');
-      expect(getVideoIdForDislikeMock('https://www.youtube.com/shorts/xyz12345', mockDoc)).toBe('xyz12345');
-
-      const meta = mockDoc.createElement('meta');
-      meta.setAttribute('itemprop', 'videoId');
-      meta.setAttribute('content', 'clip123');
-      mockDoc.head.appendChild(meta);
-      expect(getVideoIdForDislikeMock('https://www.youtube.com/clip/abc', mockDoc)).toBe('clip123');
-
-      // Test watch flexy fallback
-      const flexy = mockDoc.createElement('ytd-watch-flexy');
-      flexy.setAttribute('video-id', 'flexyId');
-      mockDoc.body.appendChild(flexy);
-      expect(getVideoIdForDislikeMock('https://www.youtube.com/watch', mockDoc)).toBe('flexyId');
+      global.mockLocation({
+        href: 'https://www.youtube.com/shorts/xyz12345',
+        pathname: '/shorts/xyz12345',
+      });
+      expect(window.YouTubePlusEnhanced.getVideoIdForDislike()).toBe('xyz12345');
     });
 
-    test('should format numbers compactly', () => {
-      const formatCompactNumber = (number) => {
-        return new Intl.NumberFormat('en', {
-          notation: 'compact',
-          compactDisplay: 'short',
-        }).format(Number(number) || 0);
-      };
+    test('should extract video ID from clip URL via meta tag', () => {
+      global.mockLocation({
+        href: 'https://www.youtube.com/clip/abc123',
+        pathname: '/clip/abc123',
+        search: '',
+      });
+      const meta = document.createElement('meta');
+      meta.setAttribute('itemprop', 'videoId');
+      meta.setAttribute('content', 'clipVideoXYZ');
+      document.head.appendChild(meta);
+      expect(window.YouTubePlusEnhanced.getVideoIdForDislike()).toBe('clipVideoXYZ');
+    });
 
-      expect(formatCompactNumber(1200)).toBe('1.2K');
-      expect(formatCompactNumber(850000)).toBe('850K');
-      expect(formatCompactNumber(75)).toBe('75');
+    test('should fall back to movie_player.getVideoData()', () => {
+      global.mockLocation({
+        href: 'https://www.youtube.com/results?search_query=test',
+        pathname: '/results',
+        search: '?search_query=test',
+      });
+      const player = document.createElement('div');
+      player.id = 'movie_player';
+      player.getVideoData = () => ({ video_id: 'playerFallback123' });
+      document.body.appendChild(player);
+      expect(window.YouTubePlusEnhanced.getVideoIdForDislike()).toBe('playerFallback123');
+    });
+
+    test('should fall back to meta[itemprop=videoId] tag', () => {
+      global.mockLocation({
+        href: 'https://www.youtube.com/results?search_query=test',
+        pathname: '/results',
+        search: '?search_query=test',
+      });
+      const meta = document.createElement('meta');
+      meta.setAttribute('itemprop', 'videoId');
+      meta.setAttribute('content', 'metaTagFallback999');
+      document.head.appendChild(meta);
+      expect(window.YouTubePlusEnhanced.getVideoIdForDislike()).toBe('metaTagFallback999');
+    });
+
+    test('should format numbers compactly via real helper', () => {
+      expect(window.YouTubePlusEnhanced.formatCompactNumber(1200)).toBe('1.2K');
+      expect(window.YouTubePlusEnhanced.formatCompactNumber(850000)).toBe('850K');
+      expect(window.YouTubePlusEnhanced.formatCompactNumber(75)).toBe('75');
     });
 
     test('should find or create text container for dislike button', () => {
@@ -293,12 +264,14 @@ describe('Enhanced Tabviews Module', () => {
       button.id = 'dislike-button';
       document.body.appendChild(button);
 
-      const getOrCreateDislikeText = (dislikeButton) => {
-        const existingCustom = dislikeButton.querySelector('#ytp-plus-dislike-text');
+      const getOrCreateDislikeText = dislikeButton => {
+        const existingCustom = dislikeButton.querySelector('#yp-dislike-text');
         if (existingCustom) return existingCustom;
 
         const buttonShape = dislikeButton.querySelector('button') || dislikeButton;
-        let textContainer = buttonShape.querySelector('.yt-spec-button-shape-next__button-text-content');
+        let textContainer = buttonShape.querySelector(
+          '.yt-spec-button-shape-next__button-text-content'
+        );
         if (!textContainer) {
           textContainer = document.createElement('div');
           textContainer.className = 'yt-spec-button-shape-next__button-text-content';
@@ -306,15 +279,326 @@ describe('Enhanced Tabviews Module', () => {
         }
 
         const created = document.createElement('span');
-        created.id = 'ytp-plus-dislike-text';
+        created.id = 'yp-dislike-text';
         textContainer.appendChild(created);
         return created;
       };
 
       const textElement = getOrCreateDislikeText(button);
       expect(textElement).not.toBeNull();
-      expect(textElement.id).toBe('ytp-plus-dislike-text');
-      expect(button.querySelector('.yt-spec-button-shape-next__button-text-content')).not.toBeNull();
+      expect(textElement.id).toBe('yp-dislike-text');
+      expect(
+        button.querySelector('.yt-spec-button-shape-next__button-text-content')
+      ).not.toBeNull();
+    });
+  });
+
+  describe('real API', () => {
+    beforeEach(() => {
+      jest.resetModules();
+      document.body.innerHTML = '';
+      document.head.innerHTML = '';
+      localStorage.clear();
+      delete window.YouTubePlusEnhanced;
+      window._enhancedInitialized = false;
+
+      Object.defineProperty(window, 'YouTubeUtils', {
+        configurable: true,
+        writable: true,
+        value: {
+          $: jest.fn(sel => document.querySelector(sel)),
+          $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
+          byId: jest.fn(id => document.getElementById(id)),
+          t: jest.fn(key => key || ''),
+          createWithErrorBoundary: _name => fn => fn,
+          setSafeHTML: jest.fn((el, html) => {
+            el.innerHTML = html;
+          }),
+          getLanguage: jest.fn(() => 'en'),
+          getHostname: jest.fn(() => 'www.youtube.com'),
+          onDomReady: jest.fn(cb => cb()),
+          loadFeatureEnabled: jest.fn(() => true),
+          debounce: jest.fn(fn => Object.assign(fn, { cancel: jest.fn(), destroy: jest.fn() })),
+          throttle: jest.fn(fn => fn),
+          cleanupManager: {
+            registerInterval: jest.fn(id => id),
+            registerTimeout: jest.fn(id => id),
+            registerObserver: jest.fn(obs => obs),
+            registerListener: jest.fn(),
+            register: jest.fn(),
+            cleanup: jest.fn(),
+            registerAnimationFrame: jest.fn(id => id),
+            getListenerStats: jest.fn(() => ({ active: 0, registeredTotal: 0 })),
+          },
+          StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+          logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+          SETTINGS_KEY: 'youtube_plus_settings',
+          logSuppressed: jest.fn(),
+          logError: jest.fn(),
+          createElement: jest.fn((tag, props, children) => {
+            const el = document.createElement(tag);
+            if (props)
+              Object.entries(props).forEach(([k, v]) => {
+                el[k] = v;
+              });
+            if (children)
+              children.forEach(c => {
+                if (typeof c === 'string') el.textContent = c;
+                else el.appendChild(c);
+              });
+            return el;
+          }),
+          whenRelevant: jest.fn(() => ({ active: false, check: jest.fn(), dispose: jest.fn() })),
+          renderTemplateClone: jest.fn((el, html) => {
+            el.innerHTML = html;
+          }),
+          waitForElement: jest.fn(() => Promise.resolve(null)),
+        },
+      });
+
+      Object.defineProperty(window, 'YouTubePlusLogger', {
+        configurable: true,
+        writable: true,
+        value: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+      });
+
+      Object.defineProperty(window, 'YouTubePlusDesignSystem', {
+        configurable: true,
+        writable: true,
+        value: {
+          StyleManager: window.YouTubeUtils.StyleManager,
+          getStyle: jest.fn(() => ''),
+        },
+      });
+
+      Object.defineProperty(window, 'YouTubePlusMutationCoordinator', {
+        configurable: true,
+        writable: true,
+        value: {
+          subscribeRoot: jest.fn(() => 'sub-id'),
+          unsubscribe: jest.fn(),
+          watchTarget: jest.fn(),
+          unwatch: jest.fn(),
+        },
+      });
+
+      Object.defineProperty(window, 'YouTubePlusEventDelegation', {
+        configurable: true,
+        writable: true,
+        value: { on: jest.fn(), off: jest.fn() },
+      });
+
+      Object.defineProperty(window, 'YouTubePlusStyleResources', {
+        configurable: true,
+        writable: true,
+        value: { enhanced: '', update: '' },
+      });
+
+      global.mockLocation({
+        hostname: 'www.youtube.com',
+        pathname: '/watch',
+        href: 'https://www.youtube.com/watch?v=test',
+      });
+
+      require('../src/enhanced.js');
+    });
+
+    test('isTabviewEnabled returns true by default', () => {
+      expect(window.YouTubePlusEnhanced.isTabviewEnabled()).toBe(true);
+    });
+
+    test('resolveMusicContainers returns filtered elements', () => {
+      const layout = document.createElement('ytmusic-app-layout');
+      layout.id = 'layout';
+      document.body.appendChild(layout);
+      const containers = window.YouTubePlusEnhanced.resolveMusicContainers();
+      expect(containers).toContain(layout);
+    });
+
+    test('invalidateMusicContainersCache resets the cache', () => {
+      window.YouTubePlusEnhanced.resolveMusicContainers();
+      window.YouTubePlusEnhanced.invalidateMusicContainersCache();
+      // Second call after DOM change should re-query, not return stale value.
+      const layout = document.createElement('ytmusic-app-layout');
+      document.body.appendChild(layout);
+      const containers = window.YouTubePlusEnhanced.resolveMusicContainers();
+      expect(containers).toContain(layout);
+    });
+
+    test('getUniversalScrollContainer queries music selectors on music.youtube.com', () => {
+      window.YouTubeUtils.getHostname.mockReturnValue('music.youtube.com');
+      const layout = document.createElement('ytmusic-app-layout');
+      layout.id = 'layout';
+      document.body.appendChild(layout);
+      window.YouTubeUtils.$.mockClear();
+      const container = window.YouTubePlusEnhanced.getUniversalScrollContainer();
+      const calls = window.YouTubeUtils.$.mock.calls.map(args => args[0]);
+      expect(calls).toContain('ytmusic-app-layout #layout');
+      expect(container).toBeInstanceOf(Element);
+    });
+
+    test('getUniversalScrollContainer returns fallback for studio.youtube.com', () => {
+      window.YouTubeUtils.getHostname.mockReturnValue('studio.youtube.com');
+      const container = window.YouTubePlusEnhanced.getUniversalScrollContainer();
+      expect(container).toBeInstanceOf(Element);
+    });
+
+    test('isTabviewEnabled returns default boolean', () => {
+      expect(typeof window.YouTubePlusEnhanced.isTabviewEnabled()).toBe('boolean');
+    });
+
+    test('isDislikeButtonReady validates button readiness across watch and shorts', () => {
+      const readyHelper = window.YouTubePlusEnhanced.isDislikeButtonReady;
+      expect(typeof readyHelper).toBe('function');
+
+      // Shorts always ready
+      const dummyDiv = document.createElement('div');
+      expect(readyHelper(dummyDiv, true)).toBe(true);
+
+      // Watch: div without button is not ready
+      expect(readyHelper(dummyDiv, false)).toBe(false);
+
+      // Watch: native button is ready
+      const btnEl = document.createElement('button');
+      expect(readyHelper(btnEl, false)).toBe(true);
+
+      // Watch: div containing inner button is ready
+      dummyDiv.appendChild(btnEl);
+      expect(readyHelper(dummyDiv, false)).toBe(true);
+    });
+
+    test('isDislikeAlreadyRendered checks video ID and rendered text state', () => {
+      const renderedHelper = window.YouTubePlusEnhanced.isDislikeAlreadyRendered;
+      expect(typeof renderedHelper).toBe('function');
+
+      const btn = document.createElement('div');
+      btn.setAttribute('data-yp-video-id', 'vid123');
+
+      // Mismatched video ID -> false
+      expect(renderedHelper(btn, 'otherVid', false)).toBe(false);
+
+      // Matching video ID without text container -> false
+      expect(renderedHelper(btn, 'vid123', false)).toBe(false);
+
+      // Matching video ID with empty text container -> false
+      const textSpan = document.createElement('span');
+      textSpan.id = 'yp-dislike-text';
+      textSpan.innerText = '   ';
+      btn.appendChild(textSpan);
+      expect(renderedHelper(btn, 'vid123', false)).toBe(false);
+
+      // Matching video ID with populated text -> true
+      textSpan.innerText = '42K';
+      expect(renderedHelper(btn, 'vid123', false)).toBe(true);
+
+      // Shorts scenario
+      const shortsBtn = document.createElement('div');
+      shortsBtn.setAttribute('data-yp-video-id', 'shorts123');
+      const shortsLabel = document.createElement('span');
+      shortsLabel.className = 'label';
+      shortsLabel.setAttribute('data-yp-original-text', 'Dislike');
+      shortsLabel.innerText = 'Dislike';
+      shortsBtn.appendChild(shortsLabel);
+
+      // Original text unchanged -> false
+      expect(renderedHelper(shortsBtn, 'shorts123', true)).toBe(false);
+
+      // Formatted dislike count rendered -> true
+      shortsLabel.innerText = '12K';
+      expect(renderedHelper(shortsBtn, 'shorts123', true)).toBe(true);
+    });
+
+    test('getDislikeButton creates fallback Shorts dislike button when native dislike is missing', () => {
+      global.mockLocation({
+        hostname: 'www.youtube.com',
+        pathname: '/shorts/shortId456',
+        href: 'https://www.youtube.com/shorts/shortId456',
+      });
+
+      // Empty DOM returns null
+      expect(window.YouTubePlusEnhanced.getDislikeButton()).toBeNull();
+
+      // Native dislike in ytd-shorts container
+      const shortsHost = document.createElement('ytd-shorts');
+      const nativeShortsDislike = document.createElement('dislike-button-view-model');
+      shortsHost.appendChild(nativeShortsDislike);
+      document.body.appendChild(shortsHost);
+      expect(window.YouTubePlusEnhanced.getDislikeButton()).toBe(nativeShortsDislike);
+      shortsHost.remove();
+
+      const reel = document.createElement('ytd-reel-video-renderer');
+      reel.setAttribute('is-active', '');
+      const actionBar = document.createElement('div');
+      const likeVm = document.createElement('like-button-view-model');
+      const likeBtn = document.createElement('button');
+      likeBtn.setAttribute('aria-label', 'Like this video');
+      likeVm.appendChild(likeBtn);
+      actionBar.appendChild(likeVm);
+      reel.appendChild(actionBar);
+      document.body.appendChild(reel);
+
+      // Native dislike in active reel
+      const reelDislike = document.createElement('dislike-button-view-model');
+      actionBar.appendChild(reelDislike);
+      expect(window.YouTubePlusEnhanced.getDislikeButton()).toBe(reelDislike);
+      reelDislike.remove();
+
+      const dislikeWrap = window.YouTubePlusEnhanced.getDislikeButton();
+      expect(dislikeWrap).not.toBeNull();
+      expect(dislikeWrap.id).toBe('yp-shorts-dislike');
+      expect(dislikeWrap.classList.contains('yp-shorts-dislike-wrap')).toBe(true);
+      expect(likeVm.nextElementSibling).toBe(dislikeWrap);
+
+      // Even if DOMCache.byId caches null for 1s, repeated calls never create duplicates
+      window.YouTubeUtils.byId.mockReturnValue(null);
+      const duplicateExtra = document.createElement('div');
+      duplicateExtra.className = 'yp-shorts-dislike-wrap';
+      actionBar.appendChild(duplicateExtra);
+      expect(window.YouTubePlusEnhanced.getDislikeButton()).toBe(dislikeWrap);
+      expect(document.querySelectorAll('.yp-shorts-dislike-wrap').length).toBe(1);
+
+      window.YouTubePlusEnhanced.setDislikeDisplay(dislikeWrap, 1500);
+      const label = dislikeWrap.querySelector('#yp-dislike-text');
+      expect(label.innerText).toBe('1.5K');
+      // Idempotent repeat call with same count
+      window.YouTubePlusEnhanced.setDislikeDisplay(dislikeWrap, 1500);
+    });
+
+    test('getDislikeButton and setDislikeDisplay handle watch page buttons', () => {
+      global.mockLocation({
+        hostname: 'www.youtube.com',
+        pathname: '/watch',
+        href: 'https://www.youtube.com/watch?v=test',
+      });
+
+      expect(window.YouTubePlusEnhanced.getDislikeButton()).toBeNull();
+      window.YouTubePlusEnhanced.setDislikeDisplay(null, 100);
+
+      const menuContainer = document.createElement('div');
+      menuContainer.id = 'menu-container';
+      const topButtons = document.createElement('div');
+      topButtons.id = 'top-level-buttons-computed';
+      menuContainer.appendChild(topButtons);
+      document.body.appendChild(menuContainer);
+
+      const segmented = document.createElement('ytd-segmented-like-dislike-button-renderer');
+      const watchDislike = document.createElement('dislike-button-view-model');
+      const innerBtn = document.createElement('button');
+      watchDislike.appendChild(innerBtn);
+      segmented.appendChild(watchDislike);
+      topButtons.appendChild(segmented);
+
+      const resolved = window.YouTubePlusEnhanced.getDislikeButton();
+      expect(resolved).toBe(watchDislike);
+
+      window.YouTubePlusEnhanced.setDislikeDisplay(watchDislike, 2400);
+      const createdSpan = watchDislike.querySelector('#yp-dislike-text');
+      expect(createdSpan).not.toBeNull();
+      expect(createdSpan.innerText).toBe('2.4K');
+
+      // Second update reuses existing #yp-dislike-text
+      window.YouTubePlusEnhanced.setDislikeDisplay(watchDislike, 3100);
+      expect(createdSpan.innerText).toBe('3.1K');
     });
   });
 });

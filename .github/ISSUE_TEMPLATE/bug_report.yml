@@ -1,0 +1,103 @@
+name: Bug report
+description: Report a reproducible problem with YouTube+.
+title: '[Bug] '
+labels: ['bug']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Tell us what happened and how to reproduce it. Screenshots and logs are optional.
+        For usage questions, use [Q&A](https://github.com/diorhc/YTP/discussions/categories/q-a). Report security vulnerabilities through [SECURITY.md](https://github.com/diorhc/YTP/blob/main/SECURITY.md).
+  - type: textarea
+    id: body
+    attributes:
+      label: What happened?
+      description: Describe what went wrong and what you expected instead.
+      placeholder: 'Example: After opening a second video, the speed button disappears. I expected it to stay available.'
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Include the page or video link if it is relevant.
+      placeholder: |
+        1. Open a video on YouTube.
+        2. Enable speed control in YouTube+ settings.
+        3. Navigate to another video without reloading the page.
+        4. The speed button is no longer visible.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: YouTube+ version
+      description: Find the version in your userscript manager.
+      placeholder: 'Version shown in Violentmonkey or Tampermonkey'
+    validations:
+      required: true
+  - type: dropdown
+    id: source
+    attributes:
+      label: Installed from
+      options:
+        - Greasy Fork
+        - GitHub Releases
+        - Built from source
+        - Other / not sure
+    validations:
+      required: true
+  - type: input
+    id: environment
+    attributes:
+      label: Browser and userscript manager
+      description: Include their versions and your operating system if known.
+      placeholder: 'Firefox (version), Violentmonkey (version), Windows / macOS / Linux'
+    validations:
+      required: true
+  - type: dropdown
+    id: page
+    attributes:
+      label: Where does it happen?
+      options:
+        - YouTube video
+        - YouTube Shorts
+        - YouTube Music
+        - Playlist
+        - Channel page
+        - Other / multiple pages
+    validations:
+      required: false
+  - type: dropdown
+    id: feature
+    attributes:
+      label: Affected feature
+      options:
+        - Player controls (PiP, speed, zoom, A-B loop)
+        - Downloads (video, audio, subtitles)
+        - Screenshots / thumbnails
+        - Timecodes / resume playback
+        - Tabview / layout / themes
+        - Playlists / comments / translation
+        - Statistics
+        - Shorts
+        - YouTube Music
+        - Settings / updates
+        - Other / not sure
+    validations:
+      required: false
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Screenshots or additional details
+      description: Drop images here. For a visual issue, mention Vision/Classic and Glass/Solid if known. Include workarounds or conflicts you have already tested.
+    validations:
+      required: false
+  - type: textarea
+    id: logs
+    attributes:
+      label: Console errors
+      description: Paste relevant errors from DevTools → Console. Remove tokens or personal information before sharing.
+      render: text
+    validations:
+      required: false

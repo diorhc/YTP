@@ -1,0 +1,32 @@
+name: Feature request
+description: Propose a specific change to YouTube+.
+title: '[Feature] '
+labels: ['enhancement']
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Describe the problem and the behavior you would like. Technical implementation details are optional.
+        To explore an idea or collect feedback first, use [Ideas](https://github.com/diorhc/YTP/discussions/categories/ideas).
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem would this solve?
+      placeholder: 'Example: I use the same A-B loop every time I return to a tutorial, but have to set its points again.'
+    validations:
+      required: true
+  - type: textarea
+    id: solution
+    attributes:
+      label: How should it work?
+      description: Describe the result you want from the user's point of view.
+      placeholder: 'Example: Offer to restore saved loop points when I reopen the same video.'
+    validations:
+      required: true
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or alternatives
+      description: Add a use case, screenshots, a related discussion, or another approach if useful.
+    validations:
+      required: false

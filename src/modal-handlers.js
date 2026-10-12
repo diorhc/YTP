@@ -4,17 +4,17 @@
  */
 
 (function () {
-  /* global GM_setValue, GM_getValue */
-
   // DOM cache helper from YouTubeUtils
   const U = window.YouTubeUtils;
+  const logS = (/** @type {unknown} */ err, /** @type {string|undefined} */ label = undefined) =>
+    U?.logSuppressed?.(err, label || 'ModalHandlers');
   const qs = U?.$ || document.querySelector.bind(document);
 
   /**
    * Safely set a setting by path (supports dot notation)
-   * @param {Record<string, any>} settings
+   * @param {Record<string, unknown>} settings
    * @param {string} path
-   * @param {any} value
+   * @param {unknown} value
    */
   const setSettingByPath = (settings, path, value) => {
     if (!settings || typeof settings !== 'object') return;
@@ -36,105 +36,32 @@
       if (!Object.hasOwn(cur, k) || typeof cur[k] !== 'object' || !cur[k]) {
         cur[k] = {};
       }
-      cur = cur[k];
+      cur = /** @type {Record<string, unknown>} */ (cur[k]);
     }
     cur[lastKey] = value;
   };
 
   /**
-   * Initialize download sites settings
-   * @param {Object} settings - Settings object
-   */
-  const initializeDownloadSites = (/** @type {any} */ settings) => {
-    if (!settings.downloadSites) {
-      settings.downloadSites = { externalDownloader: true, ytdl: true, direct: true };
-    }
-    // Migrate old key if present
-    if (settings.downloadSites && Object.hasOwn(settings.downloadSites, 'y2mate')) {
-      if (!Object.hasOwn(settings.downloadSites, 'externalDownloader')) {
-        settings.downloadSites.externalDownloader = settings.downloadSites.y2mate;
-      }
-      delete settings.downloadSites.y2mate;
-    }
-  };
-
-  /**
-   * Toggle download site controls visibility
-   * @param {HTMLInputElement} checkbox - Checkbox element
-   */
-  const toggleDownloadSiteControls = checkbox => {
-    try {
-      const container = checkbox.closest('.download-site-option');
-      if (container) {
-        const controls = container.querySelector('.download-site-controls');
-        if (controls) {
-          /** @type {any} */ (controls).style.display = checkbox.checked ? 'block' : 'none';
-        }
-      }
-    } catch (err) {
-      window.YouTubePlusLogger?.warn?.(
-        'ModalHandlers',
-        'toggle download-site-controls failed:',
-        err
-      );
-    }
-  };
-
-  /**
    * Save settings safely
-   * @param {Function} saveSettings - Save function
+   * @param {() => void} saveSettings - Save function
    */
-  const safelySaveSettings = (/** @type {Function} */ saveSettings) => {
+  const safelySaveSettings = (/** @type {() => void} */ saveSettings) => {
     try {
       saveSettings();
     } catch (err) {
-      window.YouTubePlusLogger?.warn?.(
-        'ModalHandlers',
-        'autosave downloadSite toggle failed:',
-        err
-      );
+      // storage full or disabled; the toggle stays applied for this page
+      logS(err);
     }
-  };
-
-  /**
-   * Handle download site checkbox toggle
-   * @param {HTMLElement} target - Checkbox element
-   * @param {string} key - Site key (y2mate, ytdl, direct)
-   * @param {Object} settings - Settings object
-   * @param {Function} markDirty - Function to mark modal as dirty
-   * @param {Function} saveSettings - Function to save settings
-   */
-  const handleDownloadSiteToggle = (
-    /** @type {HTMLElement} */ target,
-    /** @type {string} */ key,
-    /** @type {any} */ settings,
-    /** @type {Function} */ markDirty,
-    /** @type {Function} */ saveSettings
-  ) => {
-    initializeDownloadSites(settings);
-
-    const checkbox = /** @type {HTMLInputElement} */ (target);
-    settings.downloadSites[key] = checkbox.checked;
-
-    try {
-      markDirty();
-    } catch (_e) {
-      U.logSuppressed(_e, 'ModalHandlers');
-    }
-
-    toggleDownloadSiteControls(checkbox);
-    rebuildDownloadDropdown(settings);
-    safelySaveSettings(saveSettings);
   };
 
   /**
    * Handle Download button live toggle
    * @param {Object} context - Context object with methods
    */
-  const handleDownloadButtonToggle = (/** @type {any} */ context) => {
+  const handleDownloadButtonToggle = (/** @type {SettingsModalContext} */ context) => {
     const { settings, getElement, addDownloadButton } = context;
     const controls = getElement('.ytp-right-controls');
-    const existing = getElement('.ytp-download-button', false);
+    const existing = getElement('.yp-download-button', false);
 
     if (settings.enableDownload) {
       // create button if missing
@@ -151,13 +78,22 @@
    * Handle Speed Control live toggle
    * @param {Object} context - Context object with methods
    */
-  const handleSpeedControlToggle = (/** @type {any} */ context) => {
+  const handleSpeedControlToggle = (/** @type {SettingsModalContext} */ context) => {
     const { settings, getElement, addSpeedControlButton } = context;
+    const isEnabled = Boolean(settings?.enableSpeedControl);
+
+    // The feature module owns visibility & options display
+    if (window.YouTubePlusSpeedControl?.refreshVisibility) {
+      window.YouTubePlusSpeedControl.refreshVisibility(isEnabled);
+    }
+
     const controls = getElement('.ytp-right-controls');
     const existing = getElement('.speed-control-btn', false);
 
-    if (settings.enableSpeedControl) {
-      if (controls && !existing) addSpeedControlButton(controls);
+    if (isEnabled) {
+      if (controls && !existing && typeof addSpeedControlButton === 'function') {
+        addSpeedControlButton(controls);
+      }
     } else {
       if (existing) existing.remove();
       const speedOptions = qs('.speed-options');
@@ -165,13 +101,78 @@
     }
   };
 
+  const setTimeout_ = setTimeout.bind(window);
+
   /**
-   * Update global settings exposure
-   * @param {Object} settings - Settings object
+   * Reload the page so YouTube re-renders natively in the newly-chosen
+   * theme. Preserves current playback position
+   * on /watch pages so the reload doesn't lose the user's place in a video.
+   * @param {SettingsModalContext} context
    */
-  const updateGlobalSettings = (/** @type {any} */ settings) => {
-    if (typeof window !== 'undefined' && window.youtubePlus) {
-      window.youtubePlus.settings = window.youtubePlus.settings || settings;
+  const scheduleThemeReload = (/** @type {SettingsModalContext} */ context) => {
+    const t = window.YouTubeUtils?.t;
+    const message =
+      (typeof t === 'function' && t('themeReloadNotice')) ||
+      'Reloading so YouTube fully applies the new theme…';
+    context?.showNotification?.(message, 1800);
+
+    const doReload = () => {
+      // URL construction or the navigation itself can fail on restricted
+      // pages; the plain reload is the fallback.
+      try {
+        const url = new URL(window.location.href);
+        const video = /** @type {HTMLVideoElement|null} */ (
+          document.querySelector('video.video-stream')
+        );
+        if (video && Number.isFinite(video.currentTime) && video.currentTime > 1) {
+          url.searchParams.set('t', `${Math.floor(video.currentTime)}s`);
+        }
+        window.location.href = url.toString();
+      } catch (_e) {
+        logS(_e);
+        window.location.reload();
+      }
+    };
+
+    const cm = U?.cleanupManager;
+    if (cm?.timeout) {
+      cm.timeout(doReload, 1200);
+    } else {
+      setTimeout_(doReload, 1200);
+    }
+  };
+
+  /**
+   * Toggle a settings submenu's visibility together with its associated
+   * toggle button's disabled/aria-expanded/display state.
+   * @param {HTMLElement} modal
+   * @param {string} submenuSelector
+   * @param {string} toggleBtnSelector
+   * @param {boolean} checked
+   * @param {string} [toggleDisplayValue] - display value when enabled (default 'inline-flex')
+   */
+  const toggleSubmenuVisibility = (
+    modal,
+    submenuSelector,
+    toggleBtnSelector,
+    checked,
+    toggleDisplayValue = 'inline-flex'
+  ) => {
+    const submenu = modal.querySelector(submenuSelector);
+    if (submenu instanceof HTMLElement) {
+      submenu.style.display = checked ? 'block' : 'none';
+    }
+    const toggleBtn = modal.querySelector(toggleBtnSelector);
+    if (toggleBtn instanceof HTMLElement) {
+      if (checked) {
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.setAttribute('aria-expanded', 'true');
+        toggleBtn.style.display = toggleDisplayValue;
+      } else {
+        toggleBtn.setAttribute('disabled', '');
+        toggleBtn.setAttribute('aria-expanded', 'false');
+        toggleBtn.style.display = 'none';
+      }
     }
   };
 
@@ -180,66 +181,97 @@
    * @param {string} setting - Setting key
    * @param {Object} context - Context object with methods
    */
-  const applySettingLive = (/** @type {string} */ setting, /** @type {any} */ context) => {
+  const applySettingLiveSteps_ = (
+    /** @type {string} */ setting,
+    /** @type {SettingsModalContext} */ context
+  ) => {
     const { settings, refreshDownloadButton } = context;
 
-    try {
-      // Update page elements (show/hide buttons, dropdowns)
-      if (context.updatePageBasedOnSettings) {
-        context.updatePageBasedOnSettings();
-      }
-
-      // Dispatch to specific handlers
-      if (setting === 'enableDownload') {
-        handleDownloadButtonToggle(context);
-      } else if (setting === 'enableSpeedControl') {
-        handleSpeedControlToggle(context);
-      }
-
-      // Ensure visibility state updates
-      if (refreshDownloadButton) {
-        refreshDownloadButton();
-      }
-    } catch (innerErr) {
-      window.YouTubePlusLogger?.warn?.(
-        'ModalHandlers',
-        'live apply specific toggle failed:',
-        innerErr
-      );
+    // Update page elements (show/hide buttons, dropdowns)
+    if (context.updatePageBasedOnSettings) {
+      context.updatePageBasedOnSettings();
     }
 
-    // Expose updated settings globally for other modules
-    updateGlobalSettings(settings);
+    // Dispatch to specific handlers
+    if (setting === 'enableDownload') {
+      handleDownloadButtonToggle(context);
+    } else if (setting === 'enableSpeedControl') {
+      handleSpeedControlToggle(context);
+    } else if (setting === 'styles.themePreference') {
+      // Write PREF cookie via design-system, then reload so YouTube
+      // re-renders natively in the chosen theme.
+      const ds = window.YouTubePlusDesignSystem;
+      const pref = settings?.styles?.themePreference || 'device';
+      if (ds && typeof ds.applyThemePreference === 'function') {
+        ds.applyThemePreference(pref);
+      }
+      scheduleThemeReload(context);
+    } else if (setting === 'styles.themeVariant' || setting === 'styles.themeStyle') {
+      // Apply theme variant and material style immediately via design-system
+      const ds = window.YouTubePlusDesignSystem;
+      if (ds && typeof ds.applyThemeVariant === 'function') {
+        ds.applyThemeVariant(
+          settings?.styles?.themeVariant || 'vision',
+          settings?.styles?.themeStyle || 'glass'
+        );
+      }
+      // Rebuild the player button surface for the new variant:
+      // Classic buttons in `.ytp-right-controls` and the Vision Dock are
+      // mounted per-variant, so a live variant switch must
+      // remount them instead of waiting for next SPA navigation.
+      window.YouTubePlusBasic?.YouTubeEnhancer?.addCustomButtons?.();
+      window.YouTubePlusZoom?.rebuildUI?.();
+    }
+
+    // Ensure visibility state updates
+    if (refreshDownloadButton) {
+      refreshDownloadButton();
+    }
+  };
+
+  /**
+   * Apply a changed setting to the page now. Other modules do the work, so a
+   * failure in one of them is logged and the caller still saves the setting.
+   * @param {string} setting - Setting key
+   * @param {SettingsModalContext} context - Context object with methods
+   */
+  const applySettingLive = (
+    /** @type {string} */ setting,
+    /** @type {SettingsModalContext} */ context
+  ) => {
+    try {
+      applySettingLiveSteps_(setting, context);
+    } catch (err) {
+      logS(err);
+    }
   };
 
   /**
    * Handle simple setting checkbox toggle
    * @param {HTMLElement} target - Checkbox element
    * @param {string} setting - Setting key
-   * @param {Object} settings - Settings object
-   * @param {Object} context - Context object with methods
-   * @param {Function} markDirty - Function to mark modal as dirty
-   * @param {Function} saveSettings - Function to save settings
+   * @param {YoutubePlusSettings} settings - Settings object
+   * @param {SettingsModalContext} context - Context object with methods
+   * @param {() => void} saveSettings - Function to save settings
    * @param {HTMLElement} modal - Modal element
    */
   const handleSimpleSettingToggle = (
-    target,
-    setting,
-    settings,
-    context,
-    markDirty,
-    saveSettings,
-    modal
+    /** @type {HTMLInputElement} */ target,
+    /** @type {string} */ setting,
+    /** @type {YoutubePlusSettings} */ settings,
+    /** @type {SettingsModalContext} */ context,
+    /** @type {() => void} */ saveSettings,
+    /** @type {HTMLElement} */ modal
   ) => {
     const checked = /** @type {HTMLInputElement} */ (target).checked;
     setSettingByPath(settings, setting, checked);
 
-    if (setting === 'zenStyles.sideVideosColumnsEnabled' && checked) {
-      const currentValue = Number(/** @type {any} */ (settings).zenStyles?.sideVideosColumns);
+    if (setting === 'styles.sideVideosColumnsEnabled' && checked) {
+      const currentValue = Number(settings.styles?.sideVideosColumns);
       if (!Number.isFinite(currentValue) || currentValue <= 0) {
-        setSettingByPath(settings, 'zenStyles.sideVideosColumns', 1);
+        setSettingByPath(settings, 'styles.sideVideosColumns', 1);
         const select = modal.querySelector(
-          '.style-side-videos-submenu select[data-setting="zenStyles.sideVideosColumns"]'
+          '.style-side-videos-submenu select[data-setting="styles.sideVideosColumns"]'
         );
         if (select instanceof HTMLSelectElement) {
           select.value = '1';
@@ -247,451 +279,69 @@
       }
     }
 
-    // Mark modal as dirty
-    try {
-      markDirty();
-    } catch (_e) {
-      U.logSuppressed(_e, 'ModalHandlers');
-    }
-
     // Apply settings immediately
-    try {
-      applySettingLive(setting, context);
-    } catch (err) {
-      window.YouTubePlusLogger?.warn?.('ModalHandlers', 'apply settings live failed:', err);
-    }
+    applySettingLive(setting, context);
 
     // Persist immediately
-    try {
-      saveSettings();
-    } catch (err) {
-      window.YouTubePlusLogger?.warn?.('ModalHandlers', 'autosave simple setting failed:', err);
-    }
-
-    // Show/hide submenu for Download
-    if (setting === 'enableDownload') {
-      const submenu = modal.querySelector('.download-submenu');
-      if (submenu) {
-        /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
-      }
-      const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="download"]');
-      if (toggleBtn instanceof HTMLElement) {
-        if (checked) {
-          toggleBtn.removeAttribute('disabled');
-          toggleBtn.setAttribute('aria-expanded', 'true');
-          /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
-        } else {
-          toggleBtn.setAttribute('disabled', '');
-          toggleBtn.setAttribute('aria-expanded', 'false');
-          /** @type {any} */ (toggleBtn).style.display = 'none';
-        }
-      }
-    }
-
-    // Show/hide submenu for Zen Styles
-    if (setting === 'enableZenStyles') {
-      const submenu = modal.querySelector('.style-submenu');
-      if (submenu) {
-        /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
-      }
-      const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="style"]');
-      if (toggleBtn instanceof HTMLElement) {
-        if (checked) {
-          toggleBtn.removeAttribute('disabled');
-          toggleBtn.setAttribute('aria-expanded', 'true');
-          /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
-        } else {
-          toggleBtn.setAttribute('disabled', '');
-          toggleBtn.setAttribute('aria-expanded', 'false');
-          /** @type {any} */ (toggleBtn).style.display = 'none';
-        }
-      }
-    }
-
-    if (setting === 'zenStyles.sideVideosColumnsEnabled') {
-      const submenu = modal.querySelector(
-        '.style-side-videos-submenu[data-submenu="style-side-videos"]'
-      );
-      if (submenu instanceof HTMLElement) {
-        submenu.style.display = checked ? 'block' : 'none';
-      }
-      const toggleBtn = modal.querySelector(
-        '.ytp-plus-submenu-toggle[data-submenu="style-side-videos"]'
-      );
-      if (toggleBtn instanceof HTMLElement) {
-        if (checked) {
-          toggleBtn.removeAttribute('disabled');
-          toggleBtn.setAttribute('aria-expanded', 'true');
-          toggleBtn.style.display = 'inline-flex';
-        } else {
-          toggleBtn.setAttribute('disabled', '');
-          toggleBtn.setAttribute('aria-expanded', 'false');
-          toggleBtn.style.display = 'none';
-        }
-      }
-    }
-
-    // Show/hide submenu for Speed Control
-    if (setting === 'enableSpeedControl') {
-      const submenu = modal.querySelector('.speed-submenu');
-      if (submenu) {
-        /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
-      }
-      const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="speed"]');
-      if (toggleBtn instanceof HTMLElement) {
-        if (checked) {
-          toggleBtn.removeAttribute('disabled');
-          toggleBtn.setAttribute('aria-expanded', 'true');
-          /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
-        } else {
-          toggleBtn.setAttribute('disabled', '');
-          toggleBtn.setAttribute('aria-expanded', 'false');
-          /** @type {any} */ (toggleBtn).style.display = 'none';
-        }
-      }
-    }
-
-    // Show/hide submenu for Enhanced Features
-    if (setting === 'enableEnhanced') {
-      const submenu = modal.querySelector('.enhanced-submenu');
-      if (submenu) {
-        /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
-      }
-      const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="enhanced"]');
-      if (toggleBtn instanceof HTMLElement) {
-        if (checked) {
-          toggleBtn.removeAttribute('disabled');
-          toggleBtn.setAttribute('aria-expanded', 'true');
-          /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
-        } else {
-          toggleBtn.setAttribute('disabled', '');
-          toggleBtn.setAttribute('aria-expanded', 'false');
-          /** @type {any} */ (toggleBtn).style.display = 'none';
-        }
-      }
-    }
-
-    // Show/hide submenu for Loop
-    if (setting === 'enableLoop') {
-      const submenu = modal.querySelector('.loop-submenu');
-      if (submenu) {
-        /** @type {any} */ (submenu).style.display = checked ? 'block' : 'none';
-      }
-      const toggleBtn = modal.querySelector('.ytp-plus-submenu-toggle[data-submenu="loop"]');
-      if (toggleBtn instanceof HTMLElement) {
-        if (checked) {
-          toggleBtn.removeAttribute('disabled');
-          toggleBtn.setAttribute('aria-expanded', 'true');
-          /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
-        } else {
-          toggleBtn.setAttribute('disabled', '');
-          toggleBtn.setAttribute('aria-expanded', 'false');
-          /** @type {any} */ (toggleBtn).style.display = 'none';
-        }
-      }
-    }
-  };
-
-  /**
-   * Handle download site customization input
-   * @param {HTMLElement} target - Input element
-   * @param {string} site - Site key
-   * @param {string} field - Field name (name or url)
-   * @param {Object} settings - Settings object
-   * @param {Function} markDirty - Function to mark modal as dirty
-   * @param {Function} t - Translation function
-   */
-  /**
-   * Initialize download site customization settings
-   * @param {Object} settings - Settings object
-   */
-  const initializeDownloadCustomization = (/** @type {any} */ settings) => {
-    if (!settings.downloadSiteCustomization) {
-      settings.downloadSiteCustomization = {
-        externalDownloader: { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
-      };
-    }
-    // Migrate previous customization
-    if (
-      settings.downloadSiteCustomization &&
-      Object.hasOwn(settings.downloadSiteCustomization, 'y2mate')
-    ) {
-      if (!Object.hasOwn(settings.downloadSiteCustomization, 'externalDownloader')) {
-        settings.downloadSiteCustomization.externalDownloader =
-          settings.downloadSiteCustomization.y2mate;
-      }
-      delete settings.downloadSiteCustomization.y2mate;
-    }
-  };
-
-  /**
-   * Initialize specific download site settings
-   * @param {Object} settings - Settings object
-   * @param {string} site - Site key
-   */
-  const initializeDownloadSite = (/** @type {any} */ settings, /** @type {string} */ site) => {
-    if (!settings.downloadSiteCustomization[site]) {
-      settings.downloadSiteCustomization[site] = { name: '', url: '' };
-    }
-  };
-
-  /**
-   * Get fallback name for download site
-   * @param {string} site - Site key
-   * @param {Function} t - Translation function
-   * @returns {string} Fallback name
-   */
-  const getDownloadSiteFallbackName = (/** @type {string} */ site, /** @type {Function} */ t) => {
-    if (site === 'externalDownloader') return 'SSYouTube';
-    if (site === 'ytdl') return t('byYTDL');
-    return t('directDownload');
-  };
-
-  /**
-   * Update download site name in UI
-   * @param {HTMLElement} target - Input element
-   * @param {string} site - Site key
-   * @param {Function} t - Translation function
-   */
-  const updateDownloadSiteName = (
-    /** @type {HTMLElement} */ target,
-    /** @type {string} */ site,
-    /** @type {Function} */ t
-  ) => {
-    const nameDisplay = target
-      .closest('.download-site-option')
-      ?.querySelector('.download-site-name');
-
-    if (nameDisplay) {
-      const inputValue = /** @type {HTMLInputElement} */ (target).value;
-      const fallbackName = getDownloadSiteFallbackName(site, t);
-      nameDisplay.textContent = inputValue || fallbackName;
-    }
-  };
-
-  /**
-   * Rebuild download dropdown in UI
-   * @param {Object} settings - Settings object
-   */
-  const rebuildDownloadDropdown = (/** @type {any} */ settings) => {
-    try {
-      if (
-        typeof window !== 'undefined' &&
-        window.youtubePlus &&
-        typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
-      ) {
-        window.youtubePlus.settings = window.youtubePlus.settings || settings;
-        window.youtubePlus.rebuildDownloadDropdown();
-      }
-    } catch (err) {
-      window.YouTubePlusLogger?.warn?.(
-        'ModalHandlers',
-        'rebuildDownloadDropdown call failed:',
-        err
-      );
-    }
-  };
-
-  /**
-   * Handle download site input change
-   * @param {HTMLElement} target - Input element
-   * @param {string} site - Site key (y2mate, ytdl, direct)
-   * @param {string} field - Field name (name, url)
-   * @param {Object} settings - Settings object
-   * @param {Function} markDirty - Function to mark modal as dirty
-   * @param {Function} t - Translation function
-   */
-  const handleDownloadSiteInput = (
-    /** @type {HTMLElement} */ target,
-    /** @type {string} */ site,
-    /** @type {string} */ field,
-    /** @type {any} */ settings,
-    /** @type {Function} */ markDirty,
-    /** @type {Function} */ t
-  ) => {
-    initializeDownloadCustomization(settings);
-    initializeDownloadSite(settings, site);
-
-    settings.downloadSiteCustomization[site][field] = /** @type {HTMLInputElement} */ (
-      target
-    ).value;
-
-    try {
-      markDirty();
-    } catch (_e) {
-      U.logSuppressed(_e, 'ModalHandlers');
-    }
-
-    if (field === 'name') {
-      updateDownloadSiteName(/** @type {any} */ (target), site, t);
-    }
-
-    rebuildDownloadDropdown(settings);
-  };
-
-  /**
-   * Handle Y2Mate save button
-   * @param {HTMLElement} target - Button element
-   * @param {Object} settings - Settings object
-   * @param {Function} saveSettings - Function to save settings
-   * @param {Function} showNotification - Function to show notification
-   * @param {Function} t - Translation function
-   */
-  /**
-   * Ensure external downloader settings structure exists
-   * @param {Object} settings - Settings object
-   */
-  const ensureExternalDownloaderStructure = (/** @type {any} */ settings) => {
-    if (!settings.downloadSiteCustomization) {
-      settings.downloadSiteCustomization = {
-        externalDownloader: { name: 'SSYouTube', url: 'https://ssyoutube.com/watch?v={videoId}' },
-      };
-    }
-    if (!settings.downloadSiteCustomization.externalDownloader) {
-      settings.downloadSiteCustomization.externalDownloader = { name: '', url: '' };
-    }
-  };
-
-  /**
-   * Read external downloader input values from container
-   * @param {HTMLElement} container - Container element
-   * @param {Object} settings - Settings object
-   */
-  const readExternalDownloaderInputs = (
-    /** @type {HTMLElement} */ container,
-    /** @type {any} */ settings
-  ) => {
-    const nameInput = container.querySelector(
-      'input.download-site-input[data-site="externalDownloader"][data-field="name"]'
-    );
-    const urlInput = container.querySelector(
-      'input.download-site-input[data-site="externalDownloader"][data-field="url"]'
-    );
-    if (nameInput) settings.downloadSiteCustomization.externalDownloader.name = nameInput.value;
-    if (urlInput) settings.downloadSiteCustomization.externalDownloader.url = urlInput.value;
-  };
-
-  /**
-   * Trigger rebuild of the download dropdown if available
-   */
-  const triggerRebuildDropdown = () => {
-    try {
-      if (
-        typeof window !== 'undefined' &&
-        window.youtubePlus &&
-        typeof window.youtubePlus.rebuildDownloadDropdown === 'function'
-      ) {
-        window.youtubePlus.rebuildDownloadDropdown();
-      }
-    } catch (err) {
-      window.YouTubePlusLogger?.warn?.(
-        'ModalHandlers',
-        'rebuildDownloadDropdown call failed:',
-        err
-      );
-    }
-  };
-
-  const handleExternalDownloaderSave = (
-    /** @type {HTMLElement} */ target,
-    /** @type {any} */ settings,
-    /** @type {Function} */ saveSettings,
-    /** @type {Function} */ showNotification,
-    /** @type {Function} */ t
-  ) => {
-    ensureExternalDownloaderStructure(settings);
-
-    const container = target.closest('.download-site-option');
-    if (container) {
-      readExternalDownloaderInputs(/** @type {any} */ (container), settings);
-    }
-
     saveSettings();
 
-    if (window.youtubePlus) {
-      window.youtubePlus.settings = window.youtubePlus.settings || settings;
-    }
-    triggerRebuildDropdown();
-    try {
-      const msg =
-        (t && typeof t === 'function' && t('externalDownloaderSettingsSaved')) ||
-        t('y2mateSettingsSaved');
-      showNotification(msg);
-    } catch (_e) {
-      showNotification('Settings saved');
-    }
-  };
-
-  /**
-   * Reset external downloader to default values
-   * @param {Object} settings - Settings object
-   */
-  const resetExternalDownloaderToDefaults = (/** @type {any} */ settings) => {
-    ensureExternalDownloaderStructure(settings);
-    settings.downloadSiteCustomization.externalDownloader = {
-      name: 'SSYouTube',
-      url: 'https://ssyoutube.com/watch?v={videoId}',
+    // Data-driven submenu toggle: setting key → [submenuSelector, toggleBtnSelector]
+    const submenuMap = {
+      enableDownload: ['.download-submenu', '.yp-submenu-toggle[data-submenu="download"]'],
+      enableStyles: ['.style-submenu', '.yp-submenu-toggle[data-submenu="style"]'],
+      'styles.sideVideosColumnsEnabled': [
+        '.style-side-videos-submenu[data-submenu="style-side-videos"]',
+        '.yp-submenu-toggle[data-submenu="style-side-videos"]',
+      ],
+      enableSpeedControl: ['.speed-submenu', '.yp-submenu-toggle[data-submenu="speed"]'],
+      enableEnhanced: ['.enhanced-submenu', '.yp-submenu-toggle[data-submenu="enhanced"]'],
+      enableLoop: ['.loop-submenu', '.yp-submenu-toggle[data-submenu="loop"]'],
+      enableScreenshot: ['.screenshot-submenu', '.yp-submenu-toggle[data-submenu="screenshot"]'],
+      enablePip: ['.pip-submenu', '.yp-submenu-toggle[data-submenu="pip"]'],
+      performanceMode: [
+        '.performance-mode-submenu',
+        '.yp-submenu-toggle[data-submenu="performance-mode"]',
+      ],
     };
+    const submenu = submenuMap[/** @type {keyof typeof submenuMap} */ (setting)];
+    if (submenu) {
+      toggleSubmenuVisibility(modal, submenu[0], submenu[1], checked);
+    }
   };
 
   /**
-   * Update Y2Mate modal inputs
-   * @param {HTMLElement} container - Container element
-   * @param {Object} settings - Settings object
+   * Swap the active settings nav item and make its section the visible one.
+   * Returns the activated section id.
+   * @param {HTMLElement} navItem
+   * @param {HTMLElement} modal
+   * @returns {string | undefined}
    */
-  const updateExternalDownloaderModalInputs = (
-    /** @type {HTMLElement} */ container,
-    /** @type {any} */ settings
-  ) => {
-    const nameInput = container.querySelector(
-      'input.download-site-input[data-site="externalDownloader"][data-field="name"]'
-    );
-    const urlInput = container.querySelector(
-      'input.download-site-input[data-site="externalDownloader"][data-field="url"]'
-    );
-    const nameDisplay = container.querySelector('.download-site-name');
+  const activateSettingsSection = (navItem, modal) => {
+    const section = navItem.dataset?.section;
+    modal.querySelectorAll('.yp-settings-nav-item').forEach(item => {
+      item.classList.remove('active');
+      item.setAttribute('aria-selected', 'false');
+      item.setAttribute('tabindex', '-1');
+    });
+    modal.querySelectorAll('.yp-settings-section').forEach(s => {
+      s.classList.add('hidden');
+    });
 
-    const edSettings = settings.downloadSiteCustomization.externalDownloader;
-    if (nameInput) nameInput.value = edSettings.name;
-    if (urlInput) urlInput.value = edSettings.url;
-    if (nameDisplay) nameDisplay.textContent = edSettings.name;
-  };
+    navItem.classList.add('active');
+    navItem.setAttribute('aria-selected', 'true');
+    navItem.setAttribute('tabindex', '0');
 
-  /**
-   * Handle Y2Mate reset button
-   * @param {HTMLElement} modal - Modal element
-   * @param {Object} settings - Settings object
-   * @param {Function} saveSettings - Function to save settings
-   * @param {Function} showNotification - Function to show notification
-   * @param {Function} t - Translation function
-   */
-  const handleExternalDownloaderReset = (
-    /** @type {HTMLElement} */ modal,
-    /** @type {any} */ settings,
-    /** @type {Function} */ saveSettings,
-    /** @type {Function} */ showNotification,
-    /** @type {Function} */ t
-  ) => {
-    resetExternalDownloaderToDefaults(settings);
-
-    const container = modal.querySelector('.download-site-option');
-    if (container) {
-      updateExternalDownloaderModalInputs(/** @type {any} */ (container), settings);
+    // Update topbar centered label
+    const activeLabel = modal.querySelector('#yp-active-section-label');
+    if (activeLabel) {
+      activeLabel.textContent = navItem.dataset?.label || '';
     }
 
-    saveSettings();
-
-    if (window.youtubePlus) {
-      window.youtubePlus.settings = window.youtubePlus.settings || settings;
+    const targetSection = modal.querySelector(`.yp-settings-section[data-section="${section}"]`);
+    if (targetSection) {
+      targetSection.classList.remove('hidden');
     }
-    triggerRebuildDropdown();
-    try {
-      const msg =
-        (t && typeof t === 'function' && t('externalDownloaderReset')) || t('y2mateReset');
-      showNotification(msg);
-    } catch (_e) {
-      showNotification('Settings reset');
-    }
+    return section;
   };
 
   /**
@@ -703,44 +353,22 @@
     /** @type {HTMLElement} */ navItem,
     /** @type {HTMLElement} */ modal
   ) => {
-    const section = /** @type {any} */ (navItem).dataset?.section;
-    const usesFallback = modal.getAttribute('data-ytp-inline-fallback') === 'true';
-
-    modal
-      .querySelectorAll('.ytp-plus-settings-nav-item')
-      .forEach(item => item.classList.remove('active'));
-    modal.querySelectorAll('.ytp-plus-settings-section').forEach(s => {
-      s.classList.add('hidden');
-      if (usesFallback && s instanceof HTMLElement) s.style.display = 'none';
-    });
-
-    navItem.classList.add('active');
-
-    // Update topbar centered label
-    const activeLabel = modal.querySelector('#ytp-plus-active-section-label');
-    if (activeLabel) {
-      activeLabel.textContent = /** @type {any} */ (navItem).dataset?.label || '';
-    }
-
-    const targetSection = modal.querySelector(
-      `.ytp-plus-settings-section[data-section="${section}"]`
-    );
-    if (targetSection) {
-      targetSection.classList.remove('hidden');
-      if (usesFallback && targetSection instanceof HTMLElement) targetSection.style.display = '';
-    }
+    const section = activateSettingsSection(navItem, modal);
 
     // Init before/after slider when voting section becomes visible
-    if (section === 'voting' && window.YouTubePlus?.Voting?.initSlider) {
+    if (section === 'voting' && window.YouTubePlusVoting?.initSlider) {
       // Use rAF so the section is truly visible before measuring dimensions
-      requestAnimationFrame(() => window.YouTubePlus.Voting.initSlider());
+      window.YouTubePlusCleanupManager?.registerAnimationFrame?.(
+        requestAnimationFrame(() => window.YouTubePlusVoting.initSlider())
+      );
     }
 
     // Persist active nav section so it can be restored on next modal open
+    // Storage can be disabled or full.
     try {
-      localStorage.setItem('ytp-plus-active-nav-section', section);
+      U?.storage?.setItem?.('ytp-plus-active-nav-section', /** @type {string} */ (section));
     } catch (_e) {
-      U.logSuppressed(_e, 'ModalHandlers');
+      logS(_e);
     }
 
     // Broadcast the section change so feature modules can opt into
@@ -748,18 +376,41 @@
     // through a central registry. Modules that registered via
     // `YouTubeUtils.onSectionActive(id, onEnter, onLeave)` listen
     // for this event and respond.
-    try {
-      document.dispatchEvent(
-        new CustomEvent('youtube-plus-settings-section-activated', {
-          detail: {
-            section,
-            label: /** @type {any} */ (navItem).dataset?.label || '',
-          },
-          bubbles: true,
-        })
-      );
-    } catch (_e) {
-      U.logSuppressed(_e, 'ModalHandlers');
+    document.dispatchEvent(
+      new CustomEvent('youtube-plus-settings-section-activated', {
+        detail: {
+          section,
+          label: navItem.dataset?.label || '',
+        },
+        bubbles: true,
+      })
+    );
+  };
+
+  /**
+   * Mirror the music switch state onto its submenu card.
+   * @param {HTMLElement} target - Checkbox or toggle element
+   * @param {boolean} enabled - Whether the music setting is checked
+   */
+  const syncMusicSubmenuVisibility_ = (target, enabled) => {
+    const root = /** @type {HTMLElement|null} */ (
+      target.closest('.yp-settings-section') || target.closest('.yp-settings-panel')
+    );
+    if (!root) return;
+    const submenu = root.querySelector('.music-submenu[data-submenu="music"]');
+    if (submenu instanceof HTMLElement) {
+      submenu.style.display = enabled ? 'block' : 'none';
+    }
+    const toggleBtn = root.querySelector('.yp-submenu-toggle[data-submenu="music"]');
+    if (toggleBtn instanceof HTMLElement) {
+      if (enabled) {
+        toggleBtn.removeAttribute('disabled');
+        toggleBtn.style.display = 'inline-flex';
+      } else {
+        toggleBtn.setAttribute('disabled', '');
+        toggleBtn.style.display = 'none';
+      }
+      toggleBtn.setAttribute('aria-expanded', enabled ? 'true' : 'false');
     }
   };
 
@@ -767,113 +418,59 @@
    * Handle YouTube Music settings toggle
    * @param {HTMLElement} target - Checkbox element
    * @param {string} setting - Setting key
-   * @param {Function} showNotification - Function to show notification
-   * @param {Function} t - Translation function
    */
-  const handleMusicSettingToggle = (target, setting, showNotification, t) => {
-    try {
-      const defaults = {
-        enableMusic: true,
-        immersiveSearchStyles: true,
-        hoverStyles: true,
-        playerSidebarStyles: true,
-        centeredPlayerStyles: true,
-        playerBarStyles: true,
-        centeredPlayerBarStyles: true,
-        miniPlayerStyles: true,
-        scrollToTopStyles: true,
-      };
+  const handleMusicSettingToggle = (target, setting) => {
+    const defaults = {
+      enableMusic: true,
+      immersiveSearchStyles: true,
+      hoverStyles: true,
+      playerSidebarStyles: true,
+      centeredPlayerStyles: true,
+      playerBarStyles: true,
+      centeredPlayerBarStyles: true,
+      miniPlayerStyles: true,
+      scrollToTopStyles: true,
+    };
 
-      const allowedKeys = new Set(Object.keys(defaults));
-      if (!allowedKeys.has(setting)) return;
+    const allowedKeys = new Set(Object.keys(defaults));
+    if (!allowedKeys.has(setting)) return;
 
-      // Load current music settings (prefer GM storage for cross-subdomain sync)
-      /** @type {Record<string, any>} */
-      let musicSettings = { ...defaults };
+    const checked = /** @type {HTMLInputElement} */ (target).checked;
 
-      try {
-        if (typeof GM_getValue !== 'undefined') {
-          const stored = GM_getValue('youtube-plus-music-settings', null);
-          if (typeof stored === 'string' && stored) {
-            const parsed = JSON.parse(stored);
-            if (parsed && typeof parsed === 'object')
-              musicSettings = { ...musicSettings, ...parsed };
-          }
-        }
-      } catch (_e) {
-        U.logSuppressed(_e, 'ModalHandlers');
+    // Delegate to the music settings store helpers when available
+    const store = window.YouTubePlusSettingsStore;
+    const helpers =
+      /** @type {Partial<YouTubePlusSettingsStore & YouTubePlusSettingsHelpers> | null} */ (
+        window.YouTubePlusSettingsHelpers || window.YouTubePlusSettingsStore
+      );
+    let musicSettings;
+
+    if (helpers?.updateMusicSettings && helpers?.getMusicSettings) {
+      helpers.updateMusicSettings({ [setting]: checked });
+      musicSettings = helpers.getMusicSettings();
+    } else if (store?.updateMusicSettings && store?.getMusicSettings) {
+      // The store music bridge is the single writer; the change lands in the
+      // shared blob (or the legacy key it mirrors) and the module re-applies it.
+      store.updateMusicSettings({ [setting]: checked });
+      musicSettings = store.getMusicSettings();
+    }
+    // Without the store bridge the toggle stays on this page and is not persisted.
+    musicSettings = musicSettings ?? { ...defaults, [setting]: checked };
+
+    // UI: toggle visibility of music submenu card when main switch changes
+    if (setting === 'enableMusic') {
+      syncMusicSubmenuVisibility_(target, !!checked);
+    }
+
+    // Apply changes if YouTubeMusic / YouTubePlusMusic module is available
+    const musicModule = window.YouTubePlusMusic || window.YouTubeMusic;
+    if (musicModule) {
+      if (typeof musicModule.saveSettings === 'function') {
+        musicModule.saveSettings(musicSettings);
       }
-
-      try {
-        const stored = localStorage.getItem('youtube-plus-music-settings');
-        if (stored) {
-          const parsed = JSON.parse(stored);
-          if (parsed && typeof parsed === 'object') musicSettings = { ...musicSettings, ...parsed };
-        }
-      } catch (_e) {
-        U.logSuppressed(_e, 'ModalHandlers');
+      if (typeof musicModule.applySettingsChanges === 'function') {
+        musicModule.applySettingsChanges();
       }
-
-      musicSettings[setting] = /** @type {HTMLInputElement} */ (target).checked;
-
-      // UI: toggle visibility of music submenu card when main switch changes
-      try {
-        if (setting === 'enableMusic') {
-          const enabled = !!musicSettings.enableMusic;
-          const root = /** @type {HTMLElement|null} */ (
-            target.closest('.ytp-plus-settings-section') ||
-              target.closest('.ytp-plus-settings-panel')
-          );
-          if (root) {
-            const submenu = root.querySelector('.music-submenu[data-submenu="music"]');
-            if (submenu instanceof HTMLElement) {
-              /** @type {any} */ (submenu).style.display = enabled ? 'block' : 'none';
-            }
-            const toggleBtn = root.querySelector('.ytp-plus-submenu-toggle[data-submenu="music"]');
-            if (toggleBtn instanceof HTMLElement) {
-              if (enabled) {
-                toggleBtn.removeAttribute('disabled');
-                /** @type {any} */ (toggleBtn).style.display = 'inline-flex';
-              } else {
-                toggleBtn.setAttribute('disabled', '');
-                /** @type {any} */ (toggleBtn).style.display = 'none';
-              }
-              toggleBtn.setAttribute('aria-expanded', enabled ? 'true' : 'false');
-            }
-          }
-        }
-      } catch (_e) {
-        U.logSuppressed(_e, 'ModalHandlers');
-      }
-
-      // Save to localStorage
-      localStorage.setItem('youtube-plus-music-settings', JSON.stringify(musicSettings));
-
-      // Save to userscript-global storage so youtube.com and music.youtube.com share settings.
-      try {
-        if (typeof GM_setValue !== 'undefined') {
-          GM_setValue('youtube-plus-music-settings', JSON.stringify(musicSettings));
-        }
-      } catch (_e) {
-        U.logSuppressed(_e, 'ModalHandlers');
-      }
-
-      // Apply changes if YouTubeMusic module is available
-      if (typeof window !== 'undefined' && window.YouTubeMusic) {
-        if (window.YouTubeMusic.saveSettings) {
-          window.YouTubeMusic.saveSettings(musicSettings);
-        }
-        if (window.YouTubeMusic.applySettingsChanges) {
-          window.YouTubeMusic.applySettingsChanges();
-        }
-      }
-
-      // Show notification
-      if (showNotification && t) {
-        showNotification(t('musicSettingsSaved'));
-      }
-    } catch (_e) {
-      window.YouTubePlusLogger?.warn?.('ModalHandlers', 'handleMusicSettingToggle failed');
     }
   };
 
@@ -910,32 +507,58 @@
    * generalised so that all four call sites (pip, timecode, report, stats)
    * share one implementation.
    *
-   * @param {{ dropdown: HTMLElement, hiddenSelect: HTMLSelectElement | null }} opts
+   * @param {{ dropdown: HTMLElement | null, hiddenSelect?: HTMLSelectElement | null, onOpen?: () => void, onChange?: (val: string) => void }} opts
    */
   const initGlassDropdown = (
-    /** @type {{ dropdown: HTMLElement | null, hiddenSelect: HTMLSelectElement | null }} */ opts
+    /** @type {{ dropdown: HTMLElement | null, hiddenSelect?: HTMLSelectElement | null, onOpen?: () => void, onChange?: (val: string) => void }} */ opts
   ) => {
     const dropdown = opts?.dropdown;
-    const hidden = opts?.hiddenSelect;
-    if (!(dropdown && hidden)) return;
+    const hidden =
+      opts?.hiddenSelect ||
+      dropdown?.querySelector('select') ||
+      (dropdown?.parentElement instanceof HTMLElement
+        ? dropdown.parentElement.querySelector('select')
+        : null);
+    if (!dropdown) return;
+    if (dropdown.hasAttribute('data-yp-dropdown-init')) return;
+    dropdown.setAttribute('data-yp-dropdown-init', 'true');
+
     const toggle = dropdown.querySelector('.glass-dropdown__toggle');
     const list = dropdown.querySelector('.glass-dropdown__list');
     const label = dropdown.querySelector('.glass-dropdown__label');
     if (!(toggle instanceof HTMLElement && list instanceof HTMLElement)) return;
 
-    let items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+    // Accessibility roles & states
+    toggle.setAttribute('type', 'button');
+    toggle.setAttribute('aria-haspopup', 'listbox');
+    toggle.setAttribute('aria-expanded', 'false');
+    list.setAttribute('role', 'listbox');
+    list.setAttribute('tabindex', '-1');
+
+    /** @type {HTMLElement[]} */
+    let items = Array.from(
+      /** @type {NodeListOf<HTMLElement>} */ (list.querySelectorAll('.glass-dropdown__item'))
+    );
+    items.forEach(it => {
+      if (!it.hasAttribute('role')) it.setAttribute('role', 'option');
+    });
+
     let idx = items.findIndex(it => it.getAttribute('aria-selected') === 'true');
     if (idx < 0) idx = 0;
 
+    const isOpen = () => toggle.getAttribute('aria-expanded') === 'true';
     const openList = () => {
+      toggle.setAttribute('aria-expanded', 'true');
       dropdown.setAttribute('aria-expanded', 'true');
       list.style.display = 'block';
+      list.classList.add('is-open');
       items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+      items.forEach(it => {
+        if (!it.hasAttribute('role')) it.setAttribute('role', 'option');
+      });
 
       // Auto-detect direction: if there is not enough room above the dropdown
       // inside the nearest scrollable ancestor, open downward instead.
-      // This fixes dropdowns that are clipped by overflow-y:auto containers
-      // (e.g. the report section at the top of the settings content area).
       list.classList.remove('glass-dropdown__list--down');
       let scrollParent = dropdown.parentElement;
       while (scrollParent && scrollParent !== document.body) {
@@ -956,75 +579,174 @@
           list.classList.add('glass-dropdown__list--down');
         }
       }
+
+      opts?.onOpen?.();
     };
     const closeList = () => {
+      toggle.setAttribute('aria-expanded', 'false');
       dropdown.setAttribute('aria-expanded', 'false');
       list.style.display = 'none';
+      list.classList.remove('is-open');
       list.classList.remove('glass-dropdown__list--down');
     };
 
-    toggle.addEventListener('click', (/** @type {Event} */ e) => {
-      e.stopPropagation();
-      const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-      if (expanded) closeList();
-      else openList();
-    });
-
-    document.addEventListener('click', (/** @type {Event} */ e) => {
-      if (!dropdown.contains(/** @type {Node} */ (e.target))) closeList();
-    });
-
-    dropdown.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
-      const expanded = dropdown.getAttribute('aria-expanded') === 'true';
-      if (e.key === 'ArrowDown') {
-        e.preventDefault();
-        if (!expanded) openList();
-        idx = Math.min(idx + 1, items.length - 1);
-        items.forEach(it => it.removeAttribute('aria-selected'));
-        items[idx].setAttribute('aria-selected', 'true');
-        items[idx].scrollIntoView({ block: 'nearest' });
-      } else if (e.key === 'ArrowUp') {
-        e.preventDefault();
-        if (!expanded) openList();
-        idx = Math.max(idx - 1, 0);
-        items.forEach(it => it.removeAttribute('aria-selected'));
-        items[idx].setAttribute('aria-selected', 'true');
-        items[idx].scrollIntoView({ block: 'nearest' });
-      } else if (e.key === 'Enter' || e.key === ' ') {
-        e.preventDefault();
-        if (!expanded) {
-          openList();
-          return;
-        }
-        const it = items[idx];
-        if (it) {
-          hidden.value = /** @type {HTMLElement} */ (it).dataset?.value ?? hidden.value;
-          if (label) label.textContent = /** @type {HTMLElement} */ (it).textContent ?? '';
-          hidden.dispatchEvent(new Event('change', { bubbles: true }));
-          closeList();
-        }
-      } else if (e.key === 'Escape') {
-        closeList();
+    /**
+     * Commit an item as selected: update the hidden value, listbox marks,
+     * the visible label and dispatch the change for the settings pipeline.
+     * @param {HTMLElement} item
+     */
+    const commitItem = item => {
+      const val = item.dataset?.value ?? (hidden ? hidden.value : '');
+      if (hidden) {
+        hidden.value = val;
       }
-    });
-
-    list.addEventListener('click', (/** @type {Event} */ e) => {
-      const it =
-        e.target && /** @type {HTMLElement} */ (e.target).closest?.('.glass-dropdown__item');
-      if (!(it instanceof HTMLElement)) return;
-      hidden.value = it.dataset?.value ?? hidden.value;
+      if ('_value' in dropdown) {
+        /** @type {HTMLElement & { value?: string }} */ (dropdown).value = val;
+      }
       list
         .querySelectorAll('.glass-dropdown__item')
         .forEach(li => li.removeAttribute('aria-selected'));
-      it.setAttribute('aria-selected', 'true');
-      if (label) label.textContent = it.textContent ?? '';
-      hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      item.setAttribute('aria-selected', 'true');
+      if (label) label.textContent = item.textContent ?? '';
+      if (hidden) {
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      opts?.onChange?.(val);
       closeList();
-    });
+      if (typeof toggle.focus === 'function') toggle.focus();
+    };
+
+    /**
+     * Update the listbox selection to a target index and sync the values.
+     * @param {number} targetIdx
+     */
+    const updateSelectionToIndex = targetIdx => {
+      items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+      if (items.length === 0) return;
+      idx = Math.min(Math.max(targetIdx, 0), items.length - 1);
+      items.forEach(it => it.removeAttribute('aria-selected'));
+      items[idx].setAttribute('aria-selected', 'true');
+      if (typeof items[idx]?.scrollIntoView === 'function') {
+        items[idx].scrollIntoView({ block: 'nearest' });
+      }
+      const currentVal = items[idx].dataset?.value ?? '';
+      if (hidden) {
+        hidden.value = currentVal;
+        hidden.dispatchEvent(new Event('change', { bubbles: true }));
+      }
+      if ('_value' in dropdown) {
+        /** @type {HTMLElement & { value?: string }} */ (dropdown).value = currentVal;
+      }
+      if (label) label.textContent = items[idx].textContent ?? '';
+      opts?.onChange?.(currentVal);
+    };
+
+    /**
+     * Move the listbox selection one step and open the list first when it
+     * was closed (mirrors the native select behavior).
+     * @param {number} delta
+     */
+    const moveSelection = delta => {
+      if (!isOpen()) openList();
+      updateSelectionToIndex(idx + delta);
+    };
+
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      toggle,
+      'click',
+      (/** @type {Event} */ e) => {
+        e.stopPropagation();
+        const expanded = isOpen();
+        if (expanded) closeList();
+        else openList();
+      },
+      undefined,
+      false
+    );
+
+    // Owned by the dropdown: removing its dialog releases this listener too.
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      document,
+      'click',
+      (/** @type {Event} */ e) => {
+        if (!dropdown.contains(/** @type {Node} */ (e.target))) closeList();
+      },
+      /** @type {AddEventListenerOptions & { owner?: HTMLElement }} */ ({ owner: dropdown }),
+      true
+    );
+
+    const handleKeyNav = (/** @type {KeyboardEvent} */ e) => {
+      const key = e.key;
+      if (key === 'ArrowDown') {
+        e.preventDefault();
+        moveSelection(1);
+      } else if (key === 'ArrowUp') {
+        e.preventDefault();
+        moveSelection(-1);
+      } else if (key === 'Home' && isOpen()) {
+        e.preventDefault();
+        updateSelectionToIndex(0);
+      } else if (key === 'End' && isOpen()) {
+        e.preventDefault();
+        items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+        updateSelectionToIndex(items.length - 1);
+      }
+    };
+
+    const handleKeyCommitOrDismiss = (/** @type {KeyboardEvent} */ e) => {
+      const key = e.key;
+      if (key === 'Escape' && isOpen()) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeList();
+        if (typeof toggle.focus === 'function') toggle.focus();
+      } else if (key === 'Tab' && isOpen()) {
+        closeList();
+      } else if (key === 'Enter' || key === ' ') {
+        e.preventDefault();
+        if (!isOpen()) {
+          openList();
+          return;
+        }
+        items = Array.from(list.querySelectorAll('.glass-dropdown__item'));
+        const it = items[idx];
+        if (it) commitItem(it);
+      }
+    };
+
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      dropdown,
+      'keydown',
+      (/** @type {KeyboardEvent} */ e) => {
+        if (
+          toggle.getAttribute('aria-disabled') === 'true' ||
+          /** @type {HTMLElement & { _disabled?: boolean }} */ (dropdown)._disabled === true
+        ) {
+          return;
+        }
+        handleKeyNav(e);
+        handleKeyCommitOrDismiss(e);
+      },
+      undefined,
+      false
+    );
+
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      list,
+      'click',
+      (/** @type {Event} */ e) => {
+        const it =
+          e.target && /** @type {HTMLElement} */ (e.target).closest?.('.glass-dropdown__item');
+        if (!(it instanceof HTMLElement)) return;
+        commitItem(it);
+      },
+      undefined,
+      false
+    );
   };
 
   /**
-   * The canonical ordered list of keyboard-modifier combo values used
+   * The ordered list of keyboard-modifier combo values used
    * by the PiP and Timecode shortcut editors. The dropdowns iterate
    * over this array to render `<option>` and `<li>` markup, and the
    * resolver reads the same order to turn a `(ctrlKey, altKey,
@@ -1047,7 +769,7 @@
 
   /**
    * Translate a `(ctrlKey, altKey, shiftKey)` triple into one of the
-   * canonical combo strings above. Returns `'none'` if none of the
+   * combo strings above. Returns `'none'` if none of the
    * modifiers are held.
    *
    * @param {{ ctrlKey?: boolean, altKey?: boolean, shiftKey?: boolean }} shortcut
@@ -1073,11 +795,11 @@
    * Format a combo value for display. Two rendering modes are
    * supported, controlled by the `opts` argument:
    *
-   *   1. `translatePart(part)` callback is provided — each modifier
+   *   1. `translatePart(part)` callback is provided: each modifier
    *      key is run through it (e.g. for i18n lookup), then
    *      capitalised. This is the mode used by pip.js, where each
    *      "ctrl" / "alt" / "shift" is fed through `t('ctrl')` etc.
-   *   2. No callback — modifiers are simply capitalised as English
+   *   2. No callback: modifiers are simply capitalised as English
    *      ("Ctrl", "Alt", "Shift"). This is the fallback used by
    *      timecode.js, which renders the default English form.
    *
@@ -1156,7 +878,7 @@
       const handler = (/** @type {KeyboardEvent} */ e) => {
         if (e.key !== 'Tab') return;
         const focusable = Array.from(container.querySelectorAll(FOCUSABLE)).filter(
-          el => el.offsetParent !== null
+          el => /** @type {HTMLElement} */ (el).offsetParent !== null
         );
         if (focusable.length === 0) return;
 
@@ -1176,27 +898,244 @@
         }
       };
 
-      container.addEventListener('keydown', handler);
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        container,
+        'keydown',
+        handler,
+        undefined,
+        false
+      );
       return () => container.removeEventListener('keydown', handler);
     };
 
-    window.YouTubePlusModalHandlers = /** @type {any} */ ({
+    /**
+     * Dispatches generic settings-modal click actions (sidebar nav, save,
+     * external downloader save/reset). Extracted from Basic's enhancer object.
+     * @param {HTMLElement} target - Click target
+     * @param {HTMLElement} modal - Modal element
+     * @param {YouTubePlusModalHandlers & YouTubePlusModalDownloadHandlers} handlers - Modal handlers facade (core + download members)
+     * @param {SettingsModalContext} context - Settings + disposition callbacks
+     * @param {(key: string, params?: Record<string, string | number>) => string} translate - Translation function
+     */
+    function handleModalClickActions(target, modal, handlers, context, translate) {
+      const saveSettings = context.saveSettingsBound || context.saveSettings;
+      const showNotification = context.showNotificationBound || context.showNotification;
+
+      // Sidebar navigation
+      const navItem = /** @type {HTMLElement | null} */ (
+        target.classList?.contains('yp-settings-nav-item')
+          ? target
+          : target.closest?.('.yp-settings-nav-item')
+      );
+      if (navItem) {
+        handlers.handleSidebarNavigation(navItem, modal);
+        return;
+      }
+
+      // Save button
+      if (
+        target.id === 'yp-save-settings' ||
+        target.id === 'yp-save-settings-classic' ||
+        target.id === 'yp-save-settings-icon' ||
+        target.closest('#yp-save-settings') ||
+        target.closest('#yp-save-settings-classic')
+      ) {
+        saveSettings?.();
+        document.dispatchEvent(
+          new CustomEvent('youtube-plus-settings-modal-closed', {
+            bubbles: true,
+          })
+        );
+        modal.remove();
+        showNotification?.(translate('settingsSaved'));
+        return;
+      }
+
+      // External downloader save
+      if (target.id === 'download-externalDownloader-save') {
+        handlers.handleExternalDownloaderSave(
+          target,
+          context.settings,
+          // The downstream contract hard-calls the binding callbacks; the cast
+          // only documents that, and the runtime passes the value through.
+          /** @type {() => void} */ (saveSettings),
+          /** @type {() => void} */ (showNotification),
+          translate
+        );
+        return;
+      }
+
+      // External downloader reset
+      if (target.id === 'download-externalDownloader-reset') {
+        handlers.handleExternalDownloaderReset(
+          modal,
+          context.settings,
+          /** @type {() => void} */ (saveSettings),
+          /** @type {() => void} */ (showNotification),
+          translate
+        );
+      }
+    }
+
+    /** Toggle the active/aria-checked state over matched element nodes. */
+    function setActiveAriaState_(
+      /** @type {NodeListOf<HTMLElement>} */ nodes,
+      /** @type {(node: HTMLElement) => boolean} */ isMatch
+    ) {
+      nodes.forEach(node => {
+        const isActive = isMatch(node);
+        node.classList.toggle('active', isActive);
+        node.setAttribute('aria-checked', isActive ? 'true' : 'false');
+      });
+    }
+
+    /** Sync the style-button row against a retained material style. */
+    function syncThemeStyleButtons_(
+      /** @type {HTMLElement} */ modal,
+      /** @type {string|undefined} */ layout,
+      /** @type {string|undefined} */ style
+    ) {
+      setActiveAriaState_(
+        modal.querySelectorAll('.yp-theme-style-btn'),
+        btn => btn.dataset.layout === layout && btn.dataset.style === style
+      );
+    }
+
+    /**
+     * Mark the layout card and style-button pair matching the choice active.
+     * @param {HTMLElement} modal
+     * @param {string|undefined} layout
+     * @param {string|undefined} style
+     */
+    function activateThemeSelection_(modal, layout, style) {
+      setActiveAriaState_(
+        modal.querySelectorAll('.yp-theme-card'),
+        card => card.dataset.value === layout
+      );
+      syncThemeStyleButtons_(modal, layout, style);
+    }
+
+    /** Reflect the chosen preference button highlight inside its bar. */
+    function activateThemePrefButton_(
+      /** @type {Element} */ group,
+      /** @type {HTMLElement} */ chosen
+    ) {
+      setActiveAriaState_(group.querySelectorAll('.yp-theme-pref-btn'), btn => btn === chosen);
+    }
+
+    /** Reflect the chosen variant card plus the style row of the retained style. */
+    function activateThemeVariantCards_(
+      /** @type {Element} */ grid,
+      /** @type {HTMLElement} */ modal,
+      /** @type {HTMLElement} */ chosen,
+      /** @type {string|undefined} */ layout,
+      /** @type {string|undefined} */ style
+    ) {
+      setActiveAriaState_(grid.querySelectorAll('.yp-theme-card'), card => card === chosen);
+      syncThemeStyleButtons_(modal, layout, style);
+    }
+
+    /**
+     * Apply a material style-button choice: write both settings, sync the
+     * card/style visuals, live-apply and save.
+     */
+    function handleThemeStyleButton_(
+      /** @type {HTMLElement} */ styleBtn,
+      /** @type {HTMLElement} */ modal,
+      /** @type {YouTubePlusModalHandlers} */ handlers,
+      /** @type {SettingsModalContext} */ context,
+      /** @type {(() => void) | undefined} */ saveSettings
+    ) {
+      const settings = context.settings;
+      const layout = styleBtn.dataset.layout;
+      const style = styleBtn.dataset.style;
+      if (layout && style) {
+        handlers.setSettingByPath(settings, 'styles.themeVariant', layout);
+        handlers.setSettingByPath(settings, 'styles.themeStyle', style);
+        activateThemeSelection_(modal, layout, style);
+        handlers.applySettingLive('styles.themeVariant', context);
+        saveSettings?.();
+      }
+    }
+
+    /**
+     * Apply a settings-card choice (preference or variant): write the
+     * setting, sync its control group, live-apply and save.
+     */
+    function handleThemeOptionCard_(
+      /** @type {HTMLElement} */ themeOption,
+      /** @type {HTMLElement} */ modal,
+      /** @type {YouTubePlusModalHandlers} */ handlers,
+      /** @type {SettingsModalContext} */ context,
+      /** @type {(() => void) | undefined} */ saveSettings
+    ) {
+      const settings = context.settings;
+      const setting = themeOption.dataset.settingCard;
+      const value = themeOption.dataset.value;
+      if (setting && typeof value === 'string') {
+        handlers.setSettingByPath(settings, setting, value);
+        if (setting === 'styles.themePreference') {
+          const group = themeOption.closest('.yp-theme-pref-bar');
+          if (group) {
+            activateThemePrefButton_(group, themeOption);
+          }
+        } else if (setting === 'styles.themeVariant') {
+          const grid = themeOption.closest('.yp-theme-grid');
+          if (grid) {
+            activateThemeVariantCards_(
+              grid,
+              modal,
+              themeOption,
+              value,
+              settings?.styles?.themeStyle || 'glass'
+            );
+          }
+        }
+        handlers.applySettingLive(setting, context);
+        saveSettings?.();
+      }
+    }
+
+    /**
+     * Handles clicks on theme cards, appearance toggles, and material style buttons.
+     * Extracted from Basic's enhancer object.
+     * @param {HTMLElement} target - Click target
+     * @param {HTMLElement} modal - Modal element
+     * @param {YouTubePlusModalHandlers} handlers - Modal handlers facade
+     * @param {SettingsModalContext} context - Context object (carries settings + saveSettings)
+     * @returns {boolean} true if handled
+     */
+    function handleThemeOptionsClick(target, modal, handlers, context) {
+      const saveSettings = context.saveSettingsBound || context.saveSettings;
+      const styleBtn = target.closest('.yp-theme-style-btn[data-layout][data-style]');
+      if (styleBtn instanceof HTMLElement) {
+        handleThemeStyleButton_(styleBtn, modal, handlers, context, saveSettings);
+        return true;
+      }
+
+      const themeOption = target.closest(
+        '.yp-theme-card[data-setting-card][data-value],.yp-theme-pref-btn[data-setting-card][data-value]'
+      );
+      if (themeOption instanceof HTMLElement) {
+        handleThemeOptionCard_(themeOption, modal, handlers, context, saveSettings);
+        return true;
+      }
+      return false;
+    }
+
+    window.YouTubePlusModalHandlers = /** @type {YouTubePlusModalHandlers} */ ({
       setSettingByPath,
-      initializeDownloadSites,
-      toggleDownloadSiteControls,
       safelySaveSettings,
-      handleDownloadSiteToggle,
       handleSimpleSettingToggle,
-      handleDownloadSiteInput,
-      handleExternalDownloaderSave,
-      handleExternalDownloaderReset,
+      activateSettingsSection,
       handleSidebarNavigation,
       applySettingLive,
       handleMusicSettingToggle,
       isMusicSetting,
       createFocusTrap,
       initGlassDropdown,
-      modifierComboValues: MODIFIER_COMBO_VALUES,
+      handleModalClickActions,
+      handleThemeOptionsClick,
       resolveModifierComboValue,
       formatModifierComboLabel,
       buildModifierComboOptionItems,

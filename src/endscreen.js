@@ -1,45 +1,31 @@
-// YouTube End Screen Remover — LazyLoader registered as 'end'.
+// YouTube End Screen Remover.
 //
-// Responsibility: remove or suppress the YouTube end-screen overlay
-//   that appears at the end of a video, and optionally replace it
-//   with a custom "play next" prompt.
-// Public surface: none (self-contained IIFE, registered via LazyLoader).
+// Responsibility: hide and remove YouTube's end-screen cards and overlays
+//   while the `endscreen` setting is on.
+// Public surface: window.YouTubePlusEndscreen (test hooks only).
 (function () {
-  // Shared DOM helpers from YouTubeUtils
-  const { $, $$ } = window.YouTubeUtils || {};
   const U = window.YouTubeUtils;
-  const onDomReady =
-    U?.onDomReady ||
-    (cb => {
-      if (document.readyState !== 'loading') cb();
-      else document.addEventListener('DOMContentLoaded', cb, { once: true });
-    });
+  const { $, $$ } = U || {};
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'Endscreen');
 
-  // Optimized configuration
   const CONFIG = {
-    enabled: true,
-    storageKey: 'youtube_endscreen_settings',
-    // Added .teaser-carousel to cover variants named 'teaser-carousel'
+    // Includes the `.teaser-carousel` variant alongside the other card overlays.
     selectors:
       '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element,.ytp-ce-covering-overlay,.ytp-cards-teaser,.teaser-carousel,.ytp-cards-button,.iv-drawer,.iv-branding,.video-annotations,.ytp-cards-teaser-text',
     debounceMs: 32,
     batchSize: 20,
   };
+  const STYLE_ID = 'end-screen-remover';
+  const SETTINGS_KEY = 'endscreen';
 
-  // Minimal state with better tracking
-  /** @type {{ observerSubId: string | null, styleEl: string | null, isActive: boolean, removeCount: number, lastCheck: number, ytNavigateListenerKey: symbol | null, settingsNavListenerKey: symbol | null }} */
   const state = {
-    observerSubId: null,
-    styleEl: null,
-    isActive: false,
     removeCount: 0,
     lastCheck: 0,
-    ytNavigateListenerKey: null,
-    settingsNavListenerKey: null,
   };
 
-  // Shared debounce from YouTubeUtils
-  const debounce = U.debounce;
+  /** @type {YouTubePlusFeatureContext | null} */
+  let endCtx = null;
 
   /**
    * @param {HTMLElement[]} elements
@@ -55,67 +41,41 @@
           el.remove();
           state.removeCount++;
         } catch (_e) {
-          U.logSuppressed(_e, 'Endscreen');
+          logS(_e);
         }
       }
     }
   };
 
-  // Settings with caching
-  const settings = {
-    load: () => {
-      try {
-        const data = localStorage.getItem(CONFIG.storageKey);
-        CONFIG.enabled = data ? (JSON.parse(data).enabled ?? true) : true;
-      } catch (_e) {
-        CONFIG.enabled = true;
-      }
-    },
-
-    save: () => {
-      try {
-        localStorage.setItem(CONFIG.storageKey, JSON.stringify({ enabled: CONFIG.enabled }));
-      } catch (_e) {
-        U.logSuppressed(_e, 'Endscreen');
-      }
-      settings.apply();
-    },
-
-    apply: () => (CONFIG.enabled ? init() : cleanup()),
-  };
-
-  // Optimized core functions
-  const injectCSS = () => {
-    if (state.styleEl || !CONFIG.enabled) return;
-
-    const styles = `${CONFIG.selectors}{display:none!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;transform:scale(0)!important}`;
-    const SM = YouTubeUtils?.StyleManager;
-    if (SM && typeof SM.add === 'function') {
-      SM.add('end-screen-remover', styles);
+  /**
+   * Remove end-screen elements from the DOM while the feature runs.
+   * @param {{ force?: boolean }} [opts] - `force` bypasses the debounce guard
+   *   (the initial pass in start and programmatic calls).
+   */
+  const removeEndScreens = opts => {
+    if (!endCtx) return;
+    if (!opts?.force) {
+      const now = performance.now();
+      if (now - state.lastCheck < CONFIG.debounceMs) return;
+      state.lastCheck = now;
     }
-    // store the style id so it can be removed via StyleManager.remove
-    state.styleEl = 'end-screen-remover';
-  };
-
-  const removeEndScreens = () => {
-    if (!CONFIG.enabled) return;
-    const now = performance.now();
-    if (now - state.lastCheck < CONFIG.debounceMs) return;
-    state.lastCheck = now;
 
     const elements = $$(CONFIG.selectors);
     if (elements.length) fastRemove(/** @type {HTMLElement[]} */ (elements));
   };
 
   /**
-   * @param {Element} node
+   * The DOM exposes `className` as a string on HTML elements and as an
+   * `SVGAnimatedString` on SVG elements. In Firefox some nodes have
+   * `className === undefined`.
+   * @param {{ className?: string | SVGAnimatedString }} node
+   * @returns {string}
    */
   const getClassNameValue = node => {
-    if (typeof node.className === 'string') {
-      return node.className;
-    }
-    if (node.className && typeof node.className === 'object' && 'baseVal' in node.className) {
-      return /** @type {any} */ (node.className).baseVal;
+    const className = node?.className;
+    if (typeof className === 'string') return className;
+    if (className && typeof className === 'object' && 'baseVal' in className) {
+      return className.baseVal || '';
     }
     return '';
   };
@@ -129,7 +89,7 @@
     if (!(node instanceof Element)) return false;
 
     const classNameValue = getClassNameValue(node);
-    return classNameValue.includes('ytp-') || node.querySelector?.('.ytp-ce-element');
+    return Boolean(classNameValue.includes('ytp-') || node.querySelector?.('.ytp-ce-element'));
   };
 
   /**
@@ -147,23 +107,28 @@
   };
 
   /**
-   * Setup watcher for end screens
-   * @returns {void}
+   * Watch the player for new end-screen elements; owned by the feature.
+   * @param {YouTubePlusFeatureContext} ctx
    */
-  const setupWatcher = () => {
-    if (state.observerSubId || !CONFIG.enabled) return;
-
-    const throttledRemove = debounce(removeEndScreens, CONFIG.debounceMs);
+  const watchPlayer = ctx => {
     const coordinator = window.YouTubePlusMutationCoordinator;
     if (!coordinator?.subscribeRoot) return;
 
-    state.observerSubId = 'endscreen::observer';
+    /** @type {(() => void) | null} */
+    let pending = null;
+    const scheduleRemove = () => {
+      if (pending) return;
+      pending = ctx.timeout(() => {
+        pending = null;
+        removeEndScreens();
+      }, CONFIG.debounceMs);
+    };
+
+    const subId = 'endscreen::observer';
     coordinator.subscribeRoot(
-      state.observerSubId,
+      subId,
       /** @param {MutationRecord[]} mutations */ mutations => {
-        if (hasRelevantChanges(mutations)) {
-          throttledRemove();
-        }
+        if (hasRelevantChanges(mutations)) scheduleRemove();
       },
       {
         selector:
@@ -174,104 +139,48 @@
         attributeFilter: ['class', 'style'],
       }
     );
-
-    YouTubeUtils.cleanupManager.register(() => {
-      if (state.observerSubId) {
-        coordinator.unsubscribe(state.observerSubId);
-        state.observerSubId = null;
-      }
-    });
-
-    // Initial check after the coordinator subscribes.
-    throttledRemove();
+    ctx.onDispose(() => coordinator.unsubscribe?.(subId));
+    ctx.listen(document, 'yt-navigate-finish', scheduleRemove, { passive: true });
   };
 
-  const cleanup = () => {
-    if (state.observerSubId && window.YouTubePlusMutationCoordinator?.unsubscribe) {
-      window.YouTubePlusMutationCoordinator.unsubscribe(state.observerSubId);
-    }
-    state.observerSubId = null;
-    if (state.styleEl) {
-      try {
-        const SM = YouTubeUtils?.StyleManager;
-        if (SM && typeof SM.remove === 'function') {
-          SM.remove(state.styleEl);
-        }
-      } catch (_e) {
-        U.logSuppressed(_e, 'Endscreen');
-      }
-    }
-    state.styleEl = null;
-    state.isActive = false;
-  };
+  const endscreenFeature = window.YouTubePlusFeatureRegistry?.FeatureLifecycle?.define?.({
+    id: 'endscreen',
+    settingsKey: SETTINGS_KEY,
+    // End-screen overlays render inside the watch page's player only.
+    routes: ['watch'],
+    start(/** @type {YouTubePlusFeatureContext} */ ctx) {
+      endCtx = ctx;
+      ctx.style(
+        STYLE_ID,
+        `${CONFIG.selectors}{display:none!important;opacity:0!important;visibility:hidden!important;pointer-events:none!important;transform:scale(0)!important}`
+      );
+      removeEndScreens({ force: true });
+      watchPlayer(ctx);
+    },
+    stop() {
+      endCtx = null;
+    },
+  });
 
-  const init = () => {
-    if (state.isActive || !CONFIG.enabled) return;
-    state.isActive = true;
-    injectCSS();
-    removeEndScreens();
-    setupWatcher();
-  };
+  // ----- Settings UI (works while the feature is off) -----
 
-  const setupEndscreenSettingsDelegation = (() => {
-    let attached = false;
-    return () => {
-      if (attached) return;
-      attached = true;
-
-      const delegator = window.YouTubePlusEventDelegation;
-      const handler = (/** @type {Event} */ _ev, /** @type {HTMLInputElement | null} */ target) => {
-        if (!target) return;
-        if (!target.classList?.contains('ytp-plus-settings-checkbox')) return;
-        if (!target.closest?.('.endscreen-settings')) return;
-        CONFIG.enabled = target.checked;
-        settings.save();
-      };
-
-      if (delegator?.on) {
-        delegator.on(
-          document,
-          'change',
-          '.endscreen-settings .ytp-plus-settings-checkbox',
-          handler,
-          { passive: true }
-        );
-      } else {
-        const changeHandler = /** @param {Event} ev */ ev => {
-          const target = /** @type {Element | null} */ (ev.target)?.closest?.(
-            '.ytp-plus-settings-checkbox'
-          );
-          if (target) handler(ev, /** @type {HTMLInputElement} */ (target));
-        };
-        if (U && YouTubeUtils.cleanupManager) {
-          YouTubeUtils.cleanupManager.registerListener(document, 'change', changeHandler, {
-            passive: true,
-            capture: true,
-          });
-        } else {
-          document.addEventListener('change', changeHandler, { passive: true, capture: true });
-        }
-      }
-    };
-  })();
-
-  // Streamlined settings UI
   const addSettingsUI = () => {
     const enhancedSlot = $('.endscreen-settings-slot');
     const enhancedCard = $('.enhanced-submenu .glass-card');
     const host = enhancedSlot || enhancedCard;
     if (!host || $('.endscreen-settings', /** @type {Element} */ (host))) return;
 
+    const enabled = window.YouTubePlusSettingsStore?.get?.(SETTINGS_KEY) !== false;
     const container = document.createElement('div');
-    container.className = 'ytp-plus-settings-item endscreen-settings';
+    container.className = 'yp-settings-item endscreen-settings';
     U.renderTemplateClone(
       container,
       `
         <div>
-          <label class="ytp-plus-settings-item-label">${YouTubeUtils.t('endscreenHideLabel')}</label>
-          <div class="ytp-plus-settings-item-description">${YouTubeUtils.t('endscreenHideDesc')}${state.removeCount ? ` (${state.removeCount} ${YouTubeUtils.t('removedSuffix').replace('{n}', '').trim()})` : ''}</div>
+          <label class="yp-settings-item-label">${YouTubeUtils.t('endscreenHideLabel')}</label>
+          <div class="yp-settings-item-description">${YouTubeUtils.t('endscreenHideDesc')}${state.removeCount ? ` (${state.removeCount} ${YouTubeUtils.t('removedSuffix').replace('{n}', '').trim()})` : ''}</div>
         </div>
-        <input type="checkbox" class="ytp-plus-settings-checkbox" ${CONFIG.enabled ? 'checked' : ''}>
+        <input type="checkbox" class="yp-settings-checkbox" ${enabled ? 'checked' : ''}>
       `
     );
 
@@ -280,87 +189,50 @@
     } else {
       host.appendChild(container);
     }
-    setupEndscreenSettingsDelegation();
   };
 
-  // Optimized navigation handler
-  const handlePageChange = debounce(() => {
-    if (location.pathname === '/watch') {
-      cleanup();
-      requestIdleCallback ? requestIdleCallback(init) : setTimeout(init, 1);
-    }
-  }, 50);
+  const cm = window.YouTubePlusCleanupManager;
+  /** @param {() => void} fn @param {number} ms */
+  const later = (fn, ms) => cm.timeout(fn, ms);
 
-  let endscreenRuntimeStarted = false;
-  const startEndscreenRuntime = () => {
-    if (endscreenRuntimeStarted) return;
-    endscreenRuntimeStarted = true;
+  window.YouTubePlusEventDelegation?.on?.(
+    document,
+    'change',
+    '.endscreen-settings .yp-settings-checkbox',
+    (/** @type {Event} */ _ev, /** @type {HTMLInputElement | null} */ target) => {
+      if (target) window.YouTubePlusSettingsStore?.set?.(SETTINGS_KEY, target.checked);
+    },
+    { passive: true }
+  );
+  cm.registerListener(
+    document,
+    'youtube-plus-settings-modal-opened',
+    () => later(addSettingsUI, 25),
+    undefined,
+    true
+  );
+  cm.registerListener(
+    document,
+    'click',
+    (/** @type {Event} */ e) => {
+      const target = /** @type {HTMLElement | null} */ (e.target);
+      if (target?.dataset?.section === 'advanced') later(addSettingsUI, 10);
+    },
+    { passive: true, capture: true },
+    true
+  );
 
-    // Initialize
-    settings.load();
-    onDomReady(init);
-
-    /** @param {Event} e */
-    const handleSettingsNavClick = e => {
-      const { target } = /** @type {{ target: HTMLElement }} */ (/** @type {unknown} */ (e));
-      if (target?.dataset?.section === 'advanced') {
-        setTimeout(addSettingsUI, 10);
-      }
-    };
-
-    if (!state.ytNavigateListenerKey) {
-      state.ytNavigateListenerKey = YouTubeUtils.cleanupManager.registerListener(
-        document,
-        'yt-navigate-finish',
-        /** @type {EventListener} */ (handlePageChange),
-        { passive: true }
-      );
-    }
-
-    // Settings modal integration — use event instead of MutationObserver
-    const settingsModalHandler = () => setTimeout(addSettingsUI, 25);
-    YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'youtube-plus-settings-modal-opened',
-      settingsModalHandler
-    );
-
-    if (!state.settingsNavListenerKey) {
-      state.settingsNavListenerKey = YouTubeUtils.cleanupManager.registerListener(
-        document,
-        'click',
-        handleSettingsNavClick,
-        { passive: true, capture: true }
-      );
-    }
-  };
-
-  // Register settings modal listener at module scope so it fires
-  // regardless of route. Without this, the listener inside
-  // startEndscreenRuntime() would only be registered after whenRelevant
-  // decides the route is relevant, causing a race condition where
-  // opening the modal on a non-/watch page would miss the event.
-  document.addEventListener('youtube-plus-settings-modal-opened', () => {
-    if (!endscreenRuntimeStarted) {
-      startEndscreenRuntime();
-    }
-    // If init just ran for the first time, the inner listener was registered
-    // but the current event already fired. Directly ensure settings UI.
-    setTimeout(addSettingsUI, 25);
+  window.YouTubePlusEndscreen = {};
+  // Test-only surface: internal entry points and state accessors live here,
+  // not on the facade root.
+  U?.exposeTestHooks?.(window.YouTubePlusEndscreen, {
+    CONFIG,
+    state,
+    removeEndScreens,
+    isRelevantNode,
+    getClassNameValue,
+    fastRemove,
   });
 
-  // endscreen is /watch only — /shorts intentionally excluded
-  // (no end cards on the infinite-scroll shorts feed).
-  if (U?.whenRelevant) {
-    U.whenRelevant({
-      name: 'endscreen',
-      isRelevant: () => {
-        const path = window.location.pathname || '';
-        return path === '/watch';
-      },
-      onEnter: startEndscreenRuntime,
-    });
-  } else if ((window.location.pathname || '') === '/watch') {
-    startEndscreenRuntime();
-  }
+  U.onDomReady(() => endscreenFeature?.sync());
 })();

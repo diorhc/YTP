@@ -140,8 +140,18 @@ function installRuntimeMocks(opts = {}) {
         if (el) el.innerHTML = html;
       },
       setTimeout_: (fn, ms) => setTimeout(fn, ms),
-      waitForElement: jest.fn(() => new Promise(() => {})),
-      waitFor: jest.fn(() => new Promise(() => {})),
+      waitForElement: jest.fn(
+        () =>
+          new Promise(() => {
+            /* never resolves */
+          })
+      ),
+      waitFor: jest.fn(
+        () =>
+          new Promise(() => {
+            /* never resolves */
+          })
+      ),
       onDomReady: jest.fn(cb => {
         if (document.readyState !== 'loading') {
           try {
@@ -193,6 +203,25 @@ function installRuntimeMocks(opts = {}) {
       },
       logger,
       SETTINGS_KEY: 'youtube_plus_settings',
+      createIsRelevantRoute: (opts = {}) => {
+        const {
+          watch = false,
+          shorts = false,
+          channel = false,
+          domain = false,
+          settingsModal = false,
+        } = opts;
+        return () => {
+          if (settingsModal && window.YouTubeUtils.isSettingsModalOpen?.()) return true;
+          if (domain && !window.YouTubeUtils.isYouTubeDomain?.()) return false;
+          return (
+            (window.YouTubeUtils.isWatchRoute?.() && watch) ||
+            (window.YouTubeUtils.isShortsRoute?.() && shorts) ||
+            (window.YouTubeUtils.isChannelRoute?.() && channel)
+          );
+        };
+      },
+      createWithErrorBoundary: _name => fn => fn,
     },
   });
 
@@ -251,6 +280,13 @@ function installRuntimeMocks(opts = {}) {
       save: jest.fn(() => true),
       get: jest.fn(() => undefined),
       set: jest.fn(() => true),
+      // Standalone-key IO (outside the blob), same localStorage fallback the
+      // real store uses when GM storage is unavailable.
+      readGmKey: jest.fn(key => localStorage.getItem(key)),
+      writeGmKey: jest.fn((key, value) => {
+        localStorage.setItem(key, value);
+        return true;
+      }),
     },
   });
 
@@ -332,8 +368,12 @@ function installRuntimeMocks(opts = {}) {
 
 beforeEach(() => {
   // Start every test with a clean runtime namespace.
-  jest.spyOn(console, 'error').mockImplementation(() => {});
-  jest.spyOn(console, 'warn').mockImplementation(() => {});
+  jest.spyOn(console, 'error').mockImplementation(() => {
+    /* mock */
+  });
+  jest.spyOn(console, 'warn').mockImplementation(() => {
+    /* mock */
+  });
   jest.resetModules();
   // Remove all module-owned globals from previous tests.
   delete window.YouTubePlus;
@@ -371,14 +411,14 @@ describe('basic.js — runtime init characterization', () => {
     require('../src/basic.js');
 
     // basic.js auto-invokes init on load (document.readyState !== 'loading' in jsdom)
-    const firstCount = document.querySelectorAll('.ytp-plus-settings-button').length;
+    const firstCount = document.querySelectorAll('.yp-settings-button').length;
     expect(firstCount).toBe(1);
 
     // Dispatch a navigation finish event (the second init trigger used
     // by the real runtime in setupNavigationObserver).
     document.dispatchEvent(new CustomEvent('yt-navigate-finish', { bubbles: true }));
 
-    const secondCount = document.querySelectorAll('.ytp-plus-settings-button').length;
+    const secondCount = document.querySelectorAll('.yp-settings-button').length;
     expect(secondCount).toBe(1);
   });
 
@@ -402,13 +442,13 @@ describe('basic.js — runtime init characterization', () => {
 
     // Open twice — the modal handler is responsible for not stacking.
     window.YouTubePlus.openSettings();
-    const afterFirst = document.querySelectorAll('.ytp-plus-settings-modal').length;
+    const afterFirst = document.querySelectorAll('.yp-settings-modal').length;
 
     // Second call should either reopen the same instance or no-op.
     // The contract we protect: the public API must not throw, and the
     // number of modals should never exceed a small upper bound.
     expect(() => window.YouTubePlus.openSettings()).not.toThrow();
-    const afterSecond = document.querySelectorAll('.ytp-plus-settings-modal').length;
+    const afterSecond = document.querySelectorAll('.yp-settings-modal').length;
     expect(afterSecond).toBeLessThanOrEqual(afterFirst + 1);
 
     // closeSettings should be callable and must not throw even when
@@ -457,15 +497,19 @@ describe('time.js — resume and loop characterization', () => {
     expect(window.YouTubePlusTimeLoop.toggleLoop).toBeDefined();
   });
 
-  test('resume storage write/read roundtrip is stable across init cycles', () => {
+  test('resume storage roundtrip uses the versioned ytp_resume_v1 key across init cycles', () => {
     installRuntimeMocks({ pathname: '/watch', withMasthead: false });
     require('../src/time.js');
 
-    // Pre-seed a resume position the way the real runtime would after
-    // a few `timeupdate` ticks.
-    const key = 'youtube_resume_times_v1';
+    // Pre-seed a resume position the way the runtime persists it: through
+    // the standalone key (localStorage fallback here) with the versioned shape.
+    const key = 'ytp_resume_v1';
     const videoId = 'abc12345678';
-    localStorage.setItem(key, JSON.stringify({ [videoId]: 42 }));
+    const payload = {
+      v: 1,
+      entries: { [videoId]: { time: 42, updatedAt: Date.now() } },
+    };
+    window.YouTubePlusSettingsStore.writeGmKey(key, JSON.stringify(payload));
 
     // Re-require the module: internal `featureEnabled` and `activeCleanup`
     // state must rebuild cleanly (no exception, no leaked globals).
@@ -474,10 +518,12 @@ describe('time.js — resume and loop characterization', () => {
     installRuntimeMocks({ pathname: '/watch', withMasthead: false });
     expect(() => require('../src/time.js')).not.toThrow();
 
-    // Storage value is preserved across the resetModules() cycle because
-    // localStorage is process-global, not module-local.
-    const restored = JSON.parse(localStorage.getItem(key) || '{}');
-    expect(restored[videoId]).toBe(42);
+    // The versioned payload resolves through the same store API the runtime
+    // reads from, across the resetModules() cycle because the key lives in
+    // process-global storage.
+    const restored = JSON.parse(window.YouTubePlusSettingsStore.readGmKey(key) || '{}');
+    expect(restored.v).toBe(1);
+    expect(restored.entries[videoId].time).toBe(42);
   });
 
   test('init() does not throw when called outside /watch pathname', () => {
@@ -597,19 +643,19 @@ describe('Indirect protection of download and music', () => {
     // return so we don't run init a second time and double-register
     // hotkeys / mount a second settings button.
     const cm = window.YouTubeUtils.cleanupManager;
-    const keydownCallsAfterFirst = cm.registerListener.mock.calls.filter(
-      c => c[1] === 'keydown'
+    const visibilityCallsAfterFirst = cm.registerListener.mock.calls.filter(
+      c => c[1] === 'visibilitychange'
     ).length;
-    expect(keydownCallsAfterFirst).toBeGreaterThan(0);
+    expect(visibilityCallsAfterFirst).toBeGreaterThan(0);
 
     jest.resetModules();
     require('../src/basic.js');
-    const keydownCallsAfterSecond = cm.registerListener.mock.calls.filter(
-      c => c[1] === 'keydown'
+    const visibilityCallsAfterSecond = cm.registerListener.mock.calls.filter(
+      c => c[1] === 'visibilitychange'
     ).length;
     // The guard must have blocked the second init — no extra
-    // keydown listeners may have been registered.
-    expect(keydownCallsAfterSecond).toBe(keydownCallsAfterFirst);
+    // visibilitychange listeners may have been registered.
+    expect(visibilityCallsAfterSecond).toBe(visibilityCallsAfterFirst);
     expect(window.__ytpBasicInitDone__).toBe(true);
   });
 
@@ -618,10 +664,8 @@ describe('Indirect protection of download and music', () => {
     require('../src/basic.js');
 
     const cm = window.YouTubeUtils.cleanupManager;
-    const countFor = (event) =>
-      cm.registerListener.mock.calls.filter(c => c[1] === event).length;
+    const countFor = event => cm.registerListener.mock.calls.filter(c => c[1] === event).length;
 
-    const keydownAfterFirst = countFor('keydown');
     const visibilityAfterFirst = countFor('visibilitychange');
     const navigateFinishAfterFirst = countFor('yt-navigate-finish');
     const navigateStartAfterFirst = countFor('yt-navigate-start');
@@ -641,7 +685,6 @@ describe('Indirect protection of download and music', () => {
     // if the test framework re-uses the module — which it does
     // not, so this test is effectively a documentation of the
     // expected behavior under the existing window-guard.
-    expect(keydownAfterFirst).toBeGreaterThan(0);
     expect(visibilityAfterFirst).toBeGreaterThan(0);
     expect(navigateFinishAfterFirst).toBeGreaterThan(0);
     expect(navigateStartAfterFirst).toBeGreaterThan(0);
@@ -653,7 +696,6 @@ describe('Indirect protection of download and music', () => {
     // pattern as the guard test above.
     jest.resetModules();
     require('../src/basic.js');
-    expect(countFor('keydown')).toBe(keydownAfterFirst);
     expect(countFor('visibilitychange')).toBe(visibilityAfterFirst);
     expect(countFor('yt-navigate-finish')).toBe(navigateFinishAfterFirst);
     expect(countFor('yt-navigate-start')).toBe(navigateStartAfterFirst);

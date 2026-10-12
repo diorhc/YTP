@@ -1,5 +1,5 @@
 /**
- * YouTube+ Internationalization (i18n) — canonical translation service.
+ * YouTube+ Internationalization (i18n): translation service.
  *
  * Responsibilities:
  *   - Translation lookup with parameter interpolation.
@@ -8,7 +8,7 @@
  *   - Language change subscriptions (in-process + window CustomEvent).
  *   - Locale-aware number / date / plural formatting.
  *
- * Public surface (canonical):
+ * Public surface:
  *   window.YouTubePlusI18n
  *     - t(key, params?) / translate(key, params?)
  *     - getLanguage() / setLanguage(lang) / detectLanguage()
@@ -25,7 +25,7 @@
  * Non-responsibilities:
  *   - Settings modal internals (settings-helpers.js / modal-handlers.js).
  *   - DOM / feature logic.
- *   - Mutating window.YouTubeUtils: utils.js is the canonical compatibility
+ *   - Mutating window.YouTubeUtils: utils.js is the compatibility
  *     facade and already exposes t / getLanguage on YouTubeUtils.
  */
 (function () {
@@ -36,45 +36,100 @@
   const GITHUB_CONFIG = {
     owner: 'diorhc',
     repo: 'YTP',
-    branch: 'main',
+    // Dictionaries are read from the mutable `main` branch so a translation fix
+    // ships without a new release. Payloads are shape-checked at runtime, so a
+    // bad branch commit can lose keys, not inject markup or values.
+    ref: 'main',
     basePath: 'locales',
   };
 
+  // AUTO-GENERATED-START: LOCALE_DELIVERY_MANIFEST
+  // Release metadata for the locale delivery contract.
+  // Regenerate with: node scripts/sync-locale-metadata.js
+  // localeDigests: SHA-256 over the sorted JSON payload
+  // of each shipped locales file; a release fingerprint, not a runtime check.
+  // candidateDigest: aggregate over raw file bytes, matching the locale parity
+  // checker. Only the embedded en digest is verified at build time.
+  // biome-ignore format: generated data block
+  /** @type {{ version: string; keysCount: number; candidateDigest: string; localeDigests: Readonly<Record<string, string>> }} */
+  const LOCALE_DELIVERY_MANIFEST = Object.freeze({
+    version: "3.0.0",
+    keysCount: 418,
+    candidateDigest: "957d8b6f317a3ead51b80eb11717c4cac58faf208243b7840fa1a4c821766a0a",
+    localeDigests: Object.freeze({
+      "ar": "1917f7538fb1d1f6feb86c2e7449cd93243562bf123c17f19b4f1a3a38db80a3",
+      "az": "6596f7eb962b0231c6528eab7edeb356ede6c49237430e93da462b69c44e02cd",
+      "be": "ac2dce0078c4b3196a494c2350e95ec5936f9fea7333173751ded9e95dda01aa",
+      "bg": "e5fc9537b3a50a9ca7b42e08feaa2c256b69b3204a2973541838161d8a1d6057",
+      "de": "342cfbd200e0cea363e4f09ca46faabe0277601bdea53314b5069776b967e184",
+      "en": "87b25e83fad432c02bfbd1952d541897b00a2a1a7ecbe655ed69493ec9819833",
+      "es": "e86598cd669e522706e8adc7093cb0b5aa687c8e434f081a4854b52c4b916239",
+      "fr": "41019895b6a2297aad3d53e9133a759db475648a66fa6a11cd0fcfe0be7a2180",
+      "hi": "2f0936178e6b761254617c63b37c29210cd26c6d4cf4068bd2f164d689da8e79",
+      "id": "5b48be8f7e23e5a29c7ea8bd9f48c23ca2498f20bf2d33a2abddc7904134e3c4",
+      "it": "9dba88ceeb106790f78f817a1c5313266d0249ae920dbc07d21e65d1622196eb",
+      "ja": "ac401c8438d3c470981096fcea266c486b76dd0b48bc48bdab89f80540e990d8",
+      "kk": "6f240434305ce1097bffaf648b60bdbdd371e88970bd3be4e6b6846c88032a31",
+      "ko": "d8320557a9156f45ced5b4065260f45bc35052a964165996b944076e6ff0f650",
+      "ky": "75518271a26d256c53a034add93613ed7898fb0821e07f9245f5eda86616671e",
+      "nl": "e1602e844093fa08c6bfb38fac058f2f319db802f2ab7e7c2cf0df74c9ce36fa",
+      "pl": "23f260ff9881eaf5fe7ce89faaab1a8199eaa931931d347702e6697ce873c24f",
+      "pt": "8510c12aaebbc2cd599200d7b4c799b32cdeeee53ddd41f1bb7e392010151846",
+      "ru": "b0df68f19d8e8f00458ca68201123bce248b54932d2e59a28f031eac17c86536",
+      "tr": "59095464e7cf07c3833179ddcdf13dcc3d127fe187db58058c0ab3aadf3adcf5",
+      "uk": "87fda1119b93cdb8f8a83df8f578af3cb17948fa65a532e8144c2c173efab68b",
+      "uz": "c875f701744dce766bb24b62ac2e8cac7e59d3d2bd14a45285a3f621abb1cf0a",
+      "vi": "d95255da5ad932a3a8408593b31a22d008c67d1e6ceff594594d1d1071580a11",
+      "zh-CN": "58f24f63c2ae5e7721e5562f04e63edaab3a96318d42a9e8ec618054ee580879",
+      "zh-TW": "3b0c276083f2a53b2850c93f419fc5da3811919a9f8f1b1f33c2036b041fb324",
+    }),
+  });
+  // AUTO-GENERATED-END: LOCALE_DELIVERY_MANIFEST
+
+  // Facade over the generated delivery manifest. Only the embedded English
+  // dictionary still checks a build-time manifest digest; remote and cached
+  // payloads are shape-checked instead.
+  const CANDIDATE_METADATA = Object.freeze({
+    version: LOCALE_DELIVERY_MANIFEST.version,
+    keysCount: LOCALE_DELIVERY_MANIFEST.keysCount,
+  });
+
   const CDN_URLS = {
-    github: `https://raw.githubusercontent.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/${GITHUB_CONFIG.branch}/${GITHUB_CONFIG.basePath}`,
-    jsdelivr: `https://cdn.jsdelivr.net/gh/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}@${GITHUB_CONFIG.branch}/${GITHUB_CONFIG.basePath}`,
+    github: `https://raw.githubusercontent.com/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}/${GITHUB_CONFIG.ref}/${GITHUB_CONFIG.basePath}`,
+    jsdelivr: `https://cdn.jsdelivr.net/gh/${GITHUB_CONFIG.owner}/${GITHUB_CONFIG.repo}@${GITHUB_CONFIG.ref}/${GITHUB_CONFIG.basePath}`,
   };
 
-  // Translation files shipped with the project (and embedded by
-  // embed-translations.js). Any other YouTube UI language will map to the
+  // Translation files shipped with the project. Any other YouTube UI language will map to the
   // closest language below (usually English).
+  // AUTO-GENERATED-START: AVAILABLE_LANGUAGES
   const AVAILABLE_LANGUAGES = [
-    'en',
-    'ru',
-    'ko',
-    'fr',
-    'nl',
-    'zh-CN',
-    'zh-TW',
-    'ja',
-    'tr',
-    'es',
-    'pt',
-    'de',
-    'it',
-    'pl',
-    'uk',
     'ar',
-    'hi',
-    'id',
-    'vi',
-    'uz',
-    'kk',
-    'ky',
+    'az',
     'be',
     'bg',
-    'az',
+    'de',
+    'en',
+    'es',
+    'fr',
+    'hi',
+    'id',
+    'it',
+    'ja',
+    'kk',
+    'ko',
+    'ky',
+    'nl',
+    'pl',
+    'pt',
+    'ru',
+    'tr',
+    'uk',
+    'uz',
+    'vi',
+    'zh-CN',
+    'zh-TW',
   ];
+  // AUTO-GENERATED-END: AVAILABLE_LANGUAGES
 
   /** @type {Record<string, string>} */
   const LANGUAGE_NAMES = {
@@ -312,7 +367,7 @@
     'en-au': 'en',
     'en-ca': 'en',
     'en-in': 'en',
-    // Canonical BCP 47 aliases
+    // BCP 47 aliases
     'zh-CN': 'zh-CN',
     'zh-TW': 'zh-TW',
     ...LANGUAGE_FALLBACKS,
@@ -351,10 +406,7 @@
   // ---------------------------------------------------------------------------
 
   const setTimeout_ = setTimeout.bind(window);
-  const logger =
-    /** @type {any} */ (window).YouTubePlusLogger ||
-    /** @type {any} */ (window).YouTubeUtils?.logger ||
-    null;
+  const logger = window.YouTubePlusLogger || window.YouTubeUtils?.logger || null;
 
   /** @type {Map<string, Record<string, string>>} */
   const translationsCache = new Map();
@@ -370,11 +422,94 @@
   let translations = {};
   /** @type {Record<string, string>} */
   let fallbackTranslationsEn = {};
-  /** @type {Promise<any> | null} */
-  let loadingPromise = null;
+
+  /**
+   * Reads embedded English dictionary synchronously so `t()` has English
+   * fallbacks immediately from boot, avoiding raw key display before async
+   * network / digest verification completes.
+   */
+  function syncInitEmbeddedEn_() {
+    const host =
+      /** @type {{ __YouTubePlusEmbeddedDictionaries__?: Record<string, { data?: unknown }> }} */ (
+        globalThis
+      );
+    const entry = host.__YouTubePlusEmbeddedDictionaries__?.en;
+    const data = entry && typeof entry === 'object' ? entry.data : null;
+    if (data && typeof data === 'object' && !Array.isArray(data)) {
+      fallbackTranslationsEn = /** @type {Record<string, string>} */ (data);
+    }
+  }
+
+  syncInitEmbeddedEn_();
+
+  // The only offline dictionary is the English payload embedded into the
+  // bundle by build.js; it is trusted only after digest verification against
+  // the locale delivery manifest, exactly like network and cache delivery.
+  // Missing UI strings render as raw keys when neither network, cache, nor
+  // that verified embedded payload is available.
+
+  /**
+   * UTF-8 bytes of a string without TextEncoder (unavailable in some jsdom
+   * builds). encodeURIComponent escapes every non-ASCII byte as %XX, so the
+   * binary-safe reconstruction below yields the exact UTF-8 byte sequence.
+   * @param {string} str
+   * @returns {Uint8Array}
+   */
+  function utf8Bytes_(str) {
+    if (typeof TextEncoder !== 'undefined') return new TextEncoder().encode(str);
+    const binary = encodeURIComponent(str).replace(/%([0-9A-F]{2})/g, (_m, h) =>
+      String.fromCharCode(parseInt(h, 16))
+    );
+    const bytes = new Uint8Array(binary.length);
+    for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+    return bytes;
+  }
+
+  /**
+   * SHA-256 over the payload's sorted-key UTF-8 form. Stays identical to
+   * canonicalDigest() in scripts/sync-locale-metadata.js; the expected values
+   * in LOCALE_DELIVERY_MANIFEST.localeDigests were computed with this form.
+   * Returns '' when the platform exposes no WebCrypto: digest verification
+   * cannot pass, so an unhashable payload is unverified, never "current".
+   * @param {Record<string, string>} data
+   * @returns {Promise<string>}
+   */
+  async function computeLocaleDigest_(data) {
+    try {
+      const cryptoHost = /** @type {{ subtle?: SubtleCrypto }} */ (globalThis.crypto);
+      if (!cryptoHost?.subtle) return '';
+      const canonical = JSON.stringify(data, Object.keys(data).sort());
+      const buf = await cryptoHost.subtle.digest(
+        'SHA-256',
+        /** @type {BufferSource} */
+        (utf8Bytes_(canonical))
+      );
+      return Array.from(new Uint8Array(buf), b => b.toString(16).padStart(2, '0')).join('');
+    } catch (_e) {
+      return '';
+    }
+  }
+
+  /**
+   * A payload counts as CURRENT candidate delivery only when the hash
+   * RECOMPUTED over its actual content matches the manifest expectation for
+   * this language. The digest over the payload's sorted-key form is itself the
+   * key-completeness proof; the stored digest field is metadata, not proof
+   * A missing/empty recomputed hash (no WebCrypto) is unverified,
+   * never "current".
+   * @param {string} lang
+   * @param {Record<string, string>} data
+   * @returns {Promise<boolean>}
+   */
+  async function isVerifiedCandidateDelivery_(lang, data) {
+    const actual = await computeLocaleDigest_(data);
+    if (!actual) return false;
+    if (actual !== LOCALE_DELIVERY_MANIFEST.localeDigests[lang]) return false;
+    return Object.keys(data).length === CANDIDATE_METADATA.keysCount;
+  }
 
   // ---------------------------------------------------------------------------
-  // Loader (embedded / GitHub / jsDelivr)
+  // Loader (GitHub / jsDelivr)
   // ---------------------------------------------------------------------------
 
   /**
@@ -410,15 +545,36 @@
           },
         });
       });
-      return JSON.parse(String(responseText || '{}'));
+      try {
+        return JSON.parse(String(responseText || '{}'));
+      } catch (parseErr) {
+        const msg = parseErr instanceof Error ? parseErr.message : String(parseErr);
+        throw new Error(`Malformed JSON response from ${url}: ${msg}`);
+      }
     }
 
-    const response = await fetch(url, {
-      cache: 'default',
-      headers: { Accept: 'application/json' },
-    });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    return response.json();
+    const controller = new AbortController();
+    const timeoutId = setTimeout_(() => controller.abort(new Error('i18n request timeout')), 12000);
+    try {
+      const response = await fetch(url, {
+        cache: 'default',
+        headers: { Accept: 'application/json' },
+        signal: controller.signal,
+      });
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const text = await response.text();
+      return JSON.parse(text || '{}');
+    } catch (err) {
+      if (controller.signal.aborted) {
+        throw new Error('i18n request timeout');
+      }
+      if (err instanceof SyntaxError) {
+        throw new Error(`Malformed JSON response from ${url}: ${err.message}`);
+      }
+      throw err;
+    } finally {
+      clearTimeout(timeoutId);
+    }
   }
 
   /**
@@ -426,101 +582,318 @@
    * @returns {Promise<Record<string, string>>}
    */
   async function fetchTranslation(lang) {
-    // Fast local fallback first.
-    try {
-      if (typeof window !== 'undefined' && window.YouTubePlusEmbeddedTranslations) {
-        const embedded = window.YouTubePlusEmbeddedTranslations[lang];
-        if (embedded) {
-          logger?.debug?.('i18n', `Using embedded translations for ${lang}`);
-          return /** @type {Record<string, string>} */ (embedded);
-        }
-      }
-    } catch (e) {
-      logger?.warn?.('i18n', 'Error reading embedded translations', e);
-    }
-
-    // Try raw GitHub first; fall back to jsDelivr with cache-bust.
+    // Both URLs point at `main`, so the CDN may serve a slightly stale copy;
+    // the runtime revalidates on a 24 h cadence and shape-checks every payload.
     try {
       const rawUrl = `${CDN_URLS.github}/${lang}.json`;
       return await fetchJSON(rawUrl);
     } catch (firstErr) {
       try {
-        const cdnUrl = `${CDN_URLS.jsdelivr}/${lang}.json?_=${Date.now()}`;
+        const cdnUrl = `${CDN_URLS.jsdelivr}/${lang}.json`;
         logger?.warn?.('i18n', `Raw GitHub fetch failed, trying jsDelivr: ${cdnUrl}`);
         return await fetchJSON(cdnUrl);
       } catch (err) {
-        logger?.error?.('i18n', `Failed to fetch translations for ${lang}`, {
-          err,
-          firstErr,
-        });
+        // Not a script fault: the release tag may not be published yet, or
+        // the network is offline. The caller falls back to English.
+        logger?.warn?.(
+          'i18n',
+          `Translations for ${lang} unavailable (${
+            /** @type {string} */ (
+              /** @type {{ message?: unknown }} */ (/** @type {unknown} */ (err))?.message
+            ) || err
+          }; first: ${
+            /** @type {string} */ (
+              /** @type {{ message?: unknown }} */ (/** @type {unknown} */ (firstErr))?.message
+            ) || firstErr
+          })`
+        );
         throw err;
       }
     }
   }
 
+  const CACHE_CONFIG = {
+    storageKeyPrefix: 'ytp_locale_cache_v',
+    version: LOCALE_DELIVERY_MANIFEST.version,
+    ttlMs: 24 * 60 * 60 * 1000, // 24 hours
+  };
+
+  /** @type {Map<string, { isFallback: boolean; isStale: boolean; isOffline?: boolean; keysCount: number; timestamp: number }>} */
+  const localeDeliveryStatuses = new Map();
+
   /**
-   * Validate and sanitize translation data to prevent prototype pollution or non-string values.
-   * @param {unknown} data
-   * @returns {Record<string, string>}
+   * @param {string} lang
+   * @param {{ isFallback: boolean; isStale: boolean; isOffline?: boolean; keysCount: number }} status
    */
-  function validateTranslations(data) {
-    if (!data || typeof data !== 'object' || Array.isArray(data)) {
-      throw new Error('Invalid translation data: expected an object');
-    }
-    /** @type {Record<string, string>} */
-    const clean = {};
-    for (const [key, value] of Object.entries(data)) {
-      if (typeof key !== 'string' || typeof value !== 'string') {
-        throw new Error('Invalid translation entry: key and value must be strings');
-      }
-      if (key === '__proto__' || key === 'constructor' || key === 'prototype') {
-        continue;
-      }
-      clean[key] = value;
-    }
-    return clean;
+  function recordLocaleDeliveryStatus_(lang, status) {
+    localeDeliveryStatuses.set(lang, {
+      ...status,
+      timestamp: Date.now(),
+    });
   }
 
   /**
+   * @param {string} [lang]
+   * @returns {{
+   *   language: string;
+   *   version: string;
+   *   ref: string;
+   *   isFallback: boolean;
+   *   isStale: boolean;
+   *   isOffline: boolean;
+   *   keysCount: number;
+   *   expectedKeysCount: number;
+   *   isComplete: boolean;
+   * }}
+   */
+  function getLocaleDeliveryStatus_(lang = currentLanguage) {
+    const langCode = AVAILABLE_LANGUAGES.includes(lang) ? lang : 'en';
+    const recorded = localeDeliveryStatuses.get(langCode);
+    const activeTranslations =
+      translationsCache.get(langCode) ||
+      (currentLanguage === langCode && translations ? translations : null);
+    const activeKeysCount = activeTranslations ? Object.keys(activeTranslations).length : 0;
+    if (recorded) {
+      return {
+        language: langCode,
+        version: CACHE_CONFIG.version,
+        ref: GITHUB_CONFIG.ref,
+        isFallback: Boolean(recorded.isFallback),
+        isStale: Boolean(recorded.isStale),
+        isOffline: Boolean(recorded.isOffline),
+        keysCount: recorded.keysCount,
+        expectedKeysCount: CANDIDATE_METADATA.keysCount,
+        isComplete: !(recorded.isFallback || recorded.isStale),
+      };
+    }
+    const isComplete = activeKeysCount > 0;
+    return {
+      language: langCode,
+      version: CACHE_CONFIG.version,
+      ref: GITHUB_CONFIG.ref,
+      isFallback: false,
+      isStale: false,
+      isOffline: false,
+      keysCount: activeKeysCount,
+      expectedKeysCount: CANDIDATE_METADATA.keysCount,
+      isComplete,
+    };
+  }
+
+  /**
+   * Get versioned storage key for language cache.
+   * @param {string} lang
+   * @returns {string}
+   */
+  function getCacheKey(lang) {
+    return `${CACHE_CONFIG.storageKeyPrefix}${CACHE_CONFIG.version}_${lang}`;
+  }
+
+  /**
+   * The English dictionary baked into the bundle by build.js (locales/en.json,
+   * digest verified at build time). A payload is trusted only when the
+   * SHA-256 recomputed over its sorted-key form matches the locale delivery
+   * manifest, the same bar as network and cache delivery, so a planted global
+   * cannot bypass verification.
+   * @param {string} lang
+   * @returns {Promise<Record<string, string> | null>}
+   */
+  async function getVerifiedEmbeddedDictionary_(lang) {
+    const host =
+      /** @type {{ __YouTubePlusEmbeddedDictionaries__?: Record<string, { data?: unknown }> }} */ (
+        globalThis
+      );
+    const entry = host.__YouTubePlusEmbeddedDictionaries__?.[lang];
+    const data = entry && typeof entry === 'object' ? entry.data : null;
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const flat = /** @type {Record<string, string>} */ (data);
+    if (Object.keys(flat).length === 0) return null;
+    if (!(await isVerifiedCandidateDelivery_(lang, flat))) {
+      logger?.warn?.('i18n', `Embedded ${lang} dictionary failed digest verification; ignoring`);
+      if (lang === 'en' && fallbackTranslationsEn === flat) {
+        fallbackTranslationsEn = {};
+        translationCache.clear();
+      }
+      return null;
+    }
+    return flat;
+  }
+
+  /**
+   * Read a translation dictionary from the persistent browser cache. Entries
+   * written under a different cache version, or that fail the shape check, are
+   * dropped. Age is not a rejection here: the caller serves a stale entry and
+   * revalidates it in the background.
+   * @param {string} lang
+   * @returns {{ data: Record<string, string>; timestamp: number } | null}
+   */
+  function readPersistentCache(lang) {
+    try {
+      if (typeof localStorage === 'undefined') return null;
+      const key = getCacheKey(lang);
+      const raw = localStorage.getItem(key);
+      if (!raw) return null;
+      let parsed;
+      try {
+        parsed = JSON.parse(raw);
+      } catch (_jsonErr) {
+        localStorage.removeItem(key);
+        return null;
+      }
+      if (!parsed || typeof parsed !== 'object' || parsed.version !== CACHE_CONFIG.version) {
+        localStorage.removeItem(key);
+        return null;
+      }
+      const data = sanitizeRemoteDictionary_(parsed.data);
+      if (!data || typeof parsed.timestamp !== 'number') {
+        localStorage.removeItem(key);
+        return null;
+      }
+      return { data, timestamp: parsed.timestamp };
+    } catch (_e) {
+      return null;
+    }
+  }
+
+  /**
+   * Persist a shape-validated dictionary with version metadata. Only accepted
+   * payloads reach this function, so a later read can skip re-validation.
+   * @param {string} lang
+   * @param {Record<string, string>} data
+   */
+  function writePersistentCache(lang, data) {
+    try {
+      if (typeof localStorage === 'undefined') return;
+      const key = getCacheKey(lang);
+      localStorage.setItem(
+        key,
+        JSON.stringify({ version: CACHE_CONFIG.version, timestamp: Date.now(), data })
+      );
+    } catch (_e) {
+      /* ignore storage quota exceeded errors */
+    }
+  }
+
+  /** Longest accepted translation value, in code units. */
+  const MAX_TRANSLATION_LENGTH = 1000;
+  /** Control characters except tab/newline/CR are never valid in a value. */
+  const CONTROL_CHARS_RE = /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/;
+
+  /**
+   * Shape check for a dictionary from the mutable `main` branch (or the cache
+   * written from one). There is no digest to pin, so a payload is trusted only
+   * by form: an object whose keys exist in the embedded English dictionary and
+   * whose values are short plain strings. Unknown keys are dropped; an empty
+   * result is rejected. Keys the payload omits fall back to embedded English in
+   * resolveKey().
+   * @param {unknown} raw
+   * @returns {Record<string, string> | null}
+   */
+  function sanitizeRemoteDictionary_(raw) {
+    if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+    const enKeys = new Set(Object.keys(fallbackTranslationsEn || {}));
+    /** @type {Record<string, string>} */
+    const clean = {};
+    for (const [key, value] of Object.entries(raw)) {
+      if (key === '__proto__' || key === 'constructor' || key === 'prototype') continue;
+      if (enKeys.size > 0 && !enKeys.has(key)) continue;
+      if (typeof value !== 'string' || value.length > MAX_TRANSLATION_LENGTH) continue;
+      if (CONTROL_CHARS_RE.test(value)) continue;
+      clean[key] = value;
+    }
+    return Object.keys(clean).length > 0 ? clean : null;
+  }
+
+  /**
+   * Fetch and shape-check a remote dictionary, or throw when it is unusable.
+   * @param {string} lang
+   * @returns {Promise<Record<string, string>>}
+   */
+  async function fetchAndValidateDictionary_(lang) {
+    const raw = await fetchTranslation(lang);
+    const data = sanitizeRemoteDictionary_(raw);
+    if (!data) throw new Error(`Rejected ${lang} dictionary: shape check failed`);
+    return data;
+  }
+
+  /**
+   * Revalidate a cached dictionary in the background: the cached copy is served
+   * immediately, then the fresh one replaces it and a language-changed event
+   * lets views re-render. A failed refresh leaves the cached dictionary in place.
+   * @param {string} lang
+   * @returns {Promise<void>}
+   */
+  async function refreshDictionaryInBackground_(lang) {
+    try {
+      const data = await fetchAndValidateDictionary_(lang);
+      translationsCache.set(lang, data);
+      writePersistentCache(lang, data);
+      recordLocaleDeliveryStatus_(lang, {
+        isFallback: false,
+        isStale: false,
+        keysCount: Object.keys(data).length,
+      });
+      if (currentLanguage === lang) {
+        translations = data;
+        translationCache.clear();
+        emitI18nEvent('youtube-plus-language-changed', { language: lang, previousLanguage: lang });
+      }
+    } catch (error) {
+      logger?.debug?.(
+        'i18n',
+        `Background refresh for ${lang} failed; keeping the cached dictionary`,
+        error
+      );
+    }
+  }
+
+  /**
+   * Load a dictionary for `lang`: memory → persistent cache → GitHub/jsDelivr
+   * (`main`). A cached dictionary is served immediately and revalidated in the
+   * background; the embedded English dictionary backs missing keys and the
+   * offline path.
    * @param {string} lang
    * @returns {Promise<Record<string, string>>}
    */
   function loadTranslationsFromLoader(lang) {
     const languageCode = AVAILABLE_LANGUAGES.includes(lang) ? lang : 'en';
-    const cached = translationsCache.get(languageCode);
-    if (cached) {
-      return Promise.resolve(cached);
-    }
+
+    const inMemoryCached = translationsCache.get(languageCode);
+    if (inMemoryCached) return Promise.resolve(inMemoryCached);
+
+    // Deduplicate concurrent loads so parallel callers share one network fetch.
     const inflight = loadingPromises.get(languageCode);
     if (inflight) return inflight;
 
+    const cachedEntry = readPersistentCache(languageCode);
+
     const loadPromise = (async () => {
       try {
-        const rawData = await fetchTranslation(languageCode);
-        const data = validateTranslations(rawData);
-        // Sanity check: warn if common UI keys are missing.
-        try {
-          /** @type {string[]} */
-          const missing = [];
-          for (const k of ['loading', 'fetching']) {
-            if (!Object.hasOwn(data, k)) missing.push(k);
-          }
-          if (missing.length > 0) {
-            logger?.warn?.(
-              'i18n',
-              `Translations for ${languageCode} missing keys: ${missing.join(', ')} (source may be stale)`
-            );
-          }
-        } catch (_e) {
-          /* ignore sanity-check errors */
+        if (cachedEntry) {
+          const fresh = Date.now() - cachedEntry.timestamp <= CACHE_CONFIG.ttlMs;
+          translationsCache.set(languageCode, cachedEntry.data);
+          recordLocaleDeliveryStatus_(languageCode, {
+            isFallback: false,
+            isStale: !fresh,
+            keysCount: Object.keys(cachedEntry.data).length,
+          });
+          // Serve the cached dictionary now, then revalidate in the background:
+          // the fresh payload replaces it and fires a language-changed event.
+          void refreshDictionaryInBackground_(languageCode);
+          return cachedEntry.data;
         }
+
+        const data = await fetchAndValidateDictionary_(languageCode);
         translationsCache.set(languageCode, data);
-        loadingPromises.delete(languageCode);
+        recordLocaleDeliveryStatus_(languageCode, {
+          isFallback: false,
+          isStale: false,
+          keysCount: Object.keys(data).length,
+        });
+        writePersistentCache(languageCode, data);
         return data;
-      } catch (error) {
+      } finally {
         loadingPromises.delete(languageCode);
-        if (languageCode !== 'en') return loadTranslationsFromLoader('en');
-        throw error;
       }
     })();
 
@@ -557,35 +930,32 @@
    * @returns {string}
    */
   function detectLanguage() {
+    // At document-start the <html> element may not exist yet.
+    const ytLang =
+      document.documentElement?.lang || window.YouTubeUtils?.$?.('html')?.getAttribute('lang');
+    if (ytLang) return mapToSupportedLanguage(ytLang);
+
+    // The `hl` query parameter wins when present.
+    const urlParams = new URLSearchParams(window.location.search);
+    const hlParam = urlParams.get('hl');
+    if (hlParam) return mapToSupportedLanguage(hlParam);
+
+    // The host-page config is cross-context and can be hostile/proxied.
     try {
-      const ytLang =
-        document.documentElement.lang || window.YouTubeUtils?.$?.('html')?.getAttribute('lang');
-      if (ytLang) return mapToSupportedLanguage(ytLang);
-
-      try {
-        const urlParams = new URLSearchParams(window.location.search);
-        const hlParam = urlParams.get('hl');
-        if (hlParam) return mapToSupportedLanguage(hlParam);
-      } catch {
-        /* empty */
+      const ytConfig = window.ytcfg || window.yt?.config_;
+      if (ytConfig && typeof ytConfig.get === 'function') {
+        const hl = ytConfig.get('HL') || ytConfig.get('GAPI_LOCALE');
+        if (hl) return mapToSupportedLanguage(hl);
       }
-
-      try {
-        const ytConfig = window.ytcfg || window.yt?.config_;
-        if (ytConfig && typeof ytConfig.get === 'function') {
-          const hl = ytConfig.get('HL') || ytConfig.get('GAPI_LOCALE');
-          if (hl) return mapToSupportedLanguage(hl);
-        }
-      } catch {
-        /* empty */
-      }
-
-      const browserLang = navigator.language || /** @type {any} */ (navigator).userLanguage || 'en';
-      return mapToSupportedLanguage(browserLang);
-    } catch (error) {
-      logger?.error?.('i18n', 'Error detecting language', error);
-      return 'en';
+    } catch (_e) {
+      /* host config access can reject in hardened embeds */
     }
+
+    const browserLang =
+      navigator.language ||
+      /** @type {{ userLanguage?: string }} */ (/** @type {unknown} */ (navigator)).userLanguage ||
+      'en';
+    return mapToSupportedLanguage(browserLang);
   }
 
   // ---------------------------------------------------------------------------
@@ -593,13 +963,17 @@
   // ---------------------------------------------------------------------------
 
   /**
-   * @param {any} detail
-   * @returns {any}
+   * The GM bridge cannot structured-clone functions, symbols or bigints, so the
+   * navigation detail is copied through a replacer that flattens them.
+   * @param {unknown} detail
+   * @returns {unknown}
    */
   const toStructuredCloneSafeDetail = detail => {
     if (detail == null || typeof detail !== 'object') return detail;
     try {
-      const clone = /** @type {any} */ (globalThis)?.structuredClone;
+      const clone = /** @type {{ structuredClone?: (value: unknown) => unknown }} */ (
+        /** @type {unknown} */ (globalThis)
+      ).structuredClone;
       if (typeof clone === 'function') {
         return clone(detail);
       }
@@ -642,7 +1016,7 @@
 
   /**
    * @param {unknown} text
-   * @param {Record<string, any>} params
+   * @param {TranslationParams} params
    * @returns {string}
    */
   function interpolate(text, params) {
@@ -675,9 +1049,54 @@
   }
 
   /**
-   * Translate a key with optional placeholders.
+   * Warn if a translation is missing and translations are loaded.
    * @param {string} key - Translation key
-   * @param {Record<string, any>} [params] - Interpolation parameters
+   * @param {boolean} found - Whether the key was found in translations
+   */
+  function warnIfMissing(key, found) {
+    if (
+      !found &&
+      Object.keys(translations).length > 0 &&
+      Object.keys(fallbackTranslationsEn).length > 0
+    ) {
+      logger?.warn?.('i18n', `Missing translation for key: ${key}`);
+    }
+  }
+
+  /** Cache read: the cached translation string, or null on a miss. */
+  const cacheLookup = (/** @type {string} */ cacheKey, /** @type {string} */ key) =>
+    translationCache.has(cacheKey) ? (translationCache.get(cacheKey) ?? key) : null;
+
+  /**
+   * Parameterized translations path.
+   * @param {string} key
+   * @param {TranslationParams} safeParams
+   * @param {string[]} keys
+   * @returns {string}
+   */
+  function translateParameterized(key, safeParams, keys) {
+    let paramPart = '';
+    for (let i = 0; i < keys.length; i++) {
+      paramPart += `${keys[i]}:${safeParams[keys[i]]};`;
+    }
+    const cacheKey = `${key}:${paramPart}`;
+
+    const cached = cacheLookup(cacheKey, key);
+    if (cached !== null) return cached;
+
+    const { text, found } = resolveKey(key);
+    if (!found) warnIfMissing(key, found);
+    const result = interpolate(found ? text : key, safeParams);
+
+    if (isReady() && found) {
+      translationCache.set(cacheKey, result);
+    }
+    return result;
+  }
+
+  /**
+   * @param {string} key - Translation key
+   * @param {TranslationParams} [params] - Interpolation parameters
    * @returns {string}
    */
   function translate(key, params = {}) {
@@ -685,106 +1104,123 @@
 
     const safeParams = params && typeof params === 'object' ? params : {};
     const keys = Object.keys(safeParams);
+    if (keys.length > 0) {
+      return translateParameterized(key, safeParams, keys);
+    }
 
     // Fast path: parameterless translations
-    if (keys.length === 0) {
-      if (translationCache.has(key)) {
-        return translationCache.get(key) ?? key;
-      }
-      const { text, found } = resolveKey(key);
-      const result = found ? text : key;
-      if (
-        !found &&
-        Object.keys(translations).length > 0 &&
-        Object.keys(fallbackTranslationsEn).length > 0
-      ) {
-        logger?.warn?.('i18n', `Missing translation for key: ${key}`);
-      }
-      translationCache.set(key, result);
-      return result;
-    }
-
-    // Slow path: parameterized translations (build flat stable key instead of JSON.stringify)
-    let paramPart = '';
-    for (let i = 0; i < keys.length; i++) {
-      const k = keys[i];
-      paramPart += `${k}:${safeParams[k]};`;
-    }
-    const cacheKey = `${key}:${paramPart}`;
-
-    if (translationCache.has(cacheKey)) {
-      return translationCache.get(cacheKey) ?? key;
-    }
-
+    const cached = cacheLookup(key, key);
+    if (cached !== null) return cached;
     const { text, found } = resolveKey(key);
-    let result;
-
-    if (found) {
-      result = interpolate(text, safeParams);
-    } else {
-      if (Object.keys(translations).length > 0 && Object.keys(fallbackTranslationsEn).length > 0) {
-        logger?.warn?.('i18n', `Missing translation for key: ${key}`);
-      }
-      result = interpolate(key, safeParams);
+    const result = found ? text : key;
+    warnIfMissing(key, found);
+    if (isReady() && found) {
+      translationCache.set(key, result);
     }
-
-    translationCache.set(cacheKey, result);
     return result;
   }
+
+  let activeGeneration = 0;
+  let activeLanguageLoading = /** @type {string | null} */ (null);
 
   /**
    * @returns {Promise<boolean>}
    */
-  async function loadTranslations() {
-    if (loadingPromise) {
-      await loadingPromise;
-      return true;
+  /**
+   * English ships inside the bundle and is digest-verified against the build
+   * manifest, so it never needs a network round trip; the network loader is
+   * only the path for raw-source runs without the embedded payload.
+   * @returns {Promise<Record<string, string>>}
+   */
+  async function loadEnglish_() {
+    const embedded = await getVerifiedEmbeddedDictionary_('en');
+    if (embedded) {
+      recordLocaleDeliveryStatus_('en', {
+        isFallback: false,
+        isStale: false,
+        keysCount: Object.keys(embedded).length,
+      });
+      return embedded;
     }
+    return /** @type {Record<string, string>} */ (await loadTranslationsFromLoader('en'));
+  }
 
-    loadingPromise = (async () => {
-      try {
-        logger?.debug?.('i18n', `Loading translations for ${currentLanguage}...`);
-        translations = /** @type {Record<string, string>} */ (
-          await loadTranslationsFromLoader(currentLanguage)
-        );
+  async function loadTranslations() {
+    const currentGen = ++activeGeneration;
+    const langToLoad = currentLanguage;
+    activeLanguageLoading = langToLoad;
 
-        // Ensure English fallback is available.
-        if (!fallbackTranslationsEn || Object.keys(fallbackTranslationsEn).length === 0) {
-          try {
-            const embeddedEn =
-              typeof window !== 'undefined' &&
-              window.YouTubePlusEmbeddedTranslations &&
-              window.YouTubePlusEmbeddedTranslations.en;
-            if (embeddedEn && typeof embeddedEn === 'object') {
-              fallbackTranslationsEn = /** @type {Record<string, string>} */ (embeddedEn);
-            } else {
-              fallbackTranslationsEn = /** @type {Record<string, string>} */ (
-                await loadTranslationsFromLoader('en')
-              );
-            }
-          } catch (_e) {
-            fallbackTranslationsEn = {};
-          }
-        }
-        translationCache.clear();
+    try {
+      logger?.debug?.('i18n', `Loading translations for ${langToLoad} (gen #${currentGen})...`);
+
+      // Kick off the English fallback fetch in parallel with the target
+      // language instead of a sequential waterfall after it completes. When
+      // that fetch fails, the digest-verified build-embedded dictionary takes
+      // over below.
+      /** @type {Promise<unknown> | null} */
+      let enPromise = null;
+      if (
+        langToLoad !== 'en' &&
+        (!fallbackTranslationsEn || Object.keys(fallbackTranslationsEn).length === 0)
+      ) {
+        enPromise = loadEnglish_();
+        // Prevent unhandled-rejection noise while the fetch is in flight.
+        enPromise.catch(() => {});
+      }
+
+      const loadedTranslations = /** @type {Record<string, string>} */ (
+        langToLoad === 'en' ? await loadEnglish_() : await loadTranslationsFromLoader(langToLoad)
+      );
+
+      // Guard against race condition: only commit if this request is still the active generation
+      if (currentGen !== activeGeneration || currentLanguage !== langToLoad) {
         logger?.debug?.(
           'i18n',
-          `Loaded ${Object.keys(translations).length} translations for ${currentLanguage}`
+          `Ignoring stale translations load for ${langToLoad} (gen #${currentGen} vs active #${activeGeneration})`
         );
-        return true;
-      } catch (error) {
-        logger?.error?.('i18n', 'Failed to load translations', error);
-        if (currentLanguage !== 'en') {
-          currentLanguage = 'en';
-          return loadTranslations();
-        }
-        return false;
-      } finally {
-        loadingPromise = null;
+        return currentLanguage === langToLoad;
       }
-    })();
 
-    return loadingPromise;
+      translations = loadedTranslations;
+
+      // Ensure English fallback is available.
+      if (enPromise) {
+        try {
+          fallbackTranslationsEn = /** @type {Record<string, string>} */ (await enPromise);
+        } catch (_e) {
+          // The English fallback fetch failed (no network): use the
+          // digest-verified build-embedded dictionary instead of none.
+          fallbackTranslationsEn = (await getVerifiedEmbeddedDictionary_('en')) ?? {};
+        }
+      }
+
+      translationCache.clear();
+      logger?.debug?.(
+        'i18n',
+        `Loaded ${Object.keys(translations).length} translations for ${langToLoad}`
+      );
+      return true;
+    } catch (error) {
+      logger?.warn?.(
+        'i18n',
+        `Falling back to English: ${
+          /** @type {string} */ (
+            /** @type {{ message?: unknown }} */ (/** @type {unknown} */ (error))?.message
+          ) || error
+        }`
+      );
+      if (currentGen === activeGeneration && currentLanguage !== 'en') {
+        currentLanguage = 'en';
+        return loadTranslations();
+      }
+      // English already tried the build-embedded dictionary first
+      // (loadEnglish_), so reaching here means no verified English exists.
+      return false;
+    } finally {
+      if (currentGen === activeGeneration) {
+        activeLanguageLoading = null;
+      }
+    }
   }
 
   /**
@@ -795,36 +1231,67 @@
   }
 
   /**
+   * Tracks an in-flight `setLanguage` call so concurrent callers requesting
+   * the same target language share one promise instead of each capturing
+   * their own (possibly already-mutated) `oldLang` and firing duplicate
+   * `youtube-plus-language-changed` events. Without this, two overlapping
+   * `setLanguage('fr')` calls could both "succeed" and emit two events,
+   * the second with `previousLanguage: 'fr'` even though the language never
+   * actually changed away from 'fr' in between.
+   * @type {{ lang: string, promise: Promise<boolean> } | null}
+   */
+  let activeSetLanguageCall = null;
+
+  /**
    * @param {string} lang
    * @returns {Promise<boolean>}
    */
   async function setLanguage(lang) {
-    if (lang === currentLanguage) return true;
+    if (
+      lang === currentLanguage &&
+      Object.keys(translations).length > 0 &&
+      activeLanguageLoading === null
+    ) {
+      return true;
+    }
+
+    if (activeSetLanguageCall && activeSetLanguageCall.lang === lang) {
+      return activeSetLanguageCall.promise;
+    }
 
     const oldLang = currentLanguage;
     currentLanguage = lang;
 
-    try {
-      const success = await loadTranslations();
-      if (success) {
-        for (const listener of languageChangeListeners) {
-          try {
-            listener(currentLanguage, oldLang);
-          } catch (error) {
-            logger?.error?.('i18n', 'Error in language change listener', error);
+    const callPromise = (async () => {
+      try {
+        const success = await loadTranslations();
+        if (success && currentLanguage === lang) {
+          for (const listener of languageChangeListeners) {
+            try {
+              listener(currentLanguage, oldLang);
+            } catch (error) {
+              logger?.error?.('i18n', 'Error in language change listener', error);
+            }
           }
+          emitI18nEvent('youtube-plus-language-changed', {
+            language: currentLanguage,
+            previousLanguage: oldLang,
+          });
+          emitI18nEvent('youtube-plus-i18n-ready', { language: currentLanguage });
         }
-        emitI18nEvent('youtube-plus-language-changed', {
-          language: currentLanguage,
-          previousLanguage: oldLang,
-        });
+        return Boolean(success && currentLanguage === lang);
+      } catch (error) {
+        logger?.error?.('i18n', 'Failed to change language', error);
+        return false;
+      } finally {
+        if (activeSetLanguageCall && activeSetLanguageCall.lang === lang) {
+          activeSetLanguageCall = null;
+        }
       }
-      return success;
-    } catch (error) {
-      logger?.error?.('i18n', 'Failed to change language', error);
-      currentLanguage = oldLang; // revert
-      return false;
-    }
+    })();
+
+    activeSetLanguageCall = { lang, promise: callPromise };
+    return callPromise;
   }
 
   /**
@@ -864,7 +1331,7 @@
   }
 
   /**
-   * @param {Record<string, any>} newTranslations
+   * @param {TranslationDictionary} newTranslations
    */
   function addTranslations(newTranslations) {
     if (!newTranslations || typeof newTranslations !== 'object') return;
@@ -887,14 +1354,22 @@
   // ---------------------------------------------------------------------------
 
   /**
+   * Resolve the locale string for the current language.
+   * @returns {string}
+   */
+  function resolveLocale() {
+    const lang = getLanguage();
+    return LOCALE_FOR_LANG[lang] || 'en-US';
+  }
+
+  /**
    * @param {number} num
    * @param {Object} [options]
    * @returns {string}
    */
   function formatNumber(num, options = {}) {
     try {
-      const lang = getLanguage();
-      const locale = LOCALE_FOR_LANG[lang] || 'en-US';
+      const locale = resolveLocale();
       return new Intl.NumberFormat(locale, options).format(num);
     } catch (error) {
       logger?.error?.('i18n', 'Error formatting number', error);
@@ -909,8 +1384,7 @@
    */
   function formatDate(date, options = {}) {
     try {
-      const lang = getLanguage();
-      const locale = LOCALE_FOR_LANG[lang] || 'en-US';
+      const locale = resolveLocale();
       const dateObj = date instanceof Date ? date : new Date(date);
       return new Intl.DateTimeFormat(locale, options).format(dateObj);
     } catch (error) {
@@ -944,6 +1418,28 @@
 
   function clearCache() {
     translationCache.clear();
+    translationsCache.clear();
+    try {
+      if (typeof localStorage !== 'undefined') {
+        const keysToRemove = [];
+        for (let i = 0; i < localStorage.length; i++) {
+          const key = localStorage.key(i);
+          if (
+            key &&
+            (key.startsWith('ytp_i18n_cache_') ||
+              key.startsWith('ytp_locale_cache_') ||
+              key.startsWith(CACHE_CONFIG.storageKeyPrefix))
+          ) {
+            keysToRemove.push(key);
+          }
+        }
+        for (const k of keysToRemove) {
+          localStorage.removeItem(k);
+        }
+      }
+    } catch (_e) {
+      /* ignore storage errors */
+    }
   }
 
   /**
@@ -972,10 +1468,14 @@
    *   fallbackCount: number,
    *   cacheSize: number,
    *   availableLanguages: string[],
-   *   ready: boolean
+   *   ready: boolean,
+   *   isFallback: boolean,
+   *   isStale: boolean,
+   *   localeStatus: Object
    * }}
    */
   function getStats() {
+    const status = getLocaleDeliveryStatus_(currentLanguage);
     return {
       currentLanguage,
       translationCount: Object.keys(translations).length,
@@ -983,11 +1483,14 @@
       cacheSize: translationCache.size,
       availableLanguages: getAvailableLanguages(),
       ready: isReady(),
+      isFallback: status.isFallback,
+      isStale: status.isStale,
+      localeStatus: status,
     };
   }
 
   function isReady() {
-    return loadingPromise === null && Object.keys(translations).length > 0;
+    return activeLanguageLoading === null && Object.keys(translations).length > 0;
   }
 
   // ---------------------------------------------------------------------------
@@ -995,18 +1498,13 @@
   // ---------------------------------------------------------------------------
 
   async function initialize() {
-    try {
-      currentLanguage = detectLanguage();
-      logger?.debug?.(
-        'i18n',
-        `Detected language: ${currentLanguage} (${LANGUAGE_NAMES[currentLanguage] || currentLanguage})`
-      );
-      await loadTranslations();
-      emitI18nEvent('youtube-plus-i18n-ready', { language: currentLanguage });
-    } catch (error) {
-      logger?.error?.('i18n', 'Initialization error', error);
-      currentLanguage = 'en';
-    }
+    currentLanguage = detectLanguage();
+    logger?.debug?.(
+      'i18n',
+      `Detected language: ${currentLanguage} (${LANGUAGE_NAMES[currentLanguage] || currentLanguage})`
+    );
+    await loadTranslations();
+    emitI18nEvent('youtube-plus-i18n-ready', { language: currentLanguage });
   }
 
   // ---------------------------------------------------------------------------
@@ -1015,8 +1513,8 @@
 
   /**
    * @typedef {Object} I18nAPI
-   * @property {(key: string, params?: Record<string, any>) => string} t
-   * @property {(key: string, params?: Record<string, any>) => string} translate
+   * @property {(key: string, params?: TranslationParams) => string} t
+   * @property {(key: string, params?: TranslationParams) => string} translate
    * @property {() => string} getLanguage
    * @property {(lang: string) => Promise<boolean>} setLanguage
    * @property {() => string} detectLanguage
@@ -1024,7 +1522,7 @@
    * @property {() => string[]} getAvailableLanguages
    * @property {(key: string) => boolean} hasTranslation
    * @property {(key: string, value: string) => void} addTranslation
-   * @property {(translations: Record<string, any>) => void} addTranslations
+   * @property {(translations: TranslationDictionary) => void} addTranslations
    * @property {(cb: (newLang: string, oldLang: string) => void) => () => void} onLanguageChange
    * @property {(num: number, options?: Object) => string} formatNumber
    * @property {(date: Date|number|string, options?: Object) => string} formatDate
@@ -1032,6 +1530,7 @@
    * @property {() => void} clearCache
    * @property {() => Object} getCacheStats
    * @property {() => Object} getStats
+   * @property {(lang?: string) => Object} getLocaleStatus
    * @property {() => boolean} isReady
    * @property {() => Promise<boolean>} loadTranslations
    * @property {() => Promise<void>} initialize
@@ -1039,7 +1538,7 @@
    * @property {string} currentLanguage
    */
 
-  /** @type {I18nAPI & { [k: string]: any }} */
+  /** @type {I18nAPI & { [k: string]: unknown }} */
   const i18nAPI = {
     t: translate,
     translate,
@@ -1058,9 +1557,11 @@
     clearCache,
     getCacheStats,
     getStats,
+    getLocaleStatus: getLocaleDeliveryStatus_,
     isReady,
     loadTranslations,
     initialize,
+    _fetchJSON: fetchJSON,
     /** @type {Record<string, string>} */
     get translations() {
       return { ...translations };
@@ -1072,22 +1573,17 @@
 
   if (typeof window !== 'undefined') {
     window.YouTubePlusI18n = i18nAPI;
-    if (typeof unsafeWindow !== 'undefined') {
-      unsafeWindow.YouTubePlusI18n = i18nAPI;
-    }
 
-    // Back-compat shim for the legacy loader namespace. Canonical ownership
+    // Back-compat shim for the legacy loader namespace. Ownership
     // is YouTubePlusI18n; this is kept only so any code that referenced
     // YouTubePlusI18nLoader directly continues to work.
     window.YouTubePlusI18nLoader = {
-      loadTranslations: loadTranslationsFromLoader,
-      AVAILABLE_LANGUAGES,
-      LANGUAGE_NAMES,
-      CDN_URLS,
+      // Runtime accepts an omitted lang (falls back to 'en' via the
+      // AVAILABLE_LANGUAGES check); widen only at this shim boundary.
+      loadTranslations: /** @type {(lang?: string) => Promise<Record<string, string>>} */ (
+        loadTranslationsFromLoader
+      ),
     };
-    if (typeof unsafeWindow !== 'undefined') {
-      unsafeWindow.YouTubePlusI18nLoader = window.YouTubePlusI18nLoader;
-    }
     Object.freeze(window.YouTubePlusI18n);
     if (window.YouTubePlusI18nLoader) {
       Object.freeze(window.YouTubePlusI18nLoader);
@@ -1095,7 +1591,7 @@
   }
 
   // Note: we deliberately do NOT mutate window.YouTubeUtils here.
-  // utils.js is the canonical compatibility facade and already wires
+  // utils.js is the compatibility facade and already wires
   // t/getLanguage/i18n on YouTubeUtils, deferring to this module.
 
   initialize().then(() => {

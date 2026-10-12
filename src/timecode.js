@@ -1,12 +1,15 @@
-// YouTube Timecode Panel — no canonical window symbol (self-initializing IIFE).
+// YouTube Timecode Panel (self-initializing IIFE).
 //
 // Responsibility: clickable timestamp links in video descriptions,
 //   progress-bar chapter markers, and timecode navigation helpers.
 //   Uses `__ytpTimeInitDone__` guard for idempotent boot.
-// Public surface: none (self-contained, no LazyLoader registration).
+// Public surface: window.YouTubePlusTimecode.
 (function () {
-  // Shared helpers from YouTubeUtils (canonical boot shorthand)
+  // Shared helpers from YouTubeUtils (boot shorthand)
   const U = window.YouTubeUtils;
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'Timecode');
+
   const { $, $$, byId, setTimeout_ } = U?.helpers ?? {};
   const throttle = U?.throttle;
   const waitForElement = U?.waitForElement;
@@ -19,10 +22,37 @@
   const t = window.YouTubeUtils?.t || ((/** @type {string} */ key) => key || '');
   const timecodeLogger = window.YouTubeUtils?.logger || null;
 
-  // Configuration
-  /** @type {any} */
+  /**
+   * @typedef {Object} TimecodePanelPosition
+   * @property {number} left
+   * @property {number} top
+   */
+
+  /**
+   * @typedef {Object} TimecodeShortcut
+   * @property {string} key
+   * @property {boolean} shiftKey
+   * @property {boolean} altKey
+   * @property {boolean} ctrlKey
+   */
+
+  /**
+   * @typedef {Object} TimecodeSettings
+   * @property {boolean} autoDetect
+   * @property {TimecodeShortcut} shortcut
+   * @property {string} storageKey
+   * @property {boolean} autoSave
+   * @property {boolean} autoTrackPlayback
+   * @property {TimecodePanelPosition | null} panelPosition
+   * @property {boolean} export
+   */
+
+  // Configuration. The on/off flag is the settings-store key
+  // `timecodeEnabled`, driven by the FeatureLifecycle host; the module
+  // preferences live in `modules.timecode` of the shared blob, with the legacy
+  // key as the pre-blob fallback.
+  /** @type {TimecodeSettings} */
   const config = {
-    enabled: true,
     autoDetect: true,
     shortcut: { key: 'T', shiftKey: true, altKey: false, ctrlKey: false },
     storageKey: 'youtube_timecode_settings',
@@ -32,36 +62,87 @@
     export: true,
   };
 
+  /** Module namespace in the shared settings blob. */
+  const MODULE_NAME = 'timecode';
+
+  /** @returns {YouTubePlusSettingsStore | null} the store when the blob bridge is active */
+  const bridgedStore = () => window.YouTubePlusSettingsStore?.moduleBridge?.() ?? null;
+
+  /**
+   * @typedef {Object} TimecodeDomCache
+   * @property {HTMLElement | null} panel
+   * @property {HTMLElement | null} list
+   * @property {HTMLElement | null} empty
+   * @property {HTMLElement | null} form
+   * @property {HTMLInputElement | null} timeInput
+   * @property {HTMLInputElement | null} labelInput
+   * @property {HTMLElement | null} currentTime
+   * @property {HTMLElement | null} trackToggle
+   * @property {HTMLElement | null} reloadButton
+   */
+
+  /**
+   * @typedef {Object} TimecodeState
+   * @property {Map<string, Array<{ time: number, label: string }>>} timecodes
+   * @property {TimecodeDomCache} dom
+   * @property {boolean} isReloading
+   * @property {number | null} activeIndex
+   * @property {number} trackingId
+   * @property {boolean} dragging
+   * @property {number | null} editingIndex
+   * @property {boolean} settingsIntegrationStarted
+   */
+
   // State management
-  /** @type {any} */
+  /** @type {TimecodeState} */
   const state = {
     timecodes: new Map(),
-    dom: {},
+    dom: {
+      panel: null,
+      list: null,
+      empty: null,
+      form: null,
+      timeInput: null,
+      labelInput: null,
+      currentTime: null,
+      trackToggle: null,
+      reloadButton: null,
+    },
     isReloading: false,
     activeIndex: null,
     trackingId: 0,
     dragging: false,
     editingIndex: null,
-    resizeListenerKey: null,
     settingsIntegrationStarted: false,
   };
 
   let initStarted = false;
 
-  const isRelevantRoute = () => window.YouTubeUtils.isWatchRoute();
+  // Runtime resources follow the FeatureLifecycle contract
+  // (feature-registry.js): `timecodeCtx` exists only while the
+  // `timecodeEnabled` setting is on; `uiScope` owns the living panel group
+  // when it has been opened, and `timeUpdateRelease`/`resizeRelease` keep
+  // the releases handed out by the context.
+  /** @type {FeatureContext | null} */
+  let timecodeCtx = null;
+  /** @type {FeatureScope | null} */
+  let uiScope = null;
+  /** @type {(() => void) | null} */
+  let timeUpdateRelease = null;
+
+  const TIMECODE_STYLE_ID = 'timecode-panel-styles';
+
+  const isRelevantRoute = U.createIsRelevantRoute({ watch: true });
 
   const scheduleInitRetry = () => {
-    const retryScheduler = /** @type {any} */ (YouTubeUtils).createRetryScheduler;
+    const retryScheduler = U.createRetryScheduler;
     if (typeof retryScheduler === 'function') {
       retryScheduler({
         label: 'timecode-init',
         interval: 120,
         maxAttempts: 30,
         check: () => {
-          const root =
-            (typeof YouTubeUtils.querySelector === 'function' &&
-              YouTubeUtils.querySelector('ytd-app')) ||
-            $('ytd-app');
+          const root = $('ytd-app');
           if (!root) return false;
           init();
           return true;
@@ -70,7 +151,9 @@
       return;
     }
 
-    const rafId = requestAnimationFrame(init);
+    const rafId = window.YouTubePlusCleanupManager?.registerAnimationFrame?.(
+      requestAnimationFrame(init)
+    );
     YouTubeUtils.cleanupManager?.registerAnimationFrame?.(rafId);
   };
 
@@ -119,186 +202,196 @@
 
   // Utilities
   /**
-   * Load settings from localStorage with error handling
+   * Load settings from storage with error handling
    * @returns {void}
+   */
+  const mergeShortcutConfig_ = (/** @type {Record<string, unknown> | null | undefined} */ sc) => {
+    if (!sc || typeof sc !== 'object') return;
+    if (typeof sc.key === 'string') config.shortcut.key = sc.key;
+    if (typeof sc.shiftKey === 'boolean') config.shortcut.shiftKey = sc.shiftKey;
+    if (typeof sc.altKey === 'boolean') config.shortcut.altKey = sc.altKey;
+    if (typeof sc.ctrlKey === 'boolean') config.shortcut.ctrlKey = sc.ctrlKey;
+  };
+
+  const mergePanelPositionConfig_ = (
+    /** @type {Record<string, unknown> | null | undefined} */ pos
+  ) => {
+    if (!pos || typeof pos !== 'object') return;
+    const { left, top } = pos;
+    if (
+      typeof left === 'number' &&
+      typeof top === 'number' &&
+      !Number.isNaN(left) &&
+      !Number.isNaN(top) &&
+      left >= 0 &&
+      top >= 0
+    ) {
+      config.panelPosition = { left, top };
+    }
+  };
+
+  /**
+   * Apply a stored settings object to the live config.
+   * @param {Record<string, unknown> | null | undefined} parsed
+   */
+  const applyTimecodeSettings_ = parsed => {
+    if (!parsed || typeof parsed !== 'object') return;
+    if (typeof parsed.autoDetect === 'boolean') config.autoDetect = parsed.autoDetect;
+    if (typeof parsed.autoSave === 'boolean') config.autoSave = parsed.autoSave;
+    if (typeof parsed.autoTrackPlayback === 'boolean') {
+      config.autoTrackPlayback = parsed.autoTrackPlayback;
+    }
+    if (typeof parsed.export === 'boolean') config.export = parsed.export;
+    mergeShortcutConfig_(/** @type {Record<string, unknown>} */ (parsed.shortcut));
+    mergePanelPositionConfig_(/** @type {Record<string, unknown>} */ (parsed.panelPosition));
+  };
+
+  /** @returns {Record<string, unknown> | null | undefined} legacy key payload */
+  const readLegacySettings = () => {
+    return /** @type {Record<string, unknown> | null | undefined} */ (
+      U?.storage?.get(config.storageKey)
+    );
+  };
+
+  /**
+   * Load settings. From `modules.timecode` once the blob exists (migrating the
+   * legacy key on first read), otherwise from the legacy key.
    */
   const loadSettings = () => {
     try {
-      const saved = localStorage.getItem(config.storageKey);
-      if (!saved) return;
-
-      const parsed = JSON.parse(saved);
-      if (typeof parsed !== 'object' || parsed === null) {
-        timecodeLogger?.warn?.('Timecode', 'Invalid settings format');
+      const store = bridgedStore();
+      if (store) {
+        const mod = store.getModuleSettings(MODULE_NAME);
+        if (mod && Object.keys(mod).length) {
+          applyTimecodeSettings_(mod);
+          return;
+        }
+        applyTimecodeSettings_(readLegacySettings());
+        saveSettings();
         return;
       }
-
-      // Validate and merge settings
-      if (typeof parsed.enabled === 'boolean') {
-        config.enabled = parsed.enabled;
-      }
-      if (typeof parsed.autoDetect === 'boolean') {
-        config.autoDetect = parsed.autoDetect;
-      }
-      if (typeof parsed.autoSave === 'boolean') {
-        config.autoSave = parsed.autoSave;
-      }
-      if (typeof parsed.autoTrackPlayback === 'boolean') {
-        config.autoTrackPlayback = parsed.autoTrackPlayback;
-      }
-      if (typeof parsed.export === 'boolean') {
-        config.export = parsed.export;
-      }
-
-      // Validate shortcut object
-      if (parsed.shortcut && typeof parsed.shortcut === 'object') {
-        if (typeof parsed.shortcut.key === 'string') {
-          config.shortcut.key = parsed.shortcut.key;
-        }
-        if (typeof parsed.shortcut.shiftKey === 'boolean') {
-          config.shortcut.shiftKey = parsed.shortcut.shiftKey;
-        }
-        if (typeof parsed.shortcut.altKey === 'boolean') {
-          config.shortcut.altKey = parsed.shortcut.altKey;
-        }
-        if (typeof parsed.shortcut.ctrlKey === 'boolean') {
-          config.shortcut.ctrlKey = parsed.shortcut.ctrlKey;
-        }
-      }
-
-      // Validate panel position
-      if (parsed.panelPosition && typeof parsed.panelPosition === 'object') {
-        const { left, top } = parsed.panelPosition;
-        if (
-          typeof left === 'number' &&
-          typeof top === 'number' &&
-          !Number.isNaN(left) &&
-          !Number.isNaN(top) &&
-          left >= 0 &&
-          top >= 0
-        ) {
-          config.panelPosition = { left, top };
-        }
-      }
+      applyTimecodeSettings_(readLegacySettings());
     } catch (error) {
+      logS(error);
       timecodeLogger?.error?.('Timecode', 'Error loading settings', error);
     }
   };
 
   /**
-   * Save settings to localStorage with error handling
+   * Save settings through the shared bridge, or the legacy key before the blob.
    * @returns {void}
    */
   const saveSettings = () => {
+    const settingsToSave = {
+      autoDetect: config.autoDetect,
+      shortcut: config.shortcut,
+      autoSave: config.autoSave,
+      autoTrackPlayback: config.autoTrackPlayback,
+      panelPosition: config.panelPosition,
+      export: config.export,
+    };
+    const store = bridgedStore();
+    if (store) {
+      store.updateModuleSettings(MODULE_NAME, settingsToSave);
+      return;
+    }
     try {
-      const settingsToSave = {
-        enabled: config.enabled,
-        autoDetect: config.autoDetect,
-        shortcut: config.shortcut,
-        autoSave: config.autoSave,
-        autoTrackPlayback: config.autoTrackPlayback,
-        panelPosition: config.panelPosition,
-        export: config.export,
-      };
-      localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
+      U?.storage?.set(config.storageKey, settingsToSave);
     } catch (error) {
+      logS(error);
       timecodeLogger?.error?.('Timecode', 'Error saving settings', error);
     }
   };
 
   /**
    * Clamp panel position within viewport bounds
-   * @param {HTMLElement} panel - Panel element
+   * @param {HTMLElement | null | undefined} panel - Panel element
    * @param {number} left - Desired left position
    * @param {number} top - Desired top position
    * @returns {{left: number, top: number}} Clamped position
    */
   const clampPanelPosition = (panel, left, top) => {
-    try {
-      if (!(panel && panel instanceof HTMLElement)) {
-        timecodeLogger?.warn?.('Timecode', 'Invalid panel element');
-        return { left: 0, top: 0 };
-      }
-
-      // Validate input coordinates
-      if (
-        typeof left !== 'number' ||
-        typeof top !== 'number' ||
-        Number.isNaN(left) ||
-        Number.isNaN(top)
-      ) {
-        timecodeLogger?.warn?.('Timecode', 'Invalid position coordinates');
-        return { left: 0, top: 0 };
-      }
-
-      const rect = panel.getBoundingClientRect();
-      // Single getBoundingClientRect read; use rect.width/rect.height
-      // directly instead of also reading offsetWidth/offsetHeight which
-      // trigger separate forced layouts.
-      const width = rect.width || 0;
-      const height = rect.height || 0;
-
-      const maxLeft = Math.max(0, window.innerWidth - width);
-      const maxTop = Math.max(0, window.innerHeight - height);
-
-      return {
-        left: Math.min(Math.max(0, left), maxLeft),
-        top: Math.min(Math.max(0, top), maxTop),
-      };
-    } catch (error) {
-      timecodeLogger?.error?.('Timecode', 'Error clamping panel position', error);
+    if (!(panel && panel instanceof HTMLElement)) {
+      timecodeLogger?.warn?.('Timecode', 'Invalid panel element');
       return { left: 0, top: 0 };
+    }
+
+    if (
+      typeof left !== 'number' ||
+      typeof top !== 'number' ||
+      Number.isNaN(left) ||
+      Number.isNaN(top)
+    ) {
+      timecodeLogger?.warn?.('Timecode', 'Invalid position coordinates');
+      return { left: 0, top: 0 };
+    }
+
+    const rect = panel.getBoundingClientRect();
+    const width = rect.width || 0;
+    const height = rect.height || 0;
+
+    const maxLeft = Math.max(0, window.innerWidth - width);
+    const maxTop = Math.max(0, window.innerHeight - height);
+
+    return {
+      left: Math.min(Math.max(0, left), maxLeft),
+      top: Math.min(Math.max(0, top), maxTop),
+    };
+  };
+
+  /**
+   * Apply clamped position to panel element
+   * @param {HTMLElement} panel - Panel element to position
+   * @param {number} left - Desired left position
+   * @param {number} top - Desired top position
+   * @param {boolean} [persist=false] - Whether to save position to storage
+   * @returns {void}
+   */
+  const applyClampedPosition = (panel, left, top, persist = false) => {
+    const { left: clampedLeft, top: clampedTop } = clampPanelPosition(panel, left, top);
+    panel.style.left = `${clampedLeft}px`;
+    panel.style.top = `${clampedTop}px`;
+    panel.style.right = 'auto';
+    if (persist) {
+      savePanelPosition(clampedLeft, clampedTop);
     }
   };
 
   /**
-   * Save panel position to settings
-   * @param {number} left - Left position
-   * @param {number} top - Top position
-   * @returns {void}
-   */
-  /**
-   * Save panel position to configuration and localStorage
+   * Save panel position to configuration and storage
    * @param {number} left - X coordinate in pixels
    * @param {number} top - Y coordinate in pixels
    * @returns {void}
    */
   const savePanelPosition = (left, top) => {
-    try {
-      if (
-        typeof left !== 'number' ||
-        typeof top !== 'number' ||
-        Number.isNaN(left) ||
-        Number.isNaN(top)
-      ) {
-        timecodeLogger?.warn?.('Timecode', 'Invalid position coordinates for saving');
-        return;
-      }
-      config.panelPosition = { left, top };
-      saveSettings();
-    } catch (error) {
-      timecodeLogger?.error?.('Timecode', 'Error saving panel position', error);
+    if (
+      typeof left !== 'number' ||
+      typeof top !== 'number' ||
+      Number.isNaN(left) ||
+      Number.isNaN(top)
+    ) {
+      timecodeLogger?.warn?.('Timecode', 'Invalid position coordinates for saving');
+      return;
     }
+    config.panelPosition = { left, top };
+    saveSettings();
   };
 
   /**
    * Apply saved panel position to a panel element
-   * @param {HTMLElement} panel - The panel element to position
+   * @param {HTMLElement | null | undefined} panel - The panel element to position
    * @returns {void}
    */
-  const applySavedPanelPosition = (/** @type {any} */ panel) => {
+  const applySavedPanelPosition = panel => {
     if (!(panel && config.panelPosition)) return;
 
-    requestAnimationFrame(() => {
-      const { left, top } = clampPanelPosition(
-        panel,
-        config.panelPosition.left,
-        config.panelPosition.top
-      );
-      /** @type {any} */ (panel).style.left = `${left}px`;
-      /** @type {any} */ (panel).style.top = `${top}px`;
-      /** @type {any} */ (panel).style.right = 'auto';
-    });
+    window.YouTubePlusCleanupManager?.registerAnimationFrame?.(
+      requestAnimationFrame(() => {
+        const pos = config.panelPosition;
+        if (!pos) return;
+        applyClampedPosition(panel, pos.left, pos.top, false);
+      })
+    );
   };
 
   /**
@@ -341,8 +434,15 @@
       }
     }
 
-    // Try sliding window approach for partial duplicates
-    // Search for the longest repeating pattern
+    return findRepeatingWordPattern(words) || cleaned;
+  };
+
+  /**
+   * Sliding-window search for the longest repeating word pattern in the text
+   * @param {string[]} words - Words of the cleaned text
+   * @returns {string|null} The repeating pattern, or null if none found
+   */
+  const findRepeatingWordPattern = words => {
     const minPatternLength = Math.max(2, Math.floor(words.length / 4));
     const maxPatternLength = Math.floor(words.length / 2);
 
@@ -352,29 +452,8 @@
 
       // Check if this pattern appears again anywhere in the text
       for (let offset = 1; offset <= words.length - len; offset++) {
-        let matchCount = 0;
-        let partialWordMatch = false;
         const testWords = words.slice(offset, Math.min(offset + len, words.length));
-
-        for (let i = 0; i < patternWords.length; i++) {
-          const patternWord = patternWords[i];
-          const testWord = testWords[i];
-
-          if (!testWord) break;
-
-          // Exact match
-          if (patternWord === testWord) {
-            matchCount++;
-          }
-          // Partial match (for truncated words like "сте..." vs "стекла")
-          else if (testWord.length >= 3 && patternWord.startsWith(testWord)) {
-            matchCount += 0.8; // Partial credit
-            partialWordMatch = true;
-          } else if (patternWord.length >= 3 && testWord.startsWith(patternWord)) {
-            matchCount += 0.8; // Partial credit
-            partialWordMatch = true;
-          }
-        }
+        const { matchCount, partialWordMatch } = scorePatternMatch(patternWords, testWords);
 
         // If 70%+ of the pattern matches (allowing for partial words), it's a duplicate
         const similarity = matchCount / patternWords.length;
@@ -388,125 +467,152 @@
       }
     }
 
-    return cleaned;
-  }; /**
+    return null;
+  };
+
+  /**
+   * Score how well a pattern matches a candidate word window (partial words get 0.8 credit)
+   * @param {string[]} patternWords - Reference pattern words
+   * @param {string[]} testWords - Candidate words
+   * @returns {{matchCount: number, partialWordMatch: boolean}}
+   */
+  const scorePatternMatch = (patternWords, testWords) => {
+    let matchCount = 0;
+    let partialWordMatch = false;
+
+    for (let i = 0; i < patternWords.length; i++) {
+      const patternWord = patternWords[i];
+      const testWord = testWords[i];
+
+      if (!testWord) break;
+
+      // Exact match
+      if (patternWord === testWord) {
+        matchCount++;
+      }
+      // Partial match (for truncated words like "сте..." vs "стекла")
+      else if (testWord.length >= 3 && patternWord.startsWith(testWord)) {
+        matchCount += 0.8; // Partial credit
+        partialWordMatch = true;
+      } else if (patternWord.length >= 3 && testWord.startsWith(patternWord)) {
+        matchCount += 0.8; // Partial credit
+        partialWordMatch = true;
+      }
+    }
+
+    return { matchCount, partialWordMatch };
+  };
+
+  /**
+   * Remove duplicates from timecode label and log result
+   * @param {string} before - Label before deduplication
+   * @param {string} after - Label after deduplication
+   * @param {string} context - Log message context ('Description' | 'Removed' | 'Display')
+   * @returns {void}
+   */
+  const logTimecodeDeduplication = (before, after, context) => {
+    if (before !== after && after.length > 0) {
+      const messages = {
+        Description: `Description deduplicated: ${before} -> ${after}`,
+        Removed: `Removed duplicate: ${before} -> ${after}`,
+        Display: `Display deduplicated: ${before} -> ${after}`,
+      };
+      const message = messages[/** @type {keyof typeof messages} */ (context)] || messages.Display;
+      timecodeLogger?.warn?.('Timecode', message);
+    }
+  };
+
+  const parseHms_ = (/** @type {string} */ str) => {
+    const match = str.match(/^(\d+):(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const [, h, m, s] = match.map(Number);
+    if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(s)) return null;
+    if (m >= 60 || s >= 60 || h < 0 || m < 0 || s < 0) return null;
+    const total = h * 3600 + m * 60 + s;
+    return total <= 86400 ? total : null;
+  };
+
+  const parseMs_ = (/** @type {string} */ str) => {
+    const match = str.match(/^(\d{1,2}):(\d{2})$/);
+    if (!match) return null;
+    const [, m, s] = match.map(Number);
+    if (Number.isNaN(m) || Number.isNaN(s)) return null;
+    if (m >= 60 || s >= 60 || m < 0 || s < 0) return null;
+    return m * 60 + s;
+  };
+
+  /**
    * Parse time string to seconds with validation
-   * @param {string} timeStr - Time string (MM:SS or HH:MM:SS)
+   * @param {string | null | undefined} timeStr - Time string (MM:SS or HH:MM:SS)
    * @returns {number|null} Seconds or null if invalid
    */
-  const parseTime = (/** @type {any} */ timeStr) => {
-    try {
-      if (!timeStr || typeof timeStr !== 'string') return null;
+  const parseTime = timeStr => {
+    if (!timeStr || typeof timeStr !== 'string') return null;
+    const str = timeStr.trim();
+    if (str.length === 0 || str.length > 12) return null;
+    return parseHms_(str) ?? parseMs_(str);
+  };
 
-      const str = timeStr.trim();
-      if (str.length === 0 || str.length > 12) return null; // Sanity check
+  const parseTimecodeLine_ = (/** @type {string} */ line) => {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
 
-      // Handle HH:MM:SS format
-      let match = str.match(/^(\d+):(\d{1,2}):(\d{2})$/);
-      if (match) {
-        const [, h, m, s] = match.map(Number);
-        // Validate ranges
-        if (Number.isNaN(h) || Number.isNaN(m) || Number.isNaN(s)) return null;
-        if (m >= 60 || s >= 60 || h < 0 || m < 0 || s < 0) return null;
-        const total = h * 3600 + m * 60 + s;
-        // Sanity check: max 24 hours
-        return total <= 86400 ? total : null;
-      }
+    const timeMatch = parseLeadingTimestampToken(trimmed);
+    if (!timeMatch) return null;
 
-      // Handle MM:SS format
-      match = str.match(/^(\d{1,2}):(\d{2})$/);
-      if (match) {
-        const [, m, s] = match.map(Number);
-        // Validate ranges
-        if (Number.isNaN(m) || Number.isNaN(s)) return null;
-        if (m >= 60 || s >= 60 || m < 0 || s < 0) return null;
-        return m * 60 + s;
-      }
+    const time = parseTime(timeMatch.token);
+    if (time === null) return null;
 
-      return null;
-    } catch (error) {
-      timecodeLogger?.error?.('Timecode', 'Error parsing time', error);
-      return null;
-    }
+    let label = stripLeadingTimePrefix(trimmed.slice(timeMatch.length))
+      .trim()
+      .replace(/^\d+[.)]\s*/, '')
+      .replace(/\s+/g, ' ')
+      .substring(0, 100);
+
+    const originalLabel = label;
+    label = removeDuplicateText(label.replace(/[<>"']/g, ''));
+    logTimecodeDeduplication(originalLabel, label, 'Description');
+
+    return {
+      time,
+      label: label || '',
+      originalText: timeMatch.token,
+    };
   };
 
   /**
    * Extract timecodes from text with validation
-   * @param {string} text - Text containing timecodes
+   * @param {string | null | undefined} text - Text containing timecodes
    * @returns {Array<{time: number, label: string, originalText: string}>} Extracted timecodes
    */
   const extractTimecodes = text => {
-    try {
-      if (!text || typeof text !== 'string') return [];
+    if (!text || typeof text !== 'string') return [];
 
-      // Security: limit text length to prevent DoS
-      if (text.length > 50000) {
-        timecodeLogger?.warn?.('Timecode', 'Text too long, truncating');
-        text = text.substring(0, 50000);
-      }
-
-      /** @type {Array<{time: number, label: string, originalText: string}>} */
-      const timecodes = [];
-      const lines = String(text || '')
-        .replace(/\r/g, '')
-        .split('\n');
-      const maxIterations = 1000; // Prevent runaway parsing on malformed input
-
-      for (let i = 0; i < lines.length && i < maxIterations; i += 1) {
-        const line = lines[i].trim();
-        if (!line) continue;
-
-        const timeMatch = parseLeadingTimestampToken(line);
-        if (!timeMatch) continue;
-
-        const time = parseTime(timeMatch.token);
-        if (time === null) continue;
-
-        let label = stripLeadingTimePrefix(line.slice(timeMatch.length));
-        label = label
-          .trim()
-          .replace(/^\d+[.)]\s*/, '')
-          .replace(/\s+/g, ' ')
-          .substring(0, 100);
-
-        const originalLabel = label;
-        label = label.replace(/[<>"']/g, '');
-        label = removeDuplicateText(label);
-
-        if (originalLabel !== label && label.length > 0) {
-          timecodeLogger?.warn?.(
-            'Timecode',
-            `Description deduplicated: ${originalLabel} -> ${label}`
-          );
-        }
-
-        const existingIdx = timecodes.findIndex(tc => tc.time === time);
-        if (existingIdx !== -1) {
-          if ((label || '').length > (timecodes[existingIdx].label || '').length) {
-            timecodes[existingIdx] = {
-              time,
-              label: label || '',
-              originalText: timeMatch.token,
-            };
-          }
-        } else {
-          timecodes.push({
-            time,
-            label: label || '',
-            originalText: timeMatch.token,
-          });
-        }
-      }
-
-      if (lines.length > maxIterations) {
-        timecodeLogger?.warn?.('Timecode', 'Maximum iterations reached during extraction');
-      }
-
-      return timecodes.sort((a, b) => a.time - b.time);
-    } catch (error) {
-      timecodeLogger?.error?.('Timecode', 'Error extracting timecodes', error);
-      return [];
+    const safeText = text.length > 50000 ? text.substring(0, 50000) : text;
+    if (text.length > 50000) {
+      timecodeLogger?.warn?.('Timecode', 'Text too long, truncating');
     }
+
+    const lines = safeText.replace(/\r/g, '').split('\n');
+    const maxIterations = 1000;
+    const byTime = new Map();
+
+    const limit = Math.min(lines.length, maxIterations);
+    for (let i = 0; i < limit; i += 1) {
+      const parsed = parseTimecodeLine_(lines[i]);
+      if (!parsed) continue;
+
+      const existing = byTime.get(parsed.time);
+      if (!existing || (parsed.label || '').length > (existing.label || '').length) {
+        byTime.set(parsed.time, parsed);
+      }
+    }
+
+    if (lines.length > maxIterations) {
+      timecodeLogger?.warn?.('Timecode', 'Maximum iterations reached during extraction');
+    }
+
+    return Array.from(byTime.values()).sort((a, b) => a.time - b.time);
   };
 
   const DESCRIPTION_SELECTORS = [
@@ -582,26 +688,17 @@
    * @returns {string} Concatenated comments text
    */
   const collectCommentsText = (maxComments = 30) => {
-    try {
-      /** @type {string[]} */
-      const snippets = [];
-      for (const sel of COMMENT_SELECTORS) {
-        $$(sel).forEach(node => {
-          if (snippets.length >= maxComments) return;
-          const text = node?.textContent?.trim();
-          if (text) snippets.push(text);
-        });
-        if (snippets.length >= maxComments) break;
-      }
-      return snippets.join('\n');
-    } catch (error) {
-      YouTubeUtils.logError(
-        'TimecodePanel',
-        'collectCommentsText failed',
-        /** @type {any} */ (error)
-      );
-      return '';
+    /** @type {string[]} */
+    const snippets = [];
+    for (const sel of COMMENT_SELECTORS) {
+      $$(sel).forEach(node => {
+        if (snippets.length >= maxComments) return;
+        const text = node?.textContent?.trim();
+        if (text) snippets.push(text);
+      });
+      if (snippets.length >= maxComments) break;
     }
+    return snippets.join('\n');
   };
 
   const expandDescriptionIfNeeded = async () => {
@@ -615,28 +712,19 @@
       const ariaLabel = button.getAttribute('aria-label')?.toLowerCase();
       if (ariaLabel?.includes('less')) return false;
 
-      if (button.offsetParent !== null) {
-        try {
-          /** @type {HTMLElement} */ (button).click();
-          await sleep(400);
-          return true;
-        } catch (error) {
-          timecodeLogger?.warn?.('Timecode', 'Failed to click expand button', error);
-        }
+      if (
+        /** @type {HTMLElement} */ (button).offsetParent !== null &&
+        button instanceof HTMLElement
+      ) {
+        button.click();
+        await sleep(400);
+        return true;
       }
     }
 
     const inlineExpander = $('ytd-text-inline-expander[collapsed]');
     if (inlineExpander) {
-      try {
-        inlineExpander.removeAttribute('collapsed');
-      } catch (error) {
-        YouTubeUtils.logError(
-          'TimecodePanel',
-          'Failed to expand description',
-          /** @type {any} */ (error)
-        );
-      }
+      inlineExpander.removeAttribute('collapsed');
       await sleep(300);
       return true;
     }
@@ -653,6 +741,7 @@
       try {
         await waitForElement(DESCRIPTION_SELECTOR_COMBINED, 1500);
       } catch (_e) {
+        logS(_e);
         // Continue trying
       }
 
@@ -667,99 +756,95 @@
       }
     }
   };
-  const getCurrentVideoId = () => new URLSearchParams(window.location.search).get('v');
+  const getCurrentVideoId = () => U.getVideoIdFromLocation();
 
   // Detection
-  const detectTimecodes = async (/** @type {any} */ options = {}) => {
-    const { force = false } = options;
-
-    if (!config.enabled) return [];
-    if (!(force || config.autoDetect)) return [];
-
-    const videoId = getCurrentVideoId();
-    if (!videoId) return [];
-
+  const checkDetectionCache_ = (/** @type {string} */ videoId, /** @type {boolean} */ force) => {
     const cacheKey = `detect_${videoId}`;
     if (!force && state.timecodes.has(cacheKey)) {
       const cached = state.timecodes.get(cacheKey);
-      if (Array.isArray(cached) && cached.length) {
-        return cached;
-      }
+      if (Array.isArray(cached) && cached.length) return { cacheKey, cached };
       state.timecodes.delete(cacheKey);
     }
+    return { cacheKey, cached: null };
+  };
 
-    await ensureDescriptionReady();
-
-    const uniqueMap = new Map();
-    const descriptionText = collectDescriptionText();
-
-    if (descriptionText) {
-      const extracted = extractTimecodes(descriptionText);
-      extracted.forEach(tc => {
-        if (tc.time >= 0) {
-          uniqueMap.set(tc.time.toString(), tc);
-        }
-      });
-    }
-
-    // Get native chapters
-    const chapters = getYouTubeChapters();
-
-    chapters.forEach(chapter => {
-      if (chapter.time >= 0) {
-        const key = chapter.time.toString();
-        const existing = uniqueMap.get(key);
-        // Prefer chapter label if existing label is empty or duplicate
-        if (existing && chapter.label && chapter.label.length > existing.label.length) {
-          uniqueMap.set(key, {
-            ...existing,
-            label: chapter.label,
-            isChapter: true,
-          });
-        } else if (!existing) {
-          uniqueMap.set(key, chapter);
-        } else {
-          // Mark existing as chapter
-          uniqueMap.set(key, { ...existing, isChapter: true });
-        }
-      }
-    });
-
-    // If no timecodes from description/chapters, try scanning visible comments
-    if (uniqueMap.size === 0) {
-      try {
-        const commentsText = collectCommentsText();
-        if (commentsText) {
-          const extractedComments = extractTimecodes(commentsText);
-          extractedComments.forEach(tc => {
-            if (tc.time >= 0) uniqueMap.set(tc.time.toString(), tc);
-          });
-        }
-      } catch (error) {
-        YouTubeUtils.logError(
-          'TimecodePanel',
-          'Comment scanning failed',
-          /** @type {any} */ (error)
-        );
+  const mergeChaptersIntoMap_ = (
+    /** @type {Map<string, { time: number, label: string, isChapter?: boolean }>} */ uniqueMap,
+    /** @type {Array<{ time: number, label: string, isChapter?: boolean }>} */ chapters
+  ) => {
+    for (const chapter of chapters) {
+      if (chapter.time < 0) continue;
+      const key = chapter.time.toString();
+      const existing = uniqueMap.get(key);
+      if (existing && chapter.label && chapter.label.length > existing.label.length) {
+        uniqueMap.set(key, { ...existing, label: chapter.label, isChapter: true });
+      } else if (!existing) {
+        uniqueMap.set(key, chapter);
+      } else {
+        uniqueMap.set(key, { ...existing, isChapter: true });
       }
     }
+  };
 
-    const result = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
-    const hadExistingItems = state.dom.list?.childElementCount > 0;
+  const scanCommentsIfEmpty_ = (
+    /** @type {Map<string, { time: number, label: string, isChapter?: boolean }>} */ uniqueMap
+  ) => {
+    if (uniqueMap.size > 0) return;
+    const commentsText = collectCommentsText();
+    if (!commentsText) return;
+    const extractedComments = extractTimecodes(commentsText);
+    for (const tc of extractedComments) {
+      if (tc.time >= 0) uniqueMap.set(tc.time.toString(), tc);
+    }
+  };
 
+  const applyDetectedResults_ = (
+    /** @type {string} */ cacheKey,
+    /** @type {Array<{ time: number, label: string }>} */ result,
+    /** @type {boolean} */ force
+  ) => {
+    const hadExisting = Boolean(state.dom.list?.childElementCount);
     if (result.length > 0) {
       updateTimecodePanel(result);
       state.timecodes.set(cacheKey, result);
       if (config.autoSave) saveTimecodesToStorage(result);
     } else {
-      if (force || !hadExistingItems) {
-        updateTimecodePanel([]);
-      }
-      if (force) {
-        state.timecodes.delete(cacheKey);
+      if (force || !hadExisting) updateTimecodePanel([]);
+      if (force) state.timecodes.delete(cacheKey);
+    }
+  };
+
+  /**
+   * @param {{ force?: boolean }} [options]
+   * @returns {Promise<Array<{ time: number, label: string }>>}
+   */
+  const detectTimecodes = async (options = {}) => {
+    const { force = false } = options;
+    if (!(force || config.autoDetect)) return [];
+
+    const videoId = getCurrentVideoId();
+    if (!videoId) return [];
+
+    const { cacheKey, cached } = checkDetectionCache_(videoId, force);
+    if (cached) return cached;
+
+    await ensureDescriptionReady();
+
+    /** @type {Map<string, { time: number, label: string, isChapter?: boolean }>} */
+    const uniqueMap = new Map();
+    const descriptionText = collectDescriptionText();
+    if (descriptionText) {
+      for (const tc of extractTimecodes(descriptionText)) {
+        if (tc.time >= 0) uniqueMap.set(tc.time.toString(), tc);
       }
     }
 
+    mergeChaptersIntoMap_(uniqueMap, getYouTubeChapters());
+    scanCommentsIfEmpty_(uniqueMap);
+
+    const result = Array.from(uniqueMap.values()).sort((a, b) => a.time - b.time);
+    applyDetectedResults_(cacheKey, result, force);
     return result;
   };
 
@@ -768,10 +853,12 @@
    * @param {HTMLElement|null} [buttonOverride=null] - Optional reload button element
    * @returns {Promise<void>}
    */
-  const reloadTimecodes = async (/** @type {any} */ buttonOverride = null) => {
-    const button = buttonOverride || state.dom.reloadButton || byId('timecode-reload');
+  const reloadTimecodes = async (buttonOverride = null) => {
+    const button = /** @type {HTMLButtonElement | null} */ (
+      buttonOverride || state.dom.reloadButton || byId('timecode-reload')
+    );
 
-    if (state.isReloading || !config.enabled) return;
+    if (state.isReloading) return;
 
     state.isReloading = true;
     if (button) {
@@ -789,7 +876,8 @@
         showNotification(t('noTimecodesFound'));
       }
     } catch (error) {
-      YouTubeUtils.logError('TimecodePanel', 'Reload failed', /** @type {any} */ (error));
+      logS(error);
+      YouTubeUtils.logError('TimecodePanel', 'Reload failed', /** @type {unknown} */ (error));
       showNotification(t('reloadError'));
     } finally {
       if (button) {
@@ -800,12 +888,44 @@
     }
   };
 
+  const queryFirstText_ = (/** @type {Element} */ root, /** @type {string[]} */ selectors) => {
+    for (const sel of selectors) {
+      const el = root.querySelector(sel);
+      if (el?.textContent) return el.textContent;
+    }
+    return null;
+  };
+
+  const extractChapterItem_ = (/** @type {Element} */ item) => {
+    const timeSelectors = ['.time-info', '.timestamp', '#time', 'span[id*="time"]'];
+    const titleSelectors = ['.marker-title', '.chapter-title', '#details', 'h4', '.title'];
+
+    const timeText = queryFirstText_(item, timeSelectors);
+    if (!timeText) return null;
+    const time = parseTime(timeText.trim());
+    if (time === null) return null;
+
+    const titleText = queryFirstText_(item, titleSelectors);
+    let cleanTitle = titleText?.trim().replace(/\s+/g, ' ') || '';
+    if (cleanTitle.length > 0) {
+      timecodeLogger?.warn?.('Timecode', `Debug raw chapter title: ${cleanTitle}`);
+    }
+    cleanTitle = stripLeadingTimePrefix(cleanTitle);
+    const deduplicated = removeDuplicateText(cleanTitle);
+    logTimecodeDeduplication(cleanTitle, deduplicated, 'Removed');
+
+    return {
+      time,
+      label: deduplicated,
+      isChapter: true,
+    };
+  };
+
   /**
    * Extract chapter markers from YouTube's native chapter system
    * @returns {Array<{time: number, label: string, isChapter: boolean}>} Array of chapter objects
    */
   const getYouTubeChapters = () => {
-    // Расширенный поиск глав/эпизодов
     const selectors = [
       'ytd-macro-markers-list-item-renderer',
       'ytd-chapter-renderer',
@@ -816,87 +936,61 @@
 
     const items = $$(selectors.join(', '));
     const chapters = new Map();
+    for (const item of items) {
+      const chapter = extractChapterItem_(item);
+      if (chapter) chapters.set(chapter.time.toString(), chapter);
+    }
+    return Array.from(chapters.values()).sort((a, b) => a.time - b.time);
+  };
 
-    items.forEach(item => {
-      // Попробуем разные способы извлечения времени и заголовка
-      const timeSelectors = ['.time-info', '.timestamp', '#time', 'span[id*="time"]'];
-      const titleSelectors = ['.marker-title', '.chapter-title', '#details', 'h4', '.title'];
+  const updateTimecodeSubmenuState_ = (
+    /** @type {Element} */ enableItem,
+    /** @type {Element | null} */ submenuWrap,
+    /** @type {boolean} */ checked
+  ) => {
+    const submenuToggle = enableItem.querySelector('.yp-submenu-toggle[data-submenu="timecode"]');
+    if (!(submenuToggle instanceof HTMLElement)) return;
 
-      let timeText = null;
-      for (const sel of timeSelectors) {
-        const el = item.querySelector(sel);
-        if (el?.textContent) {
-          timeText = el.textContent;
-          break;
-        }
-      }
+    if (checked) {
+      const stored = window.YouTubePlusSettingsHelpers?.readSubmenuExpanded?.('timecode') ?? null;
+      const nextExpanded = typeof stored === 'boolean' ? stored : true;
+      submenuToggle.removeAttribute('disabled');
+      submenuToggle.classList.remove('timecode-submenu-toggle-hidden');
+      submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
+      if (submenuWrap instanceof HTMLElement)
+        submenuWrap.classList.toggle('is-hidden', !nextExpanded);
+    } else {
+      submenuToggle.setAttribute('disabled', '');
+      submenuToggle.classList.add('timecode-submenu-toggle-hidden');
+      if (submenuWrap instanceof HTMLElement) submenuWrap.classList.add('is-hidden');
+    }
+  };
 
-      let titleText = null;
-      for (const sel of titleSelectors) {
-        const el = item.querySelector(sel);
-        if (el?.textContent) {
-          titleText = el.textContent;
-          break;
-        }
-      }
-
-      if (timeText) {
-        const time = parseTime(timeText.trim());
-        if (time !== null) {
-          // Очищаем заголовок от лишних пробелов и переносов строк
-          let cleanTitle = titleText?.trim().replace(/\s+/g, ' ') || '';
-
-          // Debug logging
-          if (cleanTitle && cleanTitle.length > 0) {
-            timecodeLogger?.warn?.('Timecode', `Debug raw chapter title: ${cleanTitle}`);
-          }
-
-          // Remove time prefix if present in label
-          cleanTitle = stripLeadingTimePrefix(cleanTitle);
-
-          // Remove duplicate text (some YouTube chapters repeat the title)
-          const deduplicated = removeDuplicateText(cleanTitle);
-
-          if (cleanTitle !== deduplicated) {
-            timecodeLogger?.warn?.(
-              'Timecode',
-              `Removed duplicate: ${cleanTitle} -> ${deduplicated}`
-            );
-          }
-
-          cleanTitle = deduplicated;
-          chapters.set(time.toString(), {
-            time,
-            label: cleanTitle,
-            isChapter: true,
-          });
-        }
-      }
-    });
-    const result = Array.from(chapters.values()).sort((a, b) => a.time - b.time);
-    return result;
+  const handleTimecodeCheckboxChange_ = (
+    /** @type {HTMLInputElement} */ enableCheckbox,
+    /** @type {Element} */ enableItem,
+    /** @type {Element | null} */ submenuWrap
+  ) => {
+    const checked = enableCheckbox.checked;
+    window.YouTubePlusSettingsStore?.set?.('timecodeEnabled', checked);
+    updateTimecodeSubmenuState_(enableItem, submenuWrap, checked);
+    if (checked) {
+      toggleTimecodePanel(true);
+    } else if (!timecodeCtx && state.dom.panel) {
+      cleanup();
+    }
   };
 
   // Settings panel
   const attachTimecodeHandlers = () => {
-    const advancedSection = $('.ytp-plus-settings-section[data-section="advanced"]');
+    ensureTimecodeStyles();
+    const advancedSection = $('.yp-settings-section[data-section="advanced"]');
     if (!advancedSection) return;
     const enableItem = advancedSection.querySelector('.timecode-settings-item');
     if (!enableItem || /** @type {HTMLElement} */ (enableItem).dataset.handlerAttached) return;
     /** @type {HTMLElement} */ (enableItem).dataset.handlerAttached = '1';
 
     const submenuWrap = advancedSection.querySelector('.timecode-submenu[data-submenu="timecode"]');
-    const getSubmenuExpanded = () => {
-      try {
-        const raw = localStorage.getItem('ytp-plus-submenu-states');
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed.timecode === 'boolean') return parsed.timecode;
-      } catch (_e) {
-        U.logSuppressed(_e, 'Timecode');
-      }
-      return null;
-    };
 
     window.YouTubePlusDesignSystem?.initGlassDropdown?.({
       dropdown: byId('timecode-modifier-dropdown'),
@@ -905,74 +999,82 @@
 
     const enableCheckbox = byId('timecode-enable-checkbox');
     if (enableCheckbox instanceof HTMLInputElement) {
-      enableCheckbox.addEventListener('change', _e => {
-        config.enabled = enableCheckbox.checked;
-        const submenuToggle = enableItem.querySelector(
-          '.ytp-plus-submenu-toggle[data-submenu="timecode"]'
-        );
-        if (submenuToggle instanceof HTMLElement) {
-          if (config.enabled) {
-            const stored = getSubmenuExpanded();
-            const nextExpanded = typeof stored === 'boolean' ? stored : true;
-            submenuToggle.removeAttribute('disabled');
-            submenuToggle.classList.remove('timecode-submenu-toggle-hidden');
-            submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
-            if (submenuWrap instanceof HTMLElement)
-              submenuWrap.classList.toggle('is-hidden', !nextExpanded);
-          } else {
-            submenuToggle.setAttribute('disabled', '');
-            submenuToggle.classList.add('timecode-submenu-toggle-hidden');
-            if (submenuWrap instanceof HTMLElement) submenuWrap.classList.add('is-hidden');
-          }
-        }
-        toggleTimecodePanel(config.enabled);
-        saveSettings();
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        enableCheckbox,
+        'change',
+        () => handleTimecodeCheckboxChange_(enableCheckbox, enableItem, submenuWrap),
+        undefined,
+        false
+      );
     }
 
     const modifierCombo = byId('timecode-modifier-combo');
     if (modifierCombo instanceof HTMLSelectElement) {
-      modifierCombo.addEventListener('change', _e => {
-        const value = modifierCombo.value;
-        config.shortcut.ctrlKey = value.includes('ctrl');
-        config.shortcut.altKey = value.includes('alt');
-        config.shortcut.shiftKey = value.includes('shift');
-        saveSettings();
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        modifierCombo,
+        'change',
+        _e => {
+          const value = modifierCombo.value;
+          config.shortcut.ctrlKey = value.includes('ctrl');
+          config.shortcut.altKey = value.includes('alt');
+          config.shortcut.shiftKey = value.includes('shift');
+          saveSettings();
+        },
+        undefined,
+        false
+      );
     }
 
     const keyInput = byId('timecode-key');
     if (keyInput instanceof HTMLInputElement) {
-      keyInput.addEventListener('input', _e => {
-        if (keyInput.value) {
-          config.shortcut.key = keyInput.value.toUpperCase();
-          saveSettings();
-        }
-      });
-      keyInput.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
-        e.stopPropagation();
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        keyInput,
+        'input',
+        _e => {
+          if (keyInput.value) {
+            config.shortcut.key = keyInput.value.toUpperCase();
+            saveSettings();
+          }
+        },
+        undefined,
+        false
+      );
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        keyInput,
+        'keydown',
+        (/** @type {KeyboardEvent} */ e) => {
+          e.stopPropagation();
+        },
+        undefined,
+        false
+      );
     }
   };
 
-  // CSS
-  const insertTimecodeStyles = () => {
-    if (byId('timecode-panel-styles')) return;
-
-    const styles = window.YouTubePlusDesignSystem?.getStyle?.('timecode-panel-styles') || '';
-    YouTubeUtils.StyleManager.add('timecode-panel-styles', styles);
+  // The panel and settings-submenu CSS enter through the feature ctx right
+  // before that UI is built, not at start: a watch page that never opens the
+  // panel pays nothing for its rules.
+  let timecodeStylesAdded = false;
+  const ensureTimecodeStyles = () => {
+    if (timecodeStylesAdded || !timecodeCtx) return;
+    timecodeStylesAdded = true;
+    timecodeCtx.style(
+      TIMECODE_STYLE_ID,
+      window.YouTubePlusDesignSystem?.getStyle?.(TIMECODE_STYLE_ID) || ''
+    );
   };
 
   // Panel creation
   const createTimecodePanel = () => {
     if (state.dom.panel) return state.dom.panel;
+    ensureTimecodeStyles();
 
     // Remove any existing panels (for redundancy)
     $$('#timecode-panel').forEach(p => p.remove());
 
     const panel = document.createElement('div');
     panel.id = 'timecode-panel';
-    panel.className = config.enabled ? '' : 'hidden';
+    panel.className = '';
     if (config.autoTrackPlayback) panel.classList.add('auto-tracking');
 
     window.YouTubeUtils.renderTemplateClone(
@@ -1032,9 +1134,101 @@
       reloadButton: panel.querySelector('#timecode-reload'),
     };
 
+    // The living panel group: when the feature ctx is running, the panel
+    // element, its delegations and its drag listeners are owned by a
+    // scope that stops with the feature; manual callers keep the
+    // CleanupManager registrations.
+    const scope = timecodeCtx?.scope?.() ?? null;
+    if (scope) {
+      uiScope?.dispose();
+      uiScope = scope;
+      scope.own(panel);
+      scope.onDispose(resetDomRefs);
+    }
+
     // Event delegation
-    panel.addEventListener('click', handlePanelClick);
-    makeDraggable(panel);
+    const delegator = window.YouTubePlusEventDelegation;
+    if (delegator?.on) {
+      /** @type {(() => void)[]} */
+      const offs = [];
+      /**
+       * Register one panel delegation and collect its release.
+       * @param {string} selector
+       * @param {(e: Event, el: HTMLElement) => void} handler
+       */
+      const onPanelClick = (selector, handler) => {
+        const off = delegator.on(panel, 'click', selector, handler);
+        if (typeof off === 'function') offs.push(off);
+      };
+
+      onPanelClick('#timecode-reload', (/** @type {Event} */ e, /** @type {HTMLElement} */ el) => {
+        e.preventDefault();
+        reloadTimecodes(el);
+      });
+      onPanelClick('#timecode-close', () => {
+        toggleTimecodePanel(false);
+      });
+      onPanelClick('#timecode-add-btn', () => {
+        const video = /** @type {HTMLVideoElement | null} */ ($('video'));
+        if (video) showTimecodeForm(video.currentTime);
+      });
+      onPanelClick(
+        '#timecode-track-toggle',
+        (/** @type {Event} */ _e, /** @type {HTMLElement} */ el) => {
+          config.autoTrackPlayback = !config.autoTrackPlayback;
+          el.textContent = config.autoTrackPlayback ? t('tracking') : t('track');
+          el.classList.toggle('active', config.autoTrackPlayback);
+          state.dom.panel?.classList.toggle('auto-tracking', config.autoTrackPlayback);
+          saveSettings();
+          if (config.autoTrackPlayback) startTracking();
+        }
+      );
+      onPanelClick('#timecode-export-btn', () => {
+        exportTimecodes();
+      });
+      onPanelClick('#timecode-form-cancel', () => {
+        hideTimecodeForm();
+      });
+      onPanelClick('#timecode-form-save', () => {
+        saveTimecodeForm();
+      });
+      onPanelClick('.timecode-action', (/** @type {Event} */ e, /** @type {HTMLElement} */ el) => {
+        e.stopPropagation();
+        const action = el.dataset.action;
+        const parentItem = /** @type {HTMLElement | null} */ (el.closest('.timecode-item'));
+        const index = parseInt(parentItem?.dataset?.index ?? '', 10);
+        if (action === 'edit') {
+          editTimecode(index);
+        } else if (action === 'delete') {
+          deleteTimecode(index);
+        }
+      });
+      onPanelClick('.timecode-item', (/** @type {Event} */ e, /** @type {HTMLElement} */ el) => {
+        const evtTarget = /** @type {HTMLElement | null} */ (e.target);
+        if (evtTarget?.closest('.timecode-actions')) return;
+        const time = parseFloat(el.dataset.time ?? '');
+        const video = /** @type {HTMLVideoElement | null} */ ($('video'));
+        if (video && !Number.isNaN(time)) {
+          /** @type {HTMLVideoElement} */ (video).currentTime = time;
+          if (video.paused) video.play();
+          updateActiveItem(el);
+        }
+      });
+      if (scope) {
+        scope.onDispose(() => {
+          for (const off of offs) off?.();
+        });
+      }
+    } else {
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        panel,
+        'click',
+        handlePanelClick,
+        undefined,
+        false
+      );
+    }
+    makeDraggable(panel, scope);
 
     document.body.appendChild(panel);
     applySavedPanelPosition(panel);
@@ -1042,39 +1236,67 @@
   };
 
   // Event handling
-  const handlePanelClick = (/** @type {any} */ e) => {
-    const { target } = e;
-    const item = target.closest('.timecode-item');
+  const closestById = (/** @type {Element} */ target, /** @type {string} */ id) =>
+    /** @type {HTMLElement | null} */ (
+      target.closest ? target.closest(id) : target.id === id ? target : null
+    );
 
-    // Use closest so clicks on child SVG/path elements are detected
-    const reloadButton = target.closest
-      ? target.closest('#timecode-reload')
-      : target.id === 'timecode-reload'
-        ? target
-        : null;
+  const handleChromeButtons = (/** @type {Event} */ e, /** @type {Element} */ target) => {
+    const reloadButton = closestById(target, '#timecode-reload');
     if (reloadButton) {
       e.preventDefault();
       reloadTimecodes(reloadButton);
-      return;
+      return true;
     }
-
-    const closeButton = target.closest
-      ? target.closest('#timecode-close')
-      : target.id === 'timecode-close'
-        ? target
-        : null;
-    if (closeButton) {
+    if (closestById(target, '#timecode-close')) {
       toggleTimecodePanel(false);
-    } else if (target.id === 'timecode-add-btn') {
-      const video = YouTubeUtils.querySelector ? YouTubeUtils.querySelector('video') : $('video');
+      return true;
+    }
+    return false;
+  };
+
+  const handleItemAction = (/** @type {Event} */ e, /** @type {HTMLElement} */ target) => {
+    e.stopPropagation();
+    const action = target.dataset.action;
+    const parent = target.closest('.timecode-item');
+    const index = parseInt(/** @type {HTMLElement} */ (parent)?.dataset?.index || '', 10);
+    if (action === 'edit') {
+      editTimecode(index);
+    } else if (action === 'delete') {
+      deleteTimecode(index);
+    }
+  };
+
+  const seekFromItem = (/** @type {HTMLElement} */ item) => {
+    const time = parseFloat(item.dataset.time || '');
+    const video = /** @type {HTMLVideoElement | null} */ ($('video'));
+    if (video && !Number.isNaN(time)) {
+      /** @type {HTMLVideoElement} */ (video).currentTime = time;
+      if (video.paused) video.play();
+      updateActiveItem(item);
+    }
+  };
+
+  const handleTrackToggle = (/** @type {HTMLElement} */ target) => {
+    config.autoTrackPlayback = !config.autoTrackPlayback;
+    target.textContent = config.autoTrackPlayback ? t('tracking') : t('track');
+    target.classList.toggle('active', config.autoTrackPlayback);
+    state.dom.panel?.classList.toggle('auto-tracking', config.autoTrackPlayback);
+    saveSettings();
+    if (config.autoTrackPlayback) startTracking();
+  };
+
+  const handlePanelClick = (/** @type {Event} */ e) => {
+    const target = /** @type {HTMLElement | null} */ (e.target);
+    if (!target) return;
+    const item = /** @type {HTMLElement | null} */ (target.closest('.timecode-item'));
+    if (handleChromeButtons(e, target)) return;
+
+    if (target.id === 'timecode-add-btn') {
+      const video = /** @type {HTMLVideoElement | null} */ ($('video'));
       if (video) showTimecodeForm(video.currentTime);
     } else if (target.id === 'timecode-track-toggle') {
-      config.autoTrackPlayback = !config.autoTrackPlayback;
-      target.textContent = config.autoTrackPlayback ? t('tracking') : t('track');
-      target.classList.toggle('active', config.autoTrackPlayback);
-      state.dom.panel.classList.toggle('auto-tracking', config.autoTrackPlayback);
-      saveSettings();
-      if (config.autoTrackPlayback) startTracking();
+      handleTrackToggle(target);
     } else if (target.id === 'timecode-export-btn') {
       exportTimecodes();
     } else if (target.id === 'timecode-form-cancel') {
@@ -1082,28 +1304,14 @@
     } else if (target.id === 'timecode-form-save') {
       saveTimecodeForm();
     } else if (target.classList.contains('timecode-action')) {
-      e.stopPropagation();
-      const action = target.dataset.action;
-      const index = parseInt(target.closest('.timecode-item').dataset.index, 10);
-
-      if (action === 'edit') {
-        editTimecode(index);
-      } else if (action === 'delete') {
-        deleteTimecode(index);
-      }
+      handleItemAction(e, target);
     } else if (item && !target.closest('.timecode-actions')) {
-      const time = parseFloat(item.dataset.time);
-      const video = $('video');
-      if (video && !Number.isNaN(time)) {
-        /** @type {HTMLVideoElement} */ (video).currentTime = time;
-        if (video.paused) video.play();
-        updateActiveItem(item);
-      }
+      seekFromItem(item);
     }
   };
 
   // Edit timecode
-  const editTimecode = (/** @type {any} */ index) => {
+  const editTimecode = (/** @type {number} */ index) => {
     const timecodes = getCurrentTimecodes();
     if (index < 0 || index >= timecodes.length) return;
 
@@ -1111,20 +1319,22 @@
     state.editingIndex = index;
 
     // Update item appearance
-    const item = state.dom.list.querySelector(`.timecode-item[data-index="${index}"]`);
+    const item = state.dom.list?.querySelector(`.timecode-item[data-index="${index}"]`);
     if (item) {
       item.classList.add('editing');
       // Hide other editing items
-      state.dom.list.querySelectorAll('.timecode-item.editing').forEach((/** @type {any} */ el) => {
-        if (el !== item) el.classList.remove('editing');
-      });
+      state.dom.list
+        ?.querySelectorAll('.timecode-item.editing')
+        .forEach((/** @type {Element} */ el) => {
+          if (el !== item) el.classList.remove('editing');
+        });
     }
 
     showTimecodeForm(timecode.time, timecode.label);
   };
 
   // Delete timecode
-  const deleteTimecode = (/** @type {any} */ index) => {
+  const deleteTimecode = async (/** @type {number} */ index) => {
     const timecodes = getCurrentTimecodes();
     if (index < 0 || index >= timecodes.length) return;
 
@@ -1136,8 +1346,14 @@
       return;
     }
 
-    // Confirm deletion
-    if (!confirm(t('confirmDelete').replace('{label}', timecode.label))) return;
+    // Confirm deletion own focus-trapped dialog; interpolation
+    // goes through the common t(key, params), not a raw .replace).
+    const confirmed = await U.confirmDialog({
+      message: t('confirmDelete', { label: timecode.label }),
+      confirmLabel: t('confirm'),
+      cancelLabel: t('cancel'),
+    });
+    if (!confirmed) return;
 
     timecodes.splice(index, 1);
     updateTimecodePanel(timecodes);
@@ -1147,27 +1363,33 @@
 
   // Form handling
   const showTimecodeForm = (
-    /** @type {any} */ currentTime,
-    /** @type {any} */ existingLabel = ''
+    /** @type {number} */ currentTime,
+    /** @type {string} */ existingLabel = ''
   ) => {
     const { form, timeInput, labelInput } = state.dom;
+    if (!(form && timeInput && labelInput)) return;
     form.classList.add('visible');
     timeInput.value = formatTime(currentTime);
     labelInput.value = existingLabel;
-    requestAnimationFrame(() => labelInput.focus());
+    window.YouTubePlusCleanupManager?.registerAnimationFrame?.(
+      requestAnimationFrame(() => labelInput.focus())
+    );
   };
 
   const hideTimecodeForm = () => {
-    state.dom.form.classList.remove('visible');
+    state.dom.form?.classList.remove('visible');
     state.editingIndex = null;
     // Remove editing class from all items
-    state.dom.list?.querySelectorAll('.timecode-item.editing').forEach((/** @type {any} */ el) => {
-      el.classList.remove('editing');
-    });
+    state.dom.list
+      ?.querySelectorAll('.timecode-item.editing')
+      .forEach((/** @type {Element} */ el) => {
+        el.classList.remove('editing');
+      });
   };
 
   const saveTimecodeForm = () => {
     const { timeInput, labelInput } = state.dom;
+    if (!(timeInput && labelInput)) return;
     const timeValue = timeInput.value.trim();
     const labelValue = labelInput.value.trim();
 
@@ -1216,7 +1438,9 @@
       return;
     }
 
-    const exportBtn = state.dom.panel?.querySelector('#timecode-export-btn');
+    const exportBtn = /** @type {HTMLElement | null} */ (
+      state.dom.panel?.querySelector('#timecode-export-btn')
+    );
     if (exportBtn) {
       exportBtn.textContent = t('copied');
       exportBtn.style.backgroundColor = 'var(--yt-timecode-export-success-bg)';
@@ -1234,14 +1458,22 @@
     });
 
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(content).then(() => {
-        showNotification(t('timecodesCopied'));
-      });
+      navigator.clipboard
+        .writeText(content)
+        .then(() => {
+          showNotification(t('timecodesCopied'));
+        })
+        .catch(err => {
+          logS(err);
+          timecodeLogger?.warn?.('Timecode', 'Clipboard write failed', err);
+        });
     }
   };
 
   // Panel updates
-  const updateTimecodePanel = (/** @type {any} */ timecodes) => {
+  const updateTimecodePanel = (
+    /** @type {Array<{ time: number, label?: string, isChapter?: boolean, isUserAdded?: boolean, originalText?: string }>} */ timecodes
+  ) => {
     const { list, empty } = state.dom;
     if (!(list && empty)) return;
 
@@ -1257,50 +1489,48 @@
     window.YouTubeUtils.renderTemplateClone(
       list,
       timecodes
-        .map((/** @type {any} */ tc, /** @type {any} */ i) => {
-          const timeStr = formatTime(tc.time);
-          // Only use label if it exists and is different from time
-          let rawLabel = tc.label?.trim() || '';
+        .map(
+          (
+            /** @type {{ time: number, label?: string, isChapter?: boolean, isUserAdded?: boolean, originalText?: string }} */ tc,
+            /** @type {number} */ i
+          ) => {
+            const timeStr = formatTime(tc.time);
+            // Only use label if it exists and is different from time
+            let rawLabel = tc.label?.trim() || '';
 
-          // Remove time prefix from label if it starts with the same time
-          rawLabel = stripLeadingTimePrefix(rawLabel);
+            // Remove time prefix from label if it starts with the same time
+            rawLabel = stripLeadingTimePrefix(rawLabel);
 
-          // Remove duplicate text in label (final safety check)
-          const beforeDedup = rawLabel;
-          rawLabel = removeDuplicateText(rawLabel);
+            // Remove duplicate text in label (final safety check)
+            const beforeDedup = rawLabel;
+            rawLabel = removeDuplicateText(rawLabel);
+            logTimecodeDeduplication(beforeDedup, rawLabel, 'Display');
 
-          if (beforeDedup !== rawLabel && rawLabel.length > 0) {
-            timecodeLogger?.warn?.(
-              'Timecode',
-              `Display deduplicated: ${beforeDedup} -> ${rawLabel}`
+            // Normalize time comparisons (remove leading zeros for comparison)
+            const normalizedTime = timeStr.replace(/^0+:/, '');
+            const normalizedLabel = rawLabel.replace(/^0+:/, '');
+
+            const hasCustomLabel =
+              rawLabel &&
+              rawLabel !== timeStr &&
+              normalizedLabel !== normalizedTime &&
+              rawLabel !== tc.originalText &&
+              rawLabel.length > 0;
+            const displayLabel = hasCustomLabel ? rawLabel : '';
+            const escapeMap = /** @type {Record<string, string>} */ ({
+              '<': '&lt;',
+              '>': '&gt;',
+              '&': '&amp;',
+              '"': '&quot;',
+              "'": '&#39;',
+            });
+            const safeLabel = displayLabel.replace(
+              /[<>&"']/g,
+              (/** @type {string} */ c) => escapeMap[c] || c
             );
-          }
+            const isEditable = !tc.isChapter || tc.isUserAdded;
 
-          // Normalize time comparisons (remove leading zeros for comparison)
-          const normalizedTime = timeStr.replace(/^0+:/, '');
-          const normalizedLabel = rawLabel.replace(/^0+:/, '');
-
-          const hasCustomLabel =
-            rawLabel &&
-            rawLabel !== timeStr &&
-            normalizedLabel !== normalizedTime &&
-            rawLabel !== tc.originalText &&
-            rawLabel.length > 0;
-          const displayLabel = hasCustomLabel ? rawLabel : '';
-          const escapeMap = /** @type {any} */ ({
-            '<': '&lt;',
-            '>': '&gt;',
-            '&': '&amp;',
-            '"': '&quot;',
-            "'": '&#39;',
-          });
-          const safeLabel = displayLabel.replace(
-            /[<>&"']/g,
-            (/** @type {any} */ c) => escapeMap[c]
-          );
-          const isEditable = !tc.isChapter || tc.isUserAdded;
-
-          return `
+            return `
           <div class="timecode-item ${tc.isChapter ? 'has-chapter' : ''}" data-time="${tc.time}" data-index="${i}">
             <div class="timecode-time">${timeStr}</div>
             ${safeLabel ? `<div class="timecode-label" title="${safeLabel}">${safeLabel}</div>` : ''}
@@ -1317,16 +1547,17 @@
             }
           </div>
         `;
-        })
+          }
+        )
         .join('')
     );
   };
 
-  const updateActiveItem = (/** @type {any} */ activeItem) => {
+  const updateActiveItem = (/** @type {HTMLElement | null} */ activeItem) => {
     const items = state.dom.list?.querySelectorAll('.timecode-item');
     if (!items) return;
 
-    items.forEach((/** @type {any} */ item) => item.classList.remove('active', 'pulse'));
+    items.forEach((/** @type {Element} */ item) => item.classList.remove('active', 'pulse'));
     if (activeItem) {
       activeItem.classList.add('active', 'pulse');
       setTimeout(() => activeItem.classList.remove('pulse'), 800);
@@ -1334,129 +1565,176 @@
   };
 
   // Tracking
+  // Uses the video's `timeupdate` event (~4 Hz during playback) instead of a
+  // requestAnimationFrame loop: no per-frame DOM queries or style writes.
   const startTracking = () => {
     if (state.trackingId) return;
 
-    const track = () => {
-      try {
-        const video = $('video');
-        const { panel, currentTime, list } = state.dom;
+    const video = /** @type {HTMLVideoElement | null} */ ($('video'));
+    if (!video) return;
+    if (!timecodeCtx) return;
 
-        // Stop tracking if essential elements are missing or panel is hidden
-        if (!(video && panel) || panel.classList.contains('hidden') || !config.autoTrackPlayback) {
-          if (state.trackingId) {
-            cancelAnimationFrame(state.trackingId);
-            state.trackingId = 0;
-          }
+    const updateCurrentTimeDisplay = () => {
+      const { currentTime } = state.dom;
+      if (currentTime && !Number.isNaN(video.currentTime)) {
+        currentTime.textContent = formatTime(video.currentTime);
+      }
+    };
+
+    /** @param {NodeListOf<Element>} items */
+    const computeActiveIndex = items => {
+      let activeIndex = -1;
+      let nextIndex = -1;
+      for (let i = 0; i < items.length; i++) {
+        const timeData = /** @type {HTMLElement} */ (items[i]).dataset.time;
+        if (!timeData) continue;
+        const time = parseFloat(timeData);
+        if (Number.isNaN(time)) continue;
+        if (video.currentTime >= time) {
+          activeIndex = i;
+        } else if (nextIndex === -1) {
+          nextIndex = i;
+        }
+      }
+      return { activeIndex, nextIndex };
+    };
+
+    /** @param {Element} item */
+    const scrollItemIntoView = item => {
+      if (typeof item?.scrollIntoView !== 'function') return;
+      try {
+        item.scrollIntoView({
+          behavior: 'smooth',
+          block: 'center',
+        });
+      } catch (_e) {
+        logS(_e);
+        // Fallback for browsers that don't support smooth scrolling
+        item.scrollIntoView(false);
+      }
+    };
+
+    /**
+     * @param {NodeListOf<Element>} items
+     * @param {number} activeIndex
+     */
+    const updateActiveItemState = (items, activeIndex) => {
+      if (state.activeIndex === activeIndex) return;
+      // Clear the active class from the item that held it
+      if (state.activeIndex !== null && state.activeIndex >= 0 && items[state.activeIndex]) {
+        items[state.activeIndex].classList.remove('active');
+      }
+      // Set new active state
+      if (activeIndex >= 0 && items[activeIndex]) {
+        items[activeIndex].classList.add('active');
+        scrollItemIntoView(items[activeIndex]);
+      }
+      state.activeIndex = activeIndex;
+    };
+
+    /**
+     * @param {NodeListOf<Element>} items
+     * @param {number} activeIndex
+     * @param {number} nextIndex
+     */
+    const updateProgressBar = (items, activeIndex, nextIndex) => {
+      if (!(activeIndex >= 0 && nextIndex >= 0 && items[activeIndex])) return;
+      const currentTimeData = /** @type {HTMLElement} */ (items[activeIndex]).dataset.time;
+      const nextTimeData = /** @type {HTMLElement} */ (items[nextIndex]).dataset.time;
+      if (!(currentTimeData && nextTimeData)) return;
+      const current = parseFloat(currentTimeData);
+      const next = parseFloat(nextTimeData);
+      if (Number.isNaN(current) || Number.isNaN(next) || next <= current) return;
+      const progress = ((video.currentTime - current) / (next - current)) * 100;
+      const progressEl = /** @type {HTMLElement | null} */ (
+        items[activeIndex].querySelector('.timecode-progress')
+      );
+      if (progressEl) {
+        const clampedProgress = Math.min(100, Math.max(0, progress));
+        progressEl.style.width = `${clampedProgress}%`;
+      }
+    };
+
+    const onTimeUpdate = () => {
+      try {
+        const { panel, list } = state.dom;
+
+        // Stop tracking if essential elements are missing, the panel is
+        // hidden, or tracking was disabled. Re-bind if the video element
+        // was swapped by an SPA navigation.
+        if (
+          !(panel && video.isConnected) ||
+          panel.classList.contains('hidden') ||
+          !config.autoTrackPlayback
+        ) {
+          const shouldRebind = config.autoTrackPlayback && video.isConnected === false;
+          stopTracking();
+          if (shouldRebind) startTracking();
           return;
         }
 
         // Update current time display
-        if (currentTime && !Number.isNaN(video.currentTime)) {
-          currentTime.textContent = formatTime(video.currentTime);
-        }
+        updateCurrentTimeDisplay();
 
         // Update active item
         const items = list?.querySelectorAll('.timecode-item');
-        if (items?.length) {
-          let activeIndex = -1;
-          let nextIndex = -1;
+        if (!items?.length) return;
 
-          for (let i = 0; i < items.length; i++) {
-            const timeData = items[i].dataset.time;
-            if (!timeData) continue;
-
-            const time = parseFloat(timeData);
-            if (Number.isNaN(time)) continue;
-
-            if (video.currentTime >= time) {
-              activeIndex = i;
-            } else if (nextIndex === -1) {
-              nextIndex = i;
-            }
-          }
-
-          // Update active state
-          if (state.activeIndex !== activeIndex) {
-            // Remove previous active state
-            if (state.activeIndex !== null && state.activeIndex >= 0 && items[state.activeIndex]) {
-              items[state.activeIndex].classList.remove('active');
-            }
-
-            // Set new active state
-            if (activeIndex >= 0 && items[activeIndex]) {
-              items[activeIndex].classList.add('active');
-              try {
-                items[activeIndex].scrollIntoView({
-                  behavior: 'smooth',
-                  block: 'center',
-                });
-              } catch (_e) {
-                // Fallback for browsers that don't support smooth scrolling
-                items[activeIndex].scrollIntoView(false);
-              }
-            }
-
-            state.activeIndex = activeIndex;
-          }
-
-          // Update progress bar
-          if (activeIndex >= 0 && nextIndex >= 0 && items[activeIndex]) {
-            const currentTimeData = items[activeIndex].dataset.time;
-            const nextTimeData = items[nextIndex].dataset.time;
-
-            if (currentTimeData && nextTimeData) {
-              const current = parseFloat(currentTimeData);
-              const next = parseFloat(nextTimeData);
-
-              if (!(Number.isNaN(current) || Number.isNaN(next)) && next > current) {
-                const progress = ((video.currentTime - current) / (next - current)) * 100;
-                const progressEl = items[activeIndex].querySelector('.timecode-progress');
-                if (progressEl) {
-                  const clampedProgress = Math.min(100, Math.max(0, progress));
-                  progressEl.style.width = `${clampedProgress}%`;
-                }
-              }
-            }
-          }
-        }
-
-        // Continue tracking if enabled
-        if (config.autoTrackPlayback) {
-          state.trackingId = requestAnimationFrame(track);
-        }
+        const { activeIndex, nextIndex } = computeActiveIndex(items);
+        updateActiveItemState(items, activeIndex);
+        updateProgressBar(items, activeIndex, nextIndex);
       } catch (error) {
+        logS(error);
         timecodeLogger?.warn?.('Timecode', 'Tracking error', error);
         // Stop tracking on error to prevent infinite error loops
-        if (state.trackingId) {
-          cancelAnimationFrame(state.trackingId);
-          state.trackingId = 0;
-        }
+        stopTracking();
       }
     };
 
-    state.trackingId = requestAnimationFrame(track);
+    timeUpdateRelease = timecodeCtx.listen(video, 'timeupdate', onTimeUpdate);
+    state.trackingId = 1;
   };
 
-  // Stop tracking function
   const stopTracking = () => {
-    if (state.trackingId) {
-      cancelAnimationFrame(state.trackingId);
-      state.trackingId = 0;
-    }
+    if (!state.trackingId) return;
+    timeUpdateRelease?.();
+    timeUpdateRelease = null;
+    state.trackingId = 0;
   };
 
   // Drag functionality
-  const makeDraggable = (/** @type {any} */ panel) => {
+  /**
+   * @param {HTMLElement} panel
+   * @param {FeatureScope | null} [scope] owning group; without it the drag listeners are
+   * CleanupManager-tracked only (manual facade callers)
+   */
+  const makeDraggable = (panel, scope) => {
     const header = panel.querySelector('#timecode-header');
     if (!header) return;
 
-    /** @type {any} */ let startX;
-    /** @type {any} */ let startY;
-    /** @type {any} */ let startLeft;
-    /** @type {any} */ let startTop;
+    /**
+     * Register a drag listener that lives until its own release is called
+     * (or the owning group is disposed).
+     * @param {EventTarget} target
+     * @param {string} type
+     * @param {EventListener} fn
+     * @param {AddEventListenerOptions} [opts]
+     * @returns {() => void}
+     */
+    const addDragListener = (target, type, fn, opts) => {
+      if (scope?.listen) return scope.listen(target, type, fn, opts);
+      const key = window.YouTubePlusCleanupManager?.registerListener?.(target, type, fn, opts);
+      if (!key) return () => {};
+      return () => window.YouTubePlusCleanupManager?.unregisterListener?.(key);
+    };
 
-    const mouseDownHandler = (/** @type {any} */ e) => {
+    /** @type {number} */ let startX;
+    /** @type {number} */ let startY;
+    /** @type {number} */ let startLeft;
+    /** @type {number} */ let startTop;
+
+    const mouseDownHandler = (/** @type {Event} */ evt) => {
+      const e = /** @type {MouseEvent} */ (evt);
       if (e.button !== 0) return;
 
       state.dragging = true;
@@ -1477,77 +1755,102 @@
       startLeft = parseFloat(panel.style.left) || rect.left;
       startTop = parseFloat(panel.style.top) || rect.top;
 
-      const handleMove = (/** @type {any} */ event) => {
+      /** @type {number | null} */
+      let moveRaf = null;
+      /** @type {MouseEvent | null} */
+      let pendingEvent = null;
+
+      const handleMove = (/** @type {Event} */ evt) => {
         if (!state.dragging) return;
+        const event = /** @type {MouseEvent} */ (evt);
+        pendingEvent = event;
+        if (moveRaf) return;
 
-        const deltaX = event.clientX - startX;
-        const deltaY = event.clientY - startY;
-        const { left, top } = clampPanelPosition(panel, startLeft + deltaX, startTop + deltaY);
+        moveRaf = window.YouTubePlusCleanupManager?.registerAnimationFrame?.(
+          requestAnimationFrame(() => {
+            moveRaf = null;
+            if (!(state.dragging && pendingEvent)) return;
+            const deltaX = pendingEvent.clientX - startX;
+            const deltaY = pendingEvent.clientY - startY;
+            const { left, top } = clampPanelPosition(panel, startLeft + deltaX, startTop + deltaY);
 
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        panel.style.right = 'auto';
+            panel.style.left = `${left}px`;
+            panel.style.top = `${top}px`;
+            panel.style.right = 'auto';
+          })
+        );
       };
 
       const handleUp = () => {
         if (!state.dragging) return;
 
         state.dragging = false;
-        document.removeEventListener('mousemove', handleMove);
-        document.removeEventListener('mouseup', handleUp);
+        if (moveRaf) {
+          cancelAnimationFrame(moveRaf);
+          moveRaf = null;
+        }
+        for (const off of upRelease) off?.();
+        upRelease.length = 0;
 
         const rectAfter = panel.getBoundingClientRect();
-        const { left, top } = clampPanelPosition(panel, rectAfter.left, rectAfter.top);
-
-        panel.style.left = `${left}px`;
-        panel.style.top = `${top}px`;
-        panel.style.right = 'auto';
-
-        savePanelPosition(left, top);
+        applyClampedPosition(panel, rectAfter.left, rectAfter.top, true);
       };
 
-      document.addEventListener('mousemove', handleMove);
-      document.addEventListener('mouseup', handleUp);
+      /** @type {(() => void)[]} */
+      const upRelease = [
+        addDragListener(document, 'mousemove', handleMove),
+        addDragListener(document, 'mouseup', handleUp),
+      ];
     };
 
-    YouTubeUtils.cleanupManager.registerListener(header, 'mousedown', mouseDownHandler);
+    if (scope?.listen) {
+      scope.listen(header, 'mousedown', mouseDownHandler);
+    } else {
+      YouTubeUtils.cleanupManager.registerListener(header, 'mousedown', mouseDownHandler);
+    }
   };
 
   // Storage
-  const saveTimecodesToStorage = (/** @type {any} */ timecodes) => {
-    const videoId = new URLSearchParams(window.location.search).get('v');
+  const saveTimecodesToStorage = (
+    /** @type {Array<{ time: number, label?: string, isChapter?: boolean, isUserAdded?: boolean }>} */ timecodes
+  ) => {
+    const videoId = getCurrentVideoId();
     if (!videoId) return;
 
     try {
-      const minimal = timecodes.map((/** @type {any} */ tc) => ({
+      const minimal = timecodes.map(tc => ({
         t: tc.time,
         l: tc.label?.trim() || '',
         c: tc.isChapter,
         u: tc.isUserAdded,
       }));
-      localStorage.setItem(`yt_tc_${videoId}`, JSON.stringify(minimal));
+      U.storage?.setItem(`yt_tc_${videoId}`, JSON.stringify(minimal));
     } catch (_e) {
-      U.logSuppressed(_e, 'Timecode');
+      logS(_e);
     }
   };
 
   const loadTimecodesFromStorage = () => {
-    const videoId = new URLSearchParams(window.location.search).get('v');
+    const videoId = getCurrentVideoId();
     if (!videoId) return null;
 
     try {
-      const data = localStorage.getItem(`yt_tc_${videoId}`);
+      const data = U.storage?.getItem(`yt_tc_${videoId}`);
       return data
         ? JSON.parse(data)
-            .map((/** @type {any} */ tc) => ({
+            .map((/** @type {{ t: number, l?: string, c?: boolean, u?: boolean }} */ tc) => ({
               time: tc.t,
               label: tc.l,
               isChapter: tc.c,
               isUserAdded: tc.u,
             }))
-            .sort((/** @type {any} */ a, /** @type {any} */ b) => a.time - b.time)
+            .sort(
+              (/** @type {{ time: number }} */ a, /** @type {{ time: number }} */ b) =>
+                a.time - b.time
+            )
         : null;
     } catch (_e) {
+      logS(_e);
       return null;
     }
   };
@@ -1557,24 +1860,25 @@
     if (!items) return [];
 
     return Array.from(items)
-      .map((/** @type {any} */ item) => {
-        const time = parseFloat(item.dataset.time);
-        const labelEl = item.querySelector('.timecode-label');
+      .map(item => {
+        const htmlItem = /** @type {HTMLElement} */ (item);
+        const time = parseFloat(htmlItem.dataset.time || '0');
+        const labelEl = htmlItem.querySelector('.timecode-label');
         // Only use label if element exists and has actual text content
         const label = labelEl?.textContent?.trim() || '';
 
         return {
           time,
           label: label, // Keep original label (can be empty)
-          isChapter: item.classList.contains('has-chapter'),
-          isUserAdded: !item.classList.contains('has-chapter'),
+          isChapter: htmlItem.classList.contains('has-chapter'),
+          isUserAdded: !htmlItem.classList.contains('has-chapter'),
         };
       })
       .sort((a, b) => a.time - b.time);
   };
 
   // Toggle panel
-  const toggleTimecodePanel = (/** @type {any} */ show = undefined) => {
+  const toggleTimecodePanel = (/** @type {boolean | undefined} */ show = undefined) => {
     // Close any existing panels first (cleanup)
     $$('#timecode-panel').forEach(panel => {
       if (panel !== state.dom.panel) panel.remove();
@@ -1592,24 +1896,23 @@
       if (saved?.length) {
         updateTimecodePanel(saved);
       } else if (config.autoDetect) {
-        detectTimecodes().catch((/** @type {any} */ err) => {
+        detectTimecodes().catch((/** @type {unknown} */ err) => {
           timecodeLogger?.error?.('Timecode', 'Detection failed', err);
         });
       }
 
       if (config.autoTrackPlayback) startTracking();
-    } else if (state.trackingId) {
-      cancelAnimationFrame(state.trackingId);
-      state.trackingId = 0;
+    } else {
+      stopTracking();
     }
   };
 
   // Navigation handling
   const setupNavigation = () => {
-    let currentVideoId = new URLSearchParams(window.location.search).get('v');
+    let currentVideoId = getCurrentVideoId();
 
     const handleNavigationChange = () => {
-      const newVideoId = new URLSearchParams(window.location.search).get('v');
+      const newVideoId = getCurrentVideoId();
       if (newVideoId === currentVideoId || window.location.pathname !== '/watch') return;
 
       currentVideoId = newVideoId;
@@ -1617,14 +1920,16 @@
       state.editingIndex = null;
       state.timecodes.clear();
 
-      if (config.enabled && state.dom.panel && !state.dom.panel.classList.contains('hidden')) {
+      if (state.dom.panel && !state.dom.panel.classList.contains('hidden')) {
         const saved = loadTimecodesFromStorage();
         if (saved?.length) {
           updateTimecodePanel(saved);
         } else if (config.autoDetect) {
-          setTimeout(
+          // Feature-owned: the detection timer is cancelled when the
+          // lifecycle stop releases the context.
+          timecodeCtx?.timeout(
             () =>
-              detectTimecodes().catch(err => {
+              detectTimecodes().catch((/** @type {unknown} */ err) => {
                 timecodeLogger?.error?.('Timecode', 'Detection failed', err);
               }),
             500
@@ -1634,24 +1939,17 @@
       }
     };
 
-    if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-      YouTubeUtils.cleanupManager.registerListener(
-        document,
-        'yt-navigate-finish',
-        handleNavigationChange
-      );
-    } else {
-      document.addEventListener('yt-navigate-finish', handleNavigationChange);
+    if (timecodeCtx) {
+      timecodeCtx.listen(document, 'yt-navigate-finish', handleNavigationChange);
     }
   };
 
   // Keyboard shortcuts
   const setupKeyboard = () => {
-    const keydownHandler = (/** @type {any} */ e) => {
-      if (!config.enabled) return;
-
-      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      if (target.matches?.('input, textarea, [contenteditable]')) return;
+    const keydownHandler = (/** @type {Event} */ evt) => {
+      const e = /** @type {KeyboardEvent} */ (evt);
+      const target = /** @type {HTMLElement | null} */ (e.target);
+      if (target?.matches?.('input, textarea, [contenteditable]')) return;
 
       const { key, shiftKey, altKey, ctrlKey } = config.shortcut;
       if (
@@ -1664,20 +1962,66 @@
         toggleTimecodePanel();
       }
     };
-    if (window.YouTubeUtils && YouTubeUtils.cleanupManager) {
-      YouTubeUtils.cleanupManager.registerListener(document, 'keydown', keydownHandler);
-    } else {
-      document.addEventListener('keydown', keydownHandler);
+
+    if (timecodeCtx) {
+      // Owned by the feature: typing the hotkey only works while the
+      // toggle is on, and the listener follows the lifecycle stop.
+      timecodeCtx.listen(document, 'keydown', keydownHandler);
     }
   };
 
   // Cleanup on unload
+  // Release the living panel group; when no group exists (a manual facade
+  // call created the panel) the DOM refs are dropped after the element.
+  const resetDomRefs = () => {
+    state.dom = {
+      panel: null,
+      list: null,
+      empty: null,
+      form: null,
+      timeInput: null,
+      labelInput: null,
+      currentTime: null,
+      trackToggle: null,
+      reloadButton: null,
+    };
+  };
+
   const cleanup = () => {
     stopTracking();
-    if (state.dom.panel) {
+    if (uiScope) {
+      uiScope.dispose();
+      uiScope = null;
+    } else if (state.dom.panel) {
       state.dom.panel.remove();
-      state.dom.panel = null;
+      resetDomRefs();
     }
+  };
+
+  /** @param {FeatureContext} ctx */
+  const start = ctx => {
+    timecodeCtx = ctx;
+    init();
+    setupKeyboard();
+    setupNavigation();
+
+    // Keep a dragged panel inside the viewport on window resizes.
+    ctx.listen(
+      window,
+      'resize',
+      throttle(() => {
+        if (!state.dom.panel) return;
+        const rect = state.dom.panel.getBoundingClientRect();
+        applyClampedPosition(state.dom.panel, rect.left, rect.top, true);
+      }, 200),
+      { passive: true }
+    );
+  };
+
+  const stop = () => {
+    cleanup();
+    timecodeCtx = null;
+    timecodeStylesAdded = false;
   };
 
   const setupTimecodeSettingsIntegration = () => {
@@ -1697,21 +2041,53 @@
         settingsModalHandler
       );
     } else {
-      document.addEventListener('youtube-plus-settings-modal-opened', settingsModalHandler);
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        document,
+        'youtube-plus-settings-modal-opened',
+        settingsModalHandler,
+        undefined,
+        true
+      );
     }
 
-    const clickHandler = (/** @type {any} */ e) => {
-      const target = /** @type {HTMLElement} */ (e.target);
-      const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
-      if (navItem?.dataset?.section === 'advanced') {
-        attachTimecodeHandlers();
-      }
-    };
-    if (YouTubeUtils.cleanupManager?.registerListener) {
-      YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
+    const delegator = window.YouTubePlusEventDelegation;
+    if (delegator?.on) {
+      delegator.on(document, 'click', '.yp-settings-nav-item[data-section="advanced"]', () =>
+        attachTimecodeHandlers()
+      );
     } else {
-      document.addEventListener('click', clickHandler, true);
+      const clickHandler = (/** @type {MouseEvent} */ e) => {
+        const target = /** @type {HTMLElement | null} */ (e.target);
+        const navItem = target?.closest?.('.yp-settings-nav-item');
+        if (navItem && /** @type {HTMLElement} */ (navItem).dataset?.section === 'advanced') {
+          attachTimecodeHandlers();
+        }
+      };
+      if (YouTubeUtils.cleanupManager?.registerListener) {
+        YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
+      } else {
+        window.YouTubePlusCleanupManager?.registerListener?.(
+          document,
+          'click',
+          clickHandler,
+          true,
+          true
+        );
+      }
     }
+
+    // Blob changes arrive through the unified event; only timecode keys matter.
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      window,
+      'youtube-plus-settings-updated',
+      (/** @type {CustomEvent & { changedKeys?: string[] }} */ e) => {
+        if (window.YouTubePlusSettingsStore?.affectsModule?.(e, MODULE_NAME) === false) return;
+        loadSettings();
+        attachTimecodeHandlers();
+      },
+      undefined,
+      true
+    );
   };
 
   // Initialize
@@ -1721,10 +2097,7 @@
     if (U?.getHostname?.() !== 'www.youtube.com' || window.frameElement) return;
     if (!isRelevantRoute()) return;
 
-    const appRoot =
-      (typeof YouTubeUtils?.querySelector === 'function' &&
-        YouTubeUtils.querySelector('ytd-app')) ||
-      $('ytd-app');
+    const appRoot = $('ytd-app');
 
     if (!appRoot) {
       scheduleInitRetry();
@@ -1734,23 +2107,16 @@
     initStarted = true;
 
     loadSettings();
-    insertTimecodeStyles();
-    setupKeyboard();
-    setupNavigation();
 
-    // Settings modal observer
     /** @type {string | null} */ let modalObserverSubId = null;
-    /** @type {ReturnType<typeof setTimeout> | null} */ let modalObserverTimeout = null;
+    /** @type {ReturnType<typeof setTimeout> | number | null} */
+    let modalObserverTimeout = null;
 
-    const attachModalObserver = (/** @type {any} */ modalEl) => {
+    const attachModalObserver = (/** @type {Element | null | undefined} */ modalEl) => {
       if (!(modalEl && modalEl instanceof Element)) return;
       const coordinator = window.YouTubePlusMutationCoordinator;
       if (modalObserverSubId && coordinator?.unsubscribe) {
-        try {
-          coordinator.unsubscribe(modalObserverSubId);
-        } catch (_e) {
-          U.logSuppressed(_e, 'Timecode');
-        }
+        coordinator.unsubscribe(modalObserverSubId);
         modalObserverSubId = null;
       }
 
@@ -1764,17 +2130,19 @@
         modalObserverSubId,
         modalEl,
         () => {
-          // Debounce modal observer to reduce unnecessary checks
+          // Debounce modal observer to reduce unnecessary checks; the shared
+          // manager drops the entry once it fires and on navigation cleanup.
           if (modalObserverTimeout) return;
-          modalObserverTimeout = setTimeout(() => {
-            modalObserverTimeout = null;
-            if (
-              $('.ytp-plus-settings-section[data-section="advanced"]:not(.hidden)') &&
-              !$('.timecode-settings-item')
-            ) {
-              attachTimecodeHandlers();
-            }
-          }, 30);
+          modalObserverTimeout =
+            YouTubeUtils.cleanupManager?.timeout?.(() => {
+              modalObserverTimeout = null;
+              if (
+                $('.yp-settings-section[data-section="advanced"]:not(.hidden)') &&
+                !$('.timecode-settings-item')
+              ) {
+                attachTimecodeHandlers();
+              }
+            }, 30) ?? null;
         },
         {
           childList: true,
@@ -1794,9 +2162,9 @@
       }
     };
 
-    // Settings modal integration — use event instead of body MutationObserver
+    // Settings modal integration: react to the event, not a body MutationObserver.
     const settingsModalHandler = () => {
-      const modal = $('.ytp-plus-settings-modal');
+      const modal = $('.yp-settings-modal');
       if (modal) {
         attachModalObserver(modal);
         attachTimecodeHandlers();
@@ -1809,85 +2177,39 @@
         settingsModalHandler
       );
     } else {
-      document.addEventListener('youtube-plus-settings-modal-opened', settingsModalHandler);
-    }
-
-    const clickHandler = (/** @type {any} */ e) => {
-      const target = /** @type {HTMLElement} */ (e.target);
-      const navItem = target?.closest?.('.ytp-plus-settings-nav-item');
-      if (navItem?.dataset?.section === 'advanced') {
-        attachTimecodeHandlers();
-      }
-    };
-    YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
-
-    if (config.enabled && !state.resizeListenerKey) {
-      const onResize = throttle(() => {
-        if (!state.dom.panel) return;
-
-        const rect = state.dom.panel.getBoundingClientRect();
-        const { left, top } = clampPanelPosition(state.dom.panel, rect.left, rect.top);
-
-        state.dom.panel.style.left = `${left}px`;
-        state.dom.panel.style.top = `${top}px`;
-        state.dom.panel.style.right = 'auto';
-
-        savePanelPosition(left, top);
-      }, 200);
-
-      state.resizeListenerKey = YouTubeUtils.cleanupManager.registerListener(
-        window,
-        'resize',
-        onResize
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        document,
+        'youtube-plus-settings-modal-opened',
+        settingsModalHandler,
+        undefined,
+        true
       );
     }
+
+    // Starts the feature when its setting is on, then follows the setting.
+    timecodeFeature?.sync();
   };
 
-  const handleNavigate = () => {
-    setupTimecodeSettingsIntegration();
-    if (!isRelevantRoute()) {
-      if (initStarted) cleanup();
-      return;
-    }
-    init();
-  };
-
-  // Register settings modal listener at module scope so it fires
-  // regardless of route. Without this, the settings UI integration
-  // would only be registered after whenRelevant decides the route is
-  // relevant or the user clicks the Advanced tab, causing a race
-  // condition where opening the modal on a non-/watch page would
-  // miss the event.
-  document.addEventListener('youtube-plus-settings-modal-opened', () => {
-    try {
-      setupTimecodeSettingsIntegration();
-      attachTimecodeHandlers();
-    } catch (_e) {
-      /* non-critical */
-    }
+  /**
+   * Timecode runtime on the FeatureLifecycle contract: only the panel,
+   * hotkey, navigation reaction, styles and resize repositioning belong to
+   * the feature context; the settings integration above stays at module
+   * scope so the checkbox keeps working while the feature is off.
+   * @type {{ sync: () => void } | null | undefined}
+   */
+  const timecodeFeature = window.YouTubePlusFeatureRegistry?.FeatureLifecycle?.define?.({
+    id: 'timecode',
+    settingsKey: 'timecodeEnabled',
+    // Timestamp panels and the hotkey live on the watch player only.
+    routes: ['watch'],
+    start,
+    stop,
   });
 
-  // timecode runtime: /watch only. The settings UI is wired in
-  // setupTimecodeSettingsIntegration, which hooks a click listener
-  // that runs the inject when the user opens the "Advanced" tab.
-  // That listener self-guards via state.settingsIntegrationStarted,
-  // so we do not also need a separate onSectionActive subscription.
-  if (window.YouTubeUtils?.whenRelevant) {
-    window.YouTubeUtils.whenRelevant({
-      name: 'timecode',
-      isRelevant: isRelevantRoute,
-      onEnter: handleNavigate,
-    });
-  } else {
-    // Fallback: direct initialization
-    if (document.readyState === 'loading') {
-      document.addEventListener('DOMContentLoaded', handleNavigate, {
-        once: true,
-      });
-    } else {
-      handleNavigate();
-    }
-  }
+  // Arm the Advanced-tab wiring at boot (idempotent), then the lifecycle
+  // host follows the `timecodeEnabled` setting and the watch route.
+  setupTimecodeSettingsIntegration();
+  timecodeFeature?.sync();
 
   // Settings UI integration must be reachable from the Advanced tab
   // regardless of route, so the user can configure shortcuts even on
@@ -1895,25 +2217,68 @@
   // via state.settingsIntegrationStarted.
   if (window.YouTubeUtils?.onSectionActive) {
     window.YouTubeUtils.onSectionActive('advanced', () => {
-      try {
-        setupTimecodeSettingsIntegration();
-        attachTimecodeHandlers();
-      } catch (_e) {
-        // Non-critical: settings UI is best-effort
-      }
+      setupTimecodeSettingsIntegration();
+      attachTimecodeHandlers();
     });
   }
 
-  if (typeof window.YouTubeUtils?.cleanupManager?.registerListener === 'function') {
-    YouTubeUtils.cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
-      passive: true,
-    });
-  } else {
-    document.addEventListener('yt-navigate-finish', handleNavigate, {
-      passive: true,
-    });
-  }
+  const publicAPI = {
+    parseTime,
+    parseLeadingTimestampToken,
+    stripLeadingTimePrefix,
+    formatTime,
+    createTimecodePanel,
+    config,
+    state,
+    init,
+    cleanup,
+  };
+  window.YouTubePlusTimecode = publicAPI;
+
+  // Test-only surface: internal entry points and state accessors live here,
+  // not on the facade root.
+  U?.exposeTestHooks?.(publicAPI, {
+    detectTimecodes,
+    extractTimecodes,
+    getYouTubeChapters,
+    saveSettings,
+    loadSettings,
+    exportTimecodes,
+    reloadTimecodes,
+    updateTimecodePanel,
+    updateActiveItem,
+    makeDraggable,
+    clampPanelPosition,
+    applyClampedPosition,
+    applySavedPanelPosition,
+    savePanelPosition,
+    saveTimecodesToStorage,
+    loadTimecodesFromStorage,
+    getCurrentTimecodes,
+    toggleTimecodePanel,
+    showTimecodeForm,
+    hideTimecodeForm,
+    editTimecode,
+    deleteTimecode,
+    startTracking,
+    stopTracking,
+    setupKeyboard,
+    setupNavigation,
+    attachTimecodeHandlers,
+    setupTimecodeSettingsIntegration,
+    isRelevantRoute,
+    start,
+    stop,
+    timecodeFeature,
+    timecodeLogger,
+  });
 
   // Cleanup on beforeunload
-  window.addEventListener('beforeunload', cleanup);
+  window.YouTubePlusCleanupManager?.registerListener?.(
+    window,
+    'beforeunload',
+    cleanup,
+    undefined,
+    true
+  );
 })();

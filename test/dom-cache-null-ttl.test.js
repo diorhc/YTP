@@ -7,6 +7,11 @@
  * longer than intended after the element was inserted into the DOM.
  */
 
+const loadRealDeps = () => {
+  require('../src/cleanup-manager.js');
+  require('../src/utils.js');
+};
+
 describe('YouTubeDOMCache getElementById null TTL', () => {
   /** @type {any} */
   let cache;
@@ -16,10 +21,8 @@ describe('YouTubeDOMCache getElementById null TTL', () => {
     delete window.YouTubePlusDOMCache;
     delete window.YouTubeUtils;
     delete window.unsafeWindow;
-
-    // The DOM cache attaches to YouTubeUtils.domCache when available,
-    // so we need a stub to avoid the "YouTubeUtils not found" path.
-    window.YouTubeUtils = {};
+    delete window.YouTubePlusCleanupManager;
+    loadRealDeps();
     require('../src/dom-cache.js');
     cache = window.YouTubePlusDOMCache;
   });

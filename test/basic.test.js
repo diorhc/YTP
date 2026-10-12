@@ -1,66 +1,109 @@
 /**
  * Unit tests for YouTube+ Basic module (basic.js)
  *
- * Tests the YouTubeUtils facade, SettingsManager, NotificationManager,
- * and idempotency guards.
+ * Tests the real YouTubeUtils facade, YouTubePlusBasic facade,
+ * SettingsManager, NotificationManager, and idempotency guards.
  */
-
-/** @param {Record<string, unknown>} overrides */
-const setupYouTubeUtils = (overrides = {}) => {
-  const cm = {
-    registerInterval: jest.fn(id => id),
-    registerTimeout: jest.fn(id => id),
-    registerObserver: jest.fn(obs => obs),
-    registerListener: jest.fn(),
-    registerAnimationFrame: jest.fn(id => id),
-    register: jest.fn(),
-    cleanup: jest.fn(),
-    getListenerStats: jest.fn(() => ({ active: 0, registeredTotal: 0 })),
-  };
-
-  Object.defineProperty(window, 'YouTubeUtils', {
-    configurable: true,
-    writable: true,
-    value: {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
-      byId: jest.fn(id => document.getElementById(id)),
-      t: jest.fn(key => key || ''),
-      cleanupManager: cm,
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn(), styles: new Map() },
-      NotificationManager: { show: jest.fn(), remove: jest.fn() },
-      SettingsManager: { load: jest.fn(() => ({})), save: jest.fn(), get: jest.fn(), set: jest.fn() },
-      loadFeatureEnabled: jest.fn(() => true),
-      logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn() },
-      SETTINGS_KEY: 'youtube_plus_settings',
-      debounce: jest.fn((fn) => Object.assign(fn, { cancel: jest.fn(), destroy: jest.fn() })),
-      throttle: jest.fn(fn => fn),
-      createElement: jest.fn((tag, props, children) => {
-        const el = document.createElement(tag);
-        if (props) Object.entries(props).forEach(([k, v]) => { el[k] = v; });
-        if (children) children.forEach(c => { if (typeof c === 'string') el.textContent = c; else el.appendChild(c); });
-        return el;
-      }),
-      waitForElement: jest.fn(() => Promise.resolve(null)),
-      storage: { get: jest.fn(() => null), set: jest.fn(), remove: jest.fn() },
-      whenRelevant: jest.fn(() => ({ active: false, check: jest.fn(), dispose: jest.fn() })),
-      logSuppressed: jest.fn(),
-      ...overrides,
-    },
-  });
-};
 
 describe('Basic Module', () => {
   beforeEach(() => {
-    setupYouTubeUtils();
+    jest.resetModules();
+    delete window.__ytpBasicInitDone__;
+    document.body.innerHTML = '';
+    document.head.innerHTML = '';
+    localStorage.clear();
+
     global.mockLocation({
       hostname: 'www.youtube.com',
       pathname: '/watch',
       href: 'https://www.youtube.com/watch?v=test',
     });
+
+    // Provide standard dependencies guaranteed by build order
+    require('../src/cleanup-manager.js');
+    require('../src/design-system.js');
+    require('../src/utils.js');
+    require('../src/safe-dom.js');
+    require('../src/settings-store.js');
+    require('../src/settings-helpers.js');
+    require('../src/basic.js');
+    require('../src/modal-handlers.js');
+    require('../src/modal-download-handlers.js');
+    require('../src/settings-modal.js');
   });
 
-  describe('YouTubeUtils facade', () => {
+  afterEach(() => {
+    delete window.__ytpBasicInitDone__;
+    document.body.innerHTML = '';
+  });
+
+  describe('Real YouTubePlusBasic facade', () => {
+    test('exposes canonical window.YouTubePlusBasic facade', () => {
+      expect(window.YouTubePlusBasic).toBeDefined();
+      expect(typeof window.YouTubePlusBasic.createEnhancer).toBe('function');
+      expect(typeof window.YouTubePlusBasic.openSettings).toBe('function');
+      expect(typeof window.YouTubePlusBasic.closeSettings).toBe('function');
+      expect(window.YouTubePlusBasic.YouTubeEnhancer).toBeDefined();
+    });
+
+    test('createEnhancer returns an enhancer object with valid settings', () => {
+      const enhancer = window.YouTubePlusBasic.createEnhancer();
+      expect(enhancer).toBeDefined();
+      expect(enhancer.settings).toBeDefined();
+      expect(typeof enhancer.settings).toBe('object');
+      expect(typeof enhancer.init).toBe('function');
+    });
+
+    test('openSettings creates modal in DOM and closeSettings removes it', () => {
+      const opened = window.YouTubePlusBasic.openSettings();
+      expect(opened).toBe(true);
+
+      const modal = document.querySelector('.yp-settings-modal');
+      expect(modal).toBeTruthy();
+      expect(modal.querySelector('h1')?.textContent).toBe('YouTube +');
+      expect(modal.querySelectorAll('h2').length).toBeGreaterThanOrEqual(2);
+      const downloadToggle = /** @type {HTMLInputElement|null} */ (
+        modal.querySelector('input[data-setting="enableDownload"]')
+      );
+      const downloadSubmenu = /** @type {HTMLElement|null} */ (
+        modal.querySelector('.download-submenu')
+      );
+      expect(downloadSubmenu?.style.display).toBe(downloadToggle?.checked ? 'block' : 'none');
+
+      const closed = window.YouTubePlusBasic.closeSettings();
+      expect(closed).toBe(true);
+      expect(document.querySelector('.yp-settings-modal')).toBeNull();
+    });
+  });
+
+  describe('Settings ownership across the modal Save', () => {
+    test('saveSettings writes the store-current module namespace, not the stale snapshot', () => {
+      const enhancer = window.YouTubePlusBasic.createEnhancer();
+      // Stale modal snapshot: its `modules` namespace predates the module's own
+      // direct write to the store (e.g. a PiP/Timecode hotkey change).
+      enhancer.settings.modules = { pip: { shortcut: { key: 'OLD' } } };
+
+      const liveModules = {
+        pip: { shortcut: { key: 'J', shiftKey: true, altKey: false, ctrlKey: false } },
+      };
+      /** @type {unknown[]} */
+      const saved = [];
+      window.YouTubePlusSettingsStore = /** @type {any} */ ({
+        load: () => ({ modules: liveModules }),
+        save: s => {
+          saved.push(s);
+          return true;
+        },
+      });
+
+      enhancer.saveSettings();
+
+      expect(saved).toHaveLength(1);
+      expect(/** @type {any} */ (saved[0]).modules).toEqual(liveModules);
+    });
+  });
+
+  describe('Real YouTubeUtils public API', () => {
     test('should expose $ query helper', () => {
       document.body.innerHTML = '<div class="test-el"></div>';
       const result = window.YouTubeUtils.$('.test-el');
@@ -83,7 +126,7 @@ describe('Basic Module', () => {
 
     test('should expose translation helper t()', () => {
       expect(typeof window.YouTubeUtils.t).toBe('function');
-      expect(window.YouTubeUtils.t('hello')).toBe('hello');
+      expect(typeof window.YouTubeUtils.t('hello')).toBe('string');
     });
 
     test('should expose cleanupManager', () => {
@@ -98,150 +141,348 @@ describe('Basic Module', () => {
       expect(typeof sm.add).toBe('function');
       expect(typeof sm.remove).toBe('function');
     });
-  });
 
-  describe('SettingsManager', () => {
-    test('should load settings from localStorage', () => {
-      localStorage.setItem('youtube_plus_settings', JSON.stringify({ enabled: false }));
-      const sm = window.YouTubeUtils.SettingsManager;
-      sm.load();
-      expect(sm.load).toHaveBeenCalled();
-    });
-
-    test('should save settings', () => {
-      const sm = window.YouTubeUtils.SettingsManager;
-      sm.save({ enabled: true });
-      expect(sm.save).toHaveBeenCalledWith({ enabled: true });
-    });
-
-    test('should get setting by path', () => {
-      const sm = window.YouTubeUtils.SettingsManager;
-      sm.get('some.path');
-      expect(sm.get).toHaveBeenCalledWith('some.path');
-    });
-
-    test('should set setting by path', () => {
-      const sm = window.YouTubeUtils.SettingsManager;
-      sm.set('some.path', 'value');
-      expect(sm.set).toHaveBeenCalledWith('some.path', 'value');
-    });
-  });
-
-  describe('NotificationManager', () => {
-    test('should show notification', () => {
-      const nm = window.YouTubeUtils.NotificationManager;
-      nm.show('Test message', { duration: 3000 });
-      expect(nm.show).toHaveBeenCalledWith('Test message', { duration: 3000 });
-    });
-
-    test('should remove notification', () => {
-      const nm = window.YouTubeUtils.NotificationManager;
-      const mockEl = document.createElement('div');
-      nm.remove(mockEl);
-      expect(nm.remove).toHaveBeenCalledWith(mockEl);
-    });
-  });
-
-  describe('loadFeatureEnabled', () => {
-    test('should return true when feature is enabled', () => {
-      window.YouTubeUtils.loadFeatureEnabled = jest.fn(() => true);
-      expect(window.YouTubeUtils.loadFeatureEnabled('testFeature')).toBe(true);
-    });
-
-    test('should return false when feature is disabled', () => {
-      window.YouTubeUtils.loadFeatureEnabled = jest.fn(() => false);
-      expect(window.YouTubeUtils.loadFeatureEnabled('testFeature')).toBe(false);
-    });
-
-    test('should accept default value parameter', () => {
-      window.YouTubeUtils.loadFeatureEnabled = jest.fn(() => true);
-      window.YouTubeUtils.loadFeatureEnabled('test', true);
-      expect(window.YouTubeUtils.loadFeatureEnabled).toHaveBeenCalledWith('test', true);
-    });
-  });
-
-  describe('whenRelevant', () => {
-    test('should return activation object', () => {
-      const result = window.YouTubeUtils.whenRelevant({
-        isRelevant: () => true,
-        onEnter: jest.fn(),
-      });
-      expect(result).toBeDefined();
-      expect(typeof result.check).toBe('function');
-      expect(typeof result.dispose).toBe('function');
-    });
-  });
-
-  describe('idempotency guard', () => {
-    test('should support setting init guard flag', () => {
-      window.__ytpBasicInitDone__ = true;
-      expect(window.__ytpBasicInitDone__).toBe(true);
-      delete window.__ytpBasicInitDone__;
-    });
-  });
-
-  describe('debounce', () => {
-    test('should return a callable function', () => {
+    test('debounce returns a function with cancel method', () => {
       const fn = jest.fn();
       const debounced = window.YouTubeUtils.debounce(fn, 100);
       expect(typeof debounced).toBe('function');
-    });
-
-    test('should have cancel method', () => {
-      const fn = jest.fn();
-      const debounced = window.YouTubeUtils.debounce(fn, 100);
       expect(typeof debounced.cancel).toBe('function');
     });
-  });
 
-  describe('throttle', () => {
-    test('should return a callable function', () => {
+    test('throttle returns a function with cancel method', () => {
       const fn = jest.fn();
       const throttled = window.YouTubeUtils.throttle(fn, 100);
       expect(typeof throttled).toBe('function');
     });
-  });
 
-  describe('createElement', () => {
-    test('should create a DOM element', () => {
-      const el = window.YouTubeUtils.createElement('div', { className: 'test' }, ['Hello']);
-      expect(el.tagName).toBe('DIV');
-      expect(el.className).toBe('test');
-      expect(el.textContent).toBe('Hello');
-    });
-  });
-
-  describe('storage', () => {
-    test('should get value from storage', () => {
-      window.YouTubeUtils.storage.get('key');
-      expect(window.YouTubeUtils.storage.get).toHaveBeenCalledWith('key');
+    test('safeMerge merges objects safely', () => {
+      const target = { a: 1, b: 2 };
+      window.YouTubeUtils.safeMerge(target, { b: 3, c: 4 });
+      expect(target).toEqual({ a: 1, b: 3, c: 4 });
     });
 
-    test('should set value in storage', () => {
-      window.YouTubeUtils.storage.set('key', 'value');
-      expect(window.YouTubeUtils.storage.set).toHaveBeenCalledWith('key', 'value');
+    test('storage provides safe localStorage operations via getItem/setItem', () => {
+      window.YouTubeUtils.storage.setItem('test_key', 'test_val');
+      expect(window.YouTubeUtils.storage.getItem('test_key')).toBe('test_val');
+      window.YouTubeUtils.storage.removeItem('test_key');
+      expect(window.YouTubeUtils.storage.getItem('test_key')).toBeNull();
     });
 
-    test('should remove value from storage', () => {
-      window.YouTubeUtils.storage.remove('key');
-      expect(window.YouTubeUtils.storage.remove).toHaveBeenCalledWith('key');
-    });
-  });
-
-  describe('waitForElement', () => {
-    test('should return a promise', () => {
-      const result = window.YouTubeUtils.waitForElement('.test');
-      expect(result).toBeInstanceOf(Promise);
-    });
-  });
-
-  describe('logSuppressed', () => {
-    test('should be a function', () => {
-      expect(typeof window.YouTubeUtils.logSuppressed).toBe('function');
+    test('formatTime formats seconds into timestamps', () => {
+      expect(window.YouTubeUtils.formatTime(65)).toBe('1:05');
+      expect(window.YouTubeUtils.formatTime(3665)).toBe('1:01:05');
+      expect(window.YouTubeUtils.formatTime(0)).toBe('0:00');
     });
 
-    test('should not throw when called', () => {
+    test('logSuppressed does not throw when called', () => {
       expect(() => window.YouTubeUtils.logSuppressed(new Error('test'), 'module')).not.toThrow();
     });
+  });
+
+  describe('NotificationManager.show', () => {
+    test('NotificationManager.show creates notification in active store', () => {
+      const nm = window.YouTubeUtils.NotificationManager;
+      if (nm && typeof nm.show === 'function') {
+        const el = nm.show('Test notification', { duration: 100 });
+        expect(el).toBeDefined();
+        expect(nm.activeNotifications).toBeDefined();
+        expect(typeof nm.activeNotifications.size).toBe('number');
+        nm.clearAll();
+      }
+    });
+
+    test('show returns null for invalid message', () => {
+      const nm = window.YouTubeUtils.NotificationManager;
+      if (nm && typeof nm.show === 'function') {
+        expect(nm.show('')).toBeNull();
+        expect(nm.show(null)).toBeNull();
+        expect(nm.show(undefined)).toBeNull();
+      }
+    });
+
+    test('show applies position styles when position is valid', () => {
+      const nm = window.YouTubeUtils.NotificationManager;
+      if (nm && typeof nm.show === 'function') {
+        const el = nm.show('Positioned notification', { position: 'top-right', duration: 100 });
+        expect(el).toBeDefined();
+        expect(el.style.top).toBe('20px');
+        expect(el.style.right).toBe('20px');
+        nm.clearAll();
+      }
+    });
+
+    test('show creates action button when action is provided', () => {
+      const nm = window.YouTubeUtils.NotificationManager;
+      if (nm && typeof nm.show === 'function') {
+        const cb = jest.fn();
+        const el = nm.show('Action notification', {
+          action: { text: 'OK', callback: cb },
+          duration: 100,
+        });
+        expect(el).toBeDefined();
+        const btn = el.querySelector('button');
+        expect(btn).not.toBeNull();
+        expect(btn.textContent).toBe('OK');
+        btn.click();
+        expect(cb).toHaveBeenCalled();
+        nm.clearAll();
+      }
+    });
+  });
+
+  describe('NotificationManager timers', () => {
+    test('auto-dismiss removes the notification and leaves no timer registered', () => {
+      jest.useFakeTimers();
+      try {
+        const nm = window.YouTubeUtils.NotificationManager;
+        const cm = window.YouTubePlusCleanupManager;
+        const before = cm.timeouts.size;
+        const el = nm.show('Auto dismiss', { duration: 500 });
+        expect(el.isConnected).toBe(true);
+        expect(cm.timeouts.size).toBe(before + 1);
+
+        jest.advanceTimersByTime(500);
+        jest.advanceTimersByTime(340);
+
+        expect(el.isConnected).toBe(false);
+        expect(nm.activeNotifications.has(el)).toBe(false);
+        expect(cm.timeouts.size).toBe(before);
+      } finally {
+        jest.useRealTimers();
+      }
+    });
+  });
+
+  describe('idempotency guard', () => {
+    test('should set __ytpBasicInitDone__ on load', () => {
+      expect(window.__ytpBasicInitDone__).toBe(true);
+    });
+  });
+});
+
+describe('Basic Module — NotificationManager merge regression', () => {
+  const mockCleanupManager = {
+    registerListener: jest.fn(),
+    register: jest.fn(),
+    registerInterval: jest.fn(),
+    registerTimeout: jest.fn(),
+    registerObserver: jest.fn(),
+    registerAnimationFrame: jest.fn(),
+    cleanup: jest.fn(),
+  };
+
+  const mountMockUtils = () => {
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        $: jest.fn(),
+        $$: jest.fn(),
+        byId: jest.fn(),
+        t: jest.fn(key => key || ''),
+        setSafeHTML: jest.fn(),
+        cleanupManager: mockCleanupManager,
+        StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+        storage: { get: jest.fn(() => null), set: jest.fn(), remove: jest.fn() },
+        SettingsManager: {
+          load: jest.fn(() => ({})),
+          save: jest.fn(),
+          get: jest.fn(),
+          set: jest.fn(),
+        },
+        logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn(), info: jest.fn() },
+        loadFeatureEnabled: jest.fn(() => true),
+        whenRelevant: jest.fn(() => ({ active: false, check: jest.fn(), dispose: jest.fn() })),
+        debounce: jest.fn(fn => Object.assign(fn, { cancel: jest.fn() })),
+        throttle: jest.fn(fn => fn),
+        createElement: jest.fn(),
+        waitForElement: jest.fn(() => Promise.resolve(null)),
+        logSuppressed: jest.fn(),
+      },
+    });
+  };
+
+  beforeEach(() => {
+    jest.resetModules();
+    mountMockUtils();
+    // Skip the init IIFE body — only the top-level merge block (which
+    // previously dropped NotificationManager entirely, causing a TypeError
+    // at first use) is under test.
+    window.__ytpBasicInitDone__ = true;
+  });
+
+  afterEach(() => {
+    delete window.__ytpBasicInitDone__;
+  });
+
+  test('merges NotificationManager into window.YouTubeUtils when missing', () => {
+    expect(window.YouTubeUtils.NotificationManager).toBeUndefined();
+
+    require('../src/basic.js');
+
+    expect(window.YouTubeUtils.NotificationManager).toBeDefined();
+    expect(typeof window.YouTubeUtils.NotificationManager.show).toBe('function');
+    expect(typeof window.YouTubeUtils.NotificationManager.clearAll).toBe('function');
+    expect(typeof window.YouTubeUtils.NotificationManager.activeNotifications).toBe('object');
+  });
+
+  test('does not overwrite an existing NotificationManager', () => {
+    const existing = { show: jest.fn() };
+    window.YouTubeUtils.NotificationManager = existing;
+
+    require('../src/basic.js');
+
+    expect(window.YouTubeUtils.NotificationManager).toBe(existing);
+  });
+});
+
+describe('Basic typed guards', () => {
+  const mountBasic = () => {
+    jest.useFakeTimers();
+    jest.resetModules();
+    delete window.__ytpBasicInitDone__;
+    document.body.innerHTML = '';
+    document.head.innerHTML = '';
+    localStorage.clear();
+    global.mockLocation({
+      hostname: 'www.youtube.com',
+      pathname: '/watch',
+      href: 'https://www.youtube.com/watch?v=test',
+    });
+    require('../src/cleanup-manager.js');
+    require('../src/design-system.js');
+    require('../src/utils.js');
+    require('../src/safe-dom.js');
+    require('../src/settings-store.js');
+    require('../src/settings-helpers.js');
+    require('../src/basic.js');
+    require('../src/modal-handlers.js');
+    require('../src/modal-download-handlers.js');
+    require('../src/settings-modal.js');
+  };
+
+  afterEach(() => {
+    jest.useRealTimers();
+  });
+
+  test('isEditableTarget accepts editable tags and rejects plain elements', () => {
+    mountBasic();
+    const enhancer = window.YouTubePlusBasic.createEnhancer();
+    const input = document.createElement('input');
+    const textarea = document.createElement('textarea');
+    const div = document.createElement('div');
+    expect(enhancer.isEditableTarget(input)).toBe(true);
+    expect(enhancer.isEditableTarget(textarea)).toBe(true);
+    expect(enhancer.isEditableTarget(div)).toBe(false);
+    expect(enhancer.isEditableTarget(window)).toBe(false);
+    expect(enhancer.isEditableTarget(null)).toBe(false);
+  });
+
+  test('second show with the same message detaches the earlier notification', () => {
+    mountBasic();
+    try {
+      const nm = window.YouTubeUtils.NotificationManager;
+      const first = nm.show('Same message', { duration: 0 });
+      const second = nm.show('Same message', { duration: 0 });
+      expect(first && first.isConnected).toBe(true);
+      jest.advanceTimersByTime(340);
+      expect(first && first.isConnected).toBe(false);
+      expect(second && second.isConnected).toBe(true);
+    } finally {
+      jest.useRealTimers();
+    }
+  });
+
+  test('YouTubePlusDebug.clearAll does not throw and tears down styles and notifications', () => {
+    // The basic.test environment does not load dom-cache.js; the cleanup must
+    // still run its remaining teardown steps without throwing.
+    mountBasic();
+    expect(typeof window.YouTubePlusDebug.clearAll).toBe('function');
+    window.YouTubeUtils.StyleManager.add('yp-debug-clear-test', 'body{}');
+    expect(window.YouTubeUtils.StyleManager.styles.size).toBeGreaterThan(0);
+    const nm = window.YouTubeUtils.NotificationManager;
+    nm.show('clear target', { duration: 0 });
+    expect(nm.activeNotifications.size).toBeGreaterThan(0);
+    expect(() => window.YouTubePlusDebug.clearAll()).not.toThrow();
+    expect(window.YouTubeUtils.StyleManager.styles.size).toBe(0);
+    expect(nm.activeNotifications.size).toBe(0);
+  });
+
+  test('openSettings accepts section and forwards to modal state', () => {
+    mountBasic();
+    const writeSpy = jest.fn();
+    window.YouTubePlusSettingsModal = {
+      basicUiState: {
+        lastOpenSection: { write: writeSpy },
+      },
+      open: jest.fn(),
+      close: jest.fn(),
+    };
+    window.YouTubePlus.openSettings({ section: 'shortcuts' });
+    expect(writeSpy).toHaveBeenCalledWith('shortcuts');
+  });
+
+  test('closeSettings closes via fallback modal removal and dispatches event', () => {
+    mountBasic();
+    const modal = document.createElement('div');
+    modal.className = 'yp-settings-modal';
+    document.body.appendChild(modal);
+    window.YouTubePlusSettingsModal = null;
+    let closedEventFired = false;
+    document.addEventListener(
+      'youtube-plus-settings-modal-closed',
+      () => {
+        closedEventFired = true;
+      },
+      { once: true }
+    );
+    const result = window.YouTubePlus.closeSettings();
+    expect(result).toBe(true);
+    expect(modal.isConnected).toBe(false);
+    expect(closedEventFired).toBe(true);
+  });
+
+  test('enhancer helper methods execute expected side effects', () => {
+    mountBasic();
+    const enhancer = window.YouTubePlusBasic.createEnhancer();
+    const btn = document.createElement('button');
+    btn.className = 'yp-screenshot-button';
+    document.body.appendChild(btn);
+    enhancer.handleFullscreenChange();
+    expect(btn.style.bottom).toBe('0px');
+    btn.remove();
+
+    const nmSpy = jest.spyOn(window.YouTubeUtils.NotificationManager, 'show');
+    enhancer.showNotification('Hello test', 1500);
+    expect(nmSpy).toHaveBeenCalledWith('Hello test', { duration: 1500, type: 'info' });
+    nmSpy.mockRestore();
+  });
+
+  test('eager player surface and shared UI style bundles load without opening settings', () => {
+    mountBasic();
+    const ds = window.YouTubePlusDesignSystem;
+    expect(ds).toBeDefined();
+
+    const playerSurface = ds.getStyle('yp-player-surface-styles');
+    expect(playerSurface).toContain('.vision-top-center-dock');
+    expect(playerSurface).toContain('#yp-zoom-control');
+
+    const basicSettings = ds.getStyle('yp-basic-settings-styles');
+    expect(basicSettings).not.toContain('.vision-top-center-dock');
+
+    const sm = window.YouTubeUtils.StyleManager;
+    sm.remove('yt-enhancer-player-surface');
+    sm.remove('yt-enhancer-shared-ui');
+    expect(sm.has('yt-enhancer-player-surface')).toBe(false);
+    expect(sm.has('yt-enhancer-shared-ui')).toBe(false);
+    expect(document.querySelector('.yp-settings-modal')).toBeNull();
+
+    const enhancer = window.YouTubePlusBasic.createEnhancer();
+    enhancer.insertStyles();
+
+    expect(sm.has('yt-enhancer-player-surface')).toBe(true);
+    expect(sm.get('yt-enhancer-player-surface')).toContain('.vision-top-center-dock');
+    expect(sm.has('yt-enhancer-shared-ui')).toBe(true);
+    expect(document.querySelector('.yp-settings-modal')).toBeNull();
   });
 });

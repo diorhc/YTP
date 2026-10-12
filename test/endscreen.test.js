@@ -1,311 +1,243 @@
 /**
- * Unit tests for YouTube+ Endscreen module (endscreen.js)
+ * @jest-environment jsdom
  *
- * Tests the end screen removal functionality, settings persistence,
- * DOM mutation detection, and cleanup lifecycle.
+ * The end-screen remover (src/endscreen.js) on the FeatureLifecycle contract,
+ * with the real CleanupManager, SettingsStore, EventDelegation, registry and
+ * StyleManager.
  */
 
-const setupEndscreenDeps = () => {
-  Object.defineProperty(window, 'YouTubeUtils', {
-    configurable: true,
-    writable: true,
-    value: {
-      $: jest.fn(sel => document.querySelector(sel)),
-      $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
-      byId: jest.fn(id => document.getElementById(id)),
-      t: jest.fn(key => key || ''),
-      cleanupManager: {
-        registerInterval: jest.fn(id => id),
-        registerTimeout: jest.fn(id => id),
-        registerObserver: jest.fn(obs => obs),
-        registerListener: jest.fn(),
-        register: jest.fn(),
-        cleanup: jest.fn(),
-        registerAnimationFrame: jest.fn(id => id),
-        getListenerStats: jest.fn(() => ({ active: 0, registeredTotal: 0 })),
-      },
-      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
-      loadFeatureEnabled: jest.fn(() => true),
-      logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
-      SETTINGS_KEY: 'youtube_plus_settings',
-      debounce: jest.fn(fn => Object.assign(fn, { cancel: jest.fn() })),
-      whenRelevant: jest.fn(() => ({ active: false, check: jest.fn(), dispose: jest.fn() })),
-      renderTemplateClone: jest.fn((el, html) => { el.innerHTML = html; }),
-      logSuppressed: jest.fn(),
-    },
-  });
+function loadChain() {
+  require('../src/cleanup-manager.js');
+  require('../src/utils.js');
+  require('../src/settings-store.js');
+  require('../src/safe-dom.js');
+  require('../src/mutation-coordinator.js');
+  require('../src/event-delegation.js');
+  require('../src/i18n.js');
+  require('../src/feature-registry.js');
+  require('../src/design-system.js');
+}
 
-  Object.defineProperty(window, 'YouTubePlusMutationCoordinator', {
-    configurable: true,
-    writable: true,
-    value: {
-      subscribeRoot: jest.fn(() => 'sub-id'),
-      unsubscribe: jest.fn(),
-      watchTarget: jest.fn(),
-      unwatch: jest.fn(),
-    },
-  });
+const store = () => window.YouTubePlusSettingsStore;
+const hooks = () => window.YouTubePlusEndscreen.testHooks;
+const css = () => [...document.querySelectorAll('style')].map(el => el.textContent).join('\n');
+const nextFrame = () => new Promise(resolve => requestAnimationFrame(() => resolve()));
+const counts = () => ({
+  listeners: window.YouTubePlusCleanupManager.getListenerStats().active,
+  timeouts: window.YouTubePlusCleanupManager.timeouts.size,
+});
 
-  Object.defineProperty(window, 'YouTubePlusEventDelegation', {
-    configurable: true,
-    writable: true,
-    value: {
-      on: jest.fn(),
-      off: jest.fn(),
-    },
-  });
-
-  Object.defineProperty(window, 'YouTubePlusDesignSystem', {
-    configurable: true,
-    writable: true,
-    value: {
-      StyleManager: window.YouTubeUtils.StyleManager,
-      getStyle: jest.fn(() => ''),
-    },
-  });
-
-  global.mockLocation({
-    hostname: 'www.youtube.com',
-    pathname: '/watch',
-    href: 'https://www.youtube.com/watch?v=test',
-  });
+/** @param {string} className */
+const addCard = className => {
+  const el = document.createElement('div');
+  el.className = className;
+  document.querySelector('#movie_player').appendChild(el);
+  return el;
 };
 
-describe('Endscreen Module', () => {
+describe('Endscreen remover', () => {
   beforeEach(() => {
-    document.body.innerHTML = '';
-    setupEndscreenDeps();
+    jest.resetModules();
+    document.head.innerHTML = '';
+    document.body.innerHTML = '<div id="movie_player"></div>';
+    localStorage.clear();
+    global.mockLocation({
+      hostname: 'www.youtube.com',
+      pathname: '/watch',
+      href: 'https://www.youtube.com/watch?v=test',
+    });
   });
 
-  describe('End screen element removal', () => {
-    test('should hide elements matching endscreen selectors', () => {
-      document.body.innerHTML = `
-        <div class="ytp-ce-element">End card</div>
-        <div class="ytp-endscreen-element">End screen</div>
-        <div class="ytp-cards-teaser">Teaser</div>
-      `;
+  afterEach(() => {
+    window.YouTubePlusFeatureRegistry?.FeatureLifecycle?._reset?.();
+    // Each test loads its own design system; the next one must not fight
+    // this one's style-host observer.
+    window.YouTubePlusDesignSystem?.StyleManager?.clear?.();
+  });
 
-      const selectors = '.ytp-ce-element,.ytp-endscreen-element,.ytp-cards-teaser';
-      const elements = document.querySelectorAll(selectors);
-      elements.forEach(el => {
-        el.style.display = 'none';
-        el.style.visibility = 'hidden';
-      });
+  const load = () => {
+    loadChain();
+    require('../src/endscreen.js');
+  };
 
-      expect(document.querySelector('.ytp-ce-element').style.display).toBe('none');
-      expect(document.querySelector('.ytp-endscreen-element').style.display).toBe('none');
-      expect(document.querySelector('.ytp-cards-teaser').style.display).toBe('none');
-    });
+  test('removes existing cards on start and hides new ones with its style', async () => {
+    addCard('ytp-ce-element');
+    load();
+    expect(document.querySelector('.ytp-ce-element')).toBeNull();
+    await nextFrame();
+    expect(css()).toContain('.ytp-ce-element');
+    expect(hooks().state.removeCount).toBeGreaterThanOrEqual(1);
+  });
 
-    test('should batch-remove elements up to batch size', () => {
-      const batchSize = 20;
-      const elements = [];
-      for (let i = 0; i < 25; i++) {
-        const el = document.createElement('div');
-        el.className = 'ytp-ce-element';
-        document.body.appendChild(el);
-        elements.push(el);
+  test('fastRemove hides and detaches at most one batch', () => {
+    load();
+    const cards = Array.from({ length: hooks().CONFIG.batchSize + 2 }, () =>
+      addCard('ytp-endscreen-element')
+    );
+    hooks().fastRemove(cards);
+    expect(cards.filter(el => el.isConnected)).toHaveLength(2);
+  });
+
+  test('removeEndScreens is debounced unless forced', () => {
+    load();
+    const first = addCard('ytp-cards-teaser');
+    hooks().removeEndScreens({ force: true });
+    expect(first.isConnected).toBe(false);
+
+    hooks().removeEndScreens();
+    const second = addCard('ytp-cards-teaser');
+    hooks().removeEndScreens();
+    expect(second.isConnected).toBe(true);
+  });
+
+  test('isRelevantNode accepts player elements only', () => {
+    load();
+    const el = document.createElement('div');
+    el.className = 'ytp-ce-element-show';
+    expect(hooks().isRelevantNode(el)).toBe(true);
+    const unrelated = document.createElement('div');
+    unrelated.className = 'header-nav';
+    expect(hooks().isRelevantNode(unrelated)).toBe(false);
+    expect(hooks().isRelevantNode(document.createTextNode('x'))).toBe(false);
+  });
+
+  test('element with className === undefined does not crash subscriber or isRelevantNode', () => {
+    load();
+    const el = document.createElement('div');
+    Object.defineProperty(el, 'className', { value: undefined });
+
+    expect(hooks().getClassNameValue(el)).toBe('');
+    expect(() => hooks().isRelevantNode(el)).not.toThrow();
+    expect(hooks().isRelevantNode(el)).toBe(false);
+
+    const svgEl = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    Object.defineProperty(svgEl, 'className', { value: { baseVal: 'ytp-svg-test' } });
+    expect(hooks().getClassNameValue(svgEl)).toBe('ytp-svg-test');
+    expect(hooks().isRelevantNode(svgEl)).toBe(true);
+
+    const svgEmpty = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    Object.defineProperty(svgEmpty, 'className', { value: { baseVal: '' } });
+    expect(hooks().getClassNameValue(svgEmpty)).toBe('');
+
+    const plainObj = document.createElement('div');
+    Object.defineProperty(plainObj, 'className', { value: {} });
+    expect(hooks().getClassNameValue(plainObj)).toBe('');
+
+    // Simulate mutation containing the undefined-className element
+    const coordinator = window.YouTubePlusMutationCoordinator;
+    const errors = [];
+    const origError = console.error;
+    console.error = (...args) => errors.push(args.join(' '));
+    try {
+      document.querySelector('#movie_player').appendChild(el);
+      // Trigger coordinator manual sweep / dispatch if coordinator tracks mutations
+      if (coordinator?._dispatch) {
+        coordinator._dispatch([
+          {
+            type: 'childList',
+            target: document.querySelector('#movie_player'),
+            addedNodes: [el],
+            removedNodes: [],
+          },
+        ]);
       }
-
-      const toRemove = elements.slice(0, batchSize);
-      toRemove.forEach(el => {
-        el.style.display = 'none';
-        el.remove();
-      });
-
-      expect(document.querySelectorAll('.ytp-ce-element')).toHaveLength(5);
-    });
-
-    test('should handle empty element list gracefully', () => {
-      expect(() => {
-        const elements = [];
-        elements.forEach(el => el.remove());
-      }).not.toThrow();
-    });
+    } finally {
+      console.error = origError;
+    }
+    // Must not log subscriber failed error
+    expect(errors.some(e => e.includes('subscriber failed'))).toBe(false);
   });
 
-  describe('Settings persistence', () => {
-    test('should save endscreen settings to localStorage', () => {
-      const storageKey = 'youtube_endscreen_settings';
-      const settings = { enabled: true };
-      localStorage.setItem(storageKey, JSON.stringify(settings));
+  test('10 on/off cycles leave no listener, timer, style or watcher behind', async () => {
+    load();
+    const coordinator = window.YouTubePlusMutationCoordinator;
+    store().set('endscreen', false);
+    const baseline = counts();
+    const watchers = coordinator.getStats().rootWatchers;
 
-      const stored = JSON.parse(localStorage.getItem(storageKey));
-      expect(stored.enabled).toBe(true);
-    });
+    for (let i = 0; i < 10; i++) {
+      store().set('endscreen', true);
+      await nextFrame();
+      expect(css()).toContain('.ytp-ce-element');
+      store().set('endscreen', false);
+      await nextFrame();
+    }
 
-    test('should load endscreen settings from localStorage', () => {
-      const storageKey = 'youtube_endscreen_settings';
-      localStorage.setItem(storageKey, JSON.stringify({ enabled: false }));
+    expect(counts()).toEqual(baseline);
+    expect(coordinator.getStats().rootWatchers).toBe(watchers);
+    expect(css()).not.toContain('.ytp-ce-element');
+    const card = addCard('ytp-ce-element');
+    hooks().removeEndScreens({ force: true });
+    expect(card.isConnected).toBe(true);
 
-      const data = JSON.parse(localStorage.getItem(storageKey));
-      expect(data.enabled).toBe(false);
-    });
-
-    test('should default to enabled when no settings exist', () => {
-      const storageKey = 'youtube_endscreen_settings';
-      localStorage.removeItem(storageKey);
-
-      const data = localStorage.getItem(storageKey);
-      const enabled = data ? JSON.parse(data).enabled : true;
-      expect(enabled).toBe(true);
-    });
-
-    test('should handle corrupted localStorage data', () => {
-      localStorage.setItem('youtube_endscreen_settings', 'invalid-json');
-      let enabled = true;
-      try {
-        const data = JSON.parse(localStorage.getItem('youtube_endscreen_settings'));
-        enabled = data.enabled;
-      } catch {
-        enabled = true;
-      }
-      expect(enabled).toBe(true);
-    });
+    store().set('endscreen', true);
+    expect(card.isConnected).toBe(false);
   });
 
-  describe('CSS injection', () => {
-    test('should generate correct CSS for hiding endscreen elements', () => {
-      const selectors = '.ytp-ce-element-show,.ytp-ce-element,.ytp-endscreen-element';
-      const css = `${selectors}{display:none!important;opacity:0!important;visibility:hidden!important}`;
-      expect(css).toContain('display:none!important');
-      expect(css).toContain('visibility:hidden!important');
-    });
+  test('cards added later are removed through the player watch', async () => {
+    load();
+    const card = addCard('ytp-ce-element');
+    await new Promise(r => setTimeout(r, 120));
+    expect(card.isConnected).toBe(false);
 
-    test('should inject CSS via StyleManager', () => {
-      const sm = window.YouTubeUtils.StyleManager;
-      const styles = '.ytp-ce-element{display:none!important}';
-      sm.add('end-screen-remover', styles);
-      expect(sm.add).toHaveBeenCalledWith('end-screen-remover', expect.any(String));
-    });
-
-    test('should remove CSS on cleanup', () => {
-      const sm = window.YouTubeUtils.StyleManager;
-      sm.remove('end-screen-remover');
-      expect(sm.remove).toHaveBeenCalledWith('end-screen-remover');
-    });
+    const unrelated = document.createElement('div');
+    unrelated.className = 'header-nav';
+    document.querySelector('#movie_player').appendChild(unrelated);
+    await new Promise(r => setTimeout(r, 120));
+    expect(unrelated.isConnected).toBe(true);
   });
 
-  describe('className value extraction', () => {
-    test('should extract string className directly', () => {
-      const el = document.createElement('div');
-      el.className = 'ytp-ce-element test';
-      expect(typeof el.className).toBe('string');
-      expect(el.className).toContain('ytp-ce-element');
-    });
-
-    test('should handle SVGAnimatedString className', () => {
-      const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-      svg.setAttribute('class', 'ytp-ce-element');
-      const className = svg.getAttribute('class');
-      expect(className).toBe('ytp-ce-element');
-    });
-
-    test('should return empty string for missing className', () => {
-      const el = document.createElement('div');
-      const className = el.className || '';
-      expect(className).toBe('');
-    });
+  test('opening the Advanced section mounts the settings row', () => {
+    load();
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<div class="enhanced-submenu"><div class="glass-card"></div></div><button data-section="advanced"></button>'
+    );
+    jest.useFakeTimers();
+    try {
+      document.querySelector('[data-section="advanced"]').click();
+      jest.advanceTimersByTime(10);
+    } finally {
+      jest.useRealTimers();
+    }
+    expect(document.querySelector('.endscreen-settings')).not.toBeNull();
   });
 
-  describe('isRelevantNode', () => {
-    test('should detect ytp- prefixed elements', () => {
-      const el = document.createElement('div');
-      el.className = 'ytp-ce-element';
-      expect(el.className.includes('ytp-')).toBe(true);
-    });
+  test('the settings checkbox writes the store key', () => {
+    load();
+    document.body.insertAdjacentHTML(
+      'beforeend',
+      '<div class="enhanced-submenu"><div class="glass-card"></div></div>'
+    );
+    jest.useFakeTimers();
+    try {
+      document.dispatchEvent(new Event('youtube-plus-settings-modal-opened'));
+      jest.advanceTimersByTime(25);
+    } finally {
+      jest.useRealTimers();
+    }
+    const checkbox = document.querySelector('.endscreen-settings .yp-settings-checkbox');
+    expect(checkbox.checked).toBe(true);
 
-    test('should reject non-relevant elements', () => {
-      const el = document.createElement('div');
-      el.className = 'some-other-class';
-      expect(el.className.includes('ytp-')).toBe(false);
-    });
-
-    test('should reject non-Element nodes', () => {
-      const textNode = document.createTextNode('text');
-      expect(textNode instanceof Element).toBe(false);
-    });
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+    expect(store().get('endscreen')).toBe(false);
+    expect(css()).not.toContain('.ytp-ce-element');
   });
 
-  describe('hasRelevantChanges', () => {
-    test('should detect mutations with ytp- added nodes', () => {
-      const el = document.createElement('div');
-      el.className = 'ytp-ce-element';
-      const mutations = [{ addedNodes: [el] }];
-      const hasRelevant = mutations.some(m =>
-        Array.from(m.addedNodes).some(n => n instanceof Element && n.className.includes?.('ytp-'))
-      );
-      expect(hasRelevant).toBe(true);
-    });
-
-    test('should return false for irrelevant mutations', () => {
-      const el = document.createElement('div');
-      el.className = 'irrelevant';
-      const mutations = [{ addedNodes: [el] }];
-      const hasRelevant = mutations.some(m =>
-        Array.from(m.addedNodes).some(n => n instanceof Element && n.className.includes?.('ytp-'))
-      );
-      expect(hasRelevant).toBe(false);
-    });
+  test('the legacy flag moves into the store once and the legacy key is dropped', () => {
+    localStorage.setItem('youtube_endscreen_settings', JSON.stringify({ enabled: false }));
+    load();
+    expect(store().get('endscreen')).toBe(false);
+    expect(JSON.parse(localStorage.getItem('youtube_endscreen_settings'))).toEqual({});
+    expect(css()).not.toContain('.ytp-ce-element');
   });
 
-  describe('MutationObserver lifecycle', () => {
-    test('should register observer subscription', () => {
-      const coordinator = window.YouTubePlusMutationCoordinator;
-      const subId = coordinator.subscribeRoot('test', jest.fn(), { childList: true });
-      expect(subId).toBe('sub-id');
-      expect(coordinator.subscribeRoot).toHaveBeenCalled();
-    });
-
-    test('should unsubscribe on cleanup', () => {
-      const coordinator = window.YouTubePlusMutationCoordinator;
-      coordinator.unsubscribe('test-id');
-      expect(coordinator.unsubscribe).toHaveBeenCalledWith('test-id');
-    });
-  });
-
-  describe('Cleanup lifecycle', () => {
-    test('should reset state on cleanup', () => {
-      const state = {
-        observerSubId: 'sub-id',
-        styleEl: 'end-screen-remover',
-        isActive: true,
-        removeCount: 5,
-      };
-
-      state.observerSubId = null;
-      state.styleEl = null;
-      state.isActive = false;
-
-      expect(state.observerSubId).toBeNull();
-      expect(state.styleEl).toBeNull();
-      expect(state.isActive).toBe(false);
-    });
-
-    test('should be safe to call cleanup multiple times', () => {
-      const coordinator = window.YouTubePlusMutationCoordinator;
-      expect(() => {
-        coordinator.unsubscribe(null);
-        coordinator.unsubscribe(undefined);
-      }).not.toThrow();
-    });
-  });
-
-  describe('Debouncing', () => {
-    test('should debounce remove calls', () => {
-      const debounceMs = 32;
-      const lastCheck = 0;
-      const now = performance.now();
-      const shouldCheck = now - lastCheck >= debounceMs;
-      expect(shouldCheck).toBe(true);
-    });
-
-    test('should skip if within debounce window', () => {
-      const debounceMs = 32;
-      const now = performance.now();
-      const lastCheck = now - 10;
-      const shouldSkip = now - lastCheck < debounceMs;
-      expect(shouldSkip).toBe(true);
-    });
+  test('a store value wins over a stale legacy flag', () => {
+    localStorage.setItem('youtube_plus_settings', JSON.stringify({ endscreen: true }));
+    localStorage.setItem('youtube_endscreen_settings', JSON.stringify({ enabled: false }));
+    load();
+    expect(store().get('endscreen')).toBe(true);
+    expect(JSON.parse(localStorage.getItem('youtube_endscreen_settings'))).toEqual({});
   });
 });

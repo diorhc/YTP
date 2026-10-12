@@ -1,136 +1,255 @@
 /**
- * safe-dom.js - canonical safe HTML / HTML insertion module.
+ * safe-dom.js: safe HTML / HTML insertion module.
  *
  * Owns:
- *   - Trusted Types policy + createHTML/createScriptURL/createScript facade
- *   - createHTML / createSafeHTML (TrustedHTML wrapping + sanitization)
- *   - sanitizeHTML (DOM allowlist + URL filter)
- *   - setHTML / renderTemplateClone (canonical insertion paths)
+ *   - Trusted Types policy + createTrustedHTML facade
+ *   - createHTML (sanitize then TT wrap) / createSafeHTML (alias)
+ *   - sanitizeHTML (DOM allowlist filter, returns plain string)
+ *   - setHTML / renderTemplateClone (insertion paths)
  *   - createFragment (contextual fragment helper)
- *   - setText (text-only safe setter; used by YouTubeSecurityUtils compat)
+ *   - setText (text-only safe setter)
  *   - isSafeUrl (URL scheme allowlist used by sanitizeHTML)
  *   - escapeHTML (text-to-HTML escape)
  *   - sanitizeAttribute / setAttributeSafe (attribute-level guards)
  *
  * Back-compat only (do not use in new code):
- *   - isValidVideoId / sanitizeText (used by YouTubeSecurityUtils shim)
- *   - YouTubeSecurityUtils.escapeHtml (alias of escapeHTML)
- *
- * Removed from the YouTubeSecurityUtils shim as no src caller referenced
- * them; the canonical YouTubeSafeDOM surface owns safe HTML / sanitization:
- *   - isValidChannelId / isYouTubeUrl / validateNumber (unused)
- *   - createSafeHTML / setInnerHTMLSafe / renderTemplateClone
- *   - setTextContentSafe / sanitizeAttribute / setAttributeSafe
+ *   - isValidVideoId / sanitizeText (legacy validators)
  *
  * Module must remain dependency-free for userscript use.
  */
 // @ts-check
 (function () {
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    window.YouTubeUtils?.logSuppressed?.(_err, _label || 'SafeDOM');
   const TRUSTED_TYPES_POLICY_NAME = 'youtubeplus#sanitize';
-  let isSanitizing = false;
-  let isDefaultPolicyHTMLReentrant = false;
+  let isPolicyHTMLSanitizing = false;
   const getLogger = () =>
     (typeof window !== 'undefined' && window.YouTubePlusLogger) ||
     (typeof window !== 'undefined' && window.YouTubeUtils && window.YouTubeUtils.logger) ||
     null;
 
-  const BLOCKED_TAGS = new Set([
-    'SCRIPT',
-    'IFRAME',
-    'OBJECT',
-    'EMBED',
-    'LINK',
-    'META',
-    'STYLE',
-    'BASE',
-    'FORM',
-    'NOSCRIPT',
-    'TEMPLATE',
+  const ALLOWED_TAGS = new Set([
+    'A',
+    'B',
+    'BR',
+    'BUTTON',
+    'CIRCLE',
+    'DIV',
+    'EM',
+    'G',
+    'H1',
+    'H2',
+    'H3',
+    'H4',
+    'HEADER',
+    'I',
+    'IMG',
+    'INPUT',
+    'KBD',
+    'LABEL',
+    'LI',
+    'LINE',
+    'OPTION',
+    'P',
+    'PAPER-RIPPLE',
+    'PATH',
+    'POLYGON',
+    'POLYLINE',
+    'RECT',
+    'SECONDARY-WRAPPER',
+    'SELECT',
+    'SPAN',
+    'SVG',
+    'TABVIEW-VIEW-POS-THEAD',
+    'TEXTAREA',
+    'UL',
   ]);
 
-  const URL_ATTRS = new Set(['href', 'src', 'xlink:href', 'formaction', 'action', 'poster']);
+  const GLOBAL_ATTRS = new Set([
+    'class',
+    'id',
+    'role',
+    'title',
+    'tabindex',
+    'aria-label',
+    'aria-modal',
+    'aria-pressed',
+    'aria-hidden',
+    'aria-live',
+    'aria-expanded',
+    'aria-selected',
+    'aria-checked',
+    // functional/ARIA attributes required by code-authored
+    // templates (read-only controls, sliders, described UI). The numeric
+    // slider trio carries VALUE validation in sanitizeElementAttribute.
+    'aria-disabled',
+    'aria-describedby',
+    'aria-labelledby',
+    'aria-controls',
+    'aria-orientation',
+    'aria-valuenow',
+    'aria-valuemin',
+    'aria-valuemax',
+  ]);
+
+  // Numeric slider ARIA attributes: values must be plain numbers
+  // (value validation, fail-closed).
+  const NUMERIC_ARIA_ATTRS = new Set(['aria-valuenow', 'aria-valuemin', 'aria-valuemax']);
+  const NUMERIC_ARIA_VALUE = /^-?\d+(?:\.\d+)?$/;
+
+  // Internal attributes are inert state markers consumed by YouTube+'s own
+  // DOM logic. They must survive sanitization, while event handlers, URL
+  // attributes and arbitrary custom attributes remain blocked.
+  const INTERNAL_ATTR_PREFIXES = ['tyt-'];
+  const INTERNAL_ATTRS = new Set(['userscript-scrollbar-render']);
+
+  const SVG_ATTRS = new Set([
+    'width',
+    'height',
+    'viewbox',
+    'fill',
+    'xmlns',
+    'xmlns:svg',
+    'stroke',
+    'stroke-width',
+    'stroke-linecap',
+    'stroke-linejoin',
+    'd',
+    'points',
+    'opacity',
+    'x1',
+    'y1',
+    'x2',
+    'y2',
+    'cx',
+    'cy',
+    'r',
+    'x',
+    'y',
+    'rx',
+    'ry',
+    'preserveaspectratio',
+    'version',
+    'vector-effect',
+  ]);
+
+  const URL_ATTRS = new Set(['href', 'src']);
+
+  const LENGTH_STYLE_PROPERTIES = new Set([
+    'border-radius',
+    'font-size',
+    'gap',
+    'height',
+    'margin-top',
+    'padding',
+    'width',
+  ]);
+  /** @type {Record<string, Set<string>>} */
+  const STYLE_ENUM_VALUES = {
+    display: new Set(['none', 'block', 'flex', 'grid', 'inline', 'inline-block', 'inline-flex']),
+    fill: new Set(['currentcolor', 'none']),
+    'flex-wrap': new Set(['nowrap', 'wrap', 'wrap-reverse']),
+    'word-break': new Set(['break-all', 'break-word', 'normal']),
+  };
+  const SAFE_LENGTH_VALUE =
+    /^(?:0|-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|em|%|vh|vw))(?:\s+(?:0|-?(?:\d+(?:\.\d+)?|\.\d+)(?:px|rem|em|%|vh|vw))){0,3}$/i;
+  const SAFE_GRADIENT_VALUE =
+    /^linear-gradient\(\s*to\s+(?:right|left|top|bottom)\s*,\s*var\(--[a-z0-9-]+\)\s+\d+(?:\.\d+)?%\s*,\s*var\(--[a-z0-9-]+\)\s+\d+(?:\.\d+)?%\s*\)$/i;
+
+  /** @type {Record<string, Set<string>>} */
+  const TAG_ATTRS = {
+    A: new Set(['href', 'target', 'rel']),
+    IMG: new Set(['src', 'alt']),
+    INPUT: new Set([
+      'type',
+      'placeholder',
+      'checked',
+      'maxlength',
+      'min',
+      'max',
+      'step',
+      'value',
+      'autocomplete',
+      'spellcheck',
+      // read-only / disabled controls must survive sanitization.
+      'disabled',
+      'readonly',
+      'required',
+    ]),
+    TEXTAREA: new Set(['placeholder', 'maxlength', 'disabled', 'readonly', 'required']),
+    LABEL: new Set(['for']),
+    OPTION: new Set(['value', 'selected', 'disabled']),
+    SELECT: new Set(['disabled']),
+    BUTTON: new Set(['type', 'disabled']),
+    SVG: SVG_ATTRS,
+    PATH: SVG_ATTRS,
+    G: SVG_ATTRS,
+    CIRCLE: SVG_ATTRS,
+    LINE: SVG_ATTRS,
+    POLYLINE: SVG_ATTRS,
+    POLYGON: SVG_ATTRS,
+    RECT: SVG_ATTRS,
+  };
 
   // ---------------------------------------------------------------------
   // Trusted Types policy + facade
   // ---------------------------------------------------------------------
 
-  /** @type {{ policyName: string, isSupported: boolean, getPolicy: () => any, createHTML: (html: string) => string, createScriptURL: (url: string) => string, createScript: (value: string) => string } | null} */
+  /** @typedef {ReturnType<NonNullable<typeof trustedTypes>['createPolicy']>} TrustedTypesPolicy */
+
+  /** @type {{ policyName: string, isSupported: boolean, getPolicy: () => TrustedTypesPolicy | null, createHTML: (html: string) => string } | null} */
   let trustedTypesFacade = null;
 
   /**
    * Lazily create a named Trusted Types policy shared across the userscript.
-   * @returns {any}
+   *safe-dom is the single TT owner; the policy object is never
+   * published; callers go through the facade functions below.
+   * @returns {TrustedTypesPolicy | null}
    */
+  /** @type {TrustedTypesPolicy | null} */
+  let cachedPolicy = null;
   function getTrustedTypesPolicy() {
+    if (cachedPolicy) return cachedPolicy;
     if (typeof window === 'undefined' || typeof window.trustedTypes === 'undefined') {
       return null;
     }
 
-    const existing = /** @type {{ policy?: any } | undefined} */ (window.YouTubeTrustedTypes);
-    if (existing?.policy) {
-      return existing.policy;
-    }
-
     try {
       const policy = window.trustedTypes.createPolicy(TRUSTED_TYPES_POLICY_NAME, {
+        // Sink-level protection: everything routed through the policy
+        // is sanitized, even when a caller forgets to run sanitizeHTML first.
+        // The reentrancy guard lets sanitizeHTML's own DOM building pass raw.
         createHTML: /** @param {string} value */ value => {
-          if (typeof value !== 'string') return String(value == null ? '' : value);
-          if (!value) return '';
-          if (isSanitizing) {
-            return value;
+          if (isPolicyHTMLSanitizing) {
+            return typeof value === 'string' ? value : String(value == null ? '' : value);
           }
-          isSanitizing = true;
+          isPolicyHTMLSanitizing = true;
           try {
-            const parser = new DOMParser();
-            const doc = parser.parseFromString(value, 'text/html');
-            // DOMParser wraps bare text in <html><head></head><body>...</body></html>
-            const fragment = document.createDocumentFragment();
-            if (doc.body) {
-              fragment.append(...doc.body.childNodes);
-            } else if (doc.documentElement) {
-              fragment.append(...doc.documentElement.childNodes);
-            }
-            sanitizeFragment(fragment);
-            const container = document.createElement('div');
-            container.append(fragment);
-            return container.innerHTML;
+            return sanitizeHTML(
+              typeof value === 'string' ? value : String(value == null ? '' : value)
+            );
           } finally {
-            isSanitizing = false;
+            isPolicyHTMLSanitizing = false;
           }
         },
-        createScriptURL: /** @param {string} value */ value => {
-          if (typeof value !== 'string') return String(value == null ? '' : value);
-          try {
-            const url = new URL(value, location.origin);
-            if (url.origin === location.origin) return value;
-            if (url.hostname.endsWith('.googleapis.com') || url.hostname.endsWith('.youtube.com')) {
-              return value;
-            }
-          } catch {
-            // Ignore malformed URLs and fall through to blocking.
-          }
-          getLogger()?.warn?.('Security', 'Blocked untrusted script URL', value);
-          return 'about:blank';
-        },
-        createScript: () => {
-          getLogger()?.warn?.('Security', 'Blocked Trusted Types createScript call');
-          return '';
-        },
+        // Scripts the runtime injects itself (the page-realm Tabview core).
+        // Only our own generated text reaches this policy; nothing from the DOM.
+        createScript: /** @param {string} value */ value =>
+          typeof value === 'string' ? value : String(value == null ? '' : value),
       });
 
-      if (typeof window !== 'undefined' && window.YouTubeTrustedTypes) {
-        window.YouTubeTrustedTypes.policy = policy;
-      }
+      cachedPolicy = policy;
 
       return policy;
-    } catch {
-      return existing?.policy || null;
+    } catch (_e) {
+      logS(_e);
+      return cachedPolicy || null;
     }
   }
 
   /**
-   * Convert a string to TrustedHTML when supported.
-   * Canonical entry: this is what `createHTML` resolves to.
+   * Wrap a string as TrustedHTML via the named policy. The policy itself
+   * sanitizes, so the sink-level path is safe even for raw input.
    * @param {string} html
    * @returns {string}
    */
@@ -141,67 +260,24 @@
   }
 
   /**
-   * Convert a string to TrustedScriptURL when supported.
-   * @param {string} url
-   * @returns {string}
+   * Wrap a string as TrustedScript through the same named policy. Returns null
+   * when Trusted Types has no usable policy (unsupported document, or the policy
+   * was refused), so the caller skips the sink instead of throwing a TypeError.
+   * @param {string} text
+   * @returns {string | null}
    */
-  function createTrustedScriptURL(url) {
-    const normalized = typeof url === 'string' ? url : String(url == null ? '' : url);
+  function createTrustedScript(text) {
     const policy = getTrustedTypesPolicy();
-    return policy ? policy.createScriptURL(normalized) : normalized;
+    if (!policy || typeof policy.createScript !== 'function') return null;
+    const normalized = typeof text === 'string' ? text : String(text == null ? '' : text);
+    return /** @type {string} */ (/** @type {unknown} */ (policy.createScript(normalized)));
   }
 
   /**
-   * Convert a value to TrustedScript when supported.
-   * @param {string|unknown} value
-   * @returns {string}
+   * Trusted Types is owned by a named policy, never the global `default`
+   * policy: a default policy re-sanitizes YouTube's own markup through our
+   * allowlist for the whole page.
    */
-  function createTrustedScript(value) {
-    const normalized = typeof value === 'string' ? value : String(value == null ? '' : value);
-    const policy = getTrustedTypesPolicy();
-    return policy ? /** @type {string} */ (policy.createScript(normalized)) : normalized;
-  }
-
-  /**
-   * Install the special `default` Trusted Types policy so plain-string
-   * assignments to TT-protected sinks (Range.createContextualFragment, innerHTML,
-   * setHTMLUnsafe, etc.) are transparently sanitized. This avoids
-   * "Sink type mismatch violation" errors on hosts that enforce
-   * `require-trusted-types-for` and only allow specific policy names
-   * (e.g. youtube.com).
-   */
-  function installDefaultTrustedTypesPolicy() {
-    if (typeof window === 'undefined' || typeof window.trustedTypes === 'undefined') return;
-    if (window.trustedTypes.defaultPolicy) return;
-    const namedPolicy = getTrustedTypesPolicy();
-    try {
-      window.trustedTypes.createPolicy('default', {
-        createHTML: /** @param {string} value */ value => {
-          if (isDefaultPolicyHTMLReentrant) {
-            return typeof value === 'string' ? value : String(value == null ? '' : value);
-          }
-          isDefaultPolicyHTMLReentrant = true;
-          try {
-            const safeValue =
-              typeof value === 'string' ? value : String(value == null ? '' : value);
-            return namedPolicy ? namedPolicy.createHTML(safeValue) : safeValue;
-          } finally {
-            isDefaultPolicyHTMLReentrant = false;
-          }
-        },
-        createScriptURL: /** @param {string} value */ value => {
-          const safeValue = typeof value === 'string' ? value : String(value == null ? '' : value);
-          return namedPolicy ? namedPolicy.createScriptURL(safeValue) : safeValue;
-        },
-        createScript: () => {
-          getLogger()?.warn?.('Security', 'Blocked default Trusted Types createScript call');
-          return '';
-        },
-      });
-    } catch {
-      /* no-op */
-    }
-  }
 
   // ---------------------------------------------------------------------
   // URL scheme guard (used by sanitizeHTML)
@@ -215,20 +291,74 @@
   function isSafeUrl(value) {
     if (typeof value !== 'string') return false;
     const normalized = value.trim();
-    if (!normalized) return true;
-    if (normalized.startsWith('#') || normalized.startsWith('/')) return true;
+    if (!normalized) return false;
+    if (normalized.startsWith('#')) return true;
+    if (normalized.startsWith('//')) return false;
+    if (normalized.startsWith('/')) return true;
 
     const lower = normalized.toLowerCase();
     if (lower.startsWith('java' + 'script:')) return false;
     if (lower.startsWith('vbscript:')) return false;
-    if (lower.startsWith('data:') && !lower.startsWith('data:image/')) return false;
+    if (lower.startsWith('data:')) {
+      return /^data:image\/(?:png|jpeg|gif|webp|svg\+xml|avif)\b/.test(lower);
+    }
 
     try {
       const url = new URL(normalized, location.origin);
-      return ['http:', 'https:', 'mailto:', 'tel:', 'blob:'].includes(url.protocol);
-    } catch {
+      return ['http:', 'https:', 'mailto:', 'tel:'].includes(url.protocol);
+    } catch (_e) {
+      logS(_e);
       return false;
     }
+  }
+
+  /**
+   * Keep only the small inline-style subset used by code-authored templates.
+   * Values capable of loading resources or executing legacy CSS extensions
+   * are rejected before property-specific validation.
+   * @param {string} property
+   * @param {string} value
+   * @returns {boolean}
+   */
+  function isSafeInlineStyleValue(property, value) {
+    const normalized = value.trim();
+    if (!normalized || /[\\<>]/.test(normalized)) return false;
+    if (
+      /(?:url\s*\(|expression\s*\(|@import|javascript:|vbscript:|behavior\s*:|-moz-binding)/i.test(
+        normalized
+      )
+    ) {
+      return false;
+    }
+
+    const enumValues = STYLE_ENUM_VALUES[property];
+    if (enumValues) return enumValues.has(normalized.toLowerCase());
+    if (LENGTH_STYLE_PROPERTIES.has(property)) return SAFE_LENGTH_VALUE.test(normalized);
+    if (property === 'opacity') return /^(?:0(?:\.\d+)?|1(?:\.0+)?)$/.test(normalized);
+    if (property === 'background') return SAFE_GRADIENT_VALUE.test(normalized);
+    return false;
+  }
+
+  /**
+   * Parse an inline declaration list and serialize only approved declarations.
+   * @param {string} value
+   * @returns {string}
+   */
+  function sanitizeInlineStyle(value) {
+    if (typeof value !== 'string' || !value.trim()) return '';
+    const probe = document.createElement('div');
+    probe.setAttribute('style', value);
+    const declarations = [];
+
+    for (let index = 0; index < probe.style.length; index += 1) {
+      const property = probe.style.item(index).toLowerCase();
+      const propertyValue = probe.style.getPropertyValue(property).trim();
+      if (probe.style.getPropertyPriority(property)) continue;
+      if (!isSafeInlineStyleValue(property, propertyValue)) continue;
+      declarations.push(`${property}: ${propertyValue}`);
+    }
+
+    return declarations.join('; ');
   }
 
   // ---------------------------------------------------------------------
@@ -253,8 +383,54 @@
     } else if (html == null) {
       safeHTML = '';
     }
-    // this IS the centralized sanitizer entry; callers wrap input via Trusted Types
-    return range.createContextualFragment(/** @type {any} */ (safeHTML));
+    const fragment = range.createContextualFragment(/** @type {string} */ (safeHTML));
+    // Always guarantee DOM-level sanitization across all environments (including Firefox / non-TrustedTypes)
+    sanitizeFragment(fragment);
+    return fragment;
+  }
+
+  /**
+   * @param {string} name
+   * @param {Set<string>} tagAttributes
+   * @returns {boolean}
+   */
+  function isAllowedAttribute(name, tagAttributes) {
+    if (name.startsWith('data-')) return true;
+    if (GLOBAL_ATTRS.has(name) || tagAttributes.has(name)) return true;
+    if (INTERNAL_ATTRS.has(name)) return true;
+    return INTERNAL_ATTR_PREFIXES.some(prefix => name.startsWith(prefix));
+  }
+
+  /**
+   * @param {Element} element
+   * @param {Attr} attribute
+   * @param {Set<string>} tagAttributes
+   */
+  function sanitizeElementAttribute(element, attribute, tagAttributes) {
+    const name = attribute.name.toLowerCase();
+    if (name.startsWith('on') || name === 'srcdoc' || name === 'name') {
+      element.removeAttribute(attribute.name);
+      return;
+    }
+    if (name === 'style') {
+      const safeStyle = sanitizeInlineStyle(attribute.value);
+      if (safeStyle) element.setAttribute('style', safeStyle);
+      else element.removeAttribute(attribute.name);
+      return;
+    }
+    if (!isAllowedAttribute(name, tagAttributes)) {
+      element.removeAttribute(attribute.name);
+      return;
+    }
+    // Numeric slider ARIA values must be plain numbers;
+    // anything else is rejected (fail-closed value validation).
+    if (NUMERIC_ARIA_ATTRS.has(name) && !NUMERIC_ARIA_VALUE.test(attribute.value.trim())) {
+      element.removeAttribute(attribute.name);
+      return;
+    }
+    if (URL_ATTRS.has(name) && !isSafeUrl(attribute.value)) {
+      element.removeAttribute(attribute.name);
+    }
   }
 
   /**
@@ -274,24 +450,15 @@
 
     while (walker.nextNode()) {
       const element = /** @type {Element} */ (walker.currentNode);
-      if (BLOCKED_TAGS.has(element.tagName.toUpperCase())) {
+      const tag = element.tagName.toUpperCase();
+      if (!ALLOWED_TAGS.has(tag)) {
         toRemove.push(element);
         continue;
       }
 
-      const attrs = Array.from(element.attributes);
-      for (const attr of attrs) {
-        const name = attr.name.toLowerCase();
-        const value = attr.value;
-
-        if (name.startsWith('on') || name === 'srcdoc') {
-          element.removeAttribute(attr.name);
-          continue;
-        }
-
-        if (URL_ATTRS.has(name) && !isSafeUrl(value)) {
-          element.removeAttribute(attr.name);
-        }
+      const tagAttributes = TAG_ATTRS[tag] || new Set();
+      for (const attribute of Array.from(element.attributes)) {
+        sanitizeElementAttribute(element, attribute, tagAttributes);
       }
     }
 
@@ -317,8 +484,7 @@
   }
 
   /**
-   * Convert raw HTML to trusted HTML using the global TrustedTypes policy
-   * when available, after a sanitization pass.
+   * Sanitize then convert to TrustedHTML. Entry point for untrusted input.
    * @param {string} html
    * @returns {string}
    */
@@ -328,20 +494,19 @@
   }
 
   /**
-   * Canonical safe HTML creator. Returns a TrustedHTML value (or plain string
-   * on hosts without Trusted Types). For already-trusted input, returns it
-   * unchanged so the contextual-fragment sink receives the same value.
+   * Safe HTML creator. Sanitizes input then returns a TrustedHTML
+   * value (or plain string on hosts without Trusted Types).
    * @param {string|unknown} html
    * @returns {string}
    */
   function createHTML(html) {
     if (html == null) return '';
     if (typeof html !== 'string') return String(html);
-    return createTrustedHTML(html);
+    return createTrustedHTML(sanitizeHTML(html));
   }
 
   // ---------------------------------------------------------------------
-  // Element setters (canonical insertion paths)
+  // Element setters (insertion paths)
   // ---------------------------------------------------------------------
 
   /**
@@ -367,11 +532,7 @@
   function renderTemplateClone(element, html) {
     if (!(element instanceof Element)) return;
     const trusted =
-      typeof html === 'string'
-        ? createTrustedHTML(html)
-        : html == null
-          ? createTrustedHTML('')
-          : html;
+      typeof html === 'string' ? createSafeHTML(html) : html == null ? createSafeHTML('') : html;
     const fragment = createFragment(trusted);
     element.replaceChildren(fragment);
   }
@@ -419,16 +580,13 @@
 
     const valueStr = String(attrValue);
     const lowerName = attrName.toLowerCase();
-    if (lowerName === 'href' || lowerName === 'src') {
-      if (/^javascript:/i.test(valueStr)) {
-        getLogger()?.warn?.('Security', `Blocked javascript protocol in ${attrName}`);
-        return null;
-      }
-      if (
-        valueStr.toLowerCase().startsWith('data:') &&
-        !valueStr.toLowerCase().startsWith('data:image/')
-      ) {
-        getLogger()?.warn?.('Security', `Blocked non-image data: URI in ${attrName}`);
+    // The attribute path uses the same allowlist and normalization as the HTML
+    // sanitizer (isSafeUrl): a bare startsWith check is bypassable with control
+    // characters in the scheme (the DOM normalizes `java\tscript:` to
+    // `javascript:`) and disagrees on protocol-relative and non-image data: URIs.
+    if (lowerName === 'href' || lowerName === 'src' || lowerName === 'xlink:href') {
+      if (!isSafeUrl(valueStr)) {
+        getLogger()?.warn?.('Security', `Blocked dangerous URL in ${attrName}`);
         return null;
       }
     }
@@ -444,7 +602,9 @@
    * @returns {boolean}
    */
   function setAttributeSafe(element, attrName, attrValue) {
-    if (!(element instanceof HTMLElement)) {
+    // SVG elements (SVGAElement xlink:href) are legitimate targets;
+    // the guard is about the VALUE, not the element kind.
+    if (!(element instanceof Element) || typeof element.setAttribute !== 'function') {
       getLogger()?.error?.('Security', 'Invalid element for setAttributeSafe');
       return false;
     }
@@ -456,22 +616,21 @@
       element.setAttribute(attrName, sanitizedValue);
       return true;
     } catch (e) {
+      logS(e);
       getLogger()?.error?.('Security', 'setAttribute failed', e);
       return false;
     }
   }
 
   // ---------------------------------------------------------------------
-  // Back-compat: legacy validators (YouTubeSecurityUtils surface)
-  // These do not belong canonically to safe HTML insertion but are kept here
-  // as a stable bridge for current callers. New code must not depend on them.
+  // Back-compat: legacy validators. These do not belong canonically to safe
+  // HTML insertion but are kept here as a stable bridge for current callers.
+  // New code must not depend on them.
   // ---------------------------------------------------------------------
 
   /**
    * Validate YouTube video ID format.
-   * @deprecated Use a module-local helper or the YouTubeSafeDOM
-   *   validator surface (not currently exposed). Kept for
-   *   `YouTubeSecurityUtils.isValidVideoId` callers.
+   * @deprecated Use a module-local helper.
    * @param {string} id
    * @returns {boolean}
    */
@@ -482,8 +641,7 @@
 
   /**
    * Sanitize plain text for safe display.
-   * @deprecated Kept for `YouTubeSecurityUtils.sanitizeText` callers;
-   *   new code should sanitize through the HTML allowlist path.
+   * @deprecated New code should sanitize through the HTML allowlist path.
    * @param {string} text
    * @returns {string}
    */
@@ -506,19 +664,13 @@
       isSupported: typeof window.trustedTypes !== 'undefined',
       getPolicy: getTrustedTypesPolicy,
       createHTML: createTrustedHTML,
-      createScriptURL: createTrustedScriptURL,
-      createScript: createTrustedScript,
     };
 
     window.YouTubeTrustedTypes = trustedTypesFacade;
-    // Canonical createHTML alias exposed as a top-level helper for callers
-    // that do not import the safe-dom bundle directly.
-    window._ytplusCreateHTML = createTrustedHTML;
-    installDefaultTrustedTypesPolicy();
 
     /** @type {YouTubeSafeDOM} */
     const safeDOM = {
-      // --- canonical safe HTML / insertion ---
+      // --- safe HTML / insertion ---
       createHTML,
       createSafeHTML,
       createFragment,
@@ -529,9 +681,7 @@
       escapeHTML,
       // --- Trusted Types ---
       createTrustedHTML,
-      createTrustedScriptURL,
       createTrustedScript,
-      createTrustedInlineScript: createTrustedScript,
       getTrustedTypesPolicy,
       // --- attribute guards ---
       sanitizeAttribute,
@@ -541,9 +691,7 @@
       sanitizeText,
     };
     window.YouTubeSafeDOM = safeDOM;
-    if (typeof unsafeWindow !== 'undefined') {
-      unsafeWindow.YouTubeSafeDOM = safeDOM;
-    }
+    window.YouTubePlusSafeDOM = safeDOM;
   }
 
   if (typeof module !== 'undefined' && module.exports) {

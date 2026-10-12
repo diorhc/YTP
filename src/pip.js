@@ -1,13 +1,16 @@
-// YouTube Picture-in-Picture — LazyLoader registered as 'pip'.
+// YouTube Picture-in-Picture: LazyLoader registered as 'pip'.
 //
 // Responsibility: PiP toggle button, keyboard shortcut, Firefox
 //   bridge script injection, and PiP session state persistence.
-//   Uses nonce-based inline script injection for CSP compatibility.
-// Public surface: none (self-contained IIFE, registered via LazyLoader).
+//   Injects the page bridge through GM_addElement (CSP-safe).
+// Public surface: window.YouTubePlusPip.
 (function () {
-  // Shared helpers from YouTubeUtils (canonical boot shorthand)
+  // Shared helpers from YouTubeUtils
   const U = window.YouTubeUtils;
-  const { logger, $: qs, byId, setTimeout_ } = U?.helpers ?? {};
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'Pip');
+
+  const { logger, $: qs, byId } = U?.helpers ?? {};
 
   /**
    * @typedef {{
@@ -20,7 +23,6 @@
 
   /**
    * @typedef {{
-   *   enabled: boolean,
    *   shortcut: PipShortcut,
    *   storageKey: string
    * }} PipSettings
@@ -29,14 +31,51 @@
   /**
    * PiP settings configuration
    * @type {PipSettings}
-   * @property {boolean} enabled - Whether PiP is enabled
    * @property {Object} shortcut - Keyboard shortcut configuration
    * @property {string} storageKey - LocalStorage key for persistence
    */
   const pipSettings = {
-    enabled: true,
     shortcut: { key: 'P', shiftKey: true, altKey: false, ctrlKey: false },
     storageKey: 'youtube_pip_settings',
+  };
+
+  const keyToCode = (/** @type {string} */ key) => {
+    const normalized = String(key || '')
+      .trim()
+      .toUpperCase();
+    if (!normalized) return '';
+
+    const symbolCodeMap = {
+      '`': 'Backquote',
+      '~': 'Backquote',
+      '-': 'Minus',
+      _: 'Minus',
+      '=': 'Equal',
+      '+': 'Equal',
+      '[': 'BracketLeft',
+      '{': 'BracketLeft',
+      ']': 'BracketRight',
+      '}': 'BracketRight',
+      '\\': 'Backslash',
+      '|': 'Backslash',
+      ';': 'Semicolon',
+      ':': 'Semicolon',
+      "'": 'Quote',
+      '"': 'Quote',
+      ',': 'Comma',
+      '<': 'Comma',
+      '.': 'Period',
+      '>': 'Period',
+      '/': 'Slash',
+      '?': 'Slash',
+    };
+    if (Object.hasOwn(symbolCodeMap, normalized)) {
+      return /** @type {Record<string, string>} */ (symbolCodeMap)[normalized];
+    }
+
+    if (normalized.length === 1 && /[A-Z]/.test(normalized)) return `Key${normalized}`;
+    if (normalized.length === 1 && /[0-9]/.test(normalized)) return `Digit${normalized}`;
+    return normalized;
   };
 
   const PIP_SESSION_KEY = 'youtube_plus_pip_session';
@@ -44,42 +83,9 @@
   const FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG = '__ytplusFirefoxPipKeydownBridge';
   const FIREFOX_PIP_SHORTCUT_KEY = '__ytplusPipShortcut';
 
-  const getPageGlobal = () => {
-    try {
-      if (typeof unsafeWindow !== 'undefined') {
-        const unwrapped = /** @type {any} */ (unsafeWindow)?.wrappedJSObject;
-        if (unwrapped && typeof unwrapped === 'object') return unwrapped;
-        return /** @type {any} */ (unsafeWindow);
-      }
-    } catch (_e) {
-      U.logSuppressed(_e, 'Pip');
-    }
-    return /** @type {any} */ (window);
-  };
-
-  const createTrustedInlineScript =
-    window.YouTubeSafeDOM?.createTrustedScript ||
-    ((/** @type {unknown} */ value) => {
-      const normalized = typeof value === 'string' ? value : String(value ?? '');
-      try {
-        const sharedPolicy =
-          (window.YouTubeTrustedTypes &&
-            typeof window.YouTubeTrustedTypes.getPolicy === 'function' &&
-            window.YouTubeTrustedTypes.getPolicy()) ||
-          window.YouTubeTrustedTypes?.policy ||
-          null;
-        if (sharedPolicy && typeof sharedPolicy.createScript === 'function') {
-          return sharedPolicy.createScript(normalized);
-        }
-      } catch (_e) {
-        U.logSuppressed(_e, 'Pip');
-      }
-      return normalized;
-    });
-
   /**
    * Get video element with validation.
-   * P9: Uses a WeakRef cache to avoid repeated DOM queries for the same element.
+   *Uses a WeakRef cache to avoid repeated DOM queries for the same element.
    * @returns {HTMLVideoElement|null} Video element or null if not found
    */
   /** @type {WeakRef<HTMLVideoElement> | null} */
@@ -89,7 +95,7 @@
 
   const getVideoElement = () => {
     try {
-      // P9: Check WeakRef cache first
+      // Check WeakRef cache first
       const now = Date.now();
       if (_cachedVideoRef && now - _cachedVideoTs < _VIDEO_CACHE_TTL) {
         const cached = _cachedVideoRef.deref?.();
@@ -99,30 +105,29 @@
         _cachedVideoRef = null;
       }
 
-      const pageGlobal = getPageGlobal();
+      const pageGlobal = U.getPageWindow();
 
       const candidate =
         pageGlobal?.document?.querySelector?.(
           'video.html5-main-video, #movie_player video, video'
-        ) ||
-        (typeof YouTubeUtils?.querySelector === 'function' &&
-          YouTubeUtils.querySelector('video')) ||
-        qs('video');
+        ) || qs('video');
 
       if (candidate?.tagName && candidate.tagName.toLowerCase() === 'video') {
         const video = /** @type {HTMLVideoElement} */ (candidate);
-        // P9: Cache the result
+        // Cache the result
         try {
           _cachedVideoRef = new WeakRef(video);
           _cachedVideoTs = now;
         } catch (_e) {
-          // WeakRef not supported — no caching
+          logS(_e);
+          // WeakRef unavailable, so skip caching.
         }
         return video;
       }
 
       return null;
     } catch (error) {
+      logS(error);
       logger?.error?.('PiP', 'Error getting video element', error);
       return null;
     }
@@ -131,16 +136,16 @@
   /**
    * Request Picture-in-Picture with page-context fallback for Firefox userscript environments.
    * @param {HTMLVideoElement} video
-   * @returns {Promise<any>}
+   * @returns {Promise<unknown>}
    */
   const requestPictureInPictureCompat = async video => {
     if (typeof video.requestPictureInPicture === 'function') {
       return video.requestPictureInPicture();
     }
 
-    const pageGlobal = getPageGlobal();
-    const pageVideo = pageGlobal?.document?.querySelector?.(
-      'video.html5-main-video, #movie_player video, video'
+    const pageGlobal = U.getPageWindow();
+    const pageVideo = /** @type {HTMLVideoElement | null} */ (
+      pageGlobal?.document?.querySelector?.('video.html5-main-video, #movie_player video, video')
     );
     const proto = pageGlobal?.HTMLVideoElement?.prototype;
 
@@ -153,8 +158,10 @@
     }
 
     const player =
-      pageGlobal?.document?.getElementById?.('movie_player') ||
-      pageGlobal?.document?.querySelector?.('#movie_player');
+      /** @type {(HTMLElement & { togglePictureInPicture?: () => Promise<void> | void, requestPictureInPicture?: () => Promise<void> | void }) | null} */ (
+        pageGlobal?.document?.getElementById?.('movie_player') ||
+          pageGlobal?.document?.querySelector?.('#movie_player')
+      );
     if (player && typeof player.togglePictureInPicture === 'function') {
       return player.togglePictureInPicture();
     }
@@ -185,26 +192,82 @@
         resolve();
       };
 
-      video.addEventListener('loadedmetadata', finish, { once: true });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        video,
+        'loadedmetadata',
+        finish,
+        { once: true },
+        false
+      );
       setTimeout(finish, 700);
     });
 
-  const ensureFirefoxPagePipBridge = () => {
-    const pageGlobal = getPageGlobal();
-    if (!pageGlobal || pageGlobal[FIREFOX_PIP_BRIDGE_FLAG]) return true;
+  let bridgeToken = '';
+  const getBridgeToken = () => {
+    if (!bridgeToken) {
+      const c =
+        (typeof window !== 'undefined' && window.crypto) ||
+        (typeof crypto !== 'undefined' ? crypto : null);
+      if (c?.getRandomValues) {
+        const bytes = new Uint8Array(16);
+        c.getRandomValues(bytes);
+        bridgeToken = Array.from(bytes, b => b.toString(16).padStart(2, '0')).join('');
+      }
+    }
+    return bridgeToken;
+  };
 
+  /**
+   * Run a page-realm script through GM_addElement and detach the script node.
+   * GM_addElement bypasses the page CSP in Tampermonkey/Violentmonkey, the
+   * reliable injection path in Firefox userscript contexts.
+   * @param {string} script - Script text to run in the page realm.
+   * @returns {boolean} Whether GM_addElement ran the script.
+   */
+  const runGmPageScript = script => {
+    const gmAddElement = globalThis.GM_addElement;
+    if (typeof gmAddElement !== 'function') return false;
+    try {
+      const scriptEl = gmAddElement('script', {
+        // GM_addElement options cross the extension bridge and must stay
+        // structured-clone-safe in Firefox userscript environments.
+        textContent: String(script),
+      });
+      scriptEl?.remove?.();
+      return true;
+    } catch (_e) {
+      logS(_e);
+      return false;
+    }
+  };
+
+  const ensureFirefoxPagePipBridge = () => {
+    const pageGlobal = U.getPageWindow();
+    if (
+      !pageGlobal ||
+      /** @type {Record<string, unknown>} */ (/** @type {object} */ (pageGlobal))[
+        FIREFOX_PIP_BRIDGE_FLAG
+      ]
+    )
+      return true;
+
+    // Without a random token the bridge would accept any page message.
+    const token = getBridgeToken();
+    if (!token) return false;
     const sourceURL = 'debug://youtube-plus/pip-firefox-bridge.js';
     const bridgeScript = `(() => {
   if (window['${FIREFOX_PIP_BRIDGE_FLAG}']) return;
   window['${FIREFOX_PIP_BRIDGE_FLAG}'] = true;
+
+  const bridgeToken = '${token}';
 
   const selectVideo = () =>
     document['querySelector']('video.html5-main-video, #movie_player video, video');
 
   const clickNativePipButton = () => {
     const selectors = [
-      'button.ytp-pip-button',
-      '.ytp-right-controls .ytp-pip-button',
+      'button.yp-pip-button',
+      '.ytp-right-controls .yp-pip-button',
       '.ytp-right-controls button[aria-keyshortcuts="i"]'
     ];
     for (const selector of selectors) {
@@ -226,17 +289,18 @@
       ? location.origin
       : '*';
 
-  window.addEventListener('message', event => {
+  const handleMessage = event => { // lint:custom:ignore
     if (event.source !== window) return;
     // Allow same-origin page messages and Firefox/userscript sandbox-origin messages.
     // In some Firefox userscript contexts event.origin may be "null".
     const msgOrigin = String(event.origin || '');
     if (msgOrigin && msgOrigin !== 'null' && msgOrigin !== location.origin) return;
-    if (event.data?.type !== 'ytp-pip-request' || typeof event.data?.id !== 'string') return;
+    if (event.data?.type !== 'yp-pip-request' || typeof event.data?.id !== 'string') return;
     if (event.data.id.length > 80) return;
+    if (!bridgeToken || event.data?.token !== bridgeToken) return;
 
     const respond = success => {
-      window.postMessage({ type: 'ytp-pip-response', id: event.data.id, success }, safeTargetOrigin);
+      window.postMessage({ type: 'yp-pip-response', id: event.data.id, success }, safeTargetOrigin);
     };
 
     Promise.resolve()
@@ -254,50 +318,17 @@
       })
       .then(success => respond(Boolean(success)))
       .catch(() => respond(false));
-  }, true);
+  };
+  window['__ytplusFirefoxPipBridgeMessageHandler'] = handleMessage;
+  // lint:custom:ignore page-realm script: CleanupManager and the remove FirefoxPipBridges detacher do not reach here
+  window.addEventListener('message', handleMessage);
 })();
 //# sourceURL=${sourceURL}`;
 
-    try {
-      // Strategy 1: GM_addElement — bypasses CSP in Tampermonkey/Violentmonkey.
-      // This is the most reliable approach in Firefox userscript contexts.
-      const gmAddElement = /** @type {any} */ (globalThis).GM_addElement;
-      if (typeof gmAddElement === 'function') {
-        gmAddElement('script', {
-          // GM_addElement options cross the extension bridge and must stay
-          // structured-clone-safe in Firefox userscript environments.
-          textContent: String(bridgeScript),
-        });
-        return true;
-      }
-    } catch (_e) {
-      // GM_addElement not available — fall through
-    }
+    if (runGmPageScript(bridgeScript)) return true;
 
-    try {
-      // Strategy 2: Nonce-based inline script injection.
-      // Firefox hides nonce values from content via getAttribute() for security,
-      // so this may still fail; it is kept as a secondary attempt.
-      const nonceSource = qs('script[nonce]') || qs('[nonce]') || document.documentElement;
-      const nonce =
-        /** @type {any} */ (nonceSource)?.nonce ||
-        nonceSource?.getAttribute?.('nonce') ||
-        document.documentElement?.getAttribute?.('nonce') ||
-        '';
-      if (nonce) {
-        const script = document.createElement('script');
-        script.setAttribute('nonce', nonce);
-        script.textContent = /** @type {any} */ (createTrustedInlineScript(bridgeScript));
-        (document.head || document.documentElement).appendChild(script);
-        script.remove();
-        if (pageGlobal[FIREFOX_PIP_BRIDGE_FLAG]) return true;
-      }
-    } catch (_e) {
-      // Nonce injection failed — fall through
-    }
-
-    // Bridge installation failed — the postMessage path won't work,
-    // but clickNativeYouTubePipButton() and unsafeWindow paths are still tried.
+    // Bridge installation failed, so the postMessage path is unavailable;
+    // clickNativeYouTubePipButton() and unsafeWindow paths are still tried.
     logger?.warn?.(
       'PiP',
       'Firefox PiP bridge could not be installed (CSP). Using button fallback.'
@@ -310,18 +341,20 @@
    */
   const syncPipShortcutToPageGlobal = () => {
     try {
-      const pageGlobal = getPageGlobal();
+      const pageGlobal = U.getPageWindow();
       if (pageGlobal) {
-        pageGlobal[FIREFOX_PIP_SHORTCUT_KEY] = {
+        /** @type {Record<string, unknown>} */ (/** @type {object} */ (pageGlobal))[
+          FIREFOX_PIP_SHORTCUT_KEY
+        ] = {
           key: pipSettings.shortcut.key,
           shiftKey: pipSettings.shortcut.shiftKey,
           altKey: pipSettings.shortcut.altKey,
           ctrlKey: pipSettings.shortcut.ctrlKey,
-          enabled: pipSettings.enabled,
+          enabled: true,
         };
       }
     } catch (_e) {
-      U.logSuppressed(_e, 'Pip');
+      logS(_e);
     }
   };
 
@@ -334,9 +367,14 @@
    * @returns {boolean} Whether installation succeeded
    */
   const installFirefoxPipKeydownBridge = () => {
-    const pageGlobal = getPageGlobal();
+    const pageGlobal = U.getPageWindow();
     if (!pageGlobal) return false;
-    if (pageGlobal[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]) return true;
+    if (
+      /** @type {Record<string, unknown>} */ (/** @type {object} */ (pageGlobal))[
+        FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG
+      ]
+    )
+      return true;
 
     syncPipShortcutToPageGlobal();
 
@@ -350,7 +388,7 @@
       document['querySelector']('video.html5-main-video, #movie_player video, video');
 
   const clickPipBtn = () => {
-    const sels = ['button.ytp-pip-button', '.ytp-right-controls .ytp-pip-button',
+    const sels = ['button.yp-pip-button', '.ytp-right-controls .yp-pip-button',
                   '.ytp-right-controls button[aria-keyshortcuts="i"]'];
     for (const sel of sels) {
       const btn = document['querySelector'](sel);
@@ -368,6 +406,8 @@
     const normalized = String(key || '').trim().toUpperCase();
     if (!normalized) return '';
     const symbolCodeMap = {
+      '\`': 'Backquote',
+      '~': 'Backquote',
       '-': 'Minus',
       _: 'Minus',
       '=': 'Equal',
@@ -376,6 +416,8 @@
       '{': 'BracketLeft',
       ']': 'BracketRight',
       '}': 'BracketRight',
+      '\\\\': 'Backslash',
+      '|': 'Backslash',
       ';': 'Semicolon',
       ':': 'Semicolon',
       "'": 'Quote',
@@ -432,41 +474,50 @@
     clickPipBtn();
   };
 
-  document.addEventListener('keydown', handlePiPHotkey, true);
+  window['__ytplusFirefoxPipKeydownHandler'] = handlePiPHotkey;
+  // lint:custom:ignore page-realm script: CleanupManager is unavailable here; removeFirefoxPipBridges detaches
   window.addEventListener('keydown', handlePiPHotkey, true);
+  // lint:custom:ignore page-realm script: detached by removeFirefoxPipBridges on the feature stop
+  document.addEventListener('keydown', handlePiPHotkey, true);
 })();`;
 
-    const gmAddEl = /** @type {any} */ (globalThis).GM_addElement;
-    if (typeof gmAddEl === 'function') {
-      try {
-        gmAddEl('script', {
-          // Keep payload strictly serializable for VM/TM Firefox bridge.
-          textContent: String(bridgeScript),
-        });
-        if (pageGlobal[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]) return true;
-      } catch (_e) {
-        // Fall through to script tag injection
-      }
-    }
-
-    try {
-      const nonceSource = qs('script[nonce]') || qs('[nonce]') || document.documentElement;
-      const nonce =
-        /** @type {any} */ (nonceSource)?.nonce ||
-        nonceSource?.getAttribute?.('nonce') ||
-        document.documentElement?.getAttribute?.('nonce') ||
-        '';
-      const script = document.createElement('script');
-      if (nonce) script.setAttribute('nonce', nonce);
-      script.textContent = /** @type {any} */ (createTrustedInlineScript(bridgeScript));
-      (document.head || document.documentElement).appendChild(script);
-      script.remove();
-      if (pageGlobal[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]) return true;
-    } catch (_e) {
-      // Non-critical
-    }
+    if (
+      runGmPageScript(bridgeScript) &&
+      /** @type {Record<string, unknown>} */ (/** @type {object} */ (pageGlobal))[bridgeFlag]
+    )
+      return true;
 
     return false;
+  };
+
+  /**
+   * Remove the page-realm Firefox bridges (message + keydown) installed at
+   * the runtime start. The bridge scripts publish their own handlers as
+   * window globals, so a small removal script can detach the listeners and
+   * clear the install flags; a later start re-installs with the same token.
+   * @returns {void}
+   */
+  const removeFirefoxPipBridges = () => {
+    const pageGlobal = U.getPageWindow();
+    if (!pageGlobal) return;
+
+    const removalScript = `(() => {
+  const keydownHandler = window['__ytplusFirefoxPipKeydownHandler'];
+  if (typeof keydownHandler === 'function') {
+    window.removeEventListener('keydown', keydownHandler, true);
+    document.removeEventListener('keydown', keydownHandler, true);
+    delete window['__ytplusFirefoxPipKeydownHandler'];
+  }
+  const messageHandler = window['__ytplusFirefoxPipBridgeMessageHandler'];
+  if (typeof messageHandler === 'function') {
+    window.removeEventListener('message', messageHandler);
+    delete window['__ytplusFirefoxPipBridgeMessageHandler'];
+  }
+  delete window['${FIREFOX_PIP_BRIDGE_FLAG}'];
+  delete window['${FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG}'];
+})();`;
+
+    runGmPageScript(removalScript);
   };
 
   /**
@@ -481,35 +532,37 @@
           return;
         }
 
-        const requestId = `ytp-pip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const requestId = `yp-pip-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
         let settled = false;
-
-        const finish = (/** @type {boolean} */ success) => {
-          if (settled) return;
-          settled = true;
-          window.removeEventListener('message', onResponse, true);
-          resolve(Boolean(success));
-        };
 
         const onResponse = (/** @type {MessageEvent} */ evt) => {
           if (evt.source !== window) return;
           const msgOrigin = String(evt.origin || '');
           if (msgOrigin && msgOrigin !== 'null' && msgOrigin !== location.origin) return;
-          if (evt.data?.type !== 'ytp-pip-response' || evt.data?.id !== requestId) return;
+          if (evt.data?.type !== 'yp-pip-response' || evt.data?.id !== requestId) return;
           finish(Boolean(evt.data?.success));
         };
 
-        window.addEventListener('message', onResponse, true);
+        const cm = window.YouTubePlusCleanupManager;
+        const listenerKey = cm.registerListener(window, 'message', onResponse, true, true);
+
+        const finish = (/** @type {boolean} */ success) => {
+          if (settled) return;
+          settled = true;
+          if (listenerKey) cm.unregisterListener?.(listenerKey);
+          resolve(Boolean(success));
+        };
+
         const targetOrigin =
           typeof location !== 'undefined' && typeof location.origin === 'string' && location.origin
             ? location.origin
             : '*';
-        window.postMessage({ type: 'ytp-pip-request', id: requestId }, targetOrigin);
+        const token = getBridgeToken();
+        window.postMessage({ type: 'yp-pip-request', id: requestId, token }, targetOrigin);
 
-        setTimeout_(function () {
-          finish(false);
-        }, 1200);
+        cm.timeout(() => finish(false), 1200);
       } catch (_e) {
+        logS(_e);
         resolve(false);
       }
     });
@@ -526,37 +579,46 @@
       const rect = player.getBoundingClientRect();
       const clientX = Math.round(rect.left + rect.width - 32);
       const clientY = Math.round(rect.top + rect.height - 32);
+      // Use the page's own Window as the event `view`, not the userscript
+      // sandbox `window`. In Firefox userscript contexts the two are
+      // different (Xray-wrapped) objects, and the native MouseEvent
+      // constructor rejects a `view` that is not a real Window for that
+      // document with "'view' member of UIEventInit does not implement
+      // interface Window".
+      const eventView = U.getPageWindow() || window;
       ['mousemove', 'mouseover', 'mouseenter'].forEach(type => {
         try {
           player.dispatchEvent(
             new MouseEvent(type, {
               bubbles: true,
               cancelable: true,
-              view: window,
+              view: eventView,
               clientX,
               clientY,
             })
           );
         } catch (_e) {
-          U.logSuppressed(_e, 'Pip');
+          logS(_e);
         }
       });
     };
 
     const selectors = [
-      'button.ytp-pip-button',
-      '.ytp-right-controls .ytp-pip-button',
+      'button.yp-pip-button',
+      '.ytp-right-controls .yp-pip-button',
       '.ytp-right-controls button[aria-keyshortcuts="i"]',
     ];
     const contexts = [];
 
     try {
       contexts.push(document);
-      if (typeof unsafeWindow !== 'undefined' && unsafeWindow?.document) {
-        contexts.push(/** @type {Document} */ (unsafeWindow.document));
+      const pageWin = typeof unsafeWindow !== 'undefined' ? unsafeWindow : null;
+      const pageDoc = pageWin?.document;
+      if (pageDoc) {
+        contexts.push(pageDoc);
       }
     } catch (_e) {
-      U.logSuppressed(_e, 'Pip');
+      logS(_e);
     }
 
     revealPlayerControls();
@@ -587,7 +649,7 @@
         sessionStorage.removeItem(PIP_SESSION_KEY);
       }
     } catch (_e) {
-      U.logSuppressed(_e, 'Pip');
+      logS(_e);
     }
   };
 
@@ -595,65 +657,104 @@
     try {
       return sessionStorage.getItem(PIP_SESSION_KEY) === 'true';
     } catch (_e) {
+      logS(_e);
       return false;
     }
   };
 
+  /** Module namespace in the shared settings blob. */
+  const MODULE_NAME = 'pip';
+
+  /** @returns {YouTubePlusSettingsStore | null} the store when the blob bridge is active */
+  const bridgedStore = () => window.YouTubePlusSettingsStore?.moduleBridge?.() ?? null;
+
   /**
-   * Load settings from localStorage with validation
+   * Apply a stored settings payload to the live PiP state. `undefined` means
+   * nothing was stored and keeps the defaults.
+   * @param {unknown} parsed
+   */
+  const applySettings = parsed => {
+    if (parsed === undefined) return;
+    if (typeof parsed !== 'object' || parsed === null) {
+      logger?.warn?.('PiP', 'Invalid settings format');
+      return;
+    }
+    const p = /** @type {Record<string, unknown>} */ (parsed);
+
+    // Validate shortcut object
+    const sc = /** @type {Record<string, unknown>|null|undefined} */ (p.shortcut);
+    if (sc && typeof sc === 'object') {
+      if (typeof sc.key === 'string' && sc.key.length > 0) {
+        pipSettings.shortcut.key = sc.key;
+      }
+      if (typeof sc.shiftKey === 'boolean') {
+        pipSettings.shortcut.shiftKey = sc.shiftKey;
+      }
+      if (typeof sc.altKey === 'boolean') {
+        pipSettings.shortcut.altKey = sc.altKey;
+      }
+      if (typeof sc.ctrlKey === 'boolean') {
+        pipSettings.shortcut.ctrlKey = sc.ctrlKey;
+      }
+    }
+  };
+
+  /**
+   * Read the legacy settings payload. Returns `undefined` when nothing is
+   * stored so it is not mistaken for an invalid payload.
+   * @returns {unknown}
+   */
+  const readLegacySettings = () => {
+    const saved = U.storage?.getItem(pipSettings.storageKey);
+    if (!saved) return undefined;
+    return JSON.parse(saved);
+  };
+
+  /**
+   * Load settings. From the shared blob once it exists (migrating the legacy
+   * key on first read), otherwise from the legacy key.
    * @returns {void}
    */
   const loadSettings = () => {
     try {
-      const saved = localStorage.getItem(pipSettings.storageKey);
-      if (!saved) return;
-
-      const parsed = JSON.parse(saved);
-      if (typeof parsed !== 'object' || parsed === null) {
-        logger?.warn?.('PiP', 'Invalid settings format');
+      const store = bridgedStore();
+      if (store) {
+        const mod = store.getModuleSettings(MODULE_NAME);
+        if (mod && Object.keys(mod).length) {
+          applySettings(mod);
+          return;
+        }
+        applySettings(readLegacySettings());
+        saveSettings();
         return;
       }
-
-      // Validate and merge settings
-      if (typeof parsed.enabled === 'boolean') {
-        pipSettings.enabled = parsed.enabled;
-      }
-
-      // Validate shortcut object
-      if (parsed.shortcut && typeof parsed.shortcut === 'object') {
-        if (typeof parsed.shortcut.key === 'string' && parsed.shortcut.key.length > 0) {
-          pipSettings.shortcut.key = parsed.shortcut.key;
-        }
-        if (typeof parsed.shortcut.shiftKey === 'boolean') {
-          pipSettings.shortcut.shiftKey = parsed.shortcut.shiftKey;
-        }
-        if (typeof parsed.shortcut.altKey === 'boolean') {
-          pipSettings.shortcut.altKey = parsed.shortcut.altKey;
-        }
-        if (typeof parsed.shortcut.ctrlKey === 'boolean') {
-          pipSettings.shortcut.ctrlKey = parsed.shortcut.ctrlKey;
-        }
-      }
+      applySettings(readLegacySettings());
     } catch (e) {
+      logS(e);
       logger?.error?.('PiP', 'Error loading settings', e);
     }
   };
 
   /**
-   * Save settings to localStorage with error handling
+   * Save settings through the shared bridge, or the legacy key before the blob.
    * @returns {void}
    */
   const saveSettings = () => {
-    try {
-      const settingsToSave = {
-        enabled: pipSettings.enabled,
-        shortcut: pipSettings.shortcut,
-      };
-      localStorage.setItem(pipSettings.storageKey, JSON.stringify(settingsToSave));
-    } catch (e) {
-      logger?.error?.('PiP', 'Error saving settings', e);
+    const store = bridgedStore();
+    if (store) {
+      store.updateModuleSettings(MODULE_NAME, { shortcut: { ...pipSettings.shortcut } });
+    } else {
+      try {
+        U.storage?.setItem(
+          pipSettings.storageKey,
+          JSON.stringify({ shortcut: pipSettings.shortcut })
+        );
+      } catch (e) {
+        logS(e);
+        logger?.error?.('PiP', 'Error saving settings', e);
+      }
     }
-    // Keep page-context keydown bridge in sync with updated shortcut/enabled state.
+    // Keep page-context keydown bridge in sync with the updated shortcut.
     syncPipShortcutToPageGlobal();
   };
 
@@ -676,14 +777,15 @@
     // Firefox fallback: check if any video has the PiP attribute
     if (/firefox/i.test(navigator.userAgent || '')) {
       try {
-        const pageGlobal = getPageGlobal();
+        const pageGlobal = U.getPageWindow();
         const doc = pageGlobal?.document || document;
         // Firefox adds a data-pip attribute or sets a special class on PiP videos
         const pipVideo = doc.querySelector('video[__pip]') || doc.querySelector('video._pip');
         if (pipVideo && pipVideo.tagName?.toLowerCase() === 'video') {
           return /** @type {HTMLVideoElement} */ (pipVideo);
         }
-      } catch {
+      } catch (_e) {
+        logS(_e);
         /* empty */
       }
     }
@@ -692,12 +794,183 @@
   };
 
   /**
+   * Try to request PiP from the page context (unsafeWindow side) on Firefox.
+   * @returns {Promise<boolean>} true when PiP was activated
+   */
+  const requestFirefoxPipViaPageContext = async () => {
+    try {
+      const pageGlobal = U.getPageWindow();
+      const pageVideo = /** @type {HTMLVideoElement | null} */ (
+        pageGlobal?.document?.querySelector?.('video.html5-main-video, #movie_player video, video')
+      );
+      if (pageVideo && typeof pageVideo.requestPictureInPicture === 'function') {
+        await pageVideo.requestPictureInPicture();
+        setSessionActive(true);
+        return true;
+      }
+      // Try calling via prototype
+      const proto = pageGlobal?.HTMLVideoElement?.prototype;
+      if (pageVideo && proto && typeof proto.requestPictureInPicture === 'function') {
+        await proto.requestPictureInPicture.call(pageVideo);
+        setSessionActive(true);
+        return true;
+      }
+    } catch (_e) {
+      logS(_e);
+      /* no-op */
+    }
+    return false;
+  };
+
+  /**
+   * Firefox PiP path: prefer native button / page-context APIs before bridge fallbacks.
+   * @param {HTMLVideoElement} _video
+   * @returns {Promise<void>}
+   */
+  const enterOrExitFirefoxPip = async _video => {
+    ensureFirefoxPagePipBridge();
+
+    // Try exiting PiP first if active. Use getCurrentPiPElement() (which
+    // falls back to Firefox's video[__pip] attribute) rather than the raw
+    // document.pictureInPictureElement check: Firefox userscript contexts
+    // don't always reflect that property, and a missed check falls through
+    // to the click fallback instead of exiting.
+    if (typeof document.exitPictureInPicture === 'function' && getCurrentPiPElement()) {
+      try {
+        await document.exitPictureInPicture();
+        setSessionActive(false);
+        return;
+      } catch (_e) {
+        logS(_e);
+        /* no-op: fall through to click-based exit below */
+      }
+    }
+
+    // Try the native YouTube PiP button (most reliable on Firefox)
+    const toggledByButton = clickNativeYouTubePipButton();
+    if (toggledByButton) {
+      setSessionActive(true);
+      return;
+    }
+
+    // Try page-context requestPictureInPicture via unsafeWindow
+    if (await requestFirefoxPipViaPageContext()) return;
+
+    // Final Firefox fallback: use postMessage to trigger PiP from page context
+    // This avoids CSP violations from inline script injection
+    try {
+      const bridgeSuccess = await requestFirefoxPiPViaBridge();
+      if (bridgeSuccess) {
+        setSessionActive(true);
+        return;
+      }
+
+      // Also try using Greasemonkey's cloneInto/exportFunction if available
+      const pageGlobal2 = U.getPageWindow();
+      if (pageGlobal2) {
+        const pageVid = /** @type {HTMLVideoElement | null} */ (
+          pageGlobal2.document?.querySelector?.('video')
+        );
+        if (pageVid && typeof pageVid.requestPictureInPicture === 'function') {
+          pageVid.requestPictureInPicture().catch(() => {
+            /* ignore */
+          });
+          setSessionActive(true);
+        }
+      }
+    } catch (_e) {
+      logS(_e);
+      logger?.warn?.('PiP', 'All Firefox PiP fallbacks exhausted');
+    }
+  };
+
+  /**
+   * Exit any currently active PiP session (used before entering a new one).
+   * @param {HTMLVideoElement} video
+   * @returns {Promise<boolean>} true when an exit was performed
+   */
+  const exitActivePip = async video => {
+    const currentPiP = getCurrentPiPElement();
+    if (currentPiP && currentPiP !== video) {
+      if (typeof document.exitPictureInPicture === 'function') {
+        await document.exitPictureInPicture();
+      }
+      setSessionActive(false);
+      return true;
+    }
+    if (currentPiP === video) {
+      if (typeof document.exitPictureInPicture === 'function') {
+        await document.exitPictureInPicture();
+      }
+      setSessionActive(false);
+    }
+    return false;
+  };
+
+  /**
+   * Request PiP with one metadata-wait retry, falling back to the native button.
+   * @param {HTMLVideoElement} video
+   * @returns {Promise<void>}
+   */
+  const requestPipWithRetry = async video => {
+    try {
+      await requestPictureInPictureCompat(video);
+    } catch (_e) {
+      logS(_e);
+      await waitForMetadataOnce(video);
+      try {
+        await requestPictureInPictureCompat(video);
+      } catch (_e) {
+        logS(_e);
+        const toggledByButton = clickNativeYouTubePipButton();
+        if (!toggledByButton) {
+          throw new Error('requestPictureInPicture is not available on video element');
+        }
+      }
+    }
+  };
+
+  /**
+   * Non-Firefox (Chromium) PiP path via the W3C API.
+   * @param {HTMLVideoElement} video
+   * @returns {Promise<void>}
+   */
+  const toggleChromiumPip = async video => {
+    await exitActivePip(video);
+    if (getCurrentPiPElement() === video) return;
+
+    const hadDisablePiP = video.disablePictureInPicture === true;
+    if (hadDisablePiP) {
+      try {
+        video.disablePictureInPicture = false;
+      } catch (_e) {
+        logS(_e);
+        /* ignore */
+      }
+    }
+
+    // Keep user activation path short, but retry once after metadata for API timing quirks.
+    await requestPipWithRetry(video);
+
+    if (hadDisablePiP) {
+      try {
+        video.disablePictureInPicture = true;
+      } catch (_e) {
+        logS(_e);
+        /* ignore */
+      }
+    }
+
+    setSessionActive(true);
+  };
+
+  /**
    * Toggle Picture-in-Picture mode
    * @param {HTMLVideoElement} video - The video element
    * @returns {Promise<void>}
    */
   const togglePictureInPicture = async video => {
-    if (!(pipSettings.enabled && video)) return;
+    if (!video) return;
 
     try {
       const isFirefox = /firefox/i.test(navigator.userAgent || '');
@@ -705,131 +978,63 @@
       // Firefox path: always prefer native YouTube PiP button first
       // because Firefox doesn't expose requestPictureInPicture in userscript context
       if (isFirefox) {
-        ensureFirefoxPagePipBridge();
-
-        // Try exiting PiP first if active
-        if (
-          typeof document.exitPictureInPicture === 'function' &&
-          document.pictureInPictureElement
-        ) {
-          try {
-            await document.exitPictureInPicture();
-            setSessionActive(false);
-            return;
-          } catch {
-            /* no-op */
-          }
-        }
-
-        // Try the native YouTube PiP button (most reliable on Firefox)
-        const toggledByButton = clickNativeYouTubePipButton();
-        if (toggledByButton) {
-          setSessionActive(true);
-          return;
-        }
-
-        // Try page-context requestPictureInPicture via unsafeWindow
-        try {
-          const pageGlobal = getPageGlobal();
-          const pageVideo = pageGlobal?.document?.querySelector?.(
-            'video.html5-main-video, #movie_player video, video'
-          );
-          if (pageVideo && typeof pageVideo.requestPictureInPicture === 'function') {
-            await pageVideo.requestPictureInPicture();
-            setSessionActive(true);
-            return;
-          }
-          // Try calling via prototype
-          const proto = pageGlobal?.HTMLVideoElement?.prototype;
-          if (pageVideo && proto && typeof proto.requestPictureInPicture === 'function') {
-            await proto.requestPictureInPicture.call(pageVideo);
-            setSessionActive(true);
-            return;
-          }
-        } catch {
-          /* no-op */
-        }
-
-        // Final Firefox fallback: use postMessage to trigger PiP from page context
-        // This avoids CSP violations from inline script injection
-        try {
-          const bridgeSuccess = await requestFirefoxPiPViaBridge();
-          if (bridgeSuccess) {
-            setSessionActive(true);
-            return;
-          }
-
-          // Also try using Greasemonkey's cloneInto/exportFunction if available
-          const pageGlobal2 = getPageGlobal();
-          if (pageGlobal2) {
-            const pageVid = pageGlobal2.document?.querySelector?.('video');
-            if (pageVid && typeof pageVid.requestPictureInPicture === 'function') {
-              pageVid.requestPictureInPicture().catch(() => {
-                /* ignore */
-              });
-              setSessionActive(true);
-            }
-          }
-        } catch (_e) {
-          logger?.warn?.('PiP', 'All Firefox PiP fallbacks exhausted');
-        }
+        await enterOrExitFirefoxPip(video);
         return;
       }
 
-      // Non-Firefox path (Chrome, Edge, Safari) — standard W3C API
-      const currentPiP = getCurrentPiPElement();
-
-      if (currentPiP && currentPiP !== video) {
-        if (typeof document.exitPictureInPicture === 'function') {
-          await document.exitPictureInPicture();
-        }
-        setSessionActive(false);
-      }
-
-      if (getCurrentPiPElement() === video) {
-        if (typeof document.exitPictureInPicture === 'function') {
-          await document.exitPictureInPicture();
-        }
-        setSessionActive(false);
-        return;
-      }
-
-      const hadDisablePiP = video.disablePictureInPicture === true;
-      if (hadDisablePiP) {
-        try {
-          video.disablePictureInPicture = false;
-        } catch {
-          /* ignore */
-        }
-      }
-
-      // Keep user activation path short, but retry once after metadata for API timing quirks.
-      try {
-        await requestPictureInPictureCompat(video);
-      } catch (_e) {
-        await waitForMetadataOnce(video);
-        try {
-          await requestPictureInPictureCompat(video);
-        } catch (_e) {
-          const toggledByButton = clickNativeYouTubePipButton();
-          if (!toggledByButton) {
-            throw new Error('requestPictureInPicture is not available on video element');
-          }
-        }
-      }
-
-      if (hadDisablePiP) {
-        try {
-          video.disablePictureInPicture = true;
-        } catch {
-          /* ignore */
-        }
-      }
-
-      setSessionActive(true);
+      // Non-Firefox path (Chrome, Edge, Safari): standard W3C API.
+      await toggleChromiumPip(video);
     } catch (error) {
+      logS(error);
       logger?.error?.('PiP', 'Failed to toggle Picture-in-Picture', error);
     }
+  };
+
+  /** Stop the browser from acting on this key event. @param {KeyboardEvent} e */
+  const preventKeyEventDefaults = e => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (typeof e.stopImmediatePropagation === 'function') {
+      e.stopImmediatePropagation();
+    }
+  };
+
+  /**
+   * Hotkey toggle when the sandbox cannot reach the video element directly:
+   * try the native button, then the page bridge.
+   * @param {KeyboardEvent} e
+   * @param {boolean} allowBrowserFallback
+   * @returns {boolean}
+   */
+  const togglePipWithoutVideoHandle = (e, allowBrowserFallback) => {
+    if (clickNativeYouTubePipButton()) {
+      setSessionActive(true);
+      preventKeyEventDefaults(e);
+      return true;
+    }
+    // Fallback to page bridge when direct video handle is unavailable in sandbox.
+    void requestFirefoxPiPViaBridge().then(success => {
+      if (success) setSessionActive(true);
+    });
+    if (!allowBrowserFallback) {
+      preventKeyEventDefaults(e);
+      return true;
+    }
+    return false;
+  };
+
+  /** One delayed retry of the native PiP button after a hotkey toggle. */
+  const schedulePipButtonRetry = () => {
+    setTimeout(() => {
+      if (document.pictureInPictureElement) return;
+      if (clickNativeYouTubePipButton()) {
+        setSessionActive(true);
+        return;
+      }
+      void requestFirefoxPiPViaBridge().then(success => {
+        if (success) setSessionActive(true);
+      });
+    }, 70);
   };
 
   /**
@@ -847,46 +1052,20 @@
     }
 
     const video = getVideoElement();
-    if (!video) {
-      if (clickNativeYouTubePipButton()) {
-        setSessionActive(true);
-        e.preventDefault();
-        e.stopPropagation();
-        if (typeof e.stopImmediatePropagation === 'function') {
-          e.stopImmediatePropagation();
-        }
-        return true;
-      }
-
-      // Fallback to page bridge when direct video handle is unavailable in sandbox.
-      void requestFirefoxPiPViaBridge().then(success => {
-        if (success) setSessionActive(true);
-      });
-
-      if (!allowBrowserFallback) {
-        e.preventDefault();
-        e.stopPropagation();
-        if (typeof e.stopImmediatePropagation === 'function') {
-          e.stopImmediatePropagation();
-        }
-        return true;
-      }
-      return false;
-    }
+    if (!video) return togglePipWithoutVideoHandle(e, allowBrowserFallback);
 
     try {
       if (video.disablePictureInPicture === true) {
         video.disablePictureInPicture = false;
       }
     } catch (_e) {
-      U.logSuppressed(_e, 'Pip');
+      logS(_e);
     }
 
     // Firefox hotkey path: preserve user gesture by trying native button first.
     // Async promise fallbacks can lose gesture trust in Firefox.
     let handled = false;
-    const toggledByButtonNow = clickNativeYouTubePipButton();
-    if (toggledByButtonNow) {
+    if (clickNativeYouTubePipButton()) {
       setSessionActive(true);
       handled = true;
     }
@@ -907,20 +1086,7 @@
       handled = !allowBrowserFallback;
     }
 
-    if (!(handled || document.pictureInPictureElement)) {
-      setTimeout(() => {
-        if (!document.pictureInPictureElement) {
-          const toggledByButton = clickNativeYouTubePipButton();
-          if (toggledByButton) {
-            setSessionActive(true);
-            return;
-          }
-          void requestFirefoxPiPViaBridge().then(success => {
-            if (success) setSessionActive(true);
-          });
-        }
-      }, 70);
-    }
+    if (!(handled || document.pictureInPictureElement)) schedulePipButtonRetry();
 
     if (!(handled || allowBrowserFallback)) {
       // Custom shortcuts in Firefox should not fall through to browser defaults (e.g. Ctrl+P print).
@@ -928,26 +1094,19 @@
       handled = true;
     }
 
-    if (!handled) {
-      return false;
-    }
+    if (!handled) return false;
 
-    e.preventDefault();
-    e.stopPropagation();
-    if (typeof e.stopImmediatePropagation === 'function') {
-      e.stopImmediatePropagation();
-    }
-
+    preventKeyEventDefaults(e);
     return true;
   };
 
   /**
-   * Inject PiP settings styles via the canonical style system.
+   * Inject PiP settings styles via the shared style system.
    * Uses design-system.js getStyle(...) + StyleManager.add so the CSS is
    * owned by the shared host (`#youtube-plus-styles`) and stays in sync
    * with other modules. The byId('pip-styles') guard preserves
-   * compatibility with users upgrading from a pre-canonical version of
-   * this module that injected a raw `<style id="pip-styles">` element.
+   * compatibility with installs that injected a raw `<style id="pip-styles">`
+   * element before styles moved to the shared host.
    * @returns {void}
    */
   const addPipStyles = () => {
@@ -958,11 +1117,12 @@
 
   /**
    * Attach event handlers to the static PiP settings UI.
-   * The HTML is generated by settings-helpers.js — this function only
-   * wires up the change/input handlers and initializes glass dropdowns.
+   * The HTML is generated by settings-helpers.js; this function only
+   * wires up the shortcut handlers and initializes glass dropdowns. The
+   * enable checkbox is owned by the settings modal's general handler.
    */
   const attachPipHandlers = () => {
-    const advancedSection = qs('.ytp-plus-settings-section[data-section="advanced"]');
+    const advancedSection = qs('.yp-settings-section[data-section="advanced"]');
     if (!advancedSection) return;
     const enableItem = advancedSection.querySelector('.pip-settings-item');
     if (!enableItem || /** @type {HTMLElement} */ (enableItem).dataset.handlerAttached) return;
@@ -970,136 +1130,73 @@
 
     addPipStyles();
 
-    const submenuWrap = qs('.pip-submenu[data-submenu="pip"]');
-    const getSubmenuExpanded = () => {
-      try {
-        const raw = localStorage.getItem('ytp-plus-submenu-states');
-        if (!raw) return null;
-        const parsed = JSON.parse(raw);
-        if (parsed && typeof parsed.pip === 'boolean') return parsed.pip;
-      } catch (_e) {
-        U.logSuppressed(_e, 'Pip');
-      }
-      return null;
-    };
-
     window.YouTubePlusDesignSystem?.initGlassDropdown?.({
       dropdown: byId('pip-modifier-dropdown'),
       hiddenSelect: byId('pip-modifier-combo'),
     });
 
-    const enableCheckbox = byId('pip-enable-checkbox');
-    if (enableCheckbox instanceof HTMLInputElement) {
-      enableCheckbox.addEventListener('change', (/** @type {Event} */ e) => {
-        const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-        pipSettings.enabled = target.checked;
-        const submenuToggle = enableItem.querySelector(
-          '.ytp-plus-submenu-toggle[data-submenu="pip"]'
-        );
-        if (submenuToggle instanceof HTMLElement) {
-          if (pipSettings.enabled) {
-            const stored = getSubmenuExpanded();
-            const nextExpanded = typeof stored === 'boolean' ? stored : true;
-            submenuToggle.removeAttribute('disabled');
-            submenuToggle.classList.remove('pip-submenu-toggle-hidden');
-            submenuToggle.setAttribute('aria-expanded', nextExpanded ? 'true' : 'false');
-            if (submenuWrap instanceof HTMLElement)
-              submenuWrap.classList.toggle('is-hidden', !nextExpanded);
-          } else {
-            submenuToggle.setAttribute('disabled', '');
-            submenuToggle.classList.add('pip-submenu-toggle-hidden');
-            if (submenuWrap instanceof HTMLElement) submenuWrap.classList.add('is-hidden');
-          }
-        }
-        saveSettings();
-      });
-    }
-
     const modifierCombo = byId('pip-modifier-combo');
     if (modifierCombo instanceof HTMLSelectElement) {
-      modifierCombo.addEventListener('change', (/** @type {Event} */ e) => {
-        const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
-        const value = target.value;
-        pipSettings.shortcut.ctrlKey = value.includes('ctrl');
-        pipSettings.shortcut.altKey = value.includes('alt');
-        pipSettings.shortcut.shiftKey = value.includes('shift');
-        saveSettings();
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        modifierCombo,
+        'change',
+        (/** @type {Event} */ e) => {
+          const target = /** @type {EventTarget & HTMLSelectElement} */ (e.target);
+          const value = target.value;
+          pipSettings.shortcut.ctrlKey = value.includes('ctrl');
+          pipSettings.shortcut.altKey = value.includes('alt');
+          pipSettings.shortcut.shiftKey = value.includes('shift');
+          saveSettings();
+        },
+        undefined,
+        false
+      );
     }
 
     const pipKeyInput = byId('pip-key');
     if (pipKeyInput instanceof HTMLInputElement) {
-      pipKeyInput.addEventListener('input', (/** @type {Event} */ e) => {
-        const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-        if (target.value) {
-          pipSettings.shortcut.key = target.value.toUpperCase();
-          saveSettings();
-        }
-      });
-      pipKeyInput.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) =>
-        e.stopPropagation()
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        pipKeyInput,
+        'input',
+        (/** @type {Event} */ e) => {
+          const target = /** @type {EventTarget & HTMLInputElement} */ (e.target);
+          if (target.value) {
+            pipSettings.shortcut.key = target.value.toUpperCase();
+            saveSettings();
+          }
+        },
+        undefined,
+        false
+      );
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        pipKeyInput,
+        'keydown',
+        (/** @type {KeyboardEvent} */ e) => e.stopPropagation(),
+        undefined,
+        false
       );
     }
   };
 
-  let pipRuntimeStarted = false;
-  const startPipRuntime = () => {
-    if (pipRuntimeStarted) return;
-    pipRuntimeStarted = true;
+  /** @type {YouTubePlusFeatureContext | null} */
+  let pipRuntimeScope = null;
+
+  const startPipRuntime = (/** @type {YouTubePlusFeatureContext} */ ctx) => {
+    // Each route entry wires a fresh runtime group; the exit (or the
+    // facade's cleanup) disposes it together with the page bridges.
+    const scope = ctx.scope();
+    pipRuntimeScope = scope;
 
     // Initialize
     loadSettings();
 
-    // Event listeners — register with cleanupManager for SPA cleanup
+    // Event listeners: register with cleanupManager for SPA cleanup.
     const isEditableTarget = (/** @type {EventTarget | null} */ target) => {
-      const node = /** @type {any} */ (target);
-      if (!node || typeof node !== 'object') return false;
-      const tag = String(node.tagName || '').toUpperCase();
-      if (node.isContentEditable === true) return true;
+      if (!(target instanceof HTMLElement)) return false;
+      const tag = target.tagName.toUpperCase();
+      if (target.isContentEditable) return true;
       if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return true;
-      if (typeof node.closest === 'function') {
-        return !!node.closest('input, textarea, select, [contenteditable="true"]');
-      }
-      return false;
-    };
-
-    const keyToCode = (/** @type {string} */ key) => {
-      const normalized = String(key || '')
-        .trim()
-        .toUpperCase();
-      if (!normalized) return '';
-
-      const symbolCodeMap = {
-        '`': 'Backquote',
-        '~': 'Backquote',
-        '-': 'Minus',
-        _: 'Minus',
-        '=': 'Equal',
-        '+': 'Equal',
-        '[': 'BracketLeft',
-        '{': 'BracketLeft',
-        ']': 'BracketRight',
-        '}': 'BracketRight',
-        '\\': 'Backslash',
-        '|': 'Backslash',
-        ';': 'Semicolon',
-        ':': 'Semicolon',
-        "'": 'Quote',
-        '"': 'Quote',
-        ',': 'Comma',
-        '<': 'Comma',
-        '.': 'Period',
-        '>': 'Period',
-        '/': 'Slash',
-        '?': 'Slash',
-      };
-      if (Object.hasOwn(symbolCodeMap, normalized)) {
-        return /** @type {Record<string, string>} */ (symbolCodeMap)[normalized];
-      }
-
-      if (normalized.length === 1 && /[A-Z]/.test(normalized)) return `Key${normalized}`;
-      if (normalized.length === 1 && /[0-9]/.test(normalized)) return `Digit${normalized}`;
-      return normalized;
+      return !!target.closest('input, textarea, select, [contenteditable="true"]');
     };
 
     const isFirefoxNativePipShortcutSetting = () => {
@@ -1112,84 +1209,103 @@
 
     let lastHotkeyTriggerTs = 0;
 
-    const pipKeydownHandler = (/** @type {Event} */ e) => {
-      const evt = /** @type {any} */ (e);
-      const isKeyboardLike =
-        evt &&
-        typeof evt === 'object' &&
-        typeof evt.key === 'string' &&
-        typeof evt.code === 'string';
-      if (!isKeyboardLike) return;
-      if (!pipSettings.enabled) return;
-      if (evt.repeat || evt.isComposing) return;
-      if (evt.metaKey) return;
-      if (isEditableTarget(evt.target)) return;
-      const { shiftKey, altKey, ctrlKey, key } = pipSettings.shortcut;
-      const expectedCode = keyToCode(key);
+    /**
+     * @param {KeyboardEvent} evt
+     * @param {{ key: string, shiftKey: boolean, altKey: boolean, ctrlKey: boolean }} shortcut
+     */
+    const hotkeyMatches = (evt, shortcut) => {
+      const expectedCode = keyToCode(shortcut.key);
       const eventCode = String(evt.code || '');
       const eventKey = String(evt.key || '').toUpperCase();
       const keyMatches =
-        eventKey === key.toUpperCase() || (expectedCode && eventCode === expectedCode);
-      // Strict modifier matching: all modifiers must match exactly.
-      // Previous "at least" logic allowed false positives (e.g. Ctrl+Shift+P matching Shift+P).
-      const modifiersMatch =
-        evt.shiftKey === shiftKey && evt.altKey === altKey && evt.ctrlKey === ctrlKey;
-      if (modifiersMatch && keyMatches) {
-        const now = Date.now();
-        if (now - lastHotkeyTriggerTs < 250) {
-          e.preventDefault();
-          return;
-        }
-        lastHotkeyTriggerTs = now;
+        eventKey === shortcut.key.toUpperCase() || (expectedCode && eventCode === expectedCode);
+      // Exact modifier match: an "at least" match lets Ctrl+Shift+P satisfy Shift+P.
+      return (
+        evt.shiftKey === shortcut.shiftKey &&
+        evt.altKey === shortcut.altKey &&
+        evt.ctrlKey === shortcut.ctrlKey &&
+        keyMatches
+      );
+    };
 
-        const isFirefox = /firefox/i.test(navigator.userAgent || '');
-        if (isFirefox) {
-          // If the page-context keydown bridge is installed, defer entirely to it.
-          // The bridge runs in page context (trusted user gesture for PiP) and is
-          // registered with capture:true. Our userscript handler may run BEFORE the
-          // bridge handler depending on listener registration order, so if we call
-          // stopImmediatePropagation here we'd starve the bridge. Instead, when the
-          // bridge is present, do nothing and let it handle the shortcut natively.
-          const pageGlobal = getPageGlobal();
-          const bridgeInstalled = Boolean(pageGlobal?.[FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG]);
-          const pageHandledTs = Number(pageGlobal?.__ytplusPipPageHandled || 0);
-          if (now - pageHandledTs < 300) {
-            // Bridge already handled this key event.
-            return;
-          }
-          // Fall back even when bridge is installed; this covers layout/code mismatches
-          // where page bridge may miss shortcut matching in Firefox.
-          const handled = toggleFirefoxPiPFromHotkey(
-            /** @type {KeyboardEvent} */ (/** @type {unknown} */ (evt)),
-            bridgeInstalled ? false : isFirefoxNativePipShortcutSetting()
-          );
-          if (!handled) {
-            return;
-          }
-        } else {
-          const video = getVideoElement();
-          if (video) {
-            void togglePictureInPicture(video);
-          } else if (!clickNativeYouTubePipButton()) {
-            logger?.warn?.('PiP', 'Picture-in-Picture API is unavailable in this browser/context');
-          }
-        }
+    /** @param {KeyboardEvent} evt @param {number} now */
+    const handleFirefoxHotkey = (evt, now) => {
+      // If the page-context keydown bridge is installed, defer entirely to it.
+      // The bridge runs in page context (trusted user gesture for PiP) and is
+      // registered with capture:true. Our userscript handler may run BEFORE the
+      // bridge handler depending on listener registration order, so if we call
+      // stopImmediatePropagation here we'd starve the bridge. Instead, when the
+      // bridge is present, do nothing and let it handle the shortcut natively.
+      const pageGlobal = U.getPageWindow();
+      const bridgeInstalled = Boolean(
+        /** @type {Record<string, unknown>} */ (/** @type {object} */ (pageGlobal))?.[
+          FIREFOX_PIP_KEYDOWN_BRIDGE_FLAG
+        ]
+      );
+      const pageHandledTs = Number(pageGlobal?.__ytplusPipPageHandled || 0);
+      if (now - pageHandledTs < 300) {
+        // Bridge already handled this key event.
+        return false;
+      }
+      // Fall back even when bridge is installed; this covers layout/code mismatches
+      // where page bridge may miss shortcut matching in Firefox.
+      return toggleFirefoxPiPFromHotkey(
+        evt,
+        bridgeInstalled ? false : isFirefoxNativePipShortcutSetting()
+      );
+    };
 
-        if (!(isFirefox || document.pictureInPictureElement || getVideoElement())) {
-          logger?.warn?.('PiP', 'Picture-in-Picture API is unavailable in this browser/context');
-        }
-        e.stopPropagation();
-        if (typeof e.stopImmediatePropagation === 'function') {
-          e.stopImmediatePropagation();
-        }
+    /** @param {KeyboardEvent} evt @param {Event} e */
+    const triggerChromiumPip = (evt, e) => {
+      const video = getVideoElement();
+      if (video) {
+        void togglePictureInPicture(video);
+      } else if (!clickNativeYouTubePipButton()) {
+        logger?.warn?.('PiP', 'Picture-in-Picture API is unavailable in this browser/context');
+      }
+      if (!((evt instanceof Event && document.pictureInPictureElement) || getVideoElement())) {
+        logger?.warn?.('PiP', 'Picture-in-Picture API is unavailable in this browser/context');
+      }
+      e.stopPropagation();
+      if (typeof e.stopImmediatePropagation === 'function') {
+        e.stopImmediatePropagation();
+      }
+      e.preventDefault();
+    };
+
+    /**
+     * True when a keydown event should trigger the PiP shortcut.
+     * @param {KeyboardEvent} evt
+     */
+    const shouldHandlePipHotkey = evt => {
+      if (!evt || typeof evt !== 'object') return false;
+      if (typeof evt.key !== 'string' || typeof evt.code !== 'string') return false;
+      if (evt.repeat || evt.isComposing) return false;
+      if (evt.metaKey) return false;
+      if (isEditableTarget(evt.target)) return false;
+      return hotkeyMatches(evt, pipSettings.shortcut);
+    };
+
+    const pipKeydownHandler = (/** @type {KeyboardEvent} */ e) => {
+      const evt = e;
+      if (!shouldHandlePipHotkey(evt)) return;
+      const now = Date.now();
+      if (now - lastHotkeyTriggerTs < 250) {
         e.preventDefault();
+        return;
+      }
+      lastHotkeyTriggerTs = now;
+      if (/firefox/i.test(navigator.userAgent || '')) {
+        if (!handleFirefoxHotkey(evt, now)) return;
+      } else {
+        triggerChromiumPip(evt, e);
       }
     };
-    // Register keydown handlers only — keyup was causing double-fire on every shortcut press.
-    YouTubeUtils.cleanupManager.registerListener(document, 'keydown', pipKeydownHandler, {
+    // Register keydown only: a keyup handler double-fires on every shortcut press.
+    scope.listen(document, 'keydown', /** @type {EventListener} */ (pipKeydownHandler), {
       capture: true,
     });
-    YouTubeUtils.cleanupManager.registerListener(window, 'keydown', pipKeydownHandler, {
+    scope.listen(window, 'keydown', /** @type {EventListener} */ (pipKeydownHandler), {
       capture: true,
     });
 
@@ -1203,21 +1319,30 @@
     // Firefox userscript sandboxes can miss some browser-reserved key combos (e.g. Ctrl+P)
     // on the content window. Mirror listeners onto page globals when available.
     try {
-      const pageGlobal = getPageGlobal();
+      const pageGlobal = U.getPageWindow();
       const pageDocument = pageGlobal?.document;
       const pageWindow = pageGlobal;
-      if (pageDocument && pageDocument !== document && pageDocument.addEventListener) {
-        pageDocument.addEventListener('keydown', pipKeydownHandler, {
+      if (
+        pageDocument &&
+        pageDocument !== document &&
+        /** @type {{ addEventListener?: unknown }} */ (pageDocument).addEventListener
+      ) {
+        scope.listen(pageDocument, 'keydown', /** @type {EventListener} */ (pipKeydownHandler), {
           capture: true,
         });
       }
-      if (pageWindow && pageWindow !== window && pageWindow.addEventListener) {
-        pageWindow.addEventListener('keydown', pipKeydownHandler, {
+      if (
+        pageWindow &&
+        pageWindow !== window &&
+        /** @type {{ addEventListener?: unknown }} */ (pageWindow).addEventListener
+      ) {
+        scope.listen(pageWindow, 'keydown', /** @type {EventListener} */ (pipKeydownHandler), {
           capture: true,
         });
       }
     } catch (_e) {
-      // Firefox sandbox may throw Security Exceptions here — continue without page-level listener
+      logS(_e);
+      // Firefox sandbox may throw here; continue without a page-level listener.
       logger?.warn?.('PiP', 'Could not register page-context keydown listener (Firefox sandbox)');
     }
 
@@ -1227,89 +1352,114 @@
         loadSettings();
       }
     };
-    YouTubeUtils.cleanupManager.registerListener(window, 'storage', storageHandler);
+    scope.listen(window, 'storage', storageHandler);
 
-    window.addEventListener('load', () => {
-      if (!(pipSettings.enabled && wasSessionActive()) || document.pictureInPictureElement) {
-        return;
-      }
-
-      const resumePiP = () => {
-        const video = getVideoElement();
-        if (!video) return;
-
-        togglePictureInPicture(video).catch(() => {
-          // If resume fails we reset the session flag to avoid loops
-          setSessionActive(false);
-        });
-      };
-
-      const ensureCleanup = (/** @type {EventListenerOrEventListenerObject | null} */ handler) => {
-        if (!handler) return;
-        try {
-          document.removeEventListener('pointerdown', handler, true);
-        } catch (_e) {
-          U.logSuppressed(_e, 'Pip');
-        }
-      };
-
-      const cleanupListeners = () => {
-        ensureCleanup(pointerListener);
-        ensureCleanup(keyListener);
-      };
-
-      const pointerListener = () => {
-        cleanupListeners();
-        resumePiP();
-      };
-
-      const keyListener = () => {
-        cleanupListeners();
-        resumePiP();
-      };
-
-      document.addEventListener('pointerdown', pointerListener, {
-        once: true,
-        capture: true,
-      });
-      document.addEventListener('keydown', keyListener, {
-        once: true,
-        capture: true,
-      });
+    // Blob changes arrive through the unified event; only pip keys matter.
+    scope.listen(window, 'youtube-plus-settings-updated', (/** @type {Event} */ e) => {
+      if (window.YouTubePlusSettingsStore?.affectsModule?.(e, MODULE_NAME) === false) return;
+      loadSettings();
     });
 
-    // Settings modal integration — use event instead of MutationObserver
-    const ensurePipSettings = () => {
-      attachPipHandlers();
-    };
+    scope.listen(
+      window,
+      'load',
+      () => {
+        if (!wasSessionActive() || document.pictureInPictureElement) {
+          return;
+        }
 
-    const settingsModalHandler = () => {
-      setTimeout(ensurePipSettings, 50);
-    };
-    YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'youtube-plus-settings-modal-opened',
-      settingsModalHandler
+        // Bound how long a stale PiP session flag waits for the next user
+        // interaction before it is treated as resumable. Without this, the
+        // first keypress of any kind (even many videos later) resumes PiP
+        // from a leftover flag, and Firefox rejects it with "requires user
+        // activation".
+        const RESUME_WINDOW_MS = 15000;
+        const resumeDeadline = Date.now() + RESUME_WINDOW_MS;
+
+        const resumePiP = () => {
+          if (Date.now() > resumeDeadline) {
+            setSessionActive(false);
+            return;
+          }
+          const video = getVideoElement();
+          if (!video) return;
+
+          togglePictureInPicture(video).catch(() => {
+            // If resume fails we reset the session flag to avoid loops
+            setSessionActive(false);
+          });
+        };
+
+        // Removing the other listener when one fires needs its matching event
+        // type, so a dormant listener cannot stay armed after the resume
+        // attempt is over. Each listener also self-removes via {once:true}.
+        const ensureCleanup = (
+          /** @type {string} */ type,
+          /** @type {EventListenerOrEventListenerObject | null} */ handler
+        ) => {
+          if (!handler) return;
+          document.removeEventListener(type, handler, true);
+        };
+
+        const cleanupListeners = () => {
+          ensureCleanup('pointerdown', pointerListener);
+          ensureCleanup('keydown', keyListener);
+          clearTimeout(expiryTimer);
+        };
+
+        const pointerListener = () => {
+          cleanupListeners();
+          resumePiP();
+        };
+
+        const keyListener = () => {
+          cleanupListeners();
+          resumePiP();
+        };
+
+        window.YouTubePlusCleanupManager?.registerListener?.(
+          document,
+          'pointerdown',
+          pointerListener,
+          {
+            once: true,
+            capture: true,
+          },
+          true
+        );
+        window.YouTubePlusCleanupManager?.registerListener?.(
+          document,
+          'keydown',
+          keyListener,
+          {
+            once: true,
+            capture: true,
+          },
+          true
+        );
+
+        // Defense in depth: even with correct cross-removal above, expire the
+        // resume attempt outright after RESUME_WINDOW_MS so it can never fire
+        // on a much-later, unrelated interaction.
+        const expiryTimer = setTimeout(() => {
+          cleanupListeners();
+          setSessionActive(false);
+        }, RESUME_WINDOW_MS);
+      },
+      undefined
     );
 
     const leavePipHandler = () => {
       setSessionActive(false);
     };
-    YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'leavepictureinpicture',
-      leavePipHandler
-    );
+    scope.listen(document, 'leavepictureinpicture', leavePipHandler);
+  };
 
-    const clickHandler = (/** @type {Event} */ e) => {
-      if (!(e instanceof MouseEvent)) return;
-      const target = /** @type {EventTarget & HTMLElement} */ (e.target);
-      const navItem = target.closest('.ytp-plus-settings-nav-item');
-      if (navItem?.dataset?.section === 'advanced') {
-        setTimeout(ensurePipSettings, 25);
-      }
-    };
-    YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler, true);
+  const cleanupPipRuntime = () => {
+    // The runtime group owns every listener; disposing releases them all
+    // so a later lifecycle start re-wires cleanly.
+    pipRuntimeScope?.dispose?.();
+    pipRuntimeScope = null;
   };
 
   // Register settings modal listener at module scope so it fires
@@ -1317,52 +1467,73 @@
   // startPipRuntime() would only be registered after whenRelevant
   // decides the route is relevant, causing a race condition where
   // opening the modal on a non-/watch page would miss the event.
-  document.addEventListener('youtube-plus-settings-modal-opened', () => {
-    // Ensure settings handlers are attached even on non-/watch pages.
-    // attachPipHandlers is idempotent (checks for existing DOM).
-    setTimeout(() => {
-      attachPipHandlers();
-    }, 50);
-  });
+  window.YouTubePlusCleanupManager?.registerListener?.(
+    document,
+    'youtube-plus-settings-modal-opened',
+    () => {
+      // Ensure settings handlers are attached even on non-/watch pages.
+      // attachPipHandlers is idempotent (checks for existing DOM).
+      setTimeout(() => {
+        attachPipHandlers();
+      }, 50);
+    },
+    undefined,
+    true
+  );
 
-  // PiP has two distinct lifecycles:
+  // PiP has two lifecycles:
   //
-  //   1. Runtime on /watch — attaches the PiP keyboard shortcut
-  //      and the player listeners. Only relevant on /watch, NOT
-  //      on /shorts (PiP UX is meaningless inside the fullscreen
-  //      shorts player) and only when the feature is enabled.
-  //   2. Settings UI on the "Advanced" tab — the shortcut editor
-  //      is injected when the user opens that section of the
-  //      settings modal. The previous design folded both into one
-  //      LazyLoader registration; splitting them lets each
-  //      lifecycle start exactly when it is relevant.
-
-  if (window.YouTubeUtils?.whenRelevant) {
-    window.YouTubeUtils.whenRelevant({
-      name: 'pip.runtime',
-      isRelevant: () => {
-        if (typeof window.location !== 'object') return false;
-        // /watch only — /shorts intentionally excluded (PiP UX is
-        // meaningless inside the fullscreen shorts player).
-        return /^\/watch/.test(window.location.pathname);
-      },
-      onEnter: startPipRuntime,
-    });
-  } else if (typeof window.location === 'object' && /^\/watch/.test(window.location.pathname)) {
-    startPipRuntime();
-  }
+  //   1. Runtime on /watch: the keyboard shortcut and the page bridges are
+  //      owned by the FeatureLifecycle start; the route exit releases them.
+  //   2. Settings UI on the "Advanced" tab: the shortcut editor is injected
+  //      when the user opens that section (the module scope above).
+  const pipFeature = window.YouTubePlusFeatureRegistry?.FeatureLifecycle?.define?.({
+    id: 'pip',
+    settingsKey: 'enablePip',
+    // PiP only makes sense on the watch player; the fullscreen shorts player
+    // is excluded on purpose.
+    routes: ['watch'],
+    start: startPipRuntime,
+    stop: () => {
+      if (pipRuntimeScope) {
+        pipRuntimeScope.dispose();
+        pipRuntimeScope = null;
+      }
+      removeFirefoxPipBridges();
+    },
+  });
+  pipFeature?.sync();
 
   if (window.YouTubeUtils?.onSectionActive) {
     window.YouTubeUtils.onSectionActive('advanced', () => {
       // Attach handlers on every activation. attachPipHandlers is
       // idempotent and short-circuits when handlers are already attached.
-      try {
-        setTimeout(() => {
-          attachPipHandlers();
-        }, 25);
-      } catch (_e) {
-        /* non-critical */
-      }
+      setTimeout(() => {
+        attachPipHandlers();
+      }, 25);
     });
+  }
+
+  // Feature facade
+  const YouTubePlusPip = {
+    cleanup: cleanupPipRuntime,
+  };
+  // Test-only surface: internal entry points and state accessors live here,
+  // not on the facade root.
+  U?.exposeTestHooks?.(YouTubePlusPip, {
+    init: startPipRuntime,
+    keyToCode,
+    isFeatureEnabled: () => true,
+    getSettings: () => ({
+      ...pipSettings,
+      shortcut: { ...pipSettings.shortcut },
+    }),
+    getBridgeToken,
+    ensureFirefoxPagePipBridge,
+    requestFirefoxPiPViaBridge,
+  });
+
+  if (typeof window !== 'undefined') {
+    window.YouTubePlusPip = YouTubePlusPip;
   }
 })();

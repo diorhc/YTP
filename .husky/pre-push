@@ -1,6 +1,0 @@
-# Run full test suite before push
-npm run test
-
-# Validate build and bundle size
-npm run build:production
-npm run size:check

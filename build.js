@@ -14,15 +14,17 @@
  * Usage:
  *   node build.js              - Standard build
  *   node build.js --watch      - Watch mode with auto-rebuild
- *   node build.js --optimized  - Build with code optimization
  *   node build.js --minify     - Build with full minification
+ *   node build.js --readable-release - Compress + beautify, no name mangling
  */
 
 const fs = require('fs');
 const path = require('path');
 const { execSync } = require('child_process');
 const vm = require('vm');
+const crypto = require('crypto');
 const { performance } = require('perf_hooks');
+const { minifyCssTemplates } = require('./scripts/minify-css-templates');
 
 // Determine project root: if this script sits in a `src` folder, use parent,
 // otherwise use its directory. This prevents scanning the wrong directory
@@ -31,13 +33,21 @@ const ROOT =
   path.basename(__dirname) === 'src' ? path.resolve(__dirname, '..') : path.resolve(__dirname);
 const OUT = path.join(ROOT, 'youtube.user.js');
 // exclude basenames only (we'll search in either ROOT or ROOT/src)
-const EXCLUDE = new Set(['youtube.user.js', 'userscript.js', 'build.js']);
+const EXCLUDE = new Set(['youtube.user.js', 'userscript.js', 'build.js', 'host-policy.js']);
 
-// Watch debounce ms (optimized)
+// Module that reads the embedded offline dictionary; the part carrying the
+// dictionary is inserted right after it in the merged bundle.
+const I18N_MODULE_NAME = 'i18n.js';
+const EMBEDDED_DICTIONARY_GLOBAL = '__YouTubePlusEmbeddedDictionaries__';
+
+// Watch debounce ms
 const DEBOUNCE_MS = 150;
 
 // Possible order manifest files (JSON array of filenames or plain text lines)
 const ORDER_MANIFESTS = ['build.order.json', 'build.order.txt'];
+// Optional manifest override (`--order <path>`), used by tests to build the
+// legacy string format end to end.
+let ORDER_PATH = null;
 
 // Performance tracking with better memory management
 const perfTimings = new Map();
@@ -70,6 +80,7 @@ function _manageCacheSize(cache, maxSize = MAX_CACHE_SIZE) {
 // Build cache for incremental builds
 const BUILD_CACHE_FILE = path.join(ROOT, '.build-cache.json');
 let buildCache = { files: {}, lastBuild: 0 };
+let pendingBuildCache = {};
 
 /**
  * Load build cache from disk
@@ -98,7 +109,9 @@ function loadBuildCache() {
  */
 function saveBuildCache() {
   try {
+    Object.assign(buildCache.files, pendingBuildCache);
     fs.writeFileSync(BUILD_CACHE_FILE, JSON.stringify(buildCache, null, 2), 'utf8');
+    pendingBuildCache = {};
   } catch (e) {
     if (verbose) globalThis.console.warn('Failed to save build cache:', e.message);
   }
@@ -116,7 +129,7 @@ function hasFileChanged(filePath) {
     const cached = buildCache.files[filePath];
 
     if (!cached || cached.mtime !== mtime) {
-      buildCache.files[filePath] = { mtime, size: stats.size };
+      pendingBuildCache[filePath] = { mtime, size: stats.size };
       return true;
     }
     return false;
@@ -126,19 +139,15 @@ function hasFileChanged(filePath) {
 }
 
 // Pre-compiled regex patterns for better performance
+const USERSCRIPT_META_COMMENT_RE =
+  /==UserScript==|==\/UserScript==|@name|@version|@description|@author|@license|@match|@grant|@namespace|@downloadURL|@updateURL|@supportURL|@homepageURL|@icon|@run-at|@require|@resource/;
+
 const REGEX_PATTERNS = {
   lineStyleMeta: /\/\/\s*==UserScript==[\s\S]*?\/\/\s*==\/UserScript==/,
   blockStyleMeta: /\/\*[\s\S]*?==UserScript==[\s\S]*?==\/UserScript==[\s\S]*?\*\//,
   stripLineMeta: /\/\/\s*==UserScript==[\s\S]*?\/\/\s*==\/UserScript==/g,
   stripBlockMeta: /\/\*\s*==UserScript==[\s\S]*?==\/UserScript==\s*\*\//g,
-  regexPattern: /\/(?:[^\\/\n]|\\.)+\/[gimsuvy]*/g,
-  whitespace: /[ \t]+/g,
-  multipleNewlines: /\n{3,}/g,
-  leadingWhitespace: /^(\s+)/,
-  trailingWhitespace: /\s+$/,
-  surroundingWhitespace: /^\s+|\s+$/g,
-  regexContext: /[=([{:;!&|?+\-*%^~,]$|return$|match$|test$|replace$|split$|exec$/,
-  regexFlags: /[gimsuyv]/,
+  userscriptMetaComment: USERSCRIPT_META_COMMENT_RE,
 };
 
 /**
@@ -293,358 +302,6 @@ function stripMeta(content) {
   return result;
 }
 
-/**
- * Advanced optimizer that removes all comments (block, line, JSDoc) and normalizes whitespace
- * while preserving string literals and keeping code readable.
- *
- * Optimization steps:
- * 1. Preserve userscript header metadata
- * 2. Remove all block comments and JSDoc
- * 3. Remove all standalone line comments
- * 4. Normalize whitespace (remove extra spaces/blank lines)
- * 5. Reconstruct code with optimized body
- *
- * @param {string} code - Full code including header
- * @param {string} headerBlock - The userscript header block to preserve
- * @returns {string} Optimized code with reduced size but readable structure
- */
-/**
- * Check if character is likely start of a regex based on context
- * @param {string} resultSoFar
- * @returns {boolean}
- */
-function _isRegexContext(resultSoFar) {
-  const beforeTrimmed = resultSoFar.trimEnd();
-  const lastChars = beforeTrimmed.slice(-10);
-  return REGEX_PATTERNS.regexContext.test(lastChars);
-}
-
-/**
- * Process regex flags after closing /
- * @param {string} line
- * @param {number} startIdx
- * @returns {{endIdx: number, flags: string}}
- */
-function _consumeRegexFlags(line, startIdx) {
-  let flags = '';
-  let idx = startIdx;
-  while (idx + 1 < line.length && REGEX_PATTERNS.regexFlags.test(line[idx + 1])) {
-    idx++;
-    flags += line[idx];
-  }
-  return { endIdx: idx, flags };
-}
-
-/**
- * Process string literal character
- * @param {string} line
- * @param {number} j
- * @param {string} stringChar
- * @returns {{newIdx: number, chars: string, closed: boolean}}
- */
-function _processStringChar(line, j, stringChar) {
-  const ch = line[j];
-  if (ch === '\\' && j + 1 < line.length) {
-    return { newIdx: j + 1, chars: ch + line[j + 1], closed: false };
-  }
-  if (ch === stringChar) {
-    return { newIdx: j, chars: ch, closed: true };
-  }
-  return { newIdx: j, chars: ch, closed: false };
-}
-
-/**
- * Process regex literal character
- * @param {string} line
- * @param {number} j
- * @returns {{newIdx: number, chars: string, closed: boolean}}
- */
-function _processRegexChar(line, j) {
-  const ch = line[j];
-  if (ch === '\\' && j + 1 < line.length) {
-    return { newIdx: j + 1, chars: ch + line[j + 1], closed: false };
-  }
-  if (ch === '/') {
-    const flagInfo = _consumeRegexFlags(line, j);
-    return {
-      newIdx: flagInfo.endIdx,
-      chars: ch + flagInfo.flags,
-      closed: true,
-    };
-  }
-  return { newIdx: j, chars: ch, closed: false };
-}
-
-/**
- * Remove comments from code while preserving string literals and regex literals.
- * Handles line and block comments (including multi-line) and avoids touching strings and regexes.
- * @param {string} src
- * @returns {string}
- */
-function _removeCommentsPreserveStrings(src) {
-  const lines = src.split('\n');
-  const out = new Array(lines.length);
-  let outIdx = 0;
-  let inBlock = false;
-  let inString = false;
-  let stringChar = '';
-
-  for (let i = 0; i < lines.length; i++) {
-    let line = lines[i];
-    if (inBlock) {
-      const endIdx = line.indexOf('*/');
-      if (endIdx === -1) continue;
-      inBlock = false;
-      line = line.slice(endIdx + 2);
-    }
-
-    let result = '';
-    let inRegex = false;
-    const lineLength = line.length;
-
-    for (let j = 0; j < lineLength; j++) {
-      const ch = line[j];
-      const next = line[j + 1];
-
-      // Handle string start
-      if (!inString && !inRegex && (ch === '"' || ch === "'" || ch === '`')) {
-        inString = true;
-        stringChar = ch;
-        result += ch;
-        continue;
-      }
-
-      // Process string content
-      if (inString) {
-        const info = _processStringChar(line, j, stringChar);
-        result += info.chars;
-        j = info.newIdx;
-        if (info.closed) {
-          inString = false;
-          stringChar = '';
-        }
-        continue;
-      }
-
-      // Handle regex start
-      if (
-        !inString &&
-        !inRegex &&
-        ch === '/' &&
-        _isRegexContext(result) &&
-        next !== '/' &&
-        next !== '*'
-      ) {
-        inRegex = true;
-        result += ch;
-        continue;
-      }
-
-      // Process regex content
-      if (inRegex) {
-        const info = _processRegexChar(line, j);
-        result += info.chars;
-        j = info.newIdx;
-        if (info.closed) inRegex = false;
-        continue;
-      }
-
-      // Handle block comments
-      if (ch === '/' && next === '*') {
-        const rest = line.slice(j + 2);
-        const closing = rest.indexOf('*/');
-        if (closing !== -1) {
-          j = j + 2 + closing + 1;
-          result += ' ';
-          continue;
-        }
-        inBlock = true;
-        break;
-      }
-
-      // Handle line comments
-      if (ch === '/' && next === '/') break;
-
-      result += ch;
-    }
-
-    out[outIdx++] = result;
-  }
-
-  // Trim to actual size if we skipped lines
-  if (outIdx < out.length) {
-    out.length = outIdx;
-  }
-
-  return out.join('\n');
-}
-
-/**
- * Normalize whitespace for readability and compactness.
- * - trims trailing spaces
- * - collapses multiple spaces/tabs to a single space
- * - preserves up to 4 leading spaces of indentation
- * - preserves regex literals to avoid breaking them
- */
-function _normalizeWhitespace(src) {
-  const lines = src.split('\n');
-  const processedLines = new Array(lines.length);
-
-  for (let i = 0; i < lines.length; i++) {
-    const line = lines[i];
-
-    // First, preserve regex literals by temporarily replacing them
-    const regexMatches = [];
-    const tempLine = line.replace(REGEX_PATTERNS.regexPattern, match => {
-      regexMatches.push(match);
-      return `__REGEX_${regexMatches.length - 1}__`;
-    });
-
-    // Now process whitespace on the line with placeholders
-    let processed = tempLine.replace(REGEX_PATTERNS.trailingWhitespace, '');
-    processed = processed.replace(REGEX_PATTERNS.whitespace, ' ');
-    const leadingMatch = processed.match(REGEX_PATTERNS.leadingWhitespace);
-    if (leadingMatch) {
-      const indent = Math.min(leadingMatch[1].length, 4);
-      processed = ' '.repeat(indent) + processed.trim();
-    }
-
-    // Restore regex literals
-    for (let j = 0; j < regexMatches.length; j++) {
-      processed = processed.replace(`__REGEX_${j}__`, regexMatches[j]);
-    }
-
-    processedLines[i] = processed;
-  }
-
-  return processedLines
-    .join('\n')
-    .replace(REGEX_PATTERNS.multipleNewlines, '\n\n')
-    .replace(REGEX_PATTERNS.surroundingWhitespace, '');
-}
-
-/**
- * Minify CSS inside JavaScript template literals.
- * Only targets template literals that are overwhelmingly CSS (>60% CSS-like lines).
- * Uses safe transforms that won't break JS code inside template expressions.
- * @param {string} code
- * @returns {string}
- */
-function minifyCSSInTemplateLiterals(code) {
-  return code.replace(/`([^`]{200,})`/g, (match, inner) => {
-    // Must have newlines (multi-line) and braces
-    if (!inner.includes('\n') || !inner.includes('{')) return match;
-    // Skip if has many template expressions (likely mixed JS/HTML)
-    const exprCount = (inner.match(/\$\{/g) || []).length;
-    if (exprCount > 15) return match;
-
-    // Count lines that look like CSS vs total non-empty lines
-    const lines = inner.split('\n').filter(l => l.trim().length > 0);
-    if (lines.length < 5) return match;
-
-    let cssLines = 0;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      // CSS patterns: selectors, properties, closing braces, @rules
-      if (
-        /^[.#@:[\w*>~+\-,\s]+\{/.test(trimmed) || // selector {
-        /^[a-z-]+\s*:\s*.+;/.test(trimmed) || // property: value;
-        /^\}/.test(trimmed) || // } closing
-        /^@(media|keyframes|font-face|import|supports)/.test(trimmed) || // @rules
-        /^(from|to|\d+%)\s*\{/.test(trimmed) || // keyframe steps
-        trimmed === ''
-      ) {
-        cssLines++;
-      }
-    }
-
-    const cssRatio = cssLines / lines.length;
-    if (cssRatio < 0.6) return match; // not enough CSS content, skip
-
-    let minified = inner;
-    // Remove CSS comments
-    minified = minified.replace(/\/\*[\s\S]*?\*\//g, '');
-    // Collapse newlines and leading whitespace, but preserve spaces around ${} expressions
-    minified = minified.replace(/\n\s*/g, ' ');
-    // Collapse whitespace around CSS braces only
-    minified = minified.replace(/\s*\{\s*/g, '{');
-    minified = minified.replace(/\s*\}\s*/g, '}');
-    minified = minified.replace(/\s*;\s*/g, ';');
-    // Only collapse around colons if it's clearly a CSS property (word-colon pattern)
-    minified = minified.replace(/([a-z-])\s*:\s*/gi, '$1:');
-    // Collapse around commas in selectors
-    minified = minified.replace(/\s*,\s*/g, ',');
-    // Clean up multiple spaces
-    minified = minified.replace(/ {2,}/g, ' ');
-    minified = minified.trim();
-
-    // Only use minified if meaningfully shorter
-    if (minified.length < inner.length * 0.8) {
-      return '`' + minified + '`';
-    }
-    return match;
-  });
-}
-
-function simpleOptimize(code, headerBlock) {
-  if (!code) return '';
-
-  startPerfTimer('simpleOptimize');
-
-  const headerText = headerBlock || extractMeta(code) || '';
-  let body = headerText ? code.replace(headerText, '') : code;
-
-  // minify CSS inside template literals FIRST (before comment removal collapses newlines)
-  startPerfTimer('minifyCSS');
-  const beforeCSS = body.length;
-  body = minifyCSSInTemplateLiterals(body);
-  const cssSaved = beforeCSS - body.length;
-  const cssDuration = endPerfTimer('minifyCSS');
-  if (verbose) {
-    globalThis.console.log(
-      `  ⏱️  CSS minification: ${cssDuration.toFixed(2)}ms (saved ${(cssSaved / 1024).toFixed(1)}KB)`
-    );
-  }
-
-  // remove comments safely (optimized)
-  startPerfTimer('removeComments');
-  body = _removeCommentsPreserveStrings(body);
-  const commentsDuration = endPerfTimer('removeComments');
-  if (verbose && commentsDuration > 10) {
-    globalThis.console.log(`  ⏱️  Comment removal: ${commentsDuration.toFixed(2)}ms`);
-  }
-
-  // remove empty lines (optimized with array pre-allocation estimate)
-  startPerfTimer('removeEmptyLines');
-  const lines = body.split('\n');
-  const nonEmptyLines = [];
-  for (let i = 0; i < lines.length; i++) {
-    if (lines[i].trim().length > 0) {
-      nonEmptyLines.push(lines[i]);
-    }
-  }
-  body = nonEmptyLines.join('\n');
-  if (verbose) {
-    const emptyLinesDuration = endPerfTimer('removeEmptyLines');
-    globalThis.console.log(`  ⏱️  Empty line removal: ${emptyLinesDuration.toFixed(2)}ms`);
-  }
-
-  // normalize whitespace
-  startPerfTimer('normalizeWhitespace');
-  body = _normalizeWhitespace(body);
-  if (verbose) {
-    const whitespaceDuration = endPerfTimer('normalizeWhitespace');
-    globalThis.console.log(`  ⏱️  Whitespace normalization: ${whitespaceDuration.toFixed(2)}ms`);
-  }
-
-  const finalCode = `${(headerText ? `${headerText.trim()}\n\n` : '') + body.trim()}\n`;
-
-  const totalDuration = endPerfTimer('simpleOptimize');
-  if (verbose) globalThis.console.log(`  ⏱️  Total optimization: ${totalDuration.toFixed(2)}ms`);
-
-  return finalCode;
-}
-
 // Read header metadata
 let header = null;
 let headerSource = null;
@@ -675,35 +332,126 @@ if (header) {
   header = `// ==UserScript==\n// @name YouTube + UserScript (built)\n// @version 0.0\n// ==/UserScript==\n`;
 }
 
+// package.json is the single hand-edited version: the header @version is
+// always written from it, so a release bump never touches userscript.js.
+{
+  const pkgVersion = JSON.parse(fs.readFileSync(path.join(ROOT, 'package.json'), 'utf8')).version;
+  header = header.replace(/^(\/\/\s*@version\s+)\S+/m, `$1${pkgVersion}`);
+}
+
 // Get module files
+/** Hosts the bundle knows how to run on. `other` hosts run nothing. */
+const KNOWN_HOSTS = ['youtube', 'myactivity'];
+
 /**
- * Reads order manifest from build.order.json or build.order.txt
- * @returns {string[]|null} Array of module filenames or null if not found
+ * Normalize one manifest entry's host list. A missing list means youtube-only.
+ * @param {unknown} hosts
+ * @param {string} name
+ * @returns {string[]}
+ */
+function normalizeHosts(hosts, name) {
+  if (hosts === undefined) return ['youtube'];
+  if (!Array.isArray(hosts) || hosts.length === 0) {
+    throw new Error(
+      `[Build Error] Module "${name}" has an invalid "hosts"; expected a non-empty array of ${KNOWN_HOSTS.join('/')}.`
+    );
+  }
+  for (const host of hosts) {
+    if (!KNOWN_HOSTS.includes(host)) {
+      throw new Error(
+        `[Build Error] Module "${name}" lists unknown host "${host}"; allowed hosts: ${KNOWN_HOSTS.join(', ')}.`
+      );
+    }
+  }
+  return [...new Set(hosts)];
+}
+
+/**
+ * Parse an order manifest into `{name, hosts}` entries. Accepts both the
+ * legacy string array and the object form; unknown hosts fail the build.
+ * @param {string} raw
+ * @param {boolean} isJson
+ * @returns {Array<{name: string, hosts: string[]}>}
+ */
+function parseOrderManifest(raw, isJson) {
+  if (!isJson) {
+    return raw
+      .split(/\r?\n/)
+      .map(s => s.trim())
+      .filter(Boolean)
+      .map(name => ({ name, hosts: ['youtube'] }));
+  }
+  const arr = JSON.parse(raw);
+  if (!Array.isArray(arr)) {
+    throw new Error('[Build Error] build.order.json must be an array.');
+  }
+  return arr.map((entry, index) => {
+    if (typeof entry === 'string') {
+      const name = entry.trim();
+      if (!name) {
+        throw new Error(`[Build Error] build.order.json entry ${index} is an empty name.`);
+      }
+      return { name, hosts: ['youtube'] };
+    }
+    if (entry && typeof entry === 'object' && typeof entry.name === 'string' && entry.name.trim()) {
+      const name = entry.name.trim();
+      return { name, hosts: normalizeHosts(entry.hosts, name) };
+    }
+    throw new Error(
+      `[Build Error] build.order.json entry ${index} must be a string or { name, hosts }.`
+    );
+  });
+}
+
+/**
+ * Reads and validates the order manifest.
+ * @returns {Array<{name: string, hosts: string[]}>|null} Entries or null when no manifest exists
  */
 function readOrderManifest() {
-  for (const name of ORDER_MANIFESTS) {
-    const p = path.join(ROOT, name);
+  const candidates = ORDER_PATH
+    ? [path.isAbsolute(ORDER_PATH) ? ORDER_PATH : path.resolve(process.cwd(), ORDER_PATH)]
+    : ORDER_MANIFESTS.map(name => path.join(ROOT, name));
+  for (const p of candidates) {
     if (!fs.existsSync(p)) continue;
+    let raw;
     try {
-      const raw = fs.readFileSync(p, 'utf8');
-      if (name.endsWith('.json')) {
-        const arr = JSON.parse(raw);
-        if (Array.isArray(arr)) return arr.map(String);
-      } else {
-        return raw
-          .split(/\r?\n/)
-          .map(s => s.trim())
-          .filter(Boolean);
-      }
+      raw = fs.readFileSync(p, 'utf8');
     } catch (e) {
       globalThis.console.error(`[Build Error] Failed to read order manifest ${p}:`, e.message);
       return null;
     }
+    // Validation errors propagate: an unknown host or a malformed entry must
+    // fail the build, never silently fall back to the default ordering.
+    return parseOrderManifest(raw, p.endsWith('.json'));
   }
   if (verbose) {
     globalThis.console.warn('[Build Warning] No order manifest found. Using default ordering.');
   }
   return null;
+}
+
+/**
+ * The host policy, emitted before the first module so every gate can consult
+ * it. Mirrors the `utils.js` policy: `other` runs nothing; a module with no
+ * table entry runs on youtube only.
+ * @param {Array<{name: string, hosts: string[]}>} files
+ * @returns {string}
+ */
+function buildHostPolicyPrelude(files) {
+  /** @type {Record<string, string[]>} */
+  const table = {};
+  for (const f of files) table[f.name] = f.hosts;
+  // Inline the single-source policy module and bind the manifest table. `module`
+  // is undefined in the bundle, so its CommonJS export guard is skipped.
+  const source = fs.readFileSync(path.join(ROOT, 'src', 'host-policy.js'), 'utf8').trim();
+  return [
+    '// --- HOST POLICY (src/host-policy.js, inlined) ---',
+    '(function () {',
+    source,
+    `  window.YouTubePlusHostPolicy = createHostPolicy(${JSON.stringify(table)});`,
+    '})();',
+    '',
+  ].join('\n');
 }
 
 /**
@@ -762,27 +510,25 @@ function collectModuleFiles() {
   if (manifest) {
     const rest = new Map(files.map(f => [f.name, f]));
     const ordered = [];
-    for (const name of manifest) {
-      if (rest.has(name)) {
-        ordered.push(rest.get(name));
-        rest.delete(name);
+    for (const entry of manifest) {
+      if (rest.has(entry.name)) {
+        ordered.push({ ...rest.get(entry.name), hosts: entry.hosts });
+        rest.delete(entry.name);
       } else {
-        globalThis.console.warn(
-          `[Build Warning] Module "${name}" listed in manifest but not found in src/`
-        );
-        globalThis.console.warn(
-          `[Build Warning] Available modules: ${Array.from(rest.keys()).join(', ')}`
+        throw new Error(
+          `[Build Error] Module "${entry.name}" listed in build.order.json but not found in src/. ` +
+            `Remove it from build.order.json or add the missing file.`
         );
       }
     }
     const others = Array.from(rest.values()).sort((a, b) => a.name.localeCompare(b.name));
     if (others.length > 0) {
-      globalThis.console.warn(
-        `[Build Warning] ${others.length} module(s) not in manifest: ${others.map(f => f.name).join(', ')}`
+      throw new Error(
+        `[Build Error] ${others.length} module(s) in src/ not listed in build.order.json: ${others.map(f => f.name).join(', ')}. ` +
+          `Add them to build.order.json to define their load order.`
       );
-      globalThis.console.warn('[Build Warning] Consider adding these to build.order.json');
     }
-    return ordered.concat(others);
+    return ordered;
   }
 
   // Default: put main.js first, then alphabetically by basename, preserving dirs
@@ -791,7 +537,7 @@ function collectModuleFiles() {
     if (b.name === 'main.js') return 1;
     return a.name.localeCompare(b.name);
   });
-  return files;
+  return files.map(f => ({ ...f, hosts: ['youtube'] }));
 }
 
 /**
@@ -859,15 +605,23 @@ const watch = args.includes('--watch') || args.includes('-w');
 let noLint = args.includes('--no-lint') || args.includes('--no-biome');
 const verbose = args.includes('--verbose') || args.includes('-v');
 const minify = args.includes('--minify') || args.includes('-m');
-// New: optimized flag — performs aggressive trimming (remove comments/whitespace) and skips lint for speed
-const optimized = args.includes('--optimized');
+// Readable release: compress + beautify but NO name mangling at all, so the
+// published userscript keeps every identifier (local, function, property)
+// exactly as written in src/. GreasyFork serves these bytes verbatim, so a
+// stack trace or a DOM property dump in a user report must be greppable
+// against the repository.
+if (args.includes('--optimized')) {
+  globalThis.console.error('[Build Error] Unknown build mode --optimized; use --readable-release.');
+  process.exit(1);
+}
+const readableRelease = args.includes('--readable-release');
 // Dry-run: build everything but skip writing output (useful for CI validation)
 const dryRun = args.includes('--dry-run');
-if (optimized) {
+if (minify || readableRelease) {
   noLint = true;
   if (verbose) {
     globalThis.console.log(
-      'Optimized build requested: skipping lint validation and performing aggressive minification'
+      'Minified/readable build requested: skipping lint validation and post-processing the merged source'
     );
   }
 }
@@ -885,6 +639,74 @@ if (outIdx !== -1 && args.length > outIdx + 1) {
   OUT_PATH = path.resolve(process.cwd(), args[outIdx + 1]);
 }
 
+// Order manifest override: --order <path> (tests build the legacy string form).
+const orderIdx = args.findIndex(a => a === '--order' || a === '-O');
+if (orderIdx !== -1 && args.length > orderIdx + 1) {
+  ORDER_PATH = path.resolve(process.cwd(), args[orderIdx + 1]);
+}
+
+/**
+ * Generates the bundle part carrying the offline English dictionary.
+ * The runtime trusts the payload only after the same SHA-256 verification as
+ * network delivery, so the build must reject a locales/en.json whose canonical
+ * digest does not match the delivery manifest baked into src/i18n.js — a
+ * stale or tampered dictionary is a build error, never a silently degraded
+ * runtime.
+ * @returns {string}
+ */
+function buildEmbeddedDictionaryPart() {
+  const data = JSON.parse(fs.readFileSync(path.join(ROOT, 'locales', 'en.json'), 'utf8'));
+  if (!data || typeof data !== 'object' || Array.isArray(data)) {
+    throw new Error('locales/en.json must contain an object of string translations');
+  }
+  for (const [key, value] of Object.entries(data)) {
+    if (typeof value !== 'string') {
+      throw new Error(`locales/en.json entry "${key}" is not a string translation`);
+    }
+  }
+  const canonical = JSON.stringify(data, Object.keys(data).sort());
+  const digest = crypto.createHash('sha256').update(canonical, 'utf8').digest('hex');
+
+  const i18nSource = fs.readFileSync(path.join(ROOT, 'src', I18N_MODULE_NAME), 'utf8');
+  const manifestBlock = i18nSource.match(
+    /AUTO-GENERATED-START: LOCALE_DELIVERY_MANIFEST[\s\S]*?AUTO-GENERATED-END: LOCALE_DELIVERY_MANIFEST/
+  );
+  if (!manifestBlock) {
+    throw new Error('Locale delivery manifest block not found in src/i18n.js');
+  }
+  const expectedDigest = manifestBlock[0].match(/"en":\s*"([0-9a-f]{64})"/)?.[1];
+  if (!expectedDigest) {
+    throw new Error('English locale digest not found in the locale delivery manifest');
+  }
+  if (digest !== expectedDigest) {
+    throw new Error(
+      `locales/en.json digest ${digest} does not match the delivery manifest ${expectedDigest}; ` +
+        'run node scripts/sync-locale-metadata.js'
+    );
+  }
+  return (
+    `// --- EMBEDDED LOCALE: locales/en.json (digest verified at build time) ---\n` +
+    `globalThis.${EMBEDDED_DICTIONARY_GLOBAL} = Object.freeze({\n` +
+    `  en: Object.freeze({ data: ${canonical} })\n` +
+    '});'
+  );
+}
+
+/**
+ * Runs a module in its own block. A synchronous throw while the module
+ * initializes is reported once, and the modules after it still load.
+ * @param {string} name - Module file name
+ * @param {string} code - Module source
+ * @returns {string} Wrapped source
+ */
+function wrapModule(name, code) {
+  const message = JSON.stringify(`[YouTube+] ${name} failed to initialize`);
+  // Gate first: the module body only runs on a host its manifest entry allows.
+  // With no policy loaded, only youtube runs (fail-closed).
+  const gate = `if (window.YouTubePlusHostPolicy ? window.YouTubePlusHostPolicy.runs(${JSON.stringify(name)}) : (window.location && /(^|\\.)youtube\\.com$/i.test(String(window.location.hostname || "")))) {`;
+  return `${gate}\n  try {\n${code}\n  } catch (error) {\n    console.error(${message}, error);\n  }\n}`;
+}
+
 /**
  * Merges module files into a single output string
  * @param {Array} files - Array of file objects
@@ -894,6 +716,9 @@ async function mergeModuleFiles(files) {
   startPerfTimer('mergeModuleFiles');
 
   const parts = [header.trim(), '\n'];
+  parts.push(
+    buildHostPolicyPrelude(files.map(f => ({ name: f.name, hosts: f.hosts || ['youtube'] })))
+  );
   let mergedCount = 0;
   let skippedCount = 0;
   let changedCount = 0;
@@ -926,10 +751,23 @@ async function mergeModuleFiles(files) {
     }
 
     parts.push(`// --- MODULE: ${displayName} ---`);
-    parts.push(clean);
+    parts.push(wrapModule(displayName, clean));
     if (verbose) globalThis.console.log(`  ✓ Merged: ${displayName}`);
     mergedCount++;
   }
+
+  // The embedded dictionary is part of the produced bundle, so a missing
+  // insertion point must fail the build instead of silently shipping raw
+  // keys as the offline fallback.
+  const i18nPartIndex = parts.indexOf(`// --- MODULE: ${I18N_MODULE_NAME} ---`);
+  if (i18nPartIndex === -1) {
+    throw new Error(
+      `Module ${I18N_MODULE_NAME} was not merged; the build cannot embed the English dictionary fallback`
+    );
+  }
+  // Before i18n.js: the module requests English synchronously during its own
+  // initialization, so the payload must already be assigned by then.
+  parts.splice(i18nPartIndex, 0, buildEmbeddedDictionaryPart());
 
   const mergedCode = `${parts.join('\n\n')}\n`;
 
@@ -1010,188 +848,189 @@ function runBiomeValidation(_outPath) {
 async function optimizeOrMinify(code, outPath) {
   if (verbose) {
     globalThis.console.log(
-      minify ? 'Minifying output...' : 'Optimizing output (strip comments/whitespace)...'
+      readableRelease
+        ? 'Building readable release (compress + beautify, no mangling)...'
+        : minify
+          ? 'Minifying output...'
+          : 'Optimizing output (strip comments/whitespace)...'
     );
   }
 
   try {
-    const isOptimized = optimized && !minify;
-
-    if (isOptimized) {
-      return await performSimpleOptimization(code, outPath);
+    if (readableRelease) {
+      return await performReadableRelease(code, outPath);
     }
 
     return await performTerserMinification(code, outPath);
   } catch (e) {
-    globalThis.console.error('[Build Error] Minification/optimization failed:', e?.message);
+    globalThis.console.error('[Build Error] Minification failed:', e?.message);
     if (verbose) globalThis.console.error(e?.stack);
     return false;
   }
 }
 
 /**
- * Performs simple optimization without mangling
- * Uses Terser with compression (no mangling) for better size reduction while keeping readability
- * @param {string} code - Code to optimize
+ * Replace leading indentation (Terser's 2 spaces per level) with tabs so the
+ * beautified readable bundle stays inside GreasyFork's size band. A line that
+ * begins inside a template literal is string content and is left untouched; the
+ * AST is used to find those ranges.
+ * @param {string} code
+ * @returns {string}
+ */
+function reindentWithTabs(code) {
+  const acorn = require('acorn');
+  /** @type {Array<[number, number]>} */
+  const templateRanges = [];
+  try {
+    const ast = acorn.parse(code, { ecmaVersion: 'latest', sourceType: 'script' });
+    const walk = node => {
+      if (!node || typeof node !== 'object') return;
+      if (
+        node.type === 'TemplateLiteral' &&
+        typeof node.start === 'number' &&
+        typeof node.end === 'number'
+      ) {
+        templateRanges.push([node.start, node.end]);
+      }
+      for (const key of Object.keys(node)) {
+        const value = node[key];
+        if (Array.isArray(value)) {
+          for (const item of value) walk(item);
+        } else if (value && typeof value === 'object' && typeof value.type === 'string') {
+          walk(value);
+        }
+      }
+    };
+    walk(ast);
+    templateRanges.sort((a, b) => a[0] - b[0]);
+  } catch (_e) {
+    // Unparseable output is left verbatim rather than risk corrupting it.
+    return code;
+  }
+
+  /** @param {number} offset */
+  const inTemplate = offset => {
+    let lo = 0;
+    let hi = templateRanges.length - 1;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      const [start, end] = templateRanges[mid];
+      if (offset < start) hi = mid - 1;
+      else if (offset >= end) lo = mid + 1;
+      else return true;
+    }
+    return false;
+  };
+
+  const out = [];
+  let offset = 0;
+  for (const line of code.split('\n')) {
+    const lineStart = offset;
+    offset += line.length + 1;
+    out.push(
+      inTemplate(lineStart) ? line : line.replace(/^(?: {2})+/, m => '\t'.repeat(m.length / 2))
+    );
+  }
+  return out.join('\n');
+}
+
+/**
+ * Builds the readable release bundle: Terser compression only, with mangling
+ * switched off entirely (no local renames, no property renames) and the output
+ * beautified. The userscript metadata block is preserved as the preamble and
+ * the userscript header comments are kept, so the published file is
+ * byte-comparable with src/ by name.
+ *
+ * The unoptimized merged source is still written next to the bundle: it is the
+ * exact input Terser consumed, which is what a reviewer needs when the
+ * compressed output misbehaves.
+ * @param {string} code - Merged source
  * @param {string} outPath - Output file path
  * @returns {Promise<boolean>} True if successful
  */
-async function performSimpleOptimization(code, outPath) {
-  if (verbose) globalThis.console.log('Running optimized build (Terser compress, no mangle)');
+async function performReadableRelease(code, outPath) {
+  if (verbose) globalThis.console.log('Running readable release build (compress, no mangle)');
 
-  // Write unoptimized code for debugging
-  const debugPath = outPath.replace('.js', '.unoptimized.js');
+  const debugPath = outPath.replace(/\.js$/, '.unoptimized.js');
   fs.writeFileSync(debugPath, code, 'utf8');
   globalThis.console.log(`✓ Wrote unoptimized code to ${path.basename(debugPath)} for debugging`);
 
   try {
     const terser = require('terser');
 
-    // Remove metadata block that will be re-added via preamble
+    // The header is re-emitted through format.preamble, so drop the copy the
+    // merge embedded to avoid a duplicated metadata block.
     const codeToOptimize = code
       .replace(REGEX_PATTERNS.stripLineMeta, '')
       .replace(REGEX_PATTERNS.stripBlockMeta, '');
 
-    // Pre-minify CSS inside JS template literals so the design-system
-    // style bundles (CSS variables, components, feature flags) get
-    // collapsed before Terser runs. Without this pass the optimize
-    // build ships a lot of CSS whitespace and indentation that adds
-    // ~40-60 KB to the bundle.
-    const cssMinStart = Date.now();
-    const cssMinBefore = codeToOptimize.length;
-    const codeAfterCSS = minifyCSSInTemplateLiterals(codeToOptimize);
-    const cssMinSaved = cssMinBefore - codeAfterCSS.length;
-    if (verbose) {
-      const cssMinMs = Date.now() - cssMinStart;
-      globalThis.console.log(
-        `  ⏱️  CSS template minify: ${cssMinMs}ms (saved ${(cssMinSaved / 1024).toFixed(1)}KB)`
-      );
-    }
+    const codeAfterCSS = minifyCssTemplates(codeToOptimize);
 
-    // Reuse the production-grade compress options (5 passes, full
-    // boolean/inlining/hoisting/sequences/toplevel) but force the
-    // name-preservation and drop-console-off settings we want for the
-    // readable "optimized" debug build. We still mangle local variable
-    // and parameter names so the bundle size is comparable to the
-    // production minified build, while keeping class names and
-    // identifiers matching the public window.* exports intact for
-    // debuggability.
-    //
-    // `pure_funcs` strips non-side-effect console calls (log/info/debug)
-    // that have no return value. `console.warn` and `console.error` are
-    // kept because removing them could hide real runtime issues while
-    // debugging the optimized build.
-    const baseCompress = getTerserCompressOptions();
+    // Console output is part of the published behavior, and `pure_funcs`
+    // would otherwise delete log/info/debug calls from the shipped file.
     const compress = {
-      ...baseCompress,
+      ...getTerserCompressOptions(),
       drop_console: false,
-      pure_funcs: ['console.log', 'console.info', 'console.debug'],
+      pure_funcs: [],
       keep_classnames: true,
-      keep_fnames: false,
+      keep_fnames: true,
+      keep_infinity: true,
       toplevel: true,
     };
 
     const result = await terser.minify(codeAfterCSS, {
       compress,
-      mangle: {
-        // Mangle local variables, parameters, and private (underscore /
-        // dollar-prefixed) property names. Top-level identifiers and
-        // public window.* exports stay readable thanks to the reserved
-        // list. Function names are dropped where unused to mirror the
-        // minify build while leaving class names visible.
-        properties: {
-          regex: /^_[a-zA-Z_$0-9]+$/,
-          reserved: ['_yt_player'],
-        },
-        toplevel: false,
-        keep_classnames: true,
-        keep_fnames: false,
-        reserved: [
-          'YouTubeUtils',
-          'YouTubePlusI18n',
-          'YouTubeEnhancer',
-          'YouTubeErrorBoundary',
-          'YouTubePlusLogger',
-          'YouTubePlusCleanupManager',
-          'YouTubeSafeDOM',
-          'YouTubeSecurityUtils',
-          'YouTubeTrustedTypes',
-          'YouTubePlusDesignSystem',
-          'YouTubeDOMCache',
-          'YouTubePlusLazyLoader',
-          'YouTubePlusRegistry',
-          'YouTubePlusSettingsStore',
-          'YouTubePlusSettingsHelpers',
-          'YouTubePlusModalHandlers',
-          'YouTubePlusEventDelegation',
-          'YouTubePlusEmbeddedTranslations',
-          'YouTubePlusTimeLoop',
-          'youtubePlusReport',
-          'window',
-          'document',
-          'unsafeWindow',
-        ],
-      },
+      // No mangling: every identifier and every property name survives
+      // verbatim. This is the whole point of the readable release.
+      mangle: false,
       format: {
-        comments:
-          /==UserScript==|==\/UserScript==|@name|@version|@description|@author|@license|@match|@grant|@namespace|@downloadURL|@updateURL|@supportURL|@homepageURL|@icon|@run-at|@require|@resource/,
+        // Keep the userscript header comments, drop the rest.
+        comments: USERSCRIPT_META_COMMENT_RE,
         preamble: header.trim(),
-        semicolons: true,
-        braces: true,
         beautify: true,
-        indent_level: 0,
+        braces: true,
+        semicolons: true,
+        indent_level: 2,
         wrap_iife: true,
         ecma: 2020,
       },
       parse: { ecma: 2020 },
       ecma: 2020,
       module: false,
-      // IMPORTANT: Keep toplevel:false so that `executionScript` and other
-      // top-level identifiers are NOT mangled. The executionScript function
-      // is serialized via toString() and injected into the page — if Terser
-      // renames it, the injected script still works, but debugging becomes
-      // impossible because stack traces use the mangled name.
-      // Root-level toplevel:true would OVERRIDE mangle.toplevel:false below.
       toplevel: false,
       keep_classnames: true,
       keep_fnames: true,
     });
 
     if (result.error || !result.code) {
-      globalThis.console.warn(
-        '[Build Warning] Terser optimization failed, falling back to simple optimizer'
+      globalThis.console.error(
+        '[Build Error] Readable release build failed:',
+        result.error || 'Build produced no output'
       );
-      const finalCode = simpleOptimize(code, header);
-      fs.writeFileSync(outPath, finalCode, 'utf8');
-      return true;
+      return false;
     }
 
-    fs.writeFileSync(outPath, result.code, 'utf8');
+    // Tabs instead of Terser's 2-space indent shrink the published readable
+    // bundle without touching template-literal content.
+    const output = reindentWithTabs(result.code);
+    fs.writeFileSync(outPath, output, 'utf8');
 
     const originalSize = Buffer.byteLength(code, 'utf8');
-    const optimizedSize = Buffer.byteLength(result.code, 'utf8');
-    const savings = ((1 - optimizedSize / originalSize) * 100).toFixed(2);
+    const readableSize = Buffer.byteLength(output, 'utf8');
+    const savings = ((1 - readableSize / originalSize) * 100).toFixed(2);
 
     globalThis.console.log(
-      `✓ Optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(optimizedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
+      `✓ Readable release: ${(originalSize / 1024).toFixed(2)}KB → ${(readableSize / 1024).toFixed(2)}KB (compressed ${savings}%, names preserved)`
     );
     return true;
   } catch (e) {
-    globalThis.console.warn(
-      '[Build Warning] Terser not available, using simple optimizer:',
-      e.message
-    );
-    const finalCode = simpleOptimize(code, header);
-    fs.writeFileSync(outPath, finalCode, 'utf8');
-    const originalSize = Buffer.byteLength(code, 'utf8');
-    const optimizedSize = Buffer.byteLength(finalCode, 'utf8');
-    const savings = ((1 - optimizedSize / originalSize) * 100).toFixed(2);
-    globalThis.console.log(
-      `✓ Optimized: ${(originalSize / 1024).toFixed(2)}KB → ${(optimizedSize / 1024).toFixed(2)}KB (saved ${savings}%)`
-    );
-    return true;
+    globalThis.console.error('[Build Error] Readable release build failed:', e.message);
+    if (verbose) globalThis.console.error(e.stack);
+    return false;
   }
-} /**
+}
+
+/**
  * Creates Terser compression options with advanced optimizations
  * @returns {object|false} Compression options or false
  */
@@ -1212,7 +1051,7 @@ function getTerserCompressOptions() {
     keep_infinity: true,
 
     // Advanced optimizations - increase passes for better compression
-    passes: optimized || minify ? 5 : 3, // More passes for better results
+    passes: minify ? 6 : 3, // More passes for better results
     pure_getters: true, // Assume getters have no side effects
     unsafe: false, // Don't use unsafe optimizations
     unsafe_comps: false,
@@ -1262,12 +1101,8 @@ function getTerserCompressOptions() {
  * @returns {object} Format options
  */
 function getTerserFormatOptions() {
-  // For optimized builds, remove ALL comments except userscript metadata
-  const userscriptMetaRegex =
-    /==UserScript==|==\/UserScript==|@name|@version|@description|@author|@license|@match|@grant|@namespace|@downloadURL|@updateURL|@supportURL|@homepageURL|@icon|@run-at|@require|@resource/;
-
   const baseOptions = {
-    comments: optimized || minify ? userscriptMetaRegex : 'some',
+    comments: minify ? USERSCRIPT_META_COMMENT_RE : 'some',
     preamble: header.trim(),
     semicolons: true,
     preserve_annotations: false, // Remove @__PURE__ in production for smaller size
@@ -1359,7 +1194,7 @@ async function performTerserMinification(code, outPath) {
 
   // Pre-minify CSS inside JS template literals (design-system stylesheets)
   // so the whitespace-heavy style bundles get collapsed before Terser runs.
-  const codeAfterCSS = minifyCSSInTemplateLiterals(codeToMinify);
+  const codeAfterCSS = minifyCssTemplates(codeToMinify);
 
   const minified = await terser.minify(codeAfterCSS, terserOpts);
 
@@ -1410,6 +1245,26 @@ async function performTerserMinification(code, outPath) {
 }
 
 /**
+ * Log summary and list of merged module files
+ * @param {Array<string|{ dir: string, name: string }>} files
+ * @param {number} mergedCount
+ * @param {string} fileSize
+ * @param {number} writeDuration
+ * @param {string} outPath
+ */
+function logBuiltFilesSummary(files, mergedCount, fileSize, writeDuration, outPath) {
+  globalThis.console.log(
+    `\n✓ Built ${path.relative(ROOT, outPath)} from ${mergedCount} modules (${fileSize}KB, ${writeDuration.toFixed(2)}ms):`
+  );
+  for (const f of files) {
+    const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
+    const fp = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
+    const rel = path.relative(ROOT, fp).replace(/\\/g, '/');
+    globalThis.console.log('  ✓', rel);
+  }
+}
+
+/**
  * Main build function with reduced complexity
  * @param {string} outPath - Output file path
  * @returns {Promise<boolean>} True if build succeeded
@@ -1451,16 +1306,7 @@ async function buildOnceCustom(outPath) {
   const writeDuration = endPerfTimer('writeFile');
 
   const fileSize = (Buffer.byteLength(code, 'utf8') / 1024).toFixed(2);
-  globalThis.console.log(
-    `\n✓ Built ${path.relative(ROOT, outPath)} from ${mergedCount} modules (${fileSize}KB, ${writeDuration.toFixed(2)}ms):`
-  );
-
-  for (const f of files) {
-    const filePath = typeof f === 'string' ? f : path.join(f.dir, f.name);
-    const fp = path.isAbsolute(filePath) ? filePath : path.join(ROOT, filePath);
-    const rel = path.relative(ROOT, fp).replace(/\\/g, '/');
-    globalThis.console.log('  ✓', rel);
-  }
+  logBuiltFilesSummary(files, mergedCount, fileSize, writeDuration, outPath);
 
   // Validate syntax
   startPerfTimer('validateSyntax');
@@ -1478,8 +1324,8 @@ async function buildOnceCustom(outPath) {
   const biomeDuration = endPerfTimer('biome');
   if (!noLint && verbose) globalThis.console.log(`  ⏱️  Biome: ${biomeDuration.toFixed(2)}ms`);
 
-  // Optimize or minify if requested (skip in dry-run mode)
-  if ((minify || optimized) && !dryRun) {
+  // Minify or readable release if requested (skip in dry-run mode)
+  if ((minify || readableRelease) && !dryRun) {
     startPerfTimer('optimize');
     if (!(await optimizeOrMinify(code, outPath))) {
       return false;
@@ -1487,6 +1333,10 @@ async function buildOnceCustom(outPath) {
     const optimizeDuration = endPerfTimer('optimize');
     if (verbose) globalThis.console.log(`  ⏱️  Optimization: ${optimizeDuration.toFixed(2)}ms`);
   }
+
+  // NOTE: release-manifest.json is generated by scripts/release.js
+  // after build:release completes both readable and minified builds.
+  // Single-invocation manifests are no longer written here to avoid overwrite races.
 
   const totalDuration = endPerfTimer('totalBuild');
   const dryRunTag = dryRun ? ' (dry-run)' : '';
@@ -1523,13 +1373,25 @@ async function buildOnceCli() {
   }
 }
 
-if (watch) {
-  buildOnceCli().then(ok => {
-    if (!ok) globalThis.console.warn('Initial build failed. Still watching for fixes...');
-    watchAndBuild();
-  });
-} else {
-  buildOnceCli().then(ok => {
-    if (!ok) process.exitCode = 2;
-  });
+if (require.main === module) {
+  if (watch) {
+    buildOnceCli().then(ok => {
+      if (!ok) globalThis.console.warn('Initial build failed. Still watching for fixes...');
+      watchAndBuild();
+    });
+  } else {
+    buildOnceCli().then(ok => {
+      if (!ok) process.exitCode = 2;
+    });
+  }
 }
+
+// Test-facing surface: manifest parsing/validation and the module wrapper.
+module.exports = {
+  KNOWN_HOSTS,
+  normalizeHosts,
+  parseOrderManifest,
+  readOrderManifest,
+  buildHostPolicyPrelude,
+  wrapModule,
+};

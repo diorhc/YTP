@@ -1,359 +1,479 @@
 /**
  * @jest-environment jsdom
+ *
+ * Tests the real comment.js module surface through window.YouTubePlusComment.
+ * Exercises actual bulk-management helpers, settings storage, and comment
+ * translation button injection against real DOM structures.
  */
 
-describe('Comment Manager Module', () => {
-  /**
-   * @type {{
-   *   getItem: jest.Mock<string | null, [string]>,
-   *   setItem: jest.Mock<void, [string, string]>,
-   *   removeItem: jest.Mock<void, [string]>
-   * }}
-   */
-  let mockLocalStorage;
-  /**
-   * @type {{
-   *   debounce: (fn: (...args: unknown[]) => unknown, ms: number) => ((...args: unknown[]) => unknown) & { cancel: () => void },
-   *   StyleManager: { add: jest.Mock; remove: jest.Mock; clear: jest.Mock },
-   *   cleanupManager: { registerObserver: jest.Mock; registerListener: jest.Mock; registerTimer: jest.Mock; registerInterval: jest.Mock; cleanup: jest.Mock },
-   *   logError: jest.Mock
-   * }}
-   */
-  let mockYouTubeUtils;
-  /** @type {{ withErrorBoundary: jest.Mock<Function, [Function, string?]>, logError: jest.Mock<void, [Error, object?]> }} */
-  let mockYouTubePlusErrorBoundary;
+// Mirrors the utils.js test-hook gate: the mock YouTubeUtils object below
+// stands in for the real surface, so it carries the same gated exposure.
+const exposeTestHooks = (facade, hooks) => {
+  if (window.__YTP_TEST_HOOKS__ === true) facade.testHooks = hooks;
+};
 
-  beforeEach(() => {
-    // Mock localStorage
-    mockLocalStorage = {
-      getItem: jest.fn(),
-      setItem: jest.fn(),
-      removeItem: jest.fn(),
-    };
-    localStorage.getItem = mockLocalStorage.getItem;
-    localStorage.setItem = mockLocalStorage.setItem;
-    localStorage.removeItem = mockLocalStorage.removeItem;
+describe('Comment Module', () => {
+  const setupCommentDeps = () => {
+    document.body.innerHTML = '';
+    document.head.innerHTML = '';
 
-    // Mock window.YouTubeUtils
-    mockYouTubeUtils = {
-      debounce: jest.fn((fn, _ms) => {
-        const wrapped = /** @type {typeof fn & { cancel: () => void }} */ (
-          (...args) => fn(...args)
-        );
-        wrapped.cancel = () => {};
-        return wrapped;
-      }),
-      StyleManager: {
-        add: jest.fn(),
-        remove: jest.fn(),
-        clear: jest.fn(),
+    const utils = {
+      $: jest.fn(sel => document.querySelector(sel)),
+      $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
+      byId: jest.fn(id => document.getElementById(id)),
+      t: jest.fn((key, params = {}) =>
+        key === 'deleteCommentsConfirm' ? `Delete ${params?.count ?? ''} comment(s)?` : key || ''
+      ),
+      helpers: {
+        t: jest.fn((key, params = {}) =>
+          key === 'deleteCommentsConfirm' ? `Delete ${params?.count ?? ''} comment(s)?` : key || ''
+        ),
+        logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
       },
+      confirmDialog: jest.fn(() => Promise.resolve(true)),
+      debounce: jest.fn(fn => fn),
+      StyleManager: { add: jest.fn(), remove: jest.fn(), clear: jest.fn() },
+      openSafe: jest.fn(),
+      renderTemplateClone: jest.fn((el, html) => {
+        el.innerHTML = html;
+      }),
       cleanupManager: {
-        registerObserver: jest.fn(),
-        registerListener: jest.fn(() => Symbol('listener-key')),
-        registerTimer: jest.fn(id => id),
-        registerInterval: jest.fn(id => id),
-        cleanup: jest.fn(),
+        registerObserver: obs => obs,
+        registerListener: (target, type, handler, opts) => {
+          target?.addEventListener?.(type, handler, opts);
+          return Symbol('listener-key');
+        },
+        registerTimer: id => id,
+        registerInterval: id => id,
+        cleanup: () => {
+          /* mock */
+        },
       },
       logError: jest.fn(),
+      logSuppressed: jest.fn(),
+      exposeTestHooks,
+      createWithErrorBoundary: jest.fn(() => fn => fn),
+      onDomReady: jest.fn(cb => cb()),
+      getLanguage: jest.fn(() => 'en'),
+      getRoute: () => 'watch',
+      setSafeHTML: jest.fn((el, html) => {
+        el.innerHTML = html;
+      }),
+      SETTINGS_KEY: 'youtube_plus_settings',
+      storage: {
+        get: (key, def = null) => {
+          const raw = localStorage.getItem(key);
+          return raw ? JSON.parse(raw) : def;
+        },
+        set: (key, val) => {
+          localStorage.setItem(key, JSON.stringify(val));
+          return true;
+        },
+        remove: key => localStorage.removeItem(key),
+        has: key => localStorage.getItem(key) !== null,
+        getItem: key => localStorage.getItem(key),
+        setItem: (key, val) => {
+          localStorage.setItem(key, val);
+          return true;
+        },
+        removeItem: key => localStorage.removeItem(key),
+      },
     };
+
     Object.defineProperty(window, 'YouTubeUtils', {
       configurable: true,
       writable: true,
-      value: mockYouTubeUtils,
+      value: utils,
     });
 
-    // Mock window.YouTubePlusErrorBoundary
-    mockYouTubePlusErrorBoundary = {
-      withErrorBoundary: jest.fn(fn => fn),
-      logError: jest.fn(),
-    };
-    Object.defineProperty(window, 'YouTubePlusErrorBoundary', {
+    Object.defineProperty(window, 'YouTubePlusMutationCoordinator', {
       configurable: true,
       writable: true,
-      value: mockYouTubePlusErrorBoundary,
+      value: {
+        subscribeRoot: jest.fn(() => 'sub-root'),
+        unsubscribeRoot: jest.fn(),
+        watchTarget: jest.fn(() => 'watch-target'),
+        unwatch: jest.fn(),
+      },
     });
 
-    // Reset DOM
-    document.body.innerHTML = '';
+    Object.defineProperty(window, 'YouTubePlusCleanupManager', {
+      configurable: true,
+      writable: true,
+      value: {
+        registerListener: (target, type, handler, opts) => {
+          target?.addEventListener?.(type, handler, opts);
+          return Symbol('cm-key');
+        },
+      },
+    });
+
+    global.mockLocation({
+      hostname: 'www.youtube.com',
+      pathname: '/watch',
+      href: 'https://www.youtube.com/watch?v=test',
+    });
+  };
+
+  beforeEach(() => {
+    jest.resetModules();
+    delete window.YouTubePlusComment;
+    localStorage.clear();
+    sessionStorage.clear();
+
+    setupCommentDeps();
+    require('../src/comment.js');
   });
 
   afterEach(() => {
-    jest.clearAllMocks();
+    jest.restoreAllMocks();
   });
 
-  describe('Configuration', () => {
-    test('should have correct default configuration', () => {
-      // Configuration is internal to IIFE, but we can test behavior
-      expect(true).toBe(true); // Placeholder for actual config tests
-    });
-
-    test('should store settings in localStorage', () => {
-      // This would require refactoring to expose settings object
-      expect(mockLocalStorage.getItem).toBeDefined();
-      expect(mockLocalStorage.setItem).toBeDefined();
-    });
+  test('exposes the real API facade on window.YouTubePlusComment', () => {
+    expect(window.YouTubePlusComment).toBeDefined();
+    expect(window.YouTubePlusComment.testHooks.settings).toBeDefined();
+    expect(typeof window.YouTubePlusComment.testHooks.settings.load).toBe('function');
+    expect(typeof window.YouTubePlusComment.testHooks.settings.save).toBe('function');
+    expect(typeof window.YouTubePlusComment.testHooks.addCheckboxes).toBe('function');
+    expect(typeof window.YouTubePlusComment.testHooks.deleteSelectedComments).toBe('function');
+    expect(typeof window.YouTubePlusComment.testHooks.addTranslateButton).toBe('function');
+    expect(typeof window.YouTubePlusComment.testHooks.processComments).toBe('function');
   });
 
   describe('Settings Management', () => {
-    test('should load settings from localStorage', () => {
-      mockLocalStorage.getItem.mockReturnValue(JSON.stringify({ enabled: false }));
+    test('saves settings to localStorage and retrieves them accurately', () => {
+      window.YouTubePlusComment.testHooks.CONFIG.enabled = false;
+      window.YouTubePlusComment.testHooks.settings.save();
 
-      // Settings are loaded during initialization
-      // We can verify the mock was called
-      // This test would need module refactoring for proper testing
-      expect(true).toBe(true);
+      const raw = localStorage.getItem('youtube_comment_manager_settings');
+      expect(raw).toBeTruthy();
+      const parsed = JSON.parse(raw || '{}');
+      expect(parsed.enabled).toBe(false);
+
+      window.YouTubePlusComment.testHooks.CONFIG.enabled = true;
+      window.YouTubePlusComment.testHooks.settings.load();
+      expect(window.YouTubePlusComment.testHooks.CONFIG.enabled).toBe(false);
     });
 
-    test('should handle missing localStorage data gracefully', () => {
-      mockLocalStorage.getItem.mockReturnValue(null);
+    test('handles missing or invalid localStorage data gracefully with default config', () => {
+      localStorage.removeItem('youtube_comment_manager_settings');
+      window.YouTubePlusComment.testHooks.settings.load();
+      expect(window.YouTubePlusComment.testHooks.CONFIG.enabled).toBe(true);
 
-      // Should not throw
-      expect(() => {
-        mockLocalStorage.getItem('youtube_comment_manager_settings');
-      }).not.toThrow();
-    });
-
-    test('should handle corrupted localStorage data', () => {
-      mockLocalStorage.getItem.mockReturnValue('invalid json{');
-
-      // Should not throw when parsing invalid JSON
-      expect(() => {
-        try {
-          const raw = mockLocalStorage.getItem('test');
-          if (raw) JSON.parse(raw);
-        } catch (e) {
-          // Expected to fail
-        }
-      }).not.toThrow();
+      localStorage.setItem('youtube_comment_manager_settings', 'malformed-json{');
+      window.YouTubePlusComment.testHooks.settings.load();
+      expect(window.YouTubePlusComment.testHooks.CONFIG.enabled).toBe(true);
     });
   });
 
-  describe('DOM Manipulation', () => {
-    test('should create checkbox elements', () => {
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.className = 'comment-checkbox ytp-plus-settings-checkbox';
+  describe('Bulk Comment Checkboxes (addCheckboxes)', () => {
+    test('injects checkboxes next to delete buttons on activity pages', () => {
+      const container = document.createElement('div');
+      container.className = 'activity-root';
 
-      expect(checkbox.type).toBe('checkbox');
-      expect(checkbox.className).toContain('comment-checkbox');
+      const comment1 = document.createElement('div');
+      comment1.className = 'comment-row';
+      const deleteBtn1 = document.createElement('button');
+      deleteBtn1.setAttribute('aria-label', 'Delete comment 1');
+      comment1.appendChild(deleteBtn1);
+      container.appendChild(comment1);
+
+      const comment2 = document.createElement('div');
+      comment2.className = 'comment-row';
+      const deleteBtn2 = document.createElement('button');
+      deleteBtn2.setAttribute('aria-label', 'Delete comment 2');
+      comment2.appendChild(deleteBtn2);
+      container.appendChild(comment2);
+
+      document.body.appendChild(container);
+
+      window.YouTubePlusComment.testHooks.addCheckboxes();
+
+      const checkboxes = document.querySelectorAll('.comment-checkbox');
+      expect(checkboxes.length).toBe(2);
+      expect(checkboxes[0].tagName).toBe('INPUT');
+      expect(/** @type {HTMLInputElement} */ (checkboxes[0]).type).toBe('checkbox');
     });
 
-    test('should create control panel', () => {
-      const panel = document.createElement('div');
-      panel.className = 'comment-controls-container comment-controls-panel';
+    test('does not duplicate checkboxes when called multiple times', () => {
+      const comment = document.createElement('div');
+      const deleteBtn = document.createElement('button');
+      deleteBtn.setAttribute('aria-label', 'Delete comment');
+      comment.appendChild(deleteBtn);
+      document.body.appendChild(comment);
 
-      expect(panel.className).toContain('comment-controls-container');
-    });
+      window.YouTubePlusComment.testHooks.addCheckboxes();
+      expect(document.querySelectorAll('.comment-checkbox').length).toBe(1);
 
-    test('should create action buttons', () => {
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.textContent = 'Delete Selected';
-      button.className = 'comment-controls-button comment-controls-button--danger';
-
-      expect(button.type).toBe('button');
-      expect(button.textContent).toBe('Delete Selected');
-      expect(button.className).toContain('comment-controls-button--danger');
-    });
-  });
-
-  describe('Error Handling', () => {
-    test('should wrap functions with error boundary', () => {
-      const testFn = () => 'test';
-      const wrapped = mockYouTubePlusErrorBoundary.withErrorBoundary(testFn, 'CommentManager');
-
-      expect(wrapped).toBe(testFn); // In our mock, it returns the same function
-      expect(mockYouTubePlusErrorBoundary.withErrorBoundary).toHaveBeenCalledWith(
-        testFn,
-        'CommentManager'
-      );
-    });
-
-    test('should handle errors gracefully', () => {
-      const errorFn = () => {
-        throw new Error('Test error');
-      };
-
-      // With error boundary, errors should be caught
-      expect(() => {
-        try {
-          errorFn();
-        } catch (e) {
-          // Error caught
-        }
-      }).not.toThrow();
-    });
-
-    test('should log errors with context', () => {
-      const error = new Error('Test error');
-      mockYouTubePlusErrorBoundary.logError(error, { context: 'test' });
-
-      expect(mockYouTubePlusErrorBoundary.logError).toHaveBeenCalledWith(error, { context: 'test' });
+      window.YouTubePlusComment.testHooks.addCheckboxes();
+      expect(document.querySelectorAll('.comment-checkbox').length).toBe(1);
     });
   });
 
-  describe('Utility Functions', () => {
-    test('should use debounce from YouTubeUtils', () => {
-      const fn = jest.fn();
-      mockYouTubeUtils.debounce(fn, 100);
-
-      expect(mockYouTubeUtils.debounce).toHaveBeenCalledWith(fn, 100);
+  describe('Comment Translation (addTranslateButton)', () => {
+    // Translation runs as a lifecycle feature: load the real manager, store
+    // and registry so the feature starts with its own context.
+    beforeEach(() => {
+      jest.resetModules();
+      delete window.YouTubePlusComment;
+      delete window.YouTubePlusCleanupManager;
+      require('../src/cleanup-manager.js');
+      require('../src/settings-store.js');
+      require('../src/feature-registry.js');
+      require('../src/comment.js');
     });
 
-    test('should query DOM elements safely', () => {
-      document.body.innerHTML = '<div class="test">Test</div>';
-
-      const element = document.querySelector('.test');
-      expect(element).toBeTruthy();
-      if (!element) throw new Error('test element not found');
-      expect(element.textContent).toBe('Test');
+    afterEach(() => {
+      window.YouTubePlusFeatureRegistry?.FeatureLifecycle?._reset?.();
+      delete window.YouTubePlusFeatureRegistry;
     });
 
-    test('should query multiple DOM elements', () => {
-      document.body.innerHTML = `
-        <div class="test">1</div>
-        <div class="test">2</div>
-        <div class="test">3</div>
-      `;
+    test('injects translate button into YouTube comment elements', () => {
+      const commentThread = document.createElement('ytd-comment-thread-renderer');
+      const contentText = document.createElement('div');
+      contentText.id = 'content-text';
+      contentText.textContent = 'This is a great video!';
+      commentThread.appendChild(contentText);
 
-      const elements = document.querySelectorAll('.test');
-      expect(elements.length).toBe(3);
-    });
-  });
+      const actionButtons = document.createElement('div');
+      actionButtons.id = 'action-buttons';
+      commentThread.appendChild(actionButtons);
 
-  describe('Style Management', () => {
-    test('should add styles via StyleManager', () => {
-      const styles = '.test { color: red; }';
-      mockYouTubeUtils.StyleManager.add('test-styles', styles);
+      document.body.appendChild(commentThread);
 
-      expect(mockYouTubeUtils.StyleManager.add).toHaveBeenCalledWith('test-styles', styles);
-    });
+      window.YouTubePlusComment.testHooks.addTranslateButton(commentThread);
 
-    test('should not add duplicate styles', () => {
-      document.body.innerHTML = '<style id="comment-delete-styles"></style>';
-
-      const existing = document.getElementById('comment-delete-styles');
-      expect(existing).toBeTruthy();
-    });
-  });
-
-  describe('Cleanup Management', () => {
-    test('should register observers for cleanup', () => {
-      const observer = new MutationObserver(() => {});
-      mockYouTubeUtils.cleanupManager.registerObserver(observer);
-
-      expect(mockYouTubeUtils.cleanupManager.registerObserver).toHaveBeenCalledWith(observer);
+      const btn = commentThread.querySelector('.yp-comment-translate-btn');
+      expect(btn).not.toBeNull();
+      expect(btn?.tagName).toBe('BUTTON');
+      expect(btn?.getAttribute('aria-label')).toBeDefined();
     });
 
-    test('should register event listeners for cleanup', () => {
-      const handler = jest.fn();
-      const key = mockYouTubeUtils.cleanupManager.registerListener(document, 'click', handler, {
-        passive: true,
+    test('processComments injects buttons and removeTranslateButtons sweeps them', () => {
+      const thread = document.createElement('ytd-comment-thread-renderer');
+      const text = document.createElement('div');
+      text.id = 'content-text';
+      text.textContent = 'Hello world from comment';
+      thread.appendChild(text);
+      document.body.appendChild(thread);
+
+      window.YouTubePlusComment.testHooks.processComments();
+      expect(thread.querySelector('.yp-comment-translate-btn')).not.toBeNull();
+
+      window.YouTubePlusComment.testHooks.removeTranslateButtons();
+      expect(thread.querySelector('.yp-comment-translate-btn')).toBeNull();
+    });
+
+    test('translates text on button click and toggles back to original', async () => {
+      const thread = document.createElement('ytd-comment-thread-renderer');
+      const text = document.createElement('div');
+      text.id = 'content-text';
+      text.textContent = 'Hello world';
+      thread.appendChild(text);
+      document.body.appendChild(thread);
+
+      window.YouTubePlusComment.testHooks.addTranslateButton(thread);
+      const btn = thread.querySelector('.yp-comment-translate-btn');
+      expect(btn).not.toBeNull();
+
+      const origFetch = global.fetch;
+      global.fetch = jest.fn().mockResolvedValue({
+        ok: true,
+        json: async () => [[['Hola mundo', 'Hello world']]],
       });
 
-      expect(typeof key).toBe('symbol');
-      expect(mockYouTubeUtils.cleanupManager.registerListener).toHaveBeenCalled();
+      btn.click();
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(text.textContent).toBe('Hola mundo');
+
+      // Click again to revert to original
+      btn.click();
+      expect(text.textContent).toBe('Hello world');
+
+      global.fetch = origFetch;
+    });
+
+    test('a failed translation re-enables the button', async () => {
+      const thread = document.createElement('ytd-comment-thread-renderer');
+      const text = document.createElement('div');
+      text.id = 'content-text';
+      text.textContent = 'Hello error';
+      thread.appendChild(text);
+      document.body.appendChild(thread);
+
+      window.YouTubePlusComment.testHooks.addTranslateButton(thread);
+      const btn = thread.querySelector('.yp-comment-translate-btn');
+      expect(btn).not.toBeNull();
+
+      const origFetch = global.fetch;
+      global.fetch = jest.fn().mockRejectedValue(new Error('Network fail'));
+
+      btn?.click();
+      await new Promise(r => setTimeout(r, 20));
+
+      expect(btn?.disabled).toBe(false);
+      global.fetch = origFetch;
     });
   });
 
-  describe('Integration', () => {
-    test('should work with all dependencies available', () => {
-      expect(window.YouTubeUtils).toBeDefined();
-      expect(window.YouTubePlusErrorBoundary).toBeDefined();
-      expect(localStorage).toBeDefined();
-    });
-
-    test('should handle missing dependencies gracefully', () => {
-      Object.defineProperty(window, 'YouTubeUtils', {
-        configurable: true,
-        writable: true,
-        value: undefined,
-      });
-
-      // Should not throw when dependencies are missing
-      expect(() => {
-        const utils = window.YouTubeUtils;
-        if (utils) {
-          utils.debounce(() => {}, 100);
-        }
-      }).not.toThrow();
+  describe('Host and Route detection', () => {
+    test('accurately identifies trusted MyActivity hosts and routes', () => {
+      expect(window.YouTubePlusComment.testHooks.isTrustedMyActivityHost()).toBe(false);
+      expect(window.YouTubePlusComment.testHooks.isMyActivityHost()).toBe(false);
+      expect(window.YouTubePlusComment.testHooks.isMyActivityCommentsPage()).toBe(false);
     });
   });
 
-  describe('Accessibility', () => {
-    test('should add aria-label to checkboxes', () => {
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
-      checkbox.setAttribute('aria-label', 'Select comment');
+  describe('Bulk Comment Controls & Action Handlers', () => {
+    test('addControlButtons creates panel and wires select/clear/delete actions', async () => {
+      jest.useFakeTimers();
+      const container = document.createElement('div');
+      container.className = 'activity-root';
 
-      expect(checkbox.getAttribute('aria-label')).toBe('Select comment');
-    });
+      const row = document.createElement('div');
+      const deleteBtn = document.createElement('button');
+      deleteBtn.setAttribute('aria-label', 'Delete comment');
+      const deleteClickSpy = jest.fn();
+      deleteBtn.addEventListener('click', deleteClickSpy);
+      row.appendChild(deleteBtn);
+      container.appendChild(row);
+      document.body.appendChild(container);
 
-    test('should add role to control panel', () => {
-      const panel = document.createElement('div');
-      panel.setAttribute('role', 'region');
-      panel.setAttribute('aria-label', 'Comment manager controls');
+      window.YouTubePlusComment.testHooks.addCheckboxes();
+      window.YouTubePlusComment.testHooks.addControlButtons();
 
-      expect(panel.getAttribute('role')).toBe('region');
-      expect(panel.getAttribute('aria-label')).toBe('Comment manager controls');
-    });
+      const panel = document.querySelector('.comment-controls-panel');
+      expect(panel).not.toBeNull();
 
-    test('should add aria-expanded to collapse button', () => {
-      const button = document.createElement('button');
-      button.setAttribute('aria-expanded', 'true');
+      const checkbox = document.querySelector('.comment-checkbox');
+      expect(checkbox).not.toBeNull();
+      expect(checkbox.checked).toBe(false);
 
-      expect(button.getAttribute('aria-expanded')).toBe('true');
-    });
-  });
+      const buttons = panel.querySelectorAll('button');
+      const deleteActionBtn = panel.querySelector('.comment-controls-button-delete');
+      const selectAllBtn = Array.from(buttons).find(b => b.textContent === 'selectAll');
+      const clearAllBtn = Array.from(buttons).find(b => b.textContent === 'clearAll');
 
-  describe('User Interactions', () => {
-    test('should handle checkbox change events', () => {
-      const checkbox = document.createElement('input');
-      checkbox.type = 'checkbox';
+      expect(deleteActionBtn.disabled).toBe(true);
 
-      const handler = jest.fn();
-      checkbox.addEventListener('change', handler);
+      // Select all
+      selectAllBtn.click();
+      expect(checkbox.checked).toBe(true);
+      expect(deleteActionBtn.disabled).toBe(false);
 
+      // Clear all
+      clearAllBtn.click();
+      expect(checkbox.checked).toBe(false);
+      expect(deleteActionBtn.disabled).toBe(true);
+
+      // Delete flow with confirm
       checkbox.checked = true;
-      checkbox.dispatchEvent(new Event('change'));
+      window.YouTubePlusComment.testHooks.updateDeleteButtonState();
+      expect(deleteActionBtn.disabled).toBe(false);
 
-      expect(handler).toHaveBeenCalled();
+      const confirmSpy = jest.spyOn(window, 'confirm');
+      deleteActionBtn.click();
+      // The in-UI confirm dialog resolves before the deletion timers run.
+      await Promise.resolve();
+      await Promise.resolve();
+
+      jest.advanceTimersByTime(500);
+      expect(deleteClickSpy).toHaveBeenCalled();
+      expect(confirmSpy).not.toHaveBeenCalled();
+
+      jest.clearAllTimers();
+      jest.useRealTimers();
     });
 
-    test('should prevent event propagation on checkbox click', () => {
-      const checkbox = document.createElement('input');
-      const stopPropagation = jest.fn();
+    test('bulk delete asks the in-UI confirm dialog, never native confirm', async () => {
+      jest.useFakeTimers();
+      const container = document.createElement('div');
 
-      checkbox.addEventListener('click', e => e.stopPropagation());
+      const row = document.createElement('div');
+      const deleteBtn = document.createElement('button');
+      deleteBtn.setAttribute('aria-label', 'Delete comment');
+      const deleteClickSpy = jest.fn();
+      deleteBtn.addEventListener('click', deleteClickSpy);
+      row.appendChild(deleteBtn);
+      container.appendChild(row);
+      document.body.appendChild(container);
 
-      const event = new Event('click', { bubbles: true });
-      event.stopPropagation = stopPropagation;
-      checkbox.dispatchEvent(event);
+      window.YouTubePlusComment.testHooks.addCheckboxes();
+      window.YouTubePlusComment.testHooks.addControlButtons();
 
-      // Event propagation should be prevented
-      expect(true).toBe(true);
+      const checkbox = document.querySelector('.comment-checkbox');
+      checkbox.checked = true;
+
+      const confirmSpy = jest.spyOn(window, 'confirm');
+      const dialogStub = window.YouTubeUtils.confirmDialog;
+      await window.YouTubePlusComment.testHooks.deleteSelectedComments();
+
+      expect(confirmSpy).not.toHaveBeenCalled();
+      expect(dialogStub).toHaveBeenCalledTimes(1);
+      // The message goes through the dictionary with the {count} param.
+      expect(dialogStub.mock.calls[0][0].message).toBe('Delete 1 comment(s)?');
+
+      jest.advanceTimersByTime(500);
+      expect(deleteClickSpy).toHaveBeenCalled();
+
+      jest.clearAllTimers();
+      jest.useRealTimers();
     });
 
-    test('should confirm before deleting comments', () => {
-      global.confirm = jest.fn(() => false);
+    test('settings integration wires open-comment-history-page and experimental nav click', () => {
+      const openBtn = document.createElement('button');
+      openBtn.id = 'open-comment-history-page';
+      document.body.appendChild(openBtn);
 
-      const result = confirm('Delete 5 comment(s)?');
+      document.dispatchEvent(new Event('youtube-plus-settings-modal-opened'));
+      expect(openBtn.dataset.handlerAttached).toBe('true');
 
-      expect(global.confirm).toHaveBeenCalledWith('Delete 5 comment(s)?');
-      expect(result).toBe(false);
+      const navItem = document.createElement('div');
+      navItem.className = 'yp-settings-nav-item';
+      navItem.dataset.section = 'experimental';
+      document.body.appendChild(navItem);
+
+      expect(() => {
+        navItem.click();
+      }).not.toThrow();
+    });
+  });
+
+  describe('Extended coverage for Comment module', () => {
+    test('isTrustedMyActivityHost and route checks', () => {
+      expect(window.YouTubePlusComment.testHooks.isTrustedMyActivityHost()).toBe(false);
+      expect(window.YouTubePlusComment.testHooks.isMyActivityHost()).toBe(false);
+      expect(window.YouTubePlusComment.testHooks.isMyActivityCommentsPage()).toBe(false);
     });
 
-    test('should open comment history page', () => {
-      const mockOpen = jest.fn();
-      global.window.open = mockOpen;
+    test('settings load and save methods', () => {
+      window.YouTubePlusComment.testHooks.settings.save();
+      window.YouTubePlusComment.testHooks.settings.load();
+      expect(window.YouTubePlusComment.testHooks.CONFIG.enabled).toBe(true);
+    });
 
-      window.open('https://www.youtube.com/feed/history/comment_history', '_blank');
+    test('registerListenerSafe fallback when utils.cleanupManager throws', () => {
+      const origCM = window.YouTubeUtils.cleanupManager;
+      window.YouTubeUtils.cleanupManager = {
+        registerListener: () => {
+          throw new Error('boom');
+        },
+      };
+      const btn = document.createElement('button');
+      const text = document.createElement('div');
+      text.id = 'content-text';
+      text.textContent = 'Some comment';
+      const container = document.createElement('div');
+      container.appendChild(text);
+      container.appendChild(btn);
+      document.body.appendChild(container);
 
-      expect(mockOpen).toHaveBeenCalledWith(
-        'https://www.youtube.com/feed/history/comment_history',
-        '_blank'
-      );
+      expect(() => {
+        window.YouTubePlusComment.testHooks.addTranslateButton(container);
+      }).not.toThrow();
+
+      window.YouTubeUtils.cleanupManager = origCM;
     });
   });
 });

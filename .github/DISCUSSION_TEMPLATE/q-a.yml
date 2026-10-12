@@ -1,0 +1,44 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Ask about installing or using YouTube+. Check the [README](https://github.com/diorhc/YTP#readme) and existing discussions first.
+        For a reproducible bug, use [Issues](https://github.com/diorhc/YTP/issues/new/choose).
+  - type: textarea
+    id: question
+    attributes:
+      label: Your question
+      description: Explain what you want to do and where you need help.
+      placeholder: 'How can I...?'
+    validations:
+      required: true
+  - type: dropdown
+    id: topic
+    attributes:
+      label: Topic
+      options:
+        - Installation / updates
+        - Settings / themes
+        - Hotkeys / player controls
+        - Downloads
+        - Playlists / comments
+        - Shorts
+        - YouTube Music
+        - Compatibility
+        - Other
+    validations:
+      required: false
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Mention relevant settings, instructions or steps you have already checked.
+    validations:
+      required: false
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment or screenshots
+      description: For installation or compatibility questions, include the script version, browser and userscript manager. Drop images here if helpful.
+    validations:
+      required: false

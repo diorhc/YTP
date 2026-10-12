@@ -1,5 +1,5 @@
 /**
- * Error Boundary — canonical owner of error severity, recovery, and global
+ * Error Boundary: owner of error severity, recovery, and global
  * error/unhandledrejection listeners.
  *
  * Responsibilities:
@@ -7,7 +7,6 @@
  *   - Persist recent errors in memory and localStorage.
  *   - Provide `withErrorBoundary` / `withAsyncErrorBoundary` function wrappers.
  *   - Bridge to YouTubeUtils.NotificationManager for user-visible alerts.
- *   - Bridge to YouTubePlusErrorRecovery.attemptRecovery for recovery hooks.
  *   - Install global `error` and `unhandledrejection` listeners.
  *
  * Public surface:
@@ -56,6 +55,19 @@
     errorCount: 0,
     lastErrorTime: 0,
     isRecovering: false,
+  };
+
+  /** Dedup state for the logging path (message + timestamp of last logged error). */
+  let lastLoggedMessage = '';
+  let lastLoggedTime = 0;
+
+  /** Suppress identical repeats logged within 500ms (browser re-dispatches the same event to multiple capture/bubble listeners). @param {string} displayMessage @returns {boolean} true when this exact message was just logged. */
+  const isDuplicateLog = displayMessage => {
+    const now = Date.now();
+    if (displayMessage === lastLoggedMessage && now - lastLoggedTime < 500) return true;
+    lastLoggedMessage = displayMessage;
+    lastLoggedTime = now;
+    return false;
   };
 
   /** @param {Error} error */
@@ -123,11 +135,13 @@
       }
 
       Y.NotificationManager.show(message, { duration, type: 'error' });
-    } catch (_notificationError) {}
+    } catch (_notificationError) {
+      /* Notification failure is non-critical; suppress to avoid recursive errors. */
+    }
   };
 
-  /** @param {Error} error @param {Record<string, unknown>} context */
-  const attemptRecovery = (error, context) => {
+  /** @param {Error} error @param {Record<string, unknown>} _context - reserved for a future recovery-hook bridge */
+  const attemptRecovery = (error, _context) => {
     if (!errorBoundaryConfig.enableRecovery || errorState.isRecovering) return;
 
     const severity = categorizeSeverity(error);
@@ -137,21 +151,13 @@
     }
 
     errorState.isRecovering = true;
-    try {
-      if (severity !== ErrorSeverity.LOW && getErrorRate() <= 5) {
-        showErrorNotification(error);
-      }
-
-      if (window.YouTubePlusErrorRecovery?.attemptRecovery) {
-        window.YouTubePlusErrorRecovery.attemptRecovery(error, context);
-      }
-
-      setTimeout_(() => {
-        errorState.isRecovering = false;
-      }, 5000);
-    } catch (_recoveryError) {
-      errorState.isRecovering = false;
+    if (severity !== ErrorSeverity.LOW && getErrorRate() <= 5) {
+      showErrorNotification(error);
     }
+
+    setTimeout_(() => {
+      errorState.isRecovering = false;
+    }, 5000);
   };
 
   /** @param {Error} error @param {{ filename?: string; lineno?: number; [key: string]: unknown }} [context] */
@@ -168,6 +174,7 @@
     const displayMessage =
       fallbackMessage ||
       (context.filename ? `Error in ${context.filename}:${context.lineno}` : 'Unknown error');
+    if (isDuplicateLog(displayMessage)) return;
 
     /** Truncate stack trace to limit PII exposure in localStorage. */
     const scrubbedStack =
@@ -185,19 +192,40 @@
       },
     };
 
-    try {
-      const sink = window.YouTubePlusLogger;
-      if (sink && typeof sink.error === 'function') {
-        sink.error('ErrorBoundary', displayMessage, errorInfo);
-      } else {
-      }
-    } catch (_loggingError) {}
+    // Suppressed/expected errors log at debug level; real failures at error.
+    const sink = window.YouTubePlusLogger;
+    const level = context.level === 'debug' ? 'debug' : 'error';
+    if (sink && typeof sink[level] === 'function') {
+      sink[level]('ErrorBoundary', displayMessage, errorInfo);
+    }
 
     errorState.errors.push(errorInfo);
     if (errorState.errors.length > 50) {
       errorState.errors.shift();
     }
 
+    schedulePersist(errorInfo);
+  };
+
+  /** Persist an error into localStorage with TTL-based pruning (best effort).
+   *  Writes are rate-limited to at most one per {@link PERSIST_MIN_INTERVAL}
+   *  milliseconds; extra errors are batched and flushed at the window's end. */
+  const PERSIST_MIN_INTERVAL = 5000;
+  let lastPersistAt = 0;
+  /** @type {ReturnType<typeof setTimeout> | null} */
+  let persistTimer = null;
+  /** @type {BoundaryErrorInfo[]} */
+  let pendingPersist = [];
+
+  const flushPersisted = () => {
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
+    if (pendingPersist.length === 0) return;
+    const batch = pendingPersist;
+    pendingPersist = [];
+    lastPersistAt = Date.now();
     try {
       const now = Date.now();
       const stored = JSON.parse(localStorage.getItem(errorBoundaryConfig.storageKey) || '[]');
@@ -208,44 +236,84 @@
             return now - ts < errorBoundaryConfig.maxPersistAge;
           })
         : [];
-      fresh.push(errorInfo);
-      if (fresh.length > 20) fresh.shift();
+      for (const entry of batch) fresh.push(entry);
+      while (fresh.length > 20) fresh.shift();
       localStorage.setItem(errorBoundaryConfig.storageKey, JSON.stringify(fresh));
     } catch (e) {
-      if (typeof console !== 'undefined' && console.warn) {
+      const log = window.YouTubePlusLogger;
+      if (log?.warn) {
+        log.warn('ErrorBoundary', 'localStorage write failed:', e);
+      } else if (typeof console !== 'undefined' && console.warn) {
         console.warn('[YouTube+ ErrorBoundary] localStorage write failed:', e);
       }
     }
   };
 
-  /** @param {(...args: any[]) => unknown} fn @param {string} [context] */
-  const withErrorBoundary = (fn, context = 'unknown') => {
-    /** @this {any} */
-    return function (/** @type {any[]} */ ...args) {
-      try {
-        return fn.call(this, ...args);
-      } catch (error) {
-        const normalizedError = error instanceof Error ? error : new Error(String(error));
-        logBoundaryError(normalizedError, { module: context });
-        attemptRecovery(normalizedError, { module: context });
-        return null;
-      }
-    };
+  /** @param {BoundaryErrorInfo} errorInfo */
+  const schedulePersist = errorInfo => {
+    pendingPersist.push(errorInfo);
+    const elapsed = Date.now() - lastPersistAt;
+    if (elapsed >= PERSIST_MIN_INTERVAL) {
+      flushPersisted();
+      return;
+    }
+    if (!persistTimer) {
+      persistTimer = setTimeout_(flushPersisted, PERSIST_MIN_INTERVAL - elapsed);
+    }
   };
 
-  /** @param {(...args: any[]) => Promise<unknown>} fn @param {string} [context] */
+  /** Report a boundary failure: log, recover, and never rethrow. */
+  const handleBoundaryFailure = (/** @type {unknown} */ error, /** @type {string} */ context) => {
+    const normalizedError = error instanceof Error ? error : new Error(String(error));
+    logBoundaryError(normalizedError, { module: context });
+    attemptRecovery(normalizedError, { module: context });
+    return null;
+  };
+
+  /**
+   * @template {(...args: never[]) => unknown} F
+   * @param {F} fn
+   * @param {string} [context]
+   * @returns {F}
+   */
+  const withErrorBoundary = (fn, context = 'unknown') => {
+    const callable = /** @type {(...args: unknown[]) => unknown} */ (/** @type {unknown} */ (fn));
+    return /** @type {F} */ (
+      /** @type {unknown} */ (
+        /** @this {unknown} */
+        function (/** @type {unknown[]} */ ...args) {
+          try {
+            return callable.call(this, ...args);
+          } catch (error) {
+            return handleBoundaryFailure(error, context);
+          }
+        }
+      )
+    );
+  };
+
+  /**
+   * @template {(...args: never[]) => Promise<unknown>} F
+   * @param {F} fn
+   * @param {string} [context]
+   * @returns {F}
+   */
   const withAsyncErrorBoundary = (fn, context = 'unknown') => {
-    /** @this {any} */
-    return async function (/** @type {any[]} */ ...args) {
-      try {
-        return await fn.call(this, ...args);
-      } catch (error) {
-        const normalizedError = error instanceof Error ? error : new Error(String(error));
-        logBoundaryError(normalizedError, { module: context });
-        attemptRecovery(normalizedError, { module: context });
-        return null;
-      }
-    };
+    const callable = /** @type {(...args: unknown[]) => Promise<unknown>} */ (
+      /** @type {unknown} */ (fn)
+    );
+    return /** @type {F} */ (
+      /** @type {unknown} */ (
+        /** @this {unknown} */
+        async function (/** @type {unknown[]} */ ...args) {
+          try {
+            return await callable.call(this, ...args);
+          } catch (error) {
+            return handleBoundaryFailure(error, context);
+          }
+        }
+      )
+    );
   };
 
   const getErrorStats = () => ({
@@ -266,17 +334,51 @@
     errorState.errors = [];
     errorState.errorCount = 0;
     errorState.lastErrorTime = 0;
+    pendingPersist = [];
+    if (persistTimer) {
+      clearTimeout(persistTimer);
+      persistTimer = null;
+    }
     try {
       localStorage.removeItem(errorBoundaryConfig.storageKey);
     } catch (e) {
-      if (typeof console !== 'undefined' && console.warn) {
+      const log = window.YouTubePlusLogger;
+      if (log?.warn) {
+        log.warn('ErrorBoundary', 'localStorage remove failed:', e);
+      } else if (typeof console !== 'undefined' && console.warn) {
         console.warn('[YouTube+ ErrorBoundary] localStorage remove failed:', e);
       }
     }
   };
 
+  /**
+   * Extract the failing resource URL from a capture-phase load error
+   * (failed <script>/<link>/<img> fire a plain Event that reaches window
+   * listeners in the capture phase). Returns null when the event carries a
+   * real error payload (script execution error), not a load failure.
+   * @param {Event} event
+   * @returns {string | null}
+   */
+  const getResourceLoadErrorUrl = event => {
+    // cross-realm: the failing <script>/<link>/<img> target is read structurally
+    const target = /** @type {{ tagName?: string; src?: string; href?: string } | null} */ (
+      /** @type {unknown} */ (event?.target)
+    );
+    const tag = target?.tagName;
+    if (typeof tag !== 'string') return null;
+    if (tag !== 'SCRIPT' && tag !== 'LINK' && tag !== 'IMG') return null;
+    return target?.src || target?.href || 'unknown resource';
+  };
+
   /** @param {ErrorEvent} event */
   const handleError = event => {
+    if (getResourceLoadErrorUrl(event) !== null) {
+      // Load failure of a page resource (YouTube's own scripts, assets, etc.).
+      // Never our runtime error (our own script load fails before we run), so
+      // reporting these produced "[object Event]" console spam.
+      return false;
+    }
+
     const error = event.error || new Error(event.message);
     const message = (error.message || event.message || '').trim();
 
@@ -299,13 +401,10 @@
     });
 
     if (isErrorRateExceeded()) {
-      try {
-        const sink = window.YouTubePlusLogger;
-        if (sink && typeof sink.error === 'function') {
-          sink.error('ErrorBoundary', 'Error rate exceeded');
-        } else {
-        }
-      } catch (_loggingError) {}
+      const sink = window.YouTubePlusLogger;
+      if (sink && typeof sink.error === 'function') {
+        sink.error('ErrorBoundary', 'Error rate exceeded');
+      }
       return false;
     }
 
@@ -315,7 +414,27 @@
 
   /** @param {PromiseRejectionEvent} event */
   const handleUnhandledRejection = event => {
-    const error = event.reason instanceof Error ? event.reason : new Error(String(event.reason));
+    let reason = event.reason;
+
+    // Some failures surface as a rejection whose reason is a raw Event
+    // (e.g. a failed <script> load re-dispatched as a rejection on Firefox,
+    // or GM/fetch onerror handlers rejecting with the response event).
+    // String() of those is "[object Event]"; classify instead of logging junk.
+    if (reason && typeof reason === 'object' && !(reason instanceof Error)) {
+      const resourceUrl = getResourceLoadErrorUrl(reason);
+      if (resourceUrl !== null) {
+        // Resource load failure re-dispatched as a rejection: not our runtime
+        // error; suppress instead of logging "[object Event]" spam.
+        event.preventDefault?.();
+        return;
+      }
+      if (typeof reason.type === 'string' && reason.target != null) {
+        // Event-shaped reason without a resource target; don't stringify.
+        reason = new Error(`Unhandled rejection with ${reason.type || 'unknown'} event`);
+      }
+    }
+
+    const error = reason instanceof Error ? reason : new Error(String(reason));
     errorState.errorCount++;
     errorState.lastErrorTime = Date.now();
 
@@ -325,13 +444,10 @@
     });
 
     if (isErrorRateExceeded()) {
-      try {
-        const sink = window.YouTubePlusLogger;
-        if (sink && typeof sink.error === 'function') {
-          sink.error('ErrorBoundary', 'Promise rejection rate exceeded');
-        } else {
-        }
-      } catch (_loggingError) {}
+      const sink = window.YouTubePlusLogger;
+      if (sink && typeof sink.error === 'function') {
+        sink.error('ErrorBoundary', 'Promise rejection rate exceeded');
+      }
       return;
     }
 
@@ -349,12 +465,15 @@
   };
 
   if (typeof window !== 'undefined') {
-    window.addEventListener('error', handleError, true);
-    window.addEventListener('unhandledrejection', handleUnhandledRejection, true);
+    window.YouTubePlusCleanupManager?.registerListener?.(window, 'error', handleError, true, true);
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      window,
+      'unhandledrejection',
+      handleUnhandledRejection,
+      true,
+      true
+    );
 
-    window.YouTubePlusErrorBoundary = /** @type {any} */ (errorBoundary);
-    if (typeof unsafeWindow !== 'undefined') {
-      unsafeWindow.YouTubePlusErrorBoundary = /** @type {any} */ (errorBoundary);
-    }
+    window.YouTubePlusErrorBoundary = /** @type {YouTubeErrorBoundary} */ (errorBoundary);
   }
 })();

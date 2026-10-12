@@ -1,91 +1,100 @@
-// Shorts Keyboard Controls — LazyLoader registered as 'shorts'.
-//
-// Responsibility: keyboard shortcuts for YouTube Shorts (next/previous
-//   like/dislike/share, speed control). Persists key bindings in
-//   localStorage under `youtube_shorts_keyboard_settings`.
-// Public surface: none (self-contained IIFE, registered via LazyLoader).
+// Keyboard controls and download button for YouTube Shorts.
+// Public surface: window.YouTubePlusShorts (test hooks).
 (function () {
-  // Shared helpers from YouTubeUtils (canonical boot shorthand)
   const U = window.YouTubeUtils;
-  const { t, logger: shortsLogger, $: qs, setTimeout_ } = U?.helpers ?? {};
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'Shorts');
 
-  // Configuration - Using lazy getters for translations to avoid early loading
-  const config = {
-    enabled: true,
-    get shortcuts() {
-      return {
-        seekBackward: {
-          key: 'ArrowLeft',
-          get description() {
-            return t('seekBackward');
-          },
-        },
-        seekForward: {
-          key: 'ArrowRight',
-          get description() {
-            return t('seekForward');
-          },
-        },
-        volumeUp: {
-          key: '+',
-          get description() {
-            return t('volumeUp');
-          },
-        },
-        volumeDown: {
-          key: '-',
-          get description() {
-            return t('volumeDown');
-          },
-        },
-        mute: {
-          key: 'm',
-          get description() {
-            return t('muteUnmute');
-          },
-        },
-        toggleCaptions: {
-          key: 'c',
-          get description() {
-            return t('toggleCaptions');
-          },
-        },
-        showHelp: {
-          key: '?',
-          get description() {
-            return t('showHideHelp');
-          },
-          editable: false,
-        },
-      };
+  const { t, logger: shortsLogger, $: qs } = U?.helpers ?? {};
+  const lifecycle = () => window.YouTubePlusFeatureRegistry?.FeatureLifecycle;
+
+  /**
+   * A user-rebindable keyboard shortcut.
+   * @typedef {{ key: string, description: string, editable?: boolean }} ShortcutEntry
+   */
+
+  /**
+   * Return default shortcut entries with localized descriptions.
+   * @returns {Record<string, ShortcutEntry>}
+   */
+  const getDefaultShortcuts = () => ({
+    seekBackward: {
+      key: 'ArrowLeft',
+      get description() {
+        return t('seekBackward');
+      },
     },
+    seekForward: {
+      key: 'ArrowRight',
+      get description() {
+        return t('seekForward');
+      },
+    },
+    volumeUp: {
+      key: '+',
+      get description() {
+        return t('volumeUp');
+      },
+    },
+    volumeDown: {
+      key: '-',
+      get description() {
+        return t('volumeDown');
+      },
+    },
+    mute: {
+      key: 'm',
+      get description() {
+        return t('muteUnmute');
+      },
+    },
+    toggleCaptions: {
+      key: 'c',
+      get description() {
+        return t('toggleCaptions');
+      },
+    },
+    showHelp: {
+      key: '?',
+      get description() {
+        return t('showHideHelp');
+      },
+      editable: false,
+    },
+  });
+
+  // `shortcuts` is a plain mutable object: loadSettings and the rebind
+  // dialog write into it.
+  const config = {
+    shortcuts: getDefaultShortcuts(),
     storageKey: 'youtube_shorts_keyboard_settings',
   };
 
-  // State management
   const state = {
     helpVisible: false,
     /** @type {string|null} */
     lastAction: null,
-    /** @type {number|null} */
-    actionTimeout: null,
     /** @type {string|null} */
     editingShortcut: null,
     /** @type {HTMLVideoElement|null} */
     cachedVideo: null,
-    /** @type {HTMLElement|null} */
-    downloadButton: null,
-    /** @type {MutationObserver|null} */
-    downloadObserver: null,
-    downloadEnsureQueued: false,
     lastVideoCheck: 0,
-    initialized: false,
+  };
+
+  /** Keyboard feature context while `shortsKeyboard` is on. @type {YouTubePlusFeatureContext | null} */
+  let keysCtx = null;
+  /** Group for the help panel, feedback and dialogs of the current Shorts page. @type {YouTubePlusFeatureContext | null} */
+  let pageScope = null;
+
+  /** @returns {YouTubePlusFeatureContext | null} the page group, created on first use while the feature runs */
+  const page = () => {
+    if (!pageScope && keysCtx) pageScope = keysCtx.scope();
+    return pageScope;
   };
 
   /**
-   * Get the currently active video element in YouTube Shorts with caching
-   * Optimizes performance by caching results for 100ms
-   * @returns {HTMLVideoElement|null} The active video element or null if not found
+   * Get active video element in YouTube Shorts (cached 100ms).
+   * @returns {HTMLVideoElement|null}
    */
   const getCurrentVideo = (() => {
     const selectors = ['ytd-reel-video-renderer[is-active] video', '#shorts-player video', 'video'];
@@ -97,9 +106,7 @@
       }
 
       for (const selector of selectors) {
-        const video = YouTubeUtils.querySelector
-          ? YouTubeUtils.querySelector(selector)
-          : qs(selector);
+        const video = qs(selector);
         if (video) {
           state.cachedVideo = /** @type {HTMLVideoElement} */ (/** @type {unknown} */ (video));
           state.lastVideoCheck = now;
@@ -112,7 +119,27 @@
     };
   })();
 
-  // Optimized utilities
+  /** Apply one stored shortcut entry when its shape is valid. */
+  const applyStoredShortcut = (
+    /** @type {string} */ action,
+    /** @type {unknown} */ shortcut,
+    /** @type {Record<string, ShortcutEntry>} */ defaults
+  ) => {
+    if (!defaults[action]) return;
+    if (!shortcut || typeof shortcut !== 'object') return;
+
+    const { key: sKey, editable: sEditable } = /** @type {{ key?: string, editable?: boolean }} */ (
+      shortcut
+    );
+    if (typeof sKey === 'string' && sKey.length > 0 && sKey.length <= 20) {
+      config.shortcuts[action] = {
+        key: sKey,
+        description: defaults[action].description,
+        editable: sEditable !== false,
+      };
+    }
+  };
+
   const utils = {
     /**
      * Check if current page is a YouTube Shorts page
@@ -125,19 +152,20 @@
      * @returns {boolean} True if input/textarea/contenteditable is focused
      */
     isInputFocused: () => {
-      const el = document.activeElement;
+      const el = /** @type {HTMLElement | null} */ (document.activeElement);
       return !!(
         el?.matches?.('input, textarea, [contenteditable="true"]') || el?.isContentEditable
       );
     },
 
     /**
-     * Load settings from localStorage with validation
+     * Load settings from storage with validation
      * @returns {void}
      */
     loadSettings: () => {
+      // Storage may hold corrupt text or be unavailable.
       try {
-        const saved = localStorage.getItem(config.storageKey);
+        const saved = U.storage?.getItem(config.storageKey);
         if (!saved) return;
 
         const parsed = JSON.parse(saved);
@@ -146,102 +174,37 @@
           return;
         }
 
-        // Validate enabled flag
-        if (typeof parsed.enabled === 'boolean') {
-          config.enabled = parsed.enabled;
-        }
-
         // Validate shortcuts object
         if (parsed.shortcuts && typeof parsed.shortcuts === 'object') {
           const defaultShortcuts = utils.getDefaultShortcuts();
-
           for (const [action, shortcut] of Object.entries(parsed.shortcuts)) {
-            // Only restore valid shortcut actions
-            const defaultSc = /** @type {Record<string,any>} */ (defaultShortcuts);
-            if (!defaultSc[action]) continue;
-            if (!shortcut || typeof shortcut !== 'object') continue;
-
-            const { key: sKey, editable: sEditable } =
-              /** @type {{ key?: string, editable?: boolean }} */ (shortcut);
-            if (typeof sKey === 'string' && sKey.length > 0 && sKey.length <= 20) {
-              /** @type {Record<string,any>} */ (config.shortcuts)[action] = {
-                key: sKey,
-                description: defaultSc[action].description,
-                editable: sEditable !== false,
-              };
-            }
+            applyStoredShortcut(action, shortcut, defaultShortcuts);
           }
         }
       } catch (error) {
+        logS(error);
         shortsLogger?.error?.('Shorts', 'Error loading settings', error);
       }
     },
 
     /**
-     * Save settings to localStorage with error handling
+     * Save settings to storage with error handling
      * @returns {void}
      */
     saveSettings: () => {
       try {
-        const settingsToSave = {
-          enabled: config.enabled,
-          shortcuts: config.shortcuts,
-        };
-        localStorage.setItem(config.storageKey, JSON.stringify(settingsToSave));
+        U.storage?.setItem(config.storageKey, JSON.stringify({ shortcuts: config.shortcuts }));
       } catch (error) {
+        logS(error);
         shortsLogger?.error?.('Shorts', 'Error saving settings', error);
       }
     },
 
     /**
-     * Get default keyboard shortcuts configuration
+     * Get default keyboard shortcuts configuration.
      * @returns {Object} Object containing default shortcut definitions
      */
-    getDefaultShortcuts: () => ({
-      seekBackward: {
-        key: 'ArrowLeft',
-        get description() {
-          return t('seekBackward');
-        },
-      },
-      seekForward: {
-        key: 'ArrowRight',
-        get description() {
-          return t('seekForward');
-        },
-      },
-      volumeUp: {
-        key: '+',
-        get description() {
-          return t('volumeUp');
-        },
-      },
-      volumeDown: {
-        key: '-',
-        get description() {
-          return t('volumeDown');
-        },
-      },
-      mute: {
-        key: 'm',
-        get description() {
-          return t('muteUnmute');
-        },
-      },
-      toggleCaptions: {
-        key: 'c',
-        get description() {
-          return t('toggleCaptions');
-        },
-      },
-      showHelp: {
-        key: '?',
-        get description() {
-          return t('showHideHelp');
-        },
-        editable: false,
-      },
-    }),
+    getDefaultShortcuts,
   };
 
   /**
@@ -251,73 +214,101 @@
   const feedback = (() => {
     /** @type {HTMLElement|null} */
     let element = null;
+    /** @type {(() => void) | null} */
+    let hideRelease = null;
 
     /**
-     * Create or retrieve the feedback element
-     * @returns {HTMLElement} The feedback container element
+     * Create or retrieve the feedback element; it belongs to the page group.
+     * @param {YouTubePlusFeatureContext} scope
+     * @returns {HTMLElement}
      */
-    const create = () => {
-      if (element) return element;
+    const create = scope => {
+      if (element?.isConnected) return element;
 
       element = document.createElement('div');
       element.id = 'shorts-keyboard-feedback';
+      Object.assign(element.style, {
+        position: 'fixed',
+        top: '50%',
+        left: '50%',
+        transform: 'translate(-50%,-50%)',
+        background: 'var(--yt-glass-bg)',
+        backdropFilter: 'var(--yt-glass-blur)',
+        border: '1px solid var(--yt-glass-border)',
+        borderRadius: '20px',
+        color: 'var(--yt-text-primary,#fff)',
+        padding: '18px 32px',
+        fontSize: '20px',
+        fontWeight: '700',
+        zIndex: '10000',
+        opacity: '0',
+        visibility: 'hidden',
+        pointerEvents: 'none',
+        transition: 'all .3s cubic-bezier(.4,0,.2,1)',
+        textAlign: 'center',
+        boxShadow: 'var(--yt-glass-shadow)',
+      });
+      element.style.setProperty('-webkit-backdrop-filter', 'var(--yt-glass-blur)');
+      scope.own(element);
       document.body.appendChild(element);
-      element.style.position = 'fixed';
-      element.style.top = '50%';
-      element.style.left = '50%';
-      element.style.transform = 'translate(-50%,-50%)';
-      element.style.background = 'var(--yt-shorts-feedback-bg-dark)';
-      element.style.backdropFilter = 'blur(12px) saturate(180%)';
-      element.style.border = '1px solid var(--yt-shorts-border-light)';
-      element.style.borderRadius = '20px';
-      element.style.color = 'var(--yt-text-primary,#fff)';
-      element.style.padding = '18px 32px';
-      element.style.fontSize = '20px';
-      element.style.fontWeight = '700';
-      element.style.zIndex = '10000';
-      element.style.opacity = '0';
-      element.style.visibility = 'hidden';
-      element.style.pointerEvents = 'none';
-      element.style.transition = 'all .3s cubic-bezier(.4,0,.2,1)';
-      element.style.textAlign = 'center';
-      element.style.boxShadow = '0 8px 32px 0 var(--yt-shorts-shadow-blue)';
-      element.style.setProperty('-webkit-backdrop-filter', 'blur(12px) saturate(180%)');
       return element;
     };
 
     return {
       /**
-       * Display a feedback message to the user
-       * @param {string} text - Message text to display
-       * @returns {void}
+       * Display a short message in the middle of the player.
+       * @param {string} text
        */
       show: text => {
+        const scope = page();
+        if (!scope) return;
         state.lastAction = text;
-        clearTimeout(state.actionTimeout ?? undefined);
-
-        const el = create();
+        const el = create(scope);
         el.textContent = text;
 
-        requestAnimationFrame(() => {
+        scope.frame(() => {
           el.style.opacity = '1';
           el.style.visibility = 'visible';
           el.style.transform = 'translate(-50%,-50%) scale(1.05)';
         });
 
-        state.actionTimeout = /** @type {number} */ (
-          /** @type {unknown} */ (
-            setTimeout_(() => {
-              el.style.opacity = '0';
-              el.style.visibility = 'hidden';
-              el.style.transform = 'translate(-50%,-50%) scale(0.95)';
-            }, 1500)
-          )
-        );
+        hideRelease?.();
+        hideRelease = scope.timeout(() => {
+          hideRelease = null;
+          el.style.opacity = '0';
+          el.style.visibility = 'hidden';
+          el.style.transform = 'translate(-50%,-50%) scale(0.95)';
+        }, 1500);
       },
     };
   })();
 
+  /**
+   * Click the first visible button whose aria-label contains one of `terms`.
+   * The shorts player controls carry these labels; a hit means clicking keeps
+   * the player's own UI state in sync.
+   * @param {string[]} terms
+   * @returns {Element|null} the clicked button, or null when nothing matched
+   */
+  const clickVisibleButtonByAriaTerms = terms => {
+    const container =
+      qs('ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player') || document;
+    const buttons = container.querySelectorAll('button[aria-label]');
+    for (const b of buttons) {
+      const aria = (b.getAttribute('aria-label') || '').toLowerCase();
+      if (
+        terms.some(term => aria.includes(term)) &&
+        /** @type {HTMLElement} */ (b).offsetParent !== null
+      ) {
+        /** @type {HTMLElement} */ (b).click();
+        return b;
+      }
+    }
+    return null;
+  };
+
   // Optimized actions
+  /** @type {Record<string, () => void>} */
   const actions = {
     /**
      * Seek backward 5 seconds in the video
@@ -350,29 +341,7 @@
      */
     toggleCaptions: () => {
       // Try to click a captions/subtitles button first
-      try {
-        const container =
-          qs('ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player') || document;
-        const buttons = container.querySelectorAll('button[aria-label]');
-        for (const b of buttons) {
-          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-          if (
-            aria.includes('subtit') ||
-            aria.includes('caption') ||
-            aria.includes('субтит') ||
-            aria.includes('субтитр') ||
-            aria.includes('cc')
-          ) {
-            if (b.offsetParent !== null) {
-              b.click();
-              // It's hard to know exact state, so try to use textTracks below for feedback
-              break;
-            }
-          }
-        }
-      } catch (_e) {
-        // Continue to fallback
-      }
+      clickVisibleButtonByAriaTerms(['subtit', 'caption', 'субтит', 'субтитр', 'cc']);
 
       const video = getCurrentVideo();
       if (video?.textTracks?.length) {
@@ -426,33 +395,21 @@
       const video = getCurrentVideo();
 
       // Try to click a visible mute/volume button so the player UI updates its icon
-      try {
-        const container =
-          qs('ytd-shorts-player-controls, ytd-reel-video-renderer, #shorts-player') || document;
-        const buttons = container.querySelectorAll('button[aria-label]');
-        for (const b of buttons) {
-          const aria = (b.getAttribute('aria-label') || '').toLowerCase();
-          if (
-            aria.includes('mute') ||
-            aria.includes('unmute') ||
-            aria.includes('sound') ||
-            aria.includes('volume') ||
-            aria.includes('звук') ||
-            aria.includes('громк')
-          ) {
-            if (b.offsetParent !== null) {
-              b.click();
-              // Give the player a moment to update state, then show feedback based on video.muted
-              setTimeout(() => {
-                const v = getCurrentVideo();
-                if (v) feedback.show(v.muted ? '🔇' : '🔊');
-              }, 60);
-              return;
-            }
-          }
-        }
-      } catch (_e) {
-        // ignore and fallback
+      const clicked = clickVisibleButtonByAriaTerms([
+        'mute',
+        'unmute',
+        'sound',
+        'volume',
+        'звук',
+        'громк',
+      ]);
+      if (clicked) {
+        // Give the player a moment to update state, then show feedback based on video.muted
+        page()?.timeout(() => {
+          const v = getCurrentVideo();
+          if (v) feedback.show(v.muted ? '🔇' : '🔊');
+        }, 60);
+        return;
       }
 
       // Fallback: toggle programmatically
@@ -470,24 +427,28 @@
   };
 
   /**
-   * Help panel system for displaying keyboard shortcuts reference
-   * Provides interactive UI for viewing and editing shortcuts
+   * Help panel listing the shortcuts; a shortcut is edited by clicking it.
+   * The panel belongs to the page group, so it goes with the page or the
+   * feature.
    */
   const helpPanel = (() => {
     /** @type {HTMLElement|null} */
     let panel = null;
-    /** @type {AbortController|null} */
-    let dragListeners = null;
+    /** Owns the panel element and its listeners. @type {YouTubePlusFeatureContext | null} */
+    let panelScope = null;
+    /** Drag wiring of the current render. @type {YouTubePlusFeatureContext | null} */
+    let dragScope = null;
+    /** @type {(() => void) | null} */
+    let helpTrapCleanup = null;
 
     /**
-     * Enable dragging the help panel by grabbing the help content area
+     * Let the panel be dragged by its content area.
+     * @param {YouTubePlusFeatureContext} owner
      * @param {HTMLElement} panelEl
      */
-    const setupHelpContentDrag = panelEl => {
-      dragListeners?.abort();
-      dragListeners = new AbortController();
-
-      const { signal } = dragListeners;
+    const setupHelpContentDrag = (owner, panelEl) => {
+      dragScope?.dispose();
+      dragScope = owner.scope();
       const dragHandle = panelEl.querySelector('.help-content');
       if (!(dragHandle instanceof HTMLElement)) return;
 
@@ -531,38 +492,39 @@
         panelEl.classList.add('is-dragging');
       };
 
-      const eventOptions = signal ? { signal } : false;
-      dragHandle.addEventListener('pointerdown', onPointerDown, eventOptions);
-      window.addEventListener('pointermove', onPointerMove, eventOptions);
-      window.addEventListener('pointerup', stopDragging, eventOptions);
-      window.addEventListener('blur', stopDragging, eventOptions);
+      dragScope.listen(dragHandle, 'pointerdown', /** @type {EventListener} */ (onPointerDown));
+      dragScope.listen(window, 'pointermove', /** @type {EventListener} */ (onPointerMove));
+      dragScope.listen(window, 'pointerup', stopDragging);
+      dragScope.listen(window, 'blur', stopDragging);
     };
 
     /**
-     * Create or retrieve the help panel element
-     * @returns {HTMLElement} The help panel container element
+     * Create or retrieve the help panel element.
+     * @param {YouTubePlusFeatureContext} scope page group
+     * @returns {HTMLElement}
      */
-    const create = () => {
-      if (panel) return panel;
+    const create = scope => {
+      if (panel?.isConnected) return panel;
 
-      panel = document.createElement('div');
-      panel.id = 'shorts-keyboard-help';
-      panel.className = 'shorts-help-panel ytp-plus-shorts-overlay';
-      panel.setAttribute('role', 'dialog');
-      panel.setAttribute('aria-modal', 'true');
-      panel.tabIndex = -1;
+      panelScope = scope.scope();
+      const owner = panelScope;
+      const p = document.createElement('div');
+      panel = p;
+      p.id = 'shorts-keyboard-help';
+      p.className = 'shorts-help-panel yp-shorts-overlay';
+      p.setAttribute('role', 'dialog');
+      p.setAttribute('aria-modal', 'true');
+      p.tabIndex = -1;
 
       const render = () => {
-        if (!panel) return;
-        const p = /** @type {HTMLElement} */ (panel);
         U.renderTemplateClone(
           p,
           `
             <div class="help-topbar">
-              <div class="help-header ytp-plus-settings-title">${t('keyboardShortcuts')}</div>
-              <button class="ytp-plus-settings-close help-close" data-shared-close-button="ytp-plus-close-settings" type="button" aria-label="${t('closeButton')}">
-                  <svg viewBox="0 0 24 24" width="24" height="24" stroke="currentColor" fill="none" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12 19 6.41z"/>
+              <div class="help-header yp-settings-title">${t('keyboardShortcuts')}</div>
+              <button class="yp-settings-close help-close" data-shared-close-button="yp-close-settings" type="button" aria-label="${t('closeButton')}">
+                  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path>
                   </svg>
               </button>
             </div>
@@ -570,210 +532,287 @@
               <div class="help-content">
                 ${Object.entries(config.shortcuts)
                   .map(([action, shortcut]) => {
-                    const sc = /** @type {Record<string,any>} */ (shortcut);
                     const keyVal = shortcut.key === ' ' ? 'Space' : shortcut.key;
                     return `<div class="help-item">
-                    <kbd data-action="${window.YouTubeSafeDOM.escapeHTML(action)}" ${sc.editable === false ? 'class="non-editable"' : ''}>${window.YouTubeSafeDOM.escapeHTML(keyVal)}</kbd>
+                    <kbd data-action="${window.YouTubeSafeDOM.escapeHTML(action)}" ${shortcut.editable === false ? 'class="non-editable"' : ''}>${window.YouTubeSafeDOM.escapeHTML(keyVal)}</kbd>
                     <span>${window.YouTubeSafeDOM.escapeHTML(shortcut.description)}</span>
                   </div>`;
                   })
                   .join('')}
               </div>
               <div class="help-actions">
-                <button class="ytp-plus-button ytp-plus-button-primary reset-all-shortcuts">${t('resetAll')}</button>
+                <button class="yp-button yp-button-primary reset-all-shortcuts">${t('resetAll')}</button>
               </div>
             </div>
           `
         );
-
-        const helpClose = p.querySelector('.help-close');
-        if (helpClose) helpClose.onclick = () => helpPanel.hide();
-        const resetBtn = p.querySelector('.reset-all-shortcuts');
-        if (resetBtn) {
-          resetBtn.onclick = () => {
-            if (confirm(t('resetAllConfirm'))) {
-              const defaultShortcuts = utils.getDefaultShortcuts();
-              Object.assign(config, { _shortcuts: defaultShortcuts });
-              utils.saveSettings();
-              feedback.show(t('shortcutsReset'));
-              render();
-            }
-          };
-        }
-
-        p.querySelectorAll('kbd[data-action]:not(.non-editable)').forEach(kbd => {
-          const kbdEl = /** @type {HTMLElement} */ (kbd);
-          kbdEl.onclick = () => {
-            const act = kbdEl.getAttribute('data-action') || '';
-            const sc = /** @type {Record<string,any>} */ (config.shortcuts);
-            editShortcut(act, sc[act]?.key || '');
-          };
-        });
-
-        setupHelpContentDrag(p);
+        setupHelpContentDrag(owner, p);
       };
 
+      // One delegated click handler survives every re-render.
+      owner.listen(p, 'click', (/** @type {Event} */ ev) => {
+        const target = ev.target instanceof Element ? ev.target : null;
+        if (!target) return;
+        if (target.closest('.help-close')) {
+          helpPanel.hide();
+          return;
+        }
+        if (target.closest('.reset-all-shortcuts')) {
+          resetAll(render);
+          return;
+        }
+        const kbd = target.closest('kbd[data-action]:not(.non-editable)');
+        if (kbd) {
+          const act = kbd.getAttribute('data-action') || '';
+          editShortcut(act, config.shortcuts[act]?.key || '');
+        }
+      });
+
       render();
-      document.body.appendChild(panel);
-      return panel;
+      owner.own(p);
+      owner.onDispose(() => {
+        helpTrapCleanup?.();
+        helpTrapCleanup = null;
+        dragScope = null;
+        if (panel === p) {
+          panel = null;
+          panelScope = null;
+          state.helpVisible = false;
+        }
+      });
+      document.body.appendChild(p);
+      return p;
+    };
+
+    /** @param {() => void} rerender */
+    const resetAll = async rerender => {
+      // own focus-trapped dialog instead of native confirm().
+      const confirmed = await U.confirmDialog({
+        message: t('resetAllConfirm'),
+        confirmLabel: t('confirm'),
+        cancelLabel: t('cancel'),
+      });
+      if (!(confirmed && keysCtx)) return;
+      config.shortcuts = utils.getDefaultShortcuts();
+      utils.saveSettings();
+      feedback.show(t('shortcutsReset'));
+      if (panel?.isConnected) rerender();
     };
 
     return {
-      /**
-       * Display the help panel
-       * @returns {void}
-       */
       show: () => {
-        const p = create();
+        const scope = page();
+        if (!scope) return;
+        const p = create(scope);
         p.classList.add('visible');
         state.helpVisible = true;
         p.focus();
+        // a11y: trap Tab inside the open help dialog (shared trap).
+        helpTrapCleanup?.();
+        helpTrapCleanup = window.YouTubePlusModalHandlers?.createFocusTrap?.(p) || null;
       },
 
-      /**
-       * Hide the help panel
-       * @returns {void}
-       */
       hide: () => {
-        if (panel) {
-          panel.classList.remove('visible');
-          state.helpVisible = false;
-        }
+        panel?.classList.remove('visible');
+        state.helpVisible = false;
+        helpTrapCleanup?.();
+        helpTrapCleanup = null;
       },
 
-      /**
-       * Toggle help panel visibility
-       * @returns {void}
-       */
       toggle: () => (state.helpVisible ? helpPanel.hide() : helpPanel.show()),
 
-      /**
-       * Refresh the help panel by removing and recreating it
-       * @returns {void}
-       */
+      /** Drop the panel so the next show renders the current bindings. */
       refresh: () => {
-        dragListeners?.abort();
-        if (panel) {
-          panel.remove();
-          panel = null;
-        }
+        const wasVisible = state.helpVisible;
+        panelScope?.dispose();
+        if (wasVisible) helpPanel.show();
       },
     };
   })();
 
   /**
-   * Open dialog to edit a keyboard shortcut
+   * Open the dialog that rebinds one shortcut; it lives in the page group.
    * @param {string} actionKey - The action identifier to edit
    * @param {string} currentKey - The current key binding
-   * @returns {void}
    */
   const editShortcut = (actionKey, currentKey) => {
+    const scope = page();
+    if (!scope) return;
+    const dialogScope = scope.scope();
     const dialog = document.createElement('div');
-    dialog.className = 'glass-modal shortcut-edit-dialog ytp-plus-shortcut-modal';
+    dialog.className = 'glass-modal shortcut-edit-dialog yp-shortcut-modal';
     dialog.setAttribute('role', 'dialog');
     dialog.setAttribute('aria-modal', 'true');
-    const sc = /** @type {Record<string,any>} */ (config.shortcuts);
+    const sc = config.shortcuts;
+    const esc = window.YouTubeSafeDOM.escapeHTML;
     U.renderTemplateClone(
       dialog,
       `
         <div class="glass-panel shortcut-edit-content">
-          <h4>${window.YouTubeSafeDOM.escapeHTML(t('editShortcut'))}: ${window.YouTubeSafeDOM.escapeHTML(sc[actionKey]?.description || actionKey)}</h4>
-          <p>${window.YouTubeSafeDOM.escapeHTML(t('pressAnyKey'))}</p>
-          <div class="current-shortcut">${window.YouTubeSafeDOM.escapeHTML(t('current'))}: <kbd>${window.YouTubeSafeDOM.escapeHTML(currentKey === ' ' ? 'Space' : currentKey)}</kbd></div>
-          <button class="ytp-plus-button ytp-plus-button-primary shortcut-cancel" type="button">${window.YouTubeSafeDOM.escapeHTML(t('cancel'))}</button>
+          <h4>${esc(t('editShortcut'))}: ${esc(sc[actionKey]?.description || actionKey)}</h4>
+          <p>${esc(t('pressAnyKey'))}</p>
+          <div class="current-shortcut">${esc(t('current'))}: <kbd>${esc(currentKey === ' ' ? 'Space' : currentKey)}</kbd></div>
+          <button class="yp-button yp-button-primary shortcut-cancel" type="button">${esc(t('cancel'))}</button>
         </div>
       `
     );
 
+    dialogScope.own(dialog);
     document.body.appendChild(dialog);
     state.editingShortcut = actionKey;
+    // a11y: trap Tab inside the shortcut-edit dialog while it is open.
+    const dialogTrap = window.YouTubePlusModalHandlers?.createFocusTrap?.(dialog) || null;
+    dialogScope.onDispose(() => {
+      dialogTrap?.();
+      state.editingShortcut = null;
+    });
+    const close = () => dialogScope.dispose();
 
     const handleKey = /** @param {KeyboardEvent} e */ e => {
       e.preventDefault();
       e.stopPropagation();
-      if (e.key === 'Escape') return cleanup();
+      if (e.key === 'Escape') {
+        close();
+        return;
+      }
 
       const conflict = Object.keys(config.shortcuts).find(
-        key =>
-          key !== actionKey &&
-          /** @type {Record<string,any>} */ (config.shortcuts)[key]?.key === e.key
+        key => key !== actionKey && sc[key]?.key === e.key
       );
       if (conflict) {
         feedback.show(t('keyAlreadyUsed', { key: e.key }));
         return;
       }
 
-      /** @type {Record<string,any>} */ (config.shortcuts)[actionKey].key = e.key;
+      sc[actionKey].key = e.key;
       utils.saveSettings();
       feedback.show(t('shortcutUpdated'));
+      close();
       helpPanel.refresh();
-      cleanup();
     };
 
-    const cleanup = () => {
-      document.removeEventListener('keydown', handleKey, true);
-      dialog.remove();
-      state.editingShortcut = null;
-    };
+    dialogScope.listen(dialog, 'click', (/** @type {Event} */ ev) => {
+      const target = ev.target instanceof Element ? ev.target : null;
+      if (ev.target === dialog || target?.closest('.shortcut-cancel')) close();
+    });
+    dialogScope.listen(document, 'keydown', /** @type {EventListener} */ (handleKey), true);
+  };
 
-    const cancelBtn = dialog.querySelector('.shortcut-cancel');
-    if (cancelBtn) cancelBtn.onclick = cleanup;
-    // Use parameter destructuring to satisfy prefer-destructuring rule
-    dialog.onclick = ev => {
-      if (ev && ev.target === dialog) cleanup();
-    };
-    YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'keydown',
-      /** @type {EventListener} */ (handleKey),
-      true
+  /**
+   * Main keyboard handler while the feature runs.
+   * @param {KeyboardEvent} e
+   */
+  const handleKeydown = e => {
+    if (!isOnShortsPage() || utils.isInputFocused() || state.editingShortcut) return;
+
+    if (e.key === 'Escape' && state.helpVisible) {
+      e.preventDefault();
+      helpPanel.hide();
+      return;
+    }
+
+    let { key } = e;
+    if (e.code === 'NumpadAdd') key = '+';
+    else if (e.code === 'NumpadSubtract') key = '-';
+
+    const action = Object.keys(config.shortcuts).find(k => config.shortcuts[k]?.key === key);
+    const handler = action ? actions[action] : undefined;
+    if (handler) {
+      e.preventDefault();
+      e.stopPropagation();
+      handler();
+    }
+  };
+
+  /** @param {Event} ev */
+  const handleOutsideClick = ev => {
+    const tgt = ev.target instanceof Element ? ev.target : null;
+    if (state.helpVisible && !tgt?.closest('#shorts-keyboard-help')) helpPanel.hide();
+  };
+
+  /**
+   * Check if current route is /shorts page
+   * @returns {boolean} True if on /shorts/* route
+   */
+  const isOnShortsPage = () => location.pathname.startsWith('/shorts/');
+
+  /** Leaving /shorts drops the help panel, feedback and dialogs of the page. */
+  const syncKeysRoute = () => {
+    if (isOnShortsPage()) {
+      showFirstVisitTip();
+      return;
+    }
+    pageScope?.dispose();
+    pageScope = null;
+    state.helpVisible = false;
+  };
+
+  const showFirstVisitTip = () => {
+    if (U.storage?.getItem('shorts_keyboard_help_shown')) return;
+    keysCtx?.timeout(() => {
+      if (!isOnShortsPage()) return;
+      feedback.show('Press ? for shortcuts');
+      U.storage?.setItem('shorts_keyboard_help_shown', 'true');
+    }, 2000);
+  };
+
+  const keysFeature = lifecycle()?.define?.({
+    id: 'shortsKeyboard',
+    settingsKey: 'shortsKeyboard',
+    // Keyboard control exists only on the Shorts player pages.
+    routes: ['shorts'],
+    start(/** @type {YouTubePlusFeatureContext} */ ctx) {
+      keysCtx = ctx;
+      ctx.style(
+        'shorts-keyboard-styles',
+        window.YouTubePlusDesignSystem?.getStyle?.('shorts-keyboard-styles') || ''
+      );
+      utils.loadSettings();
+      ctx.listen(document, 'keydown', /** @type {EventListener} */ (handleKeydown), true);
+      ctx.listen(document, 'click', handleOutsideClick);
+      ctx.listen(window, 'yt-navigate-finish', syncKeysRoute);
+      ctx.listen(window, 'popstate', syncKeysRoute);
+      ctx.onDispose(() => {
+        pageScope = null;
+        state.helpVisible = false;
+        state.editingShortcut = null;
+      });
+      syncKeysRoute();
+    },
+    stop() {
+      keysCtx = null;
+    },
+  });
+
+  // ----- Shorts download button (follows `enableDownload`) -----
+
+  /** @type {YouTubePlusFeatureContext | null} */
+  let downloadCtx = null;
+  /** Group of the current /shorts page. @type {YouTubePlusFeatureContext | null} */
+  let downloadPageScope = null;
+  /** Group of the current button. @type {YouTubePlusFeatureContext | null} */
+  let buttonScope = null;
+  /** @type {HTMLElement|null} */
+  let downloadButton = null;
+
+  const openDownload = (/** @type {Event} */ ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    if (typeof window.YouTubePlusDownload?.openModal === 'function') {
+      window.YouTubePlusDownload.openModal();
+      return;
+    }
+    const unavailable = t('directDownloadModuleNotAvailable');
+    feedback.show(
+      unavailable && unavailable !== 'directDownloadModuleNotAvailable'
+        ? unavailable
+        : 'Direct download module not available'
     );
   };
 
-  /**
-   * Register Shorts keyboard-control styles via the canonical style system.
-   * Uses design-system.js getStyle(...) + StyleManager.add so the CSS is
-   * owned by the shared host (`#youtube-plus-styles`) and stays in sync
-   * with other modules. The byId('shorts-keyboard-styles') guard preserves
-   * compatibility with users upgrading from a pre-canonical version of
-   * this module that injected a raw `<style id="shorts-keyboard-styles">`
-   * element.
-   * @returns {void}
-   */
-  const addStyles = () => {
-    const styles = window.YouTubePlusDesignSystem?.getStyle?.('shorts-keyboard-styles') || '';
-    const SM = YouTubeUtils?.StyleManager;
-    if (SM && typeof SM.add === 'function') {
-      SM.add('shorts-keyboard-styles', styles);
-    }
-  };
-
-  /**
-   * Remove Shorts download button if it exists
-   */
-  const removeShortsDownloadButton = () => {
-    if (state.downloadButton?.isConnected) {
-      state.downloadButton.remove();
-    }
-    state.downloadButton = null;
-  };
-
-  /**
-   * Ensure Shorts download button is visible and wired
-   */
+  /** Place the download button next to the like button of the active Short. */
   const ensureShortsDownloadButton = () => {
-    if (!isOnShortsPage()) {
-      removeShortsDownloadButton();
-      return;
-    }
-
-    const globalSettings = /** @type {{ enableDownload?: boolean }|undefined} */ (
-      window.youtubePlus?.settings
-    );
-    if (globalSettings?.enableDownload === false) {
-      removeShortsDownloadButton();
-      return;
-    }
+    if (!(downloadPageScope && isOnShortsPage())) return;
 
     const getActiveReel = () =>
       qs('ytd-reel-video-renderer[is-active]') ||
@@ -831,8 +870,8 @@
       const likeSelectors = [
         'like-button-view-model',
         '#like-button',
-        'button[aria-label*="Like" i]',
-        'button[aria-label*="Нравится" i]',
+        'button[aria-label*="Like" i]:not([aria-label*="Dislike" i]):not(.yp-shorts-dislike-btn)',
+        'button[aria-label*="Нравится" i]:not([aria-label*="Не нравится" i])',
       ];
       for (const selector of likeSelectors) {
         const node = actionBar.querySelector(selector);
@@ -845,8 +884,8 @@
       const likeSelectors = [
         'like-button-view-model',
         '#like-button',
-        'button[aria-label*="Like" i]',
-        'button[aria-label*="Нравится" i]',
+        'button[aria-label*="Like" i]:not([aria-label*="Dislike" i]):not(.yp-shorts-dislike-btn)',
+        'button[aria-label*="Нравится" i]:not([aria-label*="Не нравится" i])',
       ];
 
       const activeReel = getActiveReel();
@@ -874,20 +913,20 @@
     if (!(actionBar || likeAnchor)) return;
 
     if (
-      state.downloadButton?.isConnected &&
+      downloadButton?.isConnected &&
       likeAnchor instanceof Element &&
-      state.downloadButton.nextElementSibling === likeAnchor
+      (downloadButton.nextElementSibling === likeAnchor ||
+        downloadButton.nextElementSibling?.classList?.contains('shortsStats'))
     ) {
+      window.YouTubePlusStats?.initVideoStats?.();
+      window.YouTubePlusStats?.ensureShortsStatsButton?.();
       return;
     }
 
-    if (state.downloadButton?.isConnected) {
-      state.downloadButton.remove();
-      state.downloadButton = null;
-    }
-
+    buttonScope?.dispose();
+    buttonScope = downloadPageScope.scope();
     const btn = document.createElement('button');
-    btn.className = 'ytp-plus-shorts-download';
+    btn.className = 'yp-shorts-download';
     btn.type = 'button';
     btn.setAttribute('aria-label', t('download'));
     btn.setAttribute('title', t('downloadOptions') || t('download'));
@@ -895,235 +934,91 @@
       btn,
       '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path opacity="0.5" d="M3 15C3 17.8284 3 19.2426 3.87868 20.1213C4.75736 21 6.17157 21 9 21H15C17.8284 21 19.2426 21 20.1213 20.1213C21 19.2426 21 17.8284 21 15" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path><path d="M12 3V16M12 16L16 11.625M12 16L8 11.625" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"></path></svg>'
     );
-
-    btn.addEventListener('click', ev => {
-      ev.preventDefault();
-      ev.stopPropagation();
-
-      if (typeof window.YouTubePlusDownload?.openModal === 'function') {
-        window.YouTubePlusDownload.openModal();
-        return;
-      }
-
-      feedback.show(t('directDownloadModuleNotAvailable') || t('downloadNotAvailable'));
-    });
+    buttonScope.listen(btn, 'click', openDownload);
+    buttonScope.own(btn);
 
     if (likeAnchor instanceof Element && likeAnchor.parentElement) {
       likeAnchor.insertAdjacentElement('beforebegin', btn);
     } else if (actionBar) {
       actionBar.prepend(btn);
     } else {
+      buttonScope.dispose();
+      buttonScope = null;
       return;
     }
-    state.downloadButton = btn;
+    downloadButton = btn;
+    window.YouTubePlusStats?.initVideoStats?.();
+    window.YouTubePlusStats?.ensureShortsStatsButton?.();
   };
 
-  /**
-   * Main keyboard event handler for Shorts controls
-   * Routes keypress events to appropriate actions
-   * @param {KeyboardEvent} e - The keyboard event
-   * @returns {void}
-   */
-  const handleKeydown = e => {
-    if (
-      !(config.enabled && utils.isInShortsPage()) ||
-      utils.isInputFocused() ||
-      state.editingShortcut
-    ) {
+  /** Build or drop the per-page group when the route changes. */
+  const syncDownloadRoute = () => {
+    if (!isOnShortsPage()) {
+      downloadPageScope?.dispose();
+      downloadPageScope = null;
       return;
     }
-
-    let { key } = e;
-    if (e.code === 'NumpadAdd') key = '+';
-    else if (e.code === 'NumpadSubtract') key = '-';
-
-    const action = Object.keys(config.shortcuts).find(
-      k => /** @type {Record<string,any>} */ (config.shortcuts)[k]?.key === key
-    );
-    if (action && /** @type {Record<string,any>} */ (actions)[action]) {
-      e.preventDefault();
-      e.stopPropagation();
-      /** @type {Record<string,any>} */ (actions)[action]();
+    if (downloadPageScope) {
+      ensureShortsDownloadButton();
+      return;
     }
-  };
-
-  /**
-   * Check if current route is /shorts page
-   * @returns {boolean} True if on /shorts/* route
-   */
-  const isOnShortsPage = () => location.pathname.startsWith('/shorts/');
-
-  /**
-   * Cleanup when leaving shorts page
-   */
-  const cleanup = () => {
-    if (!state.initialized) return;
-
-    // Remove help panel if visible
-    if (state.helpVisible) {
-      helpPanel.hide();
-    }
-
-    // Clear any pending timeouts
-    if (state.actionTimeout) {
-      clearTimeout(state.actionTimeout);
-      state.actionTimeout = null;
-    }
-
-    // Clear cached video
-    state.cachedVideo = null;
-
-    if (state.downloadObserver) {
-      state.downloadObserver.disconnect();
-      state.downloadObserver = null;
-    }
-    state.downloadEnsureQueued = false;
-
-    removeShortsDownloadButton();
-
-    state.initialized = false;
-  };
-
-  /**
-   * Initialize the Shorts keyboard controls module
-   * Sets up event listeners and styles
-   * @returns {void}
-   */
-  const init = () => {
-    // Strict route guard
-    if (!isOnShortsPage()) return;
-    if (state.initialized) return;
-
-    state.initialized = true;
-    utils.loadSettings();
-    addStyles();
-    ensureShortsDownloadButton();
-
-    if (!state.downloadObserver) {
-      state.downloadObserver = new MutationObserver(() => {
-        if (!isOnShortsPage()) return;
-        if (state.downloadEnsureQueued) return;
-        state.downloadEnsureQueued = true;
-        requestAnimationFrame(() => {
-          state.downloadEnsureQueued = false;
-          ensureShortsDownloadButton();
-        });
-      });
-
-      state.downloadObserver.observe(document.body, {
-        childList: true,
-        subtree: true,
-      });
-      if (YouTubeUtils.cleanupManager?.registerObserver) {
-        YouTubeUtils.cleanupManager.registerObserver(state.downloadObserver);
-      }
-    }
-
-    YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'keydown',
-      /** @type {EventListener} */ (handleKeydown),
-      true
-    );
-
-    // Prefer destructuring the event parameter
-    const clickHandler = /** @param {Event} ev */ ev => {
-      const tgt = ev.target instanceof Element ? ev.target : null;
-      if (state.helpVisible && tgt?.closest && !tgt.closest('#shorts-keyboard-help')) {
-        helpPanel.hide();
-      }
-    };
-    YouTubeUtils.cleanupManager.registerListener(document, 'click', clickHandler);
-
-    YouTubeUtils.cleanupManager.registerListener(
-      document,
-      'keydown',
-      /** @type {EventListener} */ (
-        /** @param {KeyboardEvent} e */ e => {
-          if (e.key === 'Escape' && state.helpVisible) {
-            e.preventDefault();
-            helpPanel.hide();
-          }
-        }
-      )
-    );
-  };
-
-  // Route watcher to cleanup when leaving /shorts
-  const observeRoute = () => {
-    let lastPath = location.pathname;
-    let isCurrentlyOnShorts = isOnShortsPage();
-
-    const syncRouteState = () => {
-      const currentPath = location.pathname;
-      // Quick path check first before expensive isOnShortsPage()
-      if (currentPath === lastPath) return;
-
-      lastPath = currentPath;
-      const nowOnShorts = isOnShortsPage();
-
-      if (nowOnShorts !== isCurrentlyOnShorts) {
-        isCurrentlyOnShorts = nowOnShorts;
-
-        if (!nowOnShorts && state.initialized) {
-          // Left shorts page
-          cleanup();
-        } else if (nowOnShorts && !state.initialized) {
-          // Entered shorts page
-          init();
-        }
-      } else if (nowOnShorts) {
-        ensureShortsDownloadButton();
-      }
-    };
-
-    if (YouTubeUtils.cleanupManager?.registerListener) {
-      YouTubeUtils.cleanupManager.registerListener(window, 'yt-navigate-finish', syncRouteState);
-      YouTubeUtils.cleanupManager.registerListener(window, 'popstate', syncRouteState);
-    } else {
-      window.addEventListener('yt-navigate-finish', syncRouteState);
-      window.addEventListener('popstate', syncRouteState);
-    }
-  };
-
-  let shortsRuntimeStarted = false;
-  const startShortsRuntime = () => {
-    if (shortsRuntimeStarted) return;
-    shortsRuntimeStarted = true;
-
-    // Initialize if on shorts page
-    if (document.readyState === 'loading') {
-      document.addEventListener(
-        'DOMContentLoaded',
-        () => {
-          init();
-          observeRoute();
-        },
-        { once: true }
-      );
-    } else {
-      init();
-      observeRoute();
-    }
-
-    // Show help tip on first visit
-    if (isOnShortsPage() && !localStorage.getItem('shorts_keyboard_help_shown')) {
-      setTimeout_(() => {
-        if (isOnShortsPage()) {
-          feedback.show('Press ? for shortcuts');
-          localStorage.setItem('shorts_keyboard_help_shown', 'true');
-        }
-      }, 2000);
-    }
-  };
-
-  if (U?.whenRelevant) {
-    U.whenRelevant({
-      name: 'shorts',
-      isRelevant: isOnShortsPage,
-      onEnter: startShortsRuntime,
+    const scope = downloadCtx?.scope();
+    if (!scope) return;
+    downloadPageScope = scope;
+    scope.onDispose(() => {
+      buttonScope = null;
+      downloadButton = null;
     });
-  } else {
-    if (isOnShortsPage()) startShortsRuntime();
-  }
+
+    /** @type {(() => void) | null} */
+    let queued = null;
+    const queueEnsure = () => {
+      if (queued) return;
+      queued = scope.frame(() => {
+        queued = null;
+        ensureShortsDownloadButton();
+      });
+    };
+    const coordinator = window.YouTubePlusMutationCoordinator;
+    const subId = 'shorts::downloadButton';
+    coordinator?.subscribeRoot?.(subId, queueEnsure, {
+      selector: 'ytd-shorts, #shorts-container, ytd-reel-video-renderer',
+      childList: true,
+      subtree: true,
+      attributes: false,
+    });
+    scope.onDispose(() => coordinator?.unsubscribe?.(subId));
+    ensureShortsDownloadButton();
+  };
+
+  const downloadFeature = lifecycle()?.define?.({
+    id: 'shortsDownload',
+    settingsKey: 'enableDownload',
+    // The Shorts download button belongs to the Shorts player pages.
+    routes: ['shorts'],
+    start(/** @type {YouTubePlusFeatureContext} */ ctx) {
+      downloadCtx = ctx;
+      ctx.listen(window, 'yt-navigate-finish', syncDownloadRoute);
+      ctx.listen(window, 'popstate', syncDownloadRoute);
+      syncDownloadRoute();
+    },
+    stop() {
+      downloadCtx = null;
+      downloadPageScope = null;
+    },
+  });
+
+  U.onDomReady(() => {
+    keysFeature?.sync();
+    downloadFeature?.sync();
+  });
+
+  window.YouTubePlusShorts = {};
+  // Test-only surface: internal entry points and state accessors live here,
+  // not on the facade root.
+  U?.exposeTestHooks?.(window.YouTubePlusShorts, {
+    isOnShortsPage,
+    getDefaultShortcuts,
+    getSettings: () => ({ shortcuts: { ...config.shortcuts } }),
+  });
 })();

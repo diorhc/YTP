@@ -1,0 +1,209 @@
+{
+  "global": {
+    "statements": 86,
+    "branches": 84,
+    "functions": 95
+  },
+  "files": {
+    "src/adblocker": {
+      "statements": 96,
+      "branches": 79,
+      "functions": 100
+    },
+    "src/basic": {
+      "statements": 85,
+      "branches": 64,
+      "functions": 84
+    },
+    "src/cleanup-manager": {
+      "statements": 95,
+      "branches": 84,
+      "functions": 100
+    },
+    "src/comment": {
+      "statements": 88,
+      "branches": 75,
+      "functions": 92
+    },
+    "src/design-system": {
+      "statements": 97,
+      "branches": 69,
+      "functions": 88
+    },
+    "src/dom-cache": {
+      "statements": 89,
+      "branches": 88,
+      "functions": 89
+    },
+    "src/download": {
+      "statements": 98,
+      "branches": 87,
+      "functions": 97
+    },
+    "src/endscreen": {
+      "statements": 98,
+      "branches": 86,
+      "functions": 93
+    },
+    "src/enhanced": {
+      "statements": 98,
+      "branches": 89,
+      "functions": 98
+    },
+    "src/error-boundary": {
+      "statements": 90,
+      "branches": 70,
+      "functions": 100
+    },
+    "src/event-delegation": {
+      "statements": 95,
+      "branches": 92,
+      "functions": 87
+    },
+    "src/feature-registry": {
+      "statements": 93,
+      "branches": 83,
+      "functions": 96
+    },
+    "src/i18n": {
+      "statements": 95,
+      "branches": 75,
+      "functions": 90
+    },
+    "src/logger": {
+      "statements": 98,
+      "branches": 85,
+      "functions": 100
+    },
+    "src/main": {
+      "statements": 3,
+      "branches": 98,
+      "functions": 95
+    },
+    "src/modal-download-handlers": {
+      "statements": 51,
+      "branches": 88,
+      "functions": 12
+    },
+    "src/modal-handlers": {
+      "statements": 96,
+      "branches": 82,
+      "functions": 94
+    },
+    "src/music": {
+      "statements": 91,
+      "branches": 45,
+      "functions": 81
+    },
+    "src/mutation-coordinator": {
+      "statements": 98,
+      "branches": 89,
+      "functions": 100
+    },
+    "src/performance": {
+      "statements": 91,
+      "branches": 61,
+      "functions": 93
+    },
+    "src/pip": {
+      "statements": 92,
+      "branches": 90,
+      "functions": 96
+    },
+    "src/playall": {
+      "statements": 86,
+      "branches": 77,
+      "functions": 94
+    },
+    "src/playlist-search": {
+      "statements": 95,
+      "branches": 79,
+      "functions": 96
+    },
+    "src/report": {
+      "statements": 87,
+      "branches": 58,
+      "functions": 100
+    },
+    "src/safe-dom": {
+      "statements": 100,
+      "branches": 88,
+      "functions": 100
+    },
+    "src/screenshot": {
+      "statements": 97,
+      "branches": 77,
+      "functions": 95
+    },
+    "src/settings-helpers": {
+      "statements": 98,
+      "branches": 82,
+      "functions": 100
+    },
+    "src/settings-modal": {
+      "statements": 95,
+      "branches": 72,
+      "functions": 96
+    },
+    "src/settings-store": {
+      "statements": 87,
+      "branches": 77,
+      "functions": 82
+    },
+    "src/shorts": {
+      "statements": 91,
+      "branches": 73,
+      "functions": 93
+    },
+    "src/speedcontrol": {
+      "statements": 95,
+      "branches": 81,
+      "functions": 83
+    },
+    "src/stats": {
+      "statements": 98,
+      "branches": 89,
+      "functions": 98
+    },
+    "src/thumbnail": {
+      "statements": 89,
+      "branches": 61,
+      "functions": 87
+    },
+    "src/time": {
+      "statements": 98,
+      "branches": 89,
+      "functions": 100
+    },
+    "src/timecode": {
+      "statements": 99,
+      "branches": 95,
+      "functions": 100
+    },
+    "src/update": {
+      "statements": 84,
+      "branches": 73,
+      "functions": 91
+    },
+    "src/utils": {
+      "statements": 95,
+      "branches": 80,
+      "functions": 96
+    },
+    "src/voting": {
+      "statements": 99,
+      "branches": 92,
+      "functions": 100
+    },
+    "src/zoom": {
+      "statements": 100,
+      "branches": 89,
+      "functions": 98
+    }
+  },
+  "e2e": {
+    "src/main#executionScript": {
+      "lines": 62
+    }
+  }
+}

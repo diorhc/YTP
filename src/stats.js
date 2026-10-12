@@ -1,47 +1,607 @@
 /**
- * Stats module — Video Statistics Panel
- *
- * This file contains TWO separate IIFEs by design:
- *
- * IIFE 1 (lines ~1–2365): Video stats — fetches and displays per-video
- *   statistics (views, likes, upload date, tags) in a modal panel.
- *   Includes settings integration and video-stats CSS.
- *
- * IIFE 2 (lines ~2366–end): Channel stats — fetches and displays channel-level
- *   statistics (subscribers, total videos, join date, country) in a banner overlay.
- *   Includes channel-stats CSS, font dropdown, and separate settings panel.
- *
- * They are kept separate because:
- * - Each has independent initialization guards and lifecycle
- * - Each manages its own DOM elements, observers, and event listeners
- * - Each has its own CSS injection to avoid cascading side effects
- * - Merging would create a 4000+ line IIFE with tangled state
+ * Stats module: video statistics panel and channel statistics overlay. Each
+ * half is its own IIFE with independent init guards, DOM, listeners and CSS;
+ * merging them would tangle state in one 4000+ line scope.
  */
+/**
+ * Fetch with a bounded deadline. The timer is cleared once the response
+ * settles so no background timer outlives the request.
+ * @param {string} url
+ * @param {RequestInit} [options]
+ * @param {number} [ms]
+ * @returns {Promise<Response>}
+ */
+function fetchWithDeadline_(url, options = {}, ms = 10000) {
+  const controller = typeof AbortController === 'function' ? new AbortController() : null;
+  const timer = controller ? setTimeout(() => controller.abort(), ms) : null;
+  return fetch(url, controller ? { ...options, signal: controller.signal } : options).finally(
+    () => {
+      if (timer !== null) clearTimeout(timer);
+    }
+  );
+}
+
+/**
+ * Accept a counter payload only when every number it carries is finite and
+ * non-negative and at least one number is present. Shape-agnostic so both
+ * counter services are covered without assuming field names.
+ * @param {unknown} data
+ * @returns {boolean}
+ */
+function numbersAreValidCounts_(data) {
+  if (!data || typeof data !== 'object') return false;
+  let sawNumber = false;
+  /** @type {unknown[]} */
+  const stack = [data];
+  while (stack.length) {
+    const node = stack.pop();
+    if (typeof node === 'number') {
+      if (!Number.isFinite(node) || node < 0) return false;
+      sawNumber = true;
+      continue;
+    }
+    if (Array.isArray(node)) {
+      for (const value of node) stack.push(value);
+      continue;
+    }
+    if (!node || typeof node !== 'object') continue;
+    for (const value of Object.values(node)) stack.push(value);
+  }
+  return sawNumber;
+}
+
+// Exposed so both counter fetch paths share one predicate and guard-branch
+// tests exercise the same code production uses.
+if (typeof window !== 'undefined') {
+  window.YouTubePlusStats = Object.assign(window.YouTubePlusStats || {}, {
+    numbersAreValidCounts: numbersAreValidCounts_,
+  });
+}
+
+/**
+ * @typedef {{
+ *   likes: number | null,
+ *   dislikes: number | null,
+ *   rating: number | null
+ * }} RydVotesAggregate
+ */
+
+/**
+ * @typedef {{
+ *   videoId?: string,
+ *   title?: string,
+ *   author?: string | null,
+ *   authorHandle?: string | null,
+ *   views?: number | null,
+ *   likes?: number | null,
+ *   dislikes?: number | null,
+ *   rating?: number | null,
+ *   thumbnail?: string | null,
+ *   duration?: string | number | null,
+ *   country?: string | null,
+ *   monetized?: boolean | null,
+ *   channelId?: string,
+ *   comments?: number | null,
+ *   subscribers?: string | number | null,
+ *   liveViewer?: number | string | null,
+ *   [key: string]: unknown
+ * }} VideoStatsData
+ */
+
+/**
+ * @typedef {{
+ *   followerCount: number,
+ *   bottomOdos: [number, number],
+ *   error?: boolean,
+ *   subscriberCount?: number,
+ *   viewCount?: number,
+ *   videoCount?: number,
+ *   [key: string]: unknown
+ * }} LivecountsChannelStats
+ */
+
+/**
+ * @typedef {{
+ *   views?: number | null,
+ *   likes?: number | null,
+ *   dislikes?: number | null,
+ *   comments?: number | null,
+ *   subscribers?: string | number | null,
+ *   title?: string,
+ *   author?: string | null,
+ *   authorHandle?: string | null,
+ *   thumbnail?: string | null,
+ *   monetized?: boolean | null,
+ *   country?: string | null,
+ *   duration?: string | number | null,
+ *   [key: string]: unknown
+ * }} PageStatsData
+ */
+
+/**
+ * @typedef {{
+ *   monetization?: string | null,
+ *   country?: string | null,
+ *   duration?: string | null
+ * }} ExtraMetadata
+ */
+
+/**
+ * @typedef {{
+ *   context: {
+ *     client: {
+ *       clientName: string,
+ *       clientVersion: string,
+ *       hl: string,
+ *       gl: string
+ *     }
+ *   },
+ *   videoId?: string,
+ *   browseId?: string,
+ *   continuation?: string
+ * }} InnerTubeRequestBody
+ */
+
+/**
+ * @typedef {{
+ *   method: string,
+ *   headers: Record<string, string>,
+ *   body: string
+ * }} InnerTubeFetchOptions
+ */
+
+/**
+ * @typedef {{
+ *   views?: number | string | null,
+ *   likes?: number | string | null,
+ *   dislikes?: number | string | null,
+ *   comments?: number | string | null,
+ *   liveViewer?: number | string | null,
+ *   title: string,
+ *   thumbUrl: string,
+ *   country?: string | null,
+ *   monetized?: boolean | null,
+ *   duration?: string | number | null,
+ *   author?: string | null,
+ *   authorHandle?: string | null
+ * }} ExtractedVideoFields
+ */
+
+/**
+ * @typedef {{
+ *   label: string,
+ *   value: number | null | undefined,
+ *   exact: number | string | null | undefined,
+ *   iconClass: string,
+ *   iconSvg: string
+ * }} VideoStatCardDef
+ */
+
+/**
+ * @typedef {{
+ *   overlay: HTMLElement | null,
+ *   isUpdating: boolean,
+ *   intervalId: { stop?: () => void } | null,
+ *   currentChannelName: string | null,
+ *   currentChannelId: string | null,
+ *   enabled: boolean,
+ *   updateInterval: number,
+ *   overlayOpacity: number,
+ *   lastSuccessfulStats: Map<string, { stats: LivecountsChannelStats, timestamp: number }>,
+ *   previousStats: Map<string, LivecountsChannelStats>,
+ *   channelIdCache: Map<string, string>,
+ *   lastChannelIdWarnAt: number,
+ *   previousUrl: string,
+ *   isChecking: boolean,
+ *   documentListenerKeys: Set<symbol>,
+ *   overlayEnsureScheduler: { stop?: () => void } | null,
+ *   pageObserversAttached: boolean,
+ *   navigationListenerAttached: boolean,
+ * }} ChannelStatsState
+ */
+
+function createTouchFeedbackShape_() {
+  const touchFeedback = document.createElement('yt-touch-feedback-shape');
+  const touchFeedbackDiv = document.createElement('div');
+  touchFeedbackDiv.className =
+    'yt-spec-touch-feedback-shape yt-spec-touch-feedback-shape--touch-response';
+  touchFeedbackDiv.setAttribute('aria-hidden', 'true');
+
+  const strokeDiv = document.createElement('div');
+  strokeDiv.className = 'yt-spec-touch-feedback-shape__stroke';
+
+  const fillDiv = document.createElement('div');
+  fillDiv.className = 'yt-spec-touch-feedback-shape__fill';
+
+  touchFeedbackDiv.appendChild(strokeDiv);
+  touchFeedbackDiv.appendChild(fillDiv);
+  touchFeedback.appendChild(touchFeedbackDiv);
+  return touchFeedback;
+}
+
+/**
+ * Read a design-system style bundle so a feature can inject it through its
+ * own context when the matching UI is built.
+ * @param {string} styleId
+ * @returns {string}
+ */
+function getStatsStyles_(styleId) {
+  return window.YouTubePlusDesignSystem?.getStyle?.(styleId) || '';
+}
+
 // Stats button and menu
 (function () {
   const U = window.YouTubeUtils;
-  U?.StyleManager?.add?.(
-    'ytp-stats-styles',
-    window.YouTubePlusDesignSystem?.getStyle?.('ytp-stats-styles') || ''
-  );
+  // Dock click registration key + stable per-button closure, so
+  // repeated mountDock calls dedup to a single live registration.
+  let statsDockKey = /** @type {symbol | null} */ (null);
+  /** @type {WeakMap<HTMLElement, (e: Event) => void>} */
+  const statsClickHandlers = new WeakMap();
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U.logSuppressed?.(_err, _label || 'Stats');
+
   if (window.__ytpVideoStatsModuleInit) return;
 
-  const isVideoStatsTriggerRoute = () => {
-    try {
-      const path = location.pathname || '';
-      return (
-        path === '/watch' ||
-        path.startsWith('/shorts') ||
-        path.startsWith('/@') ||
-        path.startsWith('/channel/') ||
-        path.startsWith('/c/')
-      );
-    } catch (_e) {
-      return false;
-    }
+  /** @type {YouTubePlusFeatureContext | null} */
+  let videoStatsCtx = null;
+  /** @type {((ctx: YouTubePlusFeatureContext) => void) | null} */
+  let videoStatsEnter = null;
+  /** @type {(() => void) | null} */
+  let videoStatsExit = null;
+
+  // Unified listener registration helper: uses cleanupManager, or falls back to
+  // addEventListener. Declared at module scope (not inside initVideoStats)
+  // because the module-scope registration below also uses it.
+  /**
+   * @param {EventTarget} target
+   * @param {string} type
+   * @param {EventListenerOrEventListenerObject} handler
+   * @param {AddEventListenerOptions | boolean} [opts]
+   */
+  // Shared helper: delegates to YouTubeUtils.
+  const registerListenerSafe = (target, type, handler, opts) =>
+    /** @type {symbol | null} */ (U.registerListenerSafe?.(target, type, handler, opts));
+
+  /** @type {YouTubePlusFeatureDescriptor | null} */
+  let DESCRIPTOR = null;
+
+  // Locale-aware counter parsing. Handles localized display forms
+  // ("1.234.567 Aufrufe", "1,2 тыс. просмотров", "1.2K", "1,2 млн", "0")
+  // and returns an exact integer. Returns 0 for a real "0": the caller must
+  // distinguish "no data" by a null/undefined check, never by truthiness.
+  // Returns null when nothing numeric can be extracted.
+  //
+  // YouTube emits different single-letter suffixes per interface language
+  // (Turkish "B" = bin, Indonesian "M" = miliar, Vietnamese "N/Tr/T"), and
+  // Hindi counts scale by लाख/करोड़, which one shared table cannot resolve,
+  // so the document language picks the table. The EN-style K/M/B fallback
+  // applies only to English and unknown locales; unambiguous markers
+  // (млн/тыс/Mio./mln/千/万/萬/만/億/亿/억…) stay in the shared fallback.
+  /** @type {Record<string, Array<[RegExp, number]>>} */
+  const LANG_SUFFIX_MARKERS_ = {
+    en: [
+      [/\bthousand\b/i, 1e3],
+      [/\bmillion\b/i, 1e6],
+      [/\bbillion\b/i, 1e9],
+    ],
+    ru: [
+      [/млрд/i, 1e9],
+      [/млн/i, 1e6],
+      [/тыс\.?/i, 1e3],
+    ],
+    uk: [
+      [/млрд/i, 1e9],
+      [/млн/i, 1e6],
+      [/тис\.?/i, 1e3],
+    ],
+    be: [
+      [/млрд/i, 1e9],
+      [/млн/i, 1e6],
+      [/тыс\.?/i, 1e3],
+    ],
+    de: [
+      [/mrd\.?/i, 1e9],
+      [/mio\.?/i, 1e6],
+      [/tsd\.?/i, 1e3],
+    ],
+    fr: [
+      [/(?<=\d)\s*md\.?\b/i, 1e9],
+      [/(?<=\d)\s*m\.?\b/i, 1e6],
+      [/(?<=\d)\s*k\.?\b/i, 1e3],
+    ],
+    es: [
+      // "1,2 mil M" is mil millones (1e9), which must win over plain "mil".
+      [/\bmil\s*m\b/i, 1e9],
+      [/\bmm\b/i, 1e9],
+      [/\bmil\b/i, 1e3],
+      [/(?<=\d)\s*m\.?\b/i, 1e6],
+    ],
+    pt: [
+      [/\bbi\b/i, 1e9],
+      [/\bmi\b/i, 1e6],
+      [/\bmil\b/i, 1e3],
+    ],
+    it: [
+      [/\bmrd\b|\bmld\b/i, 1e9],
+      [/\bmln\b/i, 1e6],
+      [/\bmila\b/i, 1e3],
+    ],
+    pl: [
+      [/\bmld\b/i, 1e9],
+      [/\bmln\b/i, 1e6],
+      [/tys\.?/i, 1e3],
+    ],
+    nl: [
+      [/\bmld\b/i, 1e9],
+      [/\bmln\b/i, 1e6],
+      [/(?<=\d)\s*k\.?\b/i, 1e3],
+      [/\bdzd\.?/i, 1e3],
+    ],
+    ja: [
+      [/億/i, 1e8],
+      [/万/i, 1e4],
+      [/千/i, 1e3],
+    ],
+    ko: [
+      [/억/i, 1e8],
+      [/만/i, 1e4],
+      [/천/i, 1e3],
+    ],
+    'zh-cn': [
+      [/亿/i, 1e8],
+      [/万/i, 1e4],
+      [/千/i, 1e3],
+    ],
+    'zh-tw': [
+      [/億/i, 1e8],
+      [/萬/i, 1e4],
+      [/千/i, 1e3],
+    ],
+    tr: [
+      [/(?<=\d)\s*mr\.?\b/i, 1e9],
+      [/(?<=\d)\s*mn\.?\b/i, 1e6],
+      [/(?<=\d)\s*b\b/i, 1e3],
+      [/\bbin\b/i, 1e3],
+    ],
+    id: [
+      [/(?<=\d)\s*m\.?\b/i, 1e9],
+      [/\bjt\b/i, 1e6],
+      [/\brb\b/i, 1e3],
+    ],
+    vi: [
+      [/(?<=\d)\s*tr\b/i, 1e6],
+      [/(?<=\d)\s*t\.?\b/i, 1e9],
+      [/(?<=\d)\s*n\b/i, 1e3],
+    ],
+    hi: [
+      [/करोड़/i, 1e7],
+      [/लाख/i, 1e5],
+      // Both the precomposed (ज़) and the combining-nukta spelling occur.
+      [/हज़ार|हज़ार|हजार/i, 1e3],
+    ],
+    ar: [
+      [/مليار/i, 1e9],
+      [/مليون/i, 1e6],
+      [/ألف/i, 1e3],
+    ],
+    bg: [
+      [/млрд/i, 1e9],
+      [/млн/i, 1e6],
+      [/хил\.?/i, 1e3],
+    ],
+    kk: [
+      [/млрд/i, 1e9],
+      [/млн/i, 1e6],
+      [/мың/i, 1e3],
+    ],
+    ky: [
+      [/млрд/i, 1e9],
+      [/млн/i, 1e6],
+      [/миң/i, 1e3],
+    ],
+    uz: [
+      [/mlrd/i, 1e9],
+      [/mln/i, 1e6],
+      [/ming/i, 1e3],
+    ],
+    az: [
+      [/mlrd/i, 1e9],
+      [/mln/i, 1e6],
+      [/min/i, 1e3],
+    ],
   };
 
-  const isSettingsModalOpen = () => U.isSettingsModalOpen();
+  /** Shared fallback: unambiguous multi-letter markers, same for every language. */
+  /** @type {Array<[RegExp, number]>} */
+  const SHARED_SUFFIX_MARKERS_ = [
+    [/billion/i, 1e9],
+    [/million/i, 1e6],
+    [/thousand/i, 1e3],
+    [/млрд/i, 1e9],
+    [/млн/i, 1e6],
+    [/тыс\.?|тис\.?/i, 1e3],
+    [/mrd\.?/i, 1e9],
+    [/mio\.?/i, 1e6],
+    [/\bbln\b/i, 1e9],
+    [/\bmln\b/i, 1e6],
+    [/\bmil\b/i, 1e3],
+    [/\bkk\b/i, 1e3],
+    [/千/i, 1e3],
+    [/万|萬/i, 1e4],
+    [/만/i, 1e4],
+    [/億|亿/i, 1e8],
+    [/억/i, 1e8],
+  ];
+
+  /** Interface language for suffix resolution, normalized to a table key. */
+  function resolveCountLangKey_() {
+    const raw = String(document?.documentElement?.lang || '').toLowerCase();
+    if (!raw) return '';
+    if (raw.startsWith('zh')) {
+      return raw.includes('tw') || raw.includes('hant') ? 'zh-tw' : 'zh-cn';
+    }
+    return raw.split('-')[0];
+  }
+
+  /**
+   * The PAGE window (userscript sandboxes wrap it; unsafeWindow is the real
+   * one), where player data lives, not in the sandbox. Same pattern as
+   * pip.js/download.js.
+   * @returns {Window & typeof globalThis}
+   */
+  function getPageGlobal() {
+    try {
+      if (typeof unsafeWindow !== 'undefined') {
+        const unwrapped = /** @type {{ wrappedJSObject?: unknown }} */ (unsafeWindow)
+          .wrappedJSObject;
+        if (unwrapped && typeof unwrapped === 'object')
+          return /** @type {Window & typeof globalThis} */ (unwrapped);
+        return unsafeWindow;
+      }
+    } catch (_e) {
+      logS(_e);
+    }
+    return window;
+  }
+
+  /**
+   * Player-supplied details are accepted only for the video currently on
+   * screen, so a stale response for an earlier video cannot feed the current
+   * card.
+   * @param {PlayerResponseData['videoDetails'] | null | undefined} details
+   * @param {string|null} currentVideoId
+   * @returns {boolean}
+   */
+  function isOwnVideoDetails_(details, currentVideoId) {
+    if (!details || typeof details !== 'object') return false;
+    if (details.viewCount == null || details.viewCount === '') return false;
+    return typeof details.videoId === 'string' && details.videoId === currentVideoId;
+  }
+
+  /**
+   * Largest thousand-grouped integer in a string ("along with 12,345
+   * others" → 12345), or null. Numbers without a separator group are
+   * ignored so a fractional display value ("1,2 लाख") never becomes a
+   * fake count.
+   * @param {unknown} rawText
+   * @returns {number|null}
+   */
+  function extractLargestInteger_(rawText) {
+    if (rawText == null) return null;
+    const runs = String(rawText).match(
+      /\d{1,3}(?:[\s\u00a0\u202f,.']\d{3})+(?![\d\u00a0\u202f,.'])/g
+    );
+    if (!runs) return null;
+    let best = null;
+    for (const run of runs) {
+      const num = Number(run.replace(/[\s\u00a0\u202f,.']/g, ''));
+      if (Number.isFinite(num) && (best === null || num > best)) best = num;
+    }
+    return best;
+  }
+
+  /**
+   * @param {string|null|undefined} rawText
+   * @returns {string|null}
+   */
+  function normalizeLocalizedDigits_(rawText) {
+    if (rawText == null) return null;
+    const text = String(rawText)
+      .replace(/[\u0660-\u0669]/g, d => String(d.charCodeAt(0) - 0x0660))
+      .replace(/[\u06f0-\u06f9]/g, d => String(d.charCodeAt(0) - 0x06f0))
+      .replace(/\u066b/g, '.')
+      .replace(/\u066c/g, ',')
+      .trim();
+    return text || null;
+  }
+
+  /**
+   * @param {string} text
+   * @param {Array<[RegExp, number]>} [markers]
+   * @returns {{ multiplier: number, cleanText: string } | null}
+   */
+  function matchSuffixMarker_(text, markers) {
+    for (const [re, mult] of markers || []) {
+      if (re.test(text)) {
+        return { multiplier: mult, cleanText: text.replace(re, ' ') };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * @param {string} text
+   * @returns {{ multiplier: number, cleanText: string }}
+   */
+  function resolveSingleLetterMultiplier_(text) {
+    const letter = text.match(/(\d)\s*([kmb])\b/i);
+    if (letter && letter.index != null) {
+      const unit = letter[2].toLowerCase();
+      const multiplier = unit === 'k' ? 1e3 : unit === 'm' ? 1e6 : 1e9;
+      const cleanText =
+        text.slice(0, letter.index + 1) + text.slice(letter.index + letter[0].length);
+      return { multiplier, cleanText };
+    }
+    return { multiplier: 1, cleanText: text };
+  }
+
+  /**
+   * @param {string} text
+   * @param {string} langKey
+   * @returns {{ multiplier: number, cleanText: string }}
+   */
+  function resolveCountMultiplier_(text, langKey) {
+    const langMarkers = LANG_SUFFIX_MARKERS_[langKey];
+    const matched =
+      matchSuffixMarker_(text, langMarkers) || matchSuffixMarker_(text, SHARED_SUFFIX_MARKERS_);
+    if (matched) return matched;
+
+    if (!langMarkers || langKey === 'en') {
+      return resolveSingleLetterMultiplier_(text);
+    }
+    return { multiplier: 1, cleanText: text };
+  }
+
+  /**
+   * @param {string} run
+   * @returns {string}
+   */
+  function normalizeNumericRun_(run) {
+    const hasComma = run.includes(',');
+    const hasDot = run.includes('.');
+    if (hasComma && hasDot) {
+      if (run.lastIndexOf(',') > run.lastIndexOf('.')) {
+        return run.replace(/\./g, '').replace(',', '.');
+      }
+      return run.replace(/,/g, '');
+    }
+    if (hasComma || hasDot) {
+      const sep = hasComma ? ',' : '.';
+      const parts = run.split(sep);
+      const grouped = parts.length > 2 || (parts.length === 2 && parts[1].length === 3);
+      return grouped ? parts.join('') : run.replace(sep, '.');
+    }
+    return run;
+  }
+
+  /**
+   * @param {string|null|undefined} rawText
+   * @returns {number|null}
+   */
+  function parseLocalizedCount_(rawText) {
+    const text = normalizeLocalizedDigits_(rawText);
+    if (!text) return null;
+
+    const { multiplier, cleanText } = resolveCountMultiplier_(text, resolveCountLangKey_());
+    const runs = cleanText.match(/\d[\d.,\s]*\d|\d/g);
+    if (!runs || runs.length === 0) return null;
+    const run = runs.sort((a, b) => b.length - a.length)[0].replace(/\s+/g, '');
+
+    const normalized = normalizeNumericRun_(run);
+    const num = Number(normalized);
+    if (!Number.isFinite(num)) return null;
+    return Math.round(num * multiplier);
+  }
 
   const initVideoStats = () => {
     if (window.__ytpVideoStatsModuleInit) return;
@@ -53,202 +613,36 @@
     const utils = U;
     const $ = utils.$;
     const $$ = utils.$$;
-    const byId = utils.byId;
 
-    // Shared translation helper — must be declared before "inject now"
-    // so addSettingsUI() doesn't hit TDZ on `t`.
+    // Shared translation helper, declared before "inject now" so
+    // addSettingsUI() doesn't hit TDZ on `t`.
     const t = U.t;
 
-    // Settings state — needed by addSettingsUI() which runs via retry
-    // scheduler even on Studio (before isStudioPage guard returns).
-    const SETTINGS_KEY = 'youtube_stats_button_enabled';
-    const STATS_ICON_ID = 'ytp-stats-universal-icon';
-    const STATS_ICON_SELECTOR = `#${STATS_ICON_ID}, .videoStats[data-ytp-stats-icon="true"], .videoStats`;
+    // Settings state needed by addSettingsUI(), which runs via retry scheduler
+    // even on Studio (before the isStudioPage guard returns).
+    const SETTINGS_KEY = 'enableStatsButton';
+    const STATS_ICON_ID = 'yp-stats-universal-icon';
+    const STATS_ICON_SELECTOR = `#${STATS_ICON_ID}, .shortsStats, .videoStats:not(.vision-dock-btn)[data-yp-stats-icon="true"], .videoStats:not(.vision-dock-btn)`;
 
-    // Safe localStorage wrapper — guards against SecurityError in restricted contexts
-    const _safeLS = window.YouTubeUtils?.safeLS || {
-      /** @param {string} k @param {string|null} [def] @returns {string|null} */
-      getItem: (k, def = null) => {
-        try {
-          return localStorage.getItem(k) ?? def;
-        } catch (_e) {
-          return def;
-        }
-      },
-      /** @param {string} k @param {string} v @returns {boolean} */
-      setItem: (k, v) => {
-        try {
-          localStorage.setItem(k, v);
-          return true;
-        } catch (_e) {
-          return false;
-        }
-      },
-      /** @param {string} k */
-      removeItem: k => {
-        try {
-          localStorage.removeItem(k);
-        } catch (_e) {
-          /* non-critical */
-        }
-      },
-    };
+    /** @returns {boolean} the stats-button flag from the settings store */
+    const isStatsButtonEnabled = () =>
+      window.YouTubePlusSettingsStore?.get?.(SETTINGS_KEY) !== false;
 
-    let statsButtonEnabled = _safeLS.getItem(SETTINGS_KEY) !== 'false';
-
-    // Attach change handler to the static checkbox in settings modal
-    const attachSettingsHandler = () => {
-      try {
-        const checkbox = document.getElementById('ytp-plus-setting-enableStatsButton');
-        if (!(checkbox instanceof HTMLInputElement)) return;
-        if (checkbox.dataset.handlerAttached) return;
-        checkbox.dataset.handlerAttached = 'true';
-        checkbox.checked = statsButtonEnabled;
-        checkbox.addEventListener('change', e => {
-          const input = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-          statsButtonEnabled = input.checked;
-          _safeLS.setItem(SETTINGS_KEY, statsButtonEnabled ? 'true' : 'false');
-          $$(`${STATS_ICON_SELECTOR}, .stats-menu-container`).forEach(el => el.remove());
-          if (statsButtonEnabled) {
-            checkAndInsertIcon();
-            checkAndAddMenu();
-          }
-        });
-      } catch (_e) {
-        // non-critical
-      }
-    };
-
-    if (isSettingsModalOpen()) {
-      attachSettingsHandler();
-    }
-
-    // Register settings modal listener for SUBSEQUENT opens.
-    if (U?.cleanupManager?.registerListener) {
-      U.cleanupManager.registerListener(document, 'youtube-plus-settings-modal-opened', () => {
-        attachSettingsHandler();
-      });
-    } else {
-      document.addEventListener('youtube-plus-settings-modal-opened', () => {
-        attachSettingsHandler();
-      });
-    }
+    let statsButtonEnabled = isStatsButtonEnabled();
 
     let statsInitialized = false;
 
     const isStatsRelevant = () => {
-      try {
-        const path = location.pathname || '';
-        if (path === '/watch' || path.startsWith('/shorts')) return true;
-        return U?.isChannelPage?.(location.href) ?? false;
-      } catch (_e) {
-        return false;
-      }
-    };
-
-    const runWhenReady = (/** @type {() => void} */ cb) => {
-      if (document.readyState === 'loading') {
-        document.addEventListener('DOMContentLoaded', cb, { once: true });
-      } else {
-        cb();
-      }
+      const path = location.pathname || '';
+      if (path === '/watch' || path.startsWith('/shorts')) return true;
+      return U.isChannelPage?.(location.href);
     };
 
     // Shared translation helper from YouTubeUtils
-    const escapeHtml =
-      window.YouTubeSafeDOM?.escapeHTML ||
-      window.YouTubeSecurityUtils?.escapeHtml ||
-      ((/** @type {string} */ s) => {
-        const d = document.createElement('div');
-        d.textContent = s;
-        return d.innerHTML;
-      });
-
-    // Glassmorphism styles for stats button and menu (shorts-keyboard-feedback look)
-    const styles = `
-      .videoStats{width:36px;height:36px;border:none;display:flex;align-items:center;justify-content:center;cursor:pointer;margin-left:8px;margin-right:8px;background:none;;border:none;transition:transform .18s ease,background .18s}
-      html[dark] .videoStats{background:none;border:none}html:not([dark]) .videoStats{background:none;border:none}.videoStats:hover{transform:translateY(-2px)}.videoStats svg{width:18px;height:18px;fill:var(--yt-spec-text-primary,#030303)}html[dark] .videoStats svg{fill:var(--yt-text-primary)}html:not([dark]) .videoStats svg{fill:var(--yt-text-primary)}
-      .shortsStats{display:flex;align-items:center;justify-content:center;margin-top:16px;margin-bottom:16px;width:48px;height:48px;border-radius:50%;cursor:pointer;background:var(--yt-stats-button-bg-light);box-shadow:0 12px 30px var(--yt-stats-shadow-deep);backdrop-filter:blur(10px) saturate(160%);-webkit-backdrop-filter:blur(10px) saturate(160%);border:1.25px solid var(--yt-stats-button-bg-light);transition:transform .22s ease}html[dark] .shortsStats{background:var(--yt-stats-button-bg-dark);border:1.25px solid var(--yt-stats-button-border-dark)}html:not([dark]) .shortsStats{background:var(--yt-stats-button-bg-light);border:1.25px solid var(--yt-stats-button-border-light)}
-      .shortsStats:hover{transform:translateY(-3px)}.shortsStats svg{width:24px;height:24px;fill:var(--yt-text-primary)}html[dark] .shortsStats svg{fill:var(--yt-text-primary)}html:not([dark]) .shortsStats svg{fill:var(--yt-text-primary)}
-        .stats-menu-container{position:relative;display:inline-block}.stats-horizontal-menu{position:absolute;display:flex;left:100%;top:0;height:100%;visibility:hidden;opacity:0;transition:visibility 0s,opacity 0.2s linear;z-index:100}.stats-menu-container:hover .stats-horizontal-menu{visibility:visible;opacity:1}.stats-menu-button{margin-left:8px;white-space:nowrap}
-        /* Modal overlay and container with glassmorphism */
-        .stats-modal-overlay{position:fixed;top:0;left:0;right:0;bottom:0;background:var(--yt-modal-bg);z-index:var(--yt-z-modal);display:flex;align-items:center;justify-content:center;animation:fadeInModal .18s;backdrop-filter:var(--yt-glass-blur);-webkit-backdrop-filter:var(--yt-glass-blur)}
-        .stats-modal-container{max-width:1100px;max-height:calc(100vh - 32px);display:flex;flex-direction:column}
-        .stats-modal-content{position:relative;background:var(--yt-glass-bg);border-radius:var(--yt-radius-lg);box-shadow:0 18px 40px var(--yt-stats-modal-shadow);overflow:visible;display:flex;flex-direction:column;animation:scaleInModal .18s;border:1.5px solid var(--yt-glass-border);backdrop-filter:blur(14px) saturate(160%);-webkit-backdrop-filter:blur(14px) saturate(160%)}
-        /* Fix custom element display for Chrome */
-        button-view-model{display:inline-flex;align-items:center;justify-content:center;}
-        button-view-model.yt-spec-button-view-model{vertical-align:top;}
-        /* Modal body */
-        .stats-modal-body{position:relative;padding:24px 16px 16px;overflow:visible;flex:1;display:flex;flex-direction:column}
-        /* Thumbnail preview */
-        .stats-thumb-title-centered{position:absolute;top:-44px;left:50%;transform:translateX(-50%);z-index:3;display:block;width:fit-content;max-width:min(90%,760px);margin:0;padding:8px 16px;border-radius:18px;border:1px solid var(--yt-glass-border);background:var(--yt-glass-bg);font-size:14px;font-weight:500;color:var(--yt-text-primary);text-align:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;cursor:default;transition:transform .25s cubic-bezier(.4,0,.2,1), background-color .25s cubic-bezier(.4,0,.2,1), border-color .25s cubic-bezier(.4,0,.2,1), color .25s cubic-bezier(.4,0,.2,1)}
-        .stats-thumb-row{display:flex;gap:12px;align-items:flex-start;flex-wrap:wrap}
-        .stats-thumb-img{width:36vw;max-width:420px;height:auto;object-fit:cover;border-radius:8px;flex-shrink:0;outline:1px solid rgba(255,255,255,0.1);outline-offset:-1px;max-height:44vh;border:none;}
-        html:not([dark]) .stats-thumb-img{outline:1px solid rgba(0,0,0,0.1);outline-offset:-1px;}
-        /* ensure the grid takes remaining horizontal space */
-        .stats-thumb-row .stats-grid{flex:1;min-width:0}
-        .stats-side-column{flex:1;min-width:280px;display:flex;flex-direction:column}
-        .stats-thumb-left{display:flex;flex-direction:column;align-items:center;gap:8px}
-        .stats-thumb-left .stats-thumb-sub{font-size:13px;color:var(--yt-stats-text-secondary-dark)}
-        html:not([dark]) .stats-thumb-left .stats-thumb-sub{color:var(--yt-stats-text-secondary-light)}
-        /* extras row under thumbnail: inline, single line */
-        .stats-thumb-extras{display:flex;flex-direction:row;gap:10px;align-items:center;margin-top:8px}
-        .stats-thumb-extras .stats-card{padding:8px 10px}
-        .stats-thumb-meta{display:flex;flex-direction:column;justify-content:center}
-        .stats-thumb-sub{font-size:13px;color:var(--yt-stats-text-secondary-dark)}
-        html:not([dark]) .stats-thumb-sub{color:var(--yt-stats-text-secondary-light)}
-        /* Loading state */
-        .stats-loader{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--yt-stats-loader-text-dark)}
-        html:not([dark]) .stats-loader{color:var(--yt-stats-loader-text-light)}
-        .stats-spinner{width:60px;height:60px;animation:spin 1s linear infinite;margin-bottom:16px}
-        .stats-spinner circle{stroke-dasharray:80;stroke-dashoffset:60;animation:dash 1.5s ease-in-out infinite}            
-        /* Error state */
-        .stats-error{display:flex;flex-direction:column;align-items:center;justify-content:center;padding:60px 20px;color:var(--yt-stats-error);text-align:center}
-        .stats-error-icon{width:60px;height:60px;margin-bottom:16px;stroke:var(--yt-stats-error)}
-        /* Stats grid */
-        .stats-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px}            
-        /* Stats card */
-        .stats-card{background:var(--yt-stats-card-bg-dark);border-radius:12px;padding:12px;display:flex;align-items:center;gap:12px;border:1px solid var(--yt-stats-card-border-dark);transition:transform .18s ease,box-shadow .18s ease}
-        html:not([dark]) .stats-card{background:var(--yt-stats-card-bg-light);border:1px solid var(--yt-stats-card-border-light)}
-        .stats-card:hover{transform:translateY(-2px);box-shadow:0 8px 20px var(--yt-stats-shadow-hover)}
-        /* Stats icon */
-        .stats-icon{width:48px;height:48px;border-radius:12px;display:flex;align-items:center;justify-content:center;flex-shrink:0}
-        .stats-icon svg{width:24px;height:24px}
-        .stats-icon-views{background:var(--yt-stats-icon-views-bg);color:var(--yt-stats-icon-views)}
-        .stats-icon-likes{background:var(--yt-stats-icon-likes-bg);color:var(--yt-stats-icon-likes)}
-        .stats-icon-dislikes{background:var(--yt-stats-icon-dislikes-bg);color:var(--yt-stats-icon-dislikes)}
-        .stats-icon-comments{background:var(--yt-stats-icon-comments-bg);color:var(--yt-stats-icon-comments)}
-        .stats-icon-viewers{background:var(--yt-stats-icon-viewers-bg);color:var(--yt-stats-icon-viewers)}
-        .stats-icon-subscribers{background:var(--yt-stats-icon-subscribers-bg);color:var(--yt-stats-icon-subscribers)}
-        .stats-icon-videos{background:var(--yt-stats-icon-videos-bg);color:var(--yt-stats-icon-videos)}
-        /* Pair likes/dislikes into a single grid cell */
-        .stats-card-pair{display:flex;gap:8px;align-items:stretch}
-        .stats-card-pair .stats-card{flex:1;margin:0}
-        @media(max-width:480px){.stats-card-pair{flex-direction:column}}            
-        /* Stats info */
-        .stats-info{flex:1;min-width:0}
-        .stats-label{font-size:13px;color:var(--yt-stats-text-label);margin-bottom:4px;font-weight:500}
-        html:not([dark]) .stats-label{color:var(--yt-stats-text-secondary-light)}
-        .stats-value{font-size:20px;font-weight:700;color:var(--yt-stats-text-value-dark);line-height:1.2;margin-bottom:2px}
-        html:not([dark]) .stats-value{color:var(--yt-stats-text-value-light)}
-        .stats-exact{font-size:13px;color:var(--yt-stats-text-exact-dark);font-weight:400}
-        html:not([dark]) .stats-exact{color:var(--yt-stats-text-exact-light)}
-        /* Animations — shared keyframes (fadeInModal, scaleInModal, spin, dash) defined in basic.js */
-        /* Responsive */
-        @media(max-width:768px){.stats-modal-container{width:95vw}.stats-grid{grid-template-columns:1fr}.stats-card{padding:16px}.stats-side-column{min-width:0;width:100%}}
-        /* Centered large author handle (preferred) */
-        .stats-author-big{display:block;text-align:center;margin-top:13px;padding-inline:8px}
-        .stats-author-name-big{display:block;color:var(--yt-stats-author-name-bright);font-weight:600;font-size:16px}
-        .stats-author-handle-big{display:inline-block;color:var(--yt-glass-border);font-weight:700;font-size:20px;text-decoration:none;padding:6px 10px;border-radius:6px}
-        .stats-author-handle-big:hover{color:var(--yt-stats-link-hover);text-decoration:underline}
-        html:not([dark]) .stats-author-name-big{color:var(--yt-stats-author-name-light)}
-        html:not([dark]) .stats-author-handle-big{color:var(--yt-stats-link-color)}
-        html:not([dark]) .stats-author-handle-big:hover{color:var(--yt-stats-link-hover-dark)}
-        `;
+    const escapeHtml = window.YouTubeSafeDOM?.escapeHTML || window.YouTubeUtils?.escapeHTML;
 
     let previousUrl = location.href;
     let isChecking = false;
-    let experimentalNavListenerKey = null;
     const channelFeatures = {
       hasStreams: false,
       hasShorts: false,
@@ -310,9 +704,23 @@
      * @private
      */
     function addStyles() {
-      if (!byId('youtube-enhancer-styles')) {
-        U.StyleManager.add('youtube-enhancer-styles', styles);
-      }
+      videoStatsCtx?.style('yp-video-stats-styles', getStatsStyles_('yp-video-stats-styles'));
+    }
+
+    let statsModalStylesAdded = false;
+
+    /**
+     * Inject the stats modal CSS right before the modal is inserted, so a
+     * page that never opens it costs nothing for its rules.
+     * @returns {void}
+     */
+    function ensureStatsModalStyles() {
+      if (statsModalStylesAdded || !videoStatsCtx) return;
+      statsModalStylesAdded = true;
+      videoStatsCtx.style(
+        'yp-video-stats-modal-styles',
+        getStatsStyles_('yp-video-stats-modal-styles')
+      );
     }
 
     /**
@@ -320,33 +728,32 @@
      * @param {string} id - Video ID to validate
      * @returns {boolean} True if valid
      */
-    // Use security-utils canonical implementation when available; local fallback for robustness
+    // Local validation; YouTubeSafeDOM.isValidVideoId is the primary implementation.
     const isValidVideoId = /** @type {(id: string | null) => boolean} */ (
-      window.YouTubeSecurityUtils?.isValidVideoId ||
+      window.YouTubeSafeDOM?.isValidVideoId ||
         /** @type {(id: string | null) => boolean} */ (
           id => !!id && /^[a-zA-Z0-9_-]{11}$/.test(/** @type {string} */ (id))
         )
     );
 
     /**
-     * Extract video ID from URL parameters
-     * @returns {string|null} Video ID or null
+     * Watch URL for a video ID taken from the current page.
+     * @returns {string|null} Full YouTube watch URL or null
      */
     function getVideoIdFromParams() {
-      const urlParams = new URLSearchParams(window.location.search);
-      const videoId = urlParams.get('v');
+      const videoId = U.getVideoIdFromUrl(window.location.href);
       return isValidVideoId(videoId) ? `https://www.youtube.com/watch?v=${videoId}` : null;
     }
 
     /**
-     * Extract video ID from shorts URL
+     * Shorts URL for a video ID taken from the given shorts URL.
      * @param {string} url - Current URL
-     * @returns {string|null} Video ID or null
+     * @returns {string|null} Full YouTube shorts URL or null
      */
     function getVideoIdFromShorts(url) {
-      const shortsMatch = url.match(/\/shorts\/([^?]+)/);
-      if (shortsMatch && isValidVideoId(shortsMatch[1])) {
-        return `https://www.youtube.com/shorts/${shortsMatch[1]}`;
+      const videoId = U.getVideoIdFromUrl(url);
+      if (isValidVideoId(videoId)) {
+        return `https://www.youtube.com/shorts/${videoId}`;
       }
       return null;
     }
@@ -356,24 +763,19 @@
      * @returns {string|null} Full YouTube video/shorts URL or null
      */
     function getCurrentVideoUrl() {
-      try {
-        const url = window.location.href;
+      const url = window.location.href;
 
-        // Validate URL is from YouTube domain
-        if (!url.includes('youtube.com')) {
-          return null;
-        }
-
-        // Try to get video ID from query params first
-        const fromParams = getVideoIdFromParams();
-        if (fromParams) return fromParams;
-
-        // Try to get from shorts URL
-        return getVideoIdFromShorts(url);
-      } catch (error) {
-        U?.logError?.('Stats', 'Failed to get video URL', /** @type {any} */ (error));
+      // Validate URL is from YouTube domain
+      if (!url.includes('youtube.com')) {
         return null;
       }
+
+      // Shorts pages keep the /shorts/ form; everything else uses ?v=
+      if ((window.location.pathname || '').startsWith('/shorts/')) {
+        return getVideoIdFromShorts(url);
+      }
+
+      return getVideoIdFromParams();
     }
 
     /**
@@ -381,26 +783,21 @@
      * @returns {string} Channel identifier
      */
     function getChannelIdentifier() {
-      try {
-        const url = window.location.href;
-        let identifier = '';
+      const url = window.location.href;
+      let identifier = '';
 
-        if (url.includes('/channel/')) {
-          identifier = url.split('/channel/')[1].split('/')[0];
-        } else if (url.includes('/@')) {
-          identifier = url.split('/@')[1].split('/')[0];
-        }
-
-        // Validate identifier (alphanumeric, dashes, underscores)
-        if (identifier && /^[a-zA-Z0-9_-]+$/.test(identifier)) {
-          return identifier;
-        }
-
-        return '';
-      } catch (error) {
-        U?.logError?.('Stats', 'Failed to get channel identifier', /** @type {any} */ (error));
-        return '';
+      if (url.includes('/channel/')) {
+        identifier = url.split('/channel/')[1]?.split('/')[0] || '';
+      } else if (url.includes('/@')) {
+        identifier = url.split('/@')[1]?.split('/')[0] || '';
       }
+
+      // Validate identifier (alphanumeric, dashes, underscores)
+      if (identifier && /^[a-zA-Z0-9_-]+$/.test(identifier)) {
+        return identifier;
+      }
+
+      return '';
     }
 
     /**
@@ -421,7 +818,8 @@
         }
         return true;
       } catch (error) {
-        U?.logError?.('Stats', 'Invalid URL for channel check', /** @type {any} */ (error));
+        logS(error);
+        U.logError?.('Stats', 'Invalid URL for channel check', error);
         return false;
       }
     }
@@ -445,6 +843,7 @@
           return null;
         }
       } catch (_e) {
+        logS(_e);
         return null;
       }
 
@@ -481,7 +880,8 @@
 
         return html;
       } catch (error) {
-        if (/** @type {any} */ (error).name === 'AbortError') {
+        logS(error);
+        if (error instanceof Error && error.name === 'AbortError') {
           window.YouTubePlusLogger?.warn?.('Stats', 'Channel check timed out');
         }
         throw error;
@@ -503,17 +903,18 @@
       try {
         return JSON.parse(match[1]);
       } catch (parseError) {
-        U?.logError?.('Stats', 'Failed to parse ytInitialData', /** @type {any} */ (parseError));
+        logS(parseError);
+        U.logError?.('Stats', 'Failed to parse ytInitialData', parseError);
         return null;
       }
     }
 
     /**
      * Extract tab URL from tab renderer
-     * @param {any} tab - Tab object
+     * @param {ChannelTabRenderer} tab - Tab object
      * @returns {string|null} Tab URL or null
      */
-    function getTabUrl(/** @type {ChannelTabRenderer} */ tab) {
+    function getTabUrl(tab) {
       return tab?.tabRenderer?.endpoint?.commandMetadata?.webCommandMetadata?.url || null;
     }
 
@@ -563,7 +964,7 @@
     /**
      * Update content type flags based on tab URL
      * @param {string} tabUrl - Tab URL
-     * @param {any} flags - Flags object with hasStreams and hasShorts
+     * @param {ChannelFeatureFlags} flags - Flags object with hasStreams and hasShorts
      */
     function updateContentTypeFlags(
       /** @type {string} */ tabUrl,
@@ -646,7 +1047,8 @@
 
         refreshStatsMenu();
       } catch (error) {
-        U?.logError?.('Stats', 'Channel tab check failed', /** @type {any} */ (error));
+        logS(error);
+        U.logError?.('Stats', 'Channel tab check failed', error);
       } finally {
         isChecking = false;
       }
@@ -655,117 +1057,171 @@
     /**
      * Check for URL changes with debouncing
      */
-    const checkUrlChange =
-      U?.debounce?.(() => {
-        try {
-          const currentUrl = location.href;
-          if (currentUrl !== previousUrl) {
-            previousUrl = currentUrl;
-            if (U?.isChannelPage?.(currentUrl) ?? false) {
-              setTimeout(() => checkChannelTabs(currentUrl), 500);
-            }
-          }
-        } catch (error) {
-          U?.logError?.('Stats', 'URL change check failed', /** @type {any} */ (error));
+    const runUrlChangeCheck = () => {
+      const currentUrl = location.href;
+      if (currentUrl !== previousUrl) {
+        previousUrl = currentUrl;
+        checkAndInsertIcon();
+        if (U.isChannelPage?.(currentUrl)) {
+          setTimeout(() => checkChannelTabs(currentUrl), 500);
         }
-      }, 300) ||
-      function () {
-        try {
-          const currentUrl = location.href;
-          if (currentUrl !== previousUrl) {
-            previousUrl = currentUrl;
-            if (U?.isChannelPage?.(currentUrl) ?? false) {
-              setTimeout(() => checkChannelTabs(currentUrl), 500);
-            }
-          }
-        } catch (error) {
-          window.YouTubePlusLogger?.error?.('Stats', 'URL change check failed:', error);
-        }
-      };
+      }
+    };
+
+    const checkUrlChange = U.debounce(runUrlChangeCheck, 300);
 
     function createStatsIcon() {
-      const icon = document.createElement('div');
-      // single universal icon for all pages
-      icon.className = 'videoStats';
+      const icon = document.createElement('button');
+      icon.type = 'button';
+      // universal icon matching YouTube player buttons
+      icon.className = 'ytp-button videoStats yp-stats-button';
       icon.id = STATS_ICON_ID;
-      icon.setAttribute('data-ytp-stats-icon', 'true');
-      _setSafeHTML(
-        icon,
-        '<svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M22 22H2" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path> <path opacity="0.5" d="M21 22V14.5C21 13.6716 20.3284 13 19.5 13H16.5C15.6716 13 15 13.6716 15 14.5V22" stroke="currentColor" stroke-width="1.5" " data-darkreader-inline-stroke=""></path> <path d="M15 22V5C15 3.58579 15 2.87868 14.5607 2.43934C14.1213 2 13.4142 2 12 2C10.5858 2 9.87868 2 9.43934 2.43934C9 2.87868 9 3.58579 9 5V22" stroke="currentColor" stroke-width="1.5"></path> <path opacity="0.5" d="M9 22V9.5C9 8.67157 8.32843 8 7.5 8H4.5C3.67157 8 3 8.67157 3 9.5V22" stroke="currentColor" stroke-width="1.5"></path></svg>'
-      );
+      icon.setAttribute('data-yp-stats-icon', 'true');
+      icon.setAttribute('title', U.t?.('videoStats') || 'Video Stats');
+      icon.setAttribute('aria-label', U.t?.('videoStats') || 'Video Stats');
+      _setSafeHTML(icon, BAR_CHART_ICON_SVG);
 
-      icon.addEventListener('click', e => {
-        e.preventDefault();
-        e.stopPropagation();
-        const videoUrl = getCurrentVideoUrl();
-        if (videoUrl) {
-          const urlParams = new URLSearchParams(new URL(videoUrl).search);
-          const videoId = urlParams.get('v') || videoUrl.match(/\/shorts\/([^?]+)/)?.[1];
-          if (videoId) {
-            openStatsModal('video', videoId);
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        icon,
+        'click',
+        e => {
+          e.preventDefault();
+          e.stopPropagation();
+          const videoUrl = getCurrentVideoUrl();
+          if (videoUrl) {
+            const videoId = U.getVideoIdFromUrl(videoUrl);
+            if (videoId) {
+              openStatsModal('video', videoId);
+            }
           }
-        }
-      });
+        },
+        undefined,
+        false
+      );
 
       return icon;
     }
 
     /**
-     * Insert the universal stats icon into the masthead #end container
+     * Find target container for stats button
+     * @returns {Element|null}
+     */
+    function findStatsMountTarget() {
+      const isShorts = (window.location.pathname || '').startsWith('/shorts');
+      if (isShorts) {
+        const dlBtn = document.querySelector('.yp-shorts-download');
+        if (dlBtn?.parentElement) return dlBtn.parentElement;
+        const activeReel =
+          document.querySelector('ytd-reel-video-renderer[is-active]') ||
+          document.querySelector('ytd-reel-video-renderer[is-active="true"]') ||
+          document.querySelector('#shorts-player ytd-reel-video-renderer');
+        const root = /** @type {ParentNode} */ (activeReel || document);
+        const likeEl = root.querySelector(
+          'like-button-view-model, #like-button, button[aria-label*="Like" i]:not([aria-label*="Dislike" i]):not(.yp-shorts-dislike-btn), button[aria-label*="Нравится" i]:not([aria-label*="Не нравится" i])'
+        );
+        const likeAnchor =
+          likeEl?.closest?.(
+            'like-button-view-model, #like-button, reel-action-view-model, ytw-reel-action-view-model, [class*="ReelActionViewModel"]'
+          ) || likeEl;
+        if (likeAnchor?.parentElement) return likeAnchor.parentElement;
+        return root.querySelector(
+          'ytwReelActionBarViewModelHostDesktop, ytwReelActionBarViewModelHost, [class*="ytwReelActionBarViewModelHost"], reel-action-bar-view-model, ytd-reel-player-overlay-renderer #actions, #actions'
+        );
+      }
+
+      const controls = $('.ytp-right-controls');
+      const isWatch = window.YouTubeUtils?.isWatchPage?.(window.location.href) ?? false;
+      if (controls && isWatch) return controls;
+
+      return null;
+    }
+
+    /**
+     * Disconnect a stats node's tracked listeners/observers before removing it.
+     * @param {Element | null | undefined} el
+     */
+    function removeStatsNode_(el) {
+      if (!el) return;
+      window.YouTubePlusCleanupManager?.disconnectForElement?.(el);
+      el.remove();
+    }
+
+    function clearStatsIcons_() {
+      document.querySelectorAll(STATS_ICON_SELECTOR).forEach(removeStatsNode_);
+    }
+
+    /**
+     * @param {NodeListOf<Element> | Element[]} existingIcons
+     * @param {Element | null} keepIcon
+     */
+    function removeDuplicateStatsIcons_(existingIcons, keepIcon) {
+      if (existingIcons.length <= 1) return;
+      existingIcons.forEach(icon => {
+        if (icon !== keepIcon) {
+          removeStatsNode_(icon);
+        }
+      });
+    }
+
+    /**
+     * @param {Element} statsIcon
+     * @param {Element} target
+     * @param {boolean} isShorts
+     */
+    function positionStatsIcon_(statsIcon, target, isShorts) {
+      if (isShorts) {
+        const dlBtn = target.querySelector('.yp-shorts-download');
+        if (dlBtn) {
+          if (dlBtn.nextElementSibling !== statsIcon) {
+            dlBtn.insertAdjacentElement('afterend', statsIcon);
+          }
+          return;
+        }
+      }
+      if (statsIcon.parentNode !== target) {
+        target.insertBefore(statsIcon, target.firstChild);
+      }
+    }
+
+    /**
+     * Insert the universal stats icon into player controls or Shorts action bar
      * @returns {void}
      */
     function insertUniversalIcon() {
       if (!statsButtonEnabled) return;
 
-      // Try to insert into masthead area (requested: "style-scope ytd-masthead").
-      // Prefer element matching 'ytd-masthead.style-scope' if present, otherwise fallback to 'ytd-masthead'.
-      let masthead = $('ytd-masthead.style-scope');
-      if (!masthead) masthead = $('ytd-masthead');
+      const target = findStatsMountTarget();
+      if (!target) {
+        clearStatsIcons_();
+        return;
+      }
 
-      if (!masthead) return;
+      if (
+        window.YouTubePlusDesignSystem?.getThemeVariant?.() === 'vision' &&
+        target.classList.contains('ytp-right-controls')
+      ) {
+        clearStatsIcons_();
+        return;
+      }
 
-      // Preferred target: element with id="end" and class containing 'style-scope' inside masthead
-      let endElem = $('#end.style-scope.ytd-masthead', /** @type {any} */ (masthead));
-      if (!endElem) endElem = $('#end', /** @type {any} */ (masthead));
-
-      const existingIcons = $$(STATS_ICON_SELECTOR);
-      let statsIcon = byId(STATS_ICON_ID);
+      const existingIcons = Array.from(document.querySelectorAll(STATS_ICON_SELECTOR));
+      let statsIcon = /** @type {HTMLElement | null} */ (document.getElementById(STATS_ICON_ID));
       if (!statsIcon && existingIcons.length > 0) {
         statsIcon = /** @type {HTMLElement} */ (existingIcons[0]);
       }
-
-      // Remove duplicates aggressively (helps if script was loaded twice in different contexts)
-      if (existingIcons.length > 1) {
-        existingIcons.forEach(icon => {
-          if (icon !== statsIcon) {
-            try {
-              icon.remove();
-            } catch (_e) {
-              /* ignore detached node errors */
-            }
-          }
-        });
-      }
+      removeDuplicateStatsIcons_(existingIcons, statsIcon);
 
       if (!statsIcon) {
         statsIcon = createStatsIcon();
-      } else {
-        statsIcon.id = STATS_ICON_ID;
-        statsIcon.classList.add('videoStats');
-        statsIcon.setAttribute('data-ytp-stats-icon', 'true');
       }
+      const isShorts = (window.location.pathname || '').startsWith('/shorts');
+      statsIcon.id = STATS_ICON_ID;
+      statsIcon.className = isShorts
+        ? 'shortsStats yp-stats-button'
+        : 'ytp-button videoStats yp-stats-button';
+      statsIcon.setAttribute('data-yp-stats-icon', 'true');
 
-      if (endElem) {
-        // Insert as first child of #end so it appears at the beginning
-        if (statsIcon.parentNode !== endElem || endElem.firstChild !== statsIcon) {
-          endElem.insertBefore(statsIcon, endElem.firstChild);
-        }
-      } else {
-        // Fallback: append to masthead
-        if (statsIcon.parentNode !== masthead) {
-          masthead.appendChild(statsIcon);
-        }
-      }
+      positionStatsIcon_(statsIcon, target, isShorts);
     }
 
     /**
@@ -791,17 +1247,23 @@
       button.className = `yt-spec-button-shape-next yt-spec-button-shape-next--outline yt-spec-button-shape-next--mono yt-spec-button-shape-next--size-m yt-spec-button-shape-next--enable-backdrop-filter-experiment ${className}-button`;
       button.setAttribute('aria-disabled', 'false');
       button.setAttribute('aria-label', text);
-      button.classList.add('ytp-stats-btn');
+      button.classList.add('yp-stats-btn');
 
-      button.addEventListener('click', (/** @type {MouseEvent} */ e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onClick();
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        button,
+        'click',
+        (/** @type {MouseEvent} */ e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          onClick();
+        },
+        undefined,
+        false
+      );
 
       const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
       svg.setAttribute('viewBox', viewBox);
-      svg.classList.add('ytp-stats-icon');
+      svg.classList.add('yp-stats-icon');
 
       const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
       path.setAttribute('d', svgPath);
@@ -810,25 +1272,10 @@
       const buttonText = document.createElement('div');
       buttonText.className = `yt-spec-button-shape-next__button-text-content ${className}-text`;
       buttonText.textContent = text;
-      buttonText.classList.add('ytp-stats-btn-text');
+      buttonText.classList.add('yp-stats-btn-text');
 
-      const touchFeedback = document.createElement('yt-touch-feedback-shape');
-      touchFeedback.classList.add('ytp-stats-touch-feedback');
-
-      const touchFeedbackDiv = document.createElement('div');
-      touchFeedbackDiv.className =
-        'yt-spec-touch-feedback-shape yt-spec-touch-feedback-shape--touch-response';
-      touchFeedbackDiv.setAttribute('aria-hidden', 'true');
-
-      const strokeDiv = document.createElement('div');
-      strokeDiv.className = 'yt-spec-touch-feedback-shape__stroke';
-
-      const fillDiv = document.createElement('div');
-      fillDiv.className = 'yt-spec-touch-feedback-shape__fill';
-
-      touchFeedbackDiv.appendChild(strokeDiv);
-      touchFeedbackDiv.appendChild(fillDiv);
-      touchFeedback.appendChild(touchFeedbackDiv);
+      const touchFeedback = createTouchFeedbackShape_();
+      touchFeedback.classList.add('yp-stats-touch-feedback');
 
       button.appendChild(svg);
       button.appendChild(buttonText);
@@ -841,39 +1288,37 @@
     /**
      * InnerTube API configuration.
      *
-     * The InnerTube key is YouTube's public web-player API key — it is shipped to
-     * every browser by `window.ytcfg`. It is NOT a secret, but to avoid noisy
-     * matches from secret scanners (TruffleHog, GitHub secret-scan, Snyk), we
-     * resolve it at runtime from ytcfg/yt.config_ first and only fall back to a
-     * base64-encoded literal as a last resort.
+     * The InnerTube key is YouTube's public web-player API key, published by the
+     * page window in `ytcfg`. It is read from there at runtime; when the page
+     * does not expose it (or uses a different config shape) the InnerTube calls
+     * are skipped instead of shipping a hardcoded key in the bundle.
      */
-    const INNERTUBE_API_KEY_FALLBACK_B64 = 'QUl6YVN5QU9fRkoyU2xxVThRNFNURUhMR0NpbHdfWTlfMTFxY1c4';
 
     /**
-     * Resolve the InnerTube API key dynamically from YouTube's runtime config,
-     * falling back to the base64-encoded literal if runtime extraction fails.
-     * @returns {string} InnerTube API key
+     * Resolve the InnerTube API key from YouTube's runtime config.
+     * @returns {string} InnerTube API key, or an empty string when unavailable
      */
     function getInnerTubeApiKey() {
       try {
-        if (typeof window.ytcfg !== 'undefined' && typeof window.ytcfg.get === 'function') {
-          const k = window.ytcfg.get('INNERTUBE_API_KEY');
+        // Read `ytcfg` from the PAGE window: the sandbox `window` does not
+        // carry YouTube's page globals (same reason extractViews reads
+        // `ytInitialPlayerResponse` through getPageGlobal()).
+        const page = getPageGlobal();
+        const cfg = page.ytcfg;
+        if (cfg && typeof cfg.get === 'function') {
+          const k = cfg.get('INNERTUBE_API_KEY');
           if (k && typeof k === 'string') return k;
         }
-        if (window.ytcfg?.data_?.INNERTUBE_API_KEY) {
-          return window.ytcfg.data_.INNERTUBE_API_KEY;
+        if (cfg?.data_?.INNERTUBE_API_KEY) {
+          return /** @type {string} */ (cfg.data_.INNERTUBE_API_KEY);
         }
-        if (window.yt?.config_?.INNERTUBE_API_KEY) {
-          return window.yt.config_.INNERTUBE_API_KEY;
+        if (page.yt?.config_?.INNERTUBE_API_KEY) {
+          return /** @type {string} */ (page.yt.config_.INNERTUBE_API_KEY);
         }
       } catch (_e) {
-        // Non-critical, fall through to decoded fallback
+        logS(_e);
       }
-      try {
-        return window.atob(INNERTUBE_API_KEY_FALLBACK_B64);
-      } catch (_e) {
-        return '';
-      }
+      return '';
     }
 
     const INNERTUBE_CLIENT_VERSION_FALLBACK = '2.20250312.01.00';
@@ -885,20 +1330,23 @@
      */
     function getInnerTubeClientVersion() {
       try {
-        // Try to extract from YouTube's runtime config
-        if (typeof window.ytcfg !== 'undefined' && typeof window.ytcfg.get === 'function') {
-          const version = window.ytcfg.get('INNERTUBE_CLIENT_VERSION');
+        // Try to extract from YouTube's runtime config (PAGE window).
+        const page = getPageGlobal();
+        const cfg = page.ytcfg;
+        if (cfg && typeof cfg.get === 'function') {
+          const version = cfg.get('INNERTUBE_CLIENT_VERSION');
           if (version && typeof version === 'string') return version;
         }
         // Try ytcfg.data_ directly
-        if (window.ytcfg?.data_?.INNERTUBE_CLIENT_VERSION) {
-          return window.ytcfg.data_.INNERTUBE_CLIENT_VERSION;
+        if (cfg?.data_?.INNERTUBE_CLIENT_VERSION) {
+          return /** @type {string} */ (cfg.data_.INNERTUBE_CLIENT_VERSION);
         }
         // Try yt.config_
-        if (window.yt?.config_?.INNERTUBE_CLIENT_VERSION) {
-          return window.yt.config_.INNERTUBE_CLIENT_VERSION;
+        if (page.yt?.config_?.INNERTUBE_CLIENT_VERSION) {
+          return /** @type {string} */ (page.yt.config_.INNERTUBE_CLIENT_VERSION);
         }
       } catch (_e) {
+        logS(_e);
         // Extraction failed, use fallback
       }
       return INNERTUBE_CLIENT_VERSION_FALLBACK;
@@ -907,12 +1355,12 @@
     /**
      * Fetch video stats from InnerTube API (more complete data)
      * @param {string} videoId - Video ID
-     * @returns {Promise<any|null>} Video stats with views, likes, country, monetization
+     * @returns {Promise<VideoStatsData|null>} Video stats with views, likes, country, monetization
      */
     /**
      * Create InnerTube API request body
      * @param {string} videoId - Video ID
-     * @returns {any} Request body
+     * @returns {InnerTubeRequestBody} Request body
      */
     function createInnerTubeRequestBody(videoId) {
       return {
@@ -930,10 +1378,10 @@
 
     /**
      * Create InnerTube API fetch options
-     * @param {string} videoId - Video ID
-     * @returns {any} Fetch options
+     * @param {InnerTubeRequestBody} body - Request body
+     * @returns {InnerTubeFetchOptions} Fetch options
      */
-    function createInnerTubeFetchOptions(videoId) {
+    function createInnerTubeFetchOptions(body) {
       return {
         method: 'POST',
         headers: {
@@ -941,28 +1389,28 @@
           'X-YouTube-Client-Name': '1',
           'X-YouTube-Client-Version': getInnerTubeClientVersion(),
         },
-        body: JSON.stringify(createInnerTubeRequestBody(videoId)),
+        body: JSON.stringify(body),
       };
     }
 
     /**
      * Extract best thumbnail URL from details
-     * @param {any} details - Video details
+     * @param {PlayerResponseData['videoDetails']} details - Video details
      * @returns {string|null} Thumbnail URL
      */
-    function extractThumbnailUrl(/** @type {any} */ details) {
-      const thumbnails = details.thumbnail?.thumbnails;
+    function extractThumbnailUrl(details) {
+      const thumbnails = details?.thumbnail?.thumbnails;
       return thumbnails?.[thumbnails.length - 1]?.url || null;
     }
 
     /**
      * Parse video stats from InnerTube response
-     * @param {any} data - InnerTube response data
-     * @returns {any} Parsed video stats
+     * @param {PlayerResponseData} data - InnerTube response data
+     * @returns {VideoStatsData} Parsed video stats
      */
-    function parseVideoStatsFromResponse(/** @type {any} */ data) {
-      const details = data.videoDetails || {};
-      const microformat = data.microformat?.playerMicroformatRenderer || {};
+    function parseVideoStatsFromResponse(data) {
+      const details = data?.videoDetails || {};
+      const microformat = data?.microformat?.playerMicroformatRenderer || {};
 
       // Extract channel handle from ownerProfileUrl (e.g. "/@handle" → "@handle")
       const ownerProfileUrl = microformat.ownerProfileUrl || microformat.ownerUrls?.[0] || '';
@@ -985,14 +1433,41 @@
     }
 
     /**
+     * Depth-first search through an InnerTube response graph, returning the
+     * first value its `pick` selector resolves from a visited node. Modern
+     * channel pages reach the About panel (creator country) through a header
+     * continuation token instead of exposing the country in the header.
+     * @param {unknown} root
+     * @param {(record: Record<string, unknown>) => string | null} pick
+     * @returns {string|null}
+     */
+    function findInResponseGraph_(root, pick) {
+      /** @type {unknown[]} */
+      const stack = [root];
+      const seen = new WeakSet();
+      while (stack.length) {
+        const node = stack.pop();
+        if (!node || typeof node !== 'object' || seen.has(node)) continue;
+        seen.add(node);
+        const record = /** @type {Record<string, unknown>} */ (node);
+        const hit = pick(record);
+        if (hit) return hit;
+        for (const key of Object.keys(record)) stack.push(record[key]);
+      }
+      return null;
+    }
+
+    /**
      * Fetch the channel creator's country from InnerTube browse API
      * @param {string} channelId - YouTube channel ID (UCxxxx)
-     * @returns {Promise<string|null>} 2-letter country code or null
+     * @returns {Promise<string|null>} Country code/name or null
      */
     async function fetchChannelCountryFromInnerTube(channelId) {
       if (!channelId) return null;
       try {
-        const url = `https://www.youtube.com/youtubei/v1/browse?key=${getInnerTubeApiKey()}&prettyPrint=false`;
+        const apiKey = getInnerTubeApiKey();
+        if (!apiKey) return null;
+        const url = `https://www.youtube.com/youtubei/v1/browse?key=${apiKey}&prettyPrint=false`;
         const body = {
           browseId: channelId,
           context: {
@@ -1004,24 +1479,17 @@
             },
           },
         };
-        const response = await fetch(url, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/json',
-            'X-YouTube-Client-Name': '1',
-            'X-YouTube-Client-Version': getInnerTubeClientVersion(),
-          },
-          body: JSON.stringify(body),
-        });
+        const response = await fetchWithDeadline_(url, createInnerTubeFetchOptions(body), 10000);
         if (!response.ok) return null;
         const data = await response.json();
-        // Try multiple header paths — YouTube returns c4TabbedHeaderRenderer for
+        // Try multiple header paths: YouTube returns c4TabbedHeaderRenderer for
         // older-UI channels and pageHeaderRenderer for newer-UI channels.
         // Also check frameworkUpdates mutations for new-UI country metadata.
         const country =
           data?.header?.c4TabbedHeaderRenderer?.country ||
           data?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.find?.(
-            (/** @type {any} */ p) => p?.text?.content?.length === 2
+            (/** @type {{ text?: { content?: string } } | undefined} */ p) =>
+              p?.text?.content?.length === 2
           )?.text?.content ||
           (() => {
             const mutations = data?.frameworkUpdates?.entityBatchUpdate?.mutations || [];
@@ -1033,8 +1501,36 @@
             }
             return null;
           })();
-        return country || null;
+        if (country) return country;
+
+        // Modern channel pages omit the creator country from the header. It
+        // lives in the About panel, reached through a continuation token
+        // embedded in the header.
+        const continuationToken = findInResponseGraph_(data?.header, record => {
+          const command = record.continuationCommand;
+          if (command && typeof command === 'object') {
+            const token = /** @type {Record<string, unknown>} */ (command).token;
+            if (typeof token === 'string' && token) return token;
+          }
+          return null;
+        });
+        if (!continuationToken) return null;
+        const aboutResponse = await fetchWithDeadline_(
+          url,
+          createInnerTubeFetchOptions({ context: body.context, continuation: continuationToken }),
+          10000
+        );
+        if (!aboutResponse.ok) return null;
+        return findInResponseGraph_(await aboutResponse.json(), record => {
+          const about = record.aboutChannelViewModel;
+          if (about && typeof about === 'object') {
+            const country = /** @type {Record<string, unknown>} */ (about).country;
+            if (typeof country === 'string' && country) return country;
+          }
+          return null;
+        });
       } catch (_e) {
+        logS(_e);
         return null;
       }
     }
@@ -1042,14 +1538,26 @@
     /**
      * Fetch video stats from InnerTube API
      * @param {string} videoId - Video ID
-     * @returns {Promise<any|null>} Video stats or null
+     * @returns {Promise<VideoStatsData|null>} Video stats or null
      */
     async function fetchVideoStatsInnerTube(videoId) {
       if (!videoId) return null;
 
       try {
-        const url = `https://www.youtube.com/youtubei/v1/player?key=${getInnerTubeApiKey()}&prettyPrint=false`;
-        const response = await fetch(url, createInnerTubeFetchOptions(videoId));
+        const apiKey = getInnerTubeApiKey();
+        if (!apiKey) {
+          window.YouTubePlusLogger?.warn?.(
+            'Stats',
+            'InnerTube API key is unavailable from ytcfg; skipping the stats request'
+          );
+          return null;
+        }
+        const url = `https://www.youtube.com/youtubei/v1/player?key=${apiKey}&prettyPrint=false`;
+        const response = await fetchWithDeadline_(
+          url,
+          createInnerTubeFetchOptions(createInnerTubeRequestBody(videoId)),
+          10000
+        );
 
         if (!response.ok) {
           window.YouTubePlusLogger?.warn?.('Stats', `InnerTube API failed:`, response.status);
@@ -1066,41 +1574,8 @@
 
         return stats;
       } catch (error) {
+        logS(error);
         window.YouTubePlusLogger?.error?.('Stats', 'InnerTube fetch error:', error);
-        return null;
-      }
-    }
-
-    /**
-     * Fetch dislikes from Return YouTube Dislike API
-     * P8: deferred via requestIdleCallback — non-critical external call
-     * @param {string} videoId - Video ID
-     * @returns {Promise<any|null>} Likes and dislikes data
-     */
-    async function fetchDislikesData(videoId) {
-      if (!videoId) return null;
-      // P8: defer until browser is idle (non-critical enrichment data)
-      await new Promise(resolve => {
-        if (typeof requestIdleCallback === 'function') {
-          requestIdleCallback(resolve, { timeout: 3000 });
-        } else {
-          setTimeout(resolve, 0);
-        }
-      });
-      try {
-        const response = await fetch(
-          `https://returnyoutubedislikeapi.com/votes?videoId=${videoId}`
-        );
-        if (!response.ok) return null;
-
-        const data = await response.json();
-        return {
-          likes: data.likes || null,
-          dislikes: data.dislikes || null,
-          rating: data.rating || null,
-        };
-      } catch (error) {
-        window.YouTubePlusLogger?.error?.('Stats', 'Failed to fetch dislikes:', error);
         return null;
       }
     }
@@ -1109,7 +1584,7 @@
      * Fetch video or channel stats from API (combines InnerTube + RYD)
      * @param {string} type - 'video' or 'channel'
      * @param {string} id - Video ID or Channel ID
-     * @returns {Promise<any|null>} Stats data or null on error
+     * @returns {Promise<{ ok: boolean, status: number, data: VideoStatsData | LivecountsChannelStats | null, url?: string }>} Stats data or null on error
      */
     async function fetchStats(type, id) {
       if (!id) return { ok: false, status: 0, data: null };
@@ -1123,7 +1598,7 @@
           }
 
           // Fetch likes/dislikes from RYD API
-          const dislikeData = /** @type {any} */ (await fetchDislikesData(id));
+          const dislikeData = await fetchDislikesData(id);
           if (dislikeData) {
             videoData.likes = dislikeData.likes;
             videoData.dislikes = dislikeData.dislikes;
@@ -1135,12 +1610,16 @@
 
         // For channels, use existing API
         const endpoint = `https://api.livecounts.io/youtube-live-subscriber-counter/stats/${id}`;
-        const response = await fetch(endpoint, {
-          method: 'GET',
-          headers: {
-            Accept: 'application/json',
+        const response = await fetchWithDeadline_(
+          endpoint,
+          {
+            method: 'GET',
+            headers: {
+              Accept: 'application/json',
+            },
           },
-        });
+          10000
+        );
 
         if (!response.ok) {
           window.YouTubePlusLogger?.warn?.(
@@ -1148,13 +1627,23 @@
             `Failed to fetch ${type} stats:`,
             response.status
           );
-          return { ok: false, status: response.status, data: null, url: endpoint };
+          return {
+            ok: false,
+            status: response.status,
+            data: null,
+            url: endpoint,
+          };
         }
 
         const data = await response.json();
+        if (!numbersAreValidCounts_(data)) {
+          // A malformed counter payload is a failed request, not a partial result.
+          return { ok: false, status: response.status, data: null, url: endpoint };
+        }
         return { ok: true, status: response.status, data, url: endpoint };
       } catch (error) {
-        U?.logError?.('Stats', `Failed to fetch ${type} stats`, /** @type {any} */ (error));
+        logS(error);
+        U.logError?.('Stats', `Failed to fetch ${type} stats`, error);
         return { ok: false, status: 0, data: null };
       }
     }
@@ -1164,132 +1653,158 @@
      * Returns an object with views, likes, comments, subscribers when available
      */
     /**
+     * @param {PlayerResponseData['videoDetails'] | null | undefined} details
+     * @param {string|null} currentVideoId
+     * @returns {number|null}
+     */
+    function extractViewsFromDetails_(details, currentVideoId) {
+      if (!isOwnVideoDetails_(details, currentVideoId)) return null;
+      const count = Number(details?.viewCount);
+      return Number.isFinite(count) ? count : null;
+    }
+
+    /**
+     * @param {(Window & typeof globalThis & { ytInitialPlayerResponse?: PlayerResponseData }) | null | undefined} pageGlobal
+     * @param {string|null} currentVideoId
+     * @returns {number|null}
+     */
+    function extractViewsFromPlayer_(pageGlobal, currentVideoId) {
+      const doc = pageGlobal?.document || document;
+      const playerEl = /** @type {(HTMLElement & { wrappedJSObject?: unknown }) | null} */ (
+        doc.getElementById?.('movie_player') || document.getElementById('movie_player')
+      );
+      const livePlayer =
+        /** @type {(HTMLElement & { getPlayerResponse?: () => PlayerResponseData | null | undefined }) | null} */ (
+          playerEl?.wrappedJSObject || playerEl
+        );
+      let liveDetails = null;
+      try {
+        liveDetails = livePlayer?.getPlayerResponse?.()?.videoDetails;
+      } catch (_e) {
+        // page player object denied or not ready (cross-context access)
+        logS(_e);
+      }
+      const liveViews = extractViewsFromDetails_(liveDetails, currentVideoId);
+      if (liveViews != null) return liveViews;
+
+      const initialDetails = pageGlobal?.ytInitialPlayerResponse?.videoDetails;
+      return extractViewsFromDetails_(initialDetails, currentVideoId);
+    }
+
+    /**
      * Get video stats from current page DOM
      * Refactored to use helper functions and reduce complexity
-     * @returns {any|null} Stats object or null
+     * @returns {PageStatsData|null} Stats object or null
      */
     function getPageVideoStats() {
-      try {
-        // Use centralized helpers from YouTubeStatsHelpers when available.
-        // If not present (some runtime environments), provide a lightweight
-        // DOM-based fallback to avoid noisy errors and still surface basic stats.
-        const helpers = /** @type {YouTubeStatsHelpers} */ (window.YouTubeStatsHelpers || {});
+      // Extraction is DOM-based, with exact numbers taken from the player response when available.
+      const fallbackHelpers = {
+        extractViews() {
+          const currentVideoId = U.getVideoIdFromLocation?.();
+          const viewsFromPlayer = extractViewsFromPlayer_(getPageGlobal(), currentVideoId);
+          if (viewsFromPlayer != null) return { views: viewsFromPlayer };
 
-        const fallbackHelpers = {
-          extractViews() {
-            try {
-              const el = $('yt-view-count-renderer, #count .view-count');
-              const text = el?.textContent ? el.textContent.trim() : '';
-              const match = text.replace(/[^0-9,.]/g, '').replace(/,/g, '');
-              return match ? { views: Number(match) || null } : {};
-            } catch (_e) {
-              return {};
-            }
-          },
-          extractLikes() {
-            try {
-              const btn =
-                $('ytd-toggle-button-renderer[is-icon-button] yt-formatted-string') ||
-                $(
-                  '#top-level-buttons-computed ytd-toggle-button-renderer:first-child yt-formatted-string'
-                );
-              const text = btn?.textContent ? btn.textContent.trim() : '';
-              const match = text.replace(/[^0-9,.]/g, '').replace(/,/g, '');
-              return match ? { likes: Number(match) || null } : {};
-            } catch (_e) {
-              return {};
-            }
-          },
-          extractDislikes() {
-            // Dislike counts may not be available; return empty
-            return {};
-          },
-          extractComments() {
-            try {
-              const el = $(
-                '#count > ytd-comment-thread-renderer, ytd-comments-header-renderer #count'
-              );
-              const text = el?.textContent ? el.textContent.trim() : '';
-              const match = text.replace(/[^0-9,.]/g, '').replace(/,/g, '');
-              return match ? { comments: Number(match) || null } : {};
-            } catch (_e) {
-              return {};
-            }
-          },
-          extractSubscribers() {
-            try {
-              const el = $('#owner-sub-count, #subscriber-count');
-              const text = el?.textContent ? el.textContent.trim() : '';
-              return text ? { subscribers: text } : {};
-            } catch (_e) {
-              return {};
-            }
-          },
-          extractThumbnail() {
-            try {
-              const meta = $('link[rel="image_src"]') || $('meta[property="og:image"]');
-              const url = meta && (meta.href || meta.content) ? meta.href || meta.content : null;
-              return url ? { thumbnail: url } : {};
-            } catch (_e) {
-              return {};
-            }
-          },
-          extractTitle() {
-            try {
-              const el = $('h1.title yt-formatted-string') || $('h1');
-              const text = el?.textContent ? el.textContent.trim() : '';
-              return text ? { title: text } : {};
-            } catch (_e) {
-              return {};
-            }
-          },
-          extractAuthor() {
-            try {
-              // Try to get the @handle from the owner link
-              const handleEl =
-                $('ytd-video-owner-renderer #channel-handle') ||
-                $('ytd-video-owner-renderer yt-formatted-string.ytd-channel-name a') ||
-                $('#owner ytd-channel-name a') ||
-                $('ytd-video-owner-renderer #owner-name a');
-              const handleText = handleEl?.textContent?.trim() || '';
-              // Some links contain the @handle, others contain the channel name
-              const handle = handleText.startsWith('@') ? handleText : null;
-              const nameEl =
-                $('ytd-video-owner-renderer #channel-name') ||
-                $('ytd-video-owner-renderer #owner-name');
-              const authorName = nameEl?.textContent?.trim() || null;
-              if (handle || authorName) {
-                return { authorHandle: handle, author: authorName };
-              }
-              return {};
-            } catch (_e) {
-              return {};
-            }
-          },
-        };
+          const el = $('yt-view-count-renderer, #count .view-count');
+          const text = el?.textContent ? el.textContent.trim() : '';
+          const views = parseLocalizedCount_(text);
+          return views == null ? {} : { views };
+        },
+        extractLikes() {
+          const btn =
+            $('like-button-view-model button[aria-label]') ||
+            $('#segmented-like-button button[aria-label]') ||
+            $('ytd-toggle-button-renderer button[aria-label]') ||
+            $('ytd-toggle-button-renderer[is-icon-button] yt-formatted-string') ||
+            $(
+              '#top-level-buttons-computed ytd-toggle-button-renderer:first-child yt-formatted-string'
+            );
+          const label = btn?.getAttribute?.('aria-label') || '';
+          const exact = extractLargestInteger_(label);
+          if (exact != null) return { likes: exact };
+          const text = btn?.textContent ? btn.textContent.trim() : '';
+          const likes = parseLocalizedCount_(text);
+          return likes == null ? {} : { likes };
+        },
+        extractDislikes() {
+          return {};
+        },
+        extractComments() {
+          const el = $('#count > ytd-comment-thread-renderer, ytd-comments-header-renderer #count');
+          const text = el?.textContent ? el.textContent.trim() : '';
+          const comments = parseLocalizedCount_(text);
+          return comments == null ? {} : { comments };
+        },
+        extractSubscribers() {
+          const el = $('#owner-sub-count, #subscriber-count');
+          const text = el?.textContent ? el.textContent.trim() : '';
+          return text ? { subscribers: text } : {};
+        },
+        extractThumbnail() {
+          const meta = /** @type {{ href?: string, content?: string } | null} */ (
+            $('link[rel="image_src"]') || $('meta[property="og:image"]')
+          );
+          const url = meta && (meta.href || meta.content) ? meta.href || meta.content : null;
+          return url ? { thumbnail: url } : {};
+        },
+        extractTitle() {
+          const el = $('h1.title yt-formatted-string') || $('h1');
+          const text = el?.textContent ? el.textContent.trim() : '';
+          return text ? { title: text } : {};
+        },
+        extractAuthor() {
+          const handleEl =
+            $('ytd-video-owner-renderer #channel-handle') ||
+            $('ytd-video-owner-renderer yt-formatted-string.ytd-channel-name a') ||
+            $('#owner ytd-channel-name a') ||
+            $('ytd-video-owner-renderer #owner-name a');
+          const handleText = handleEl?.textContent?.trim() || '';
+          const handle = handleText.startsWith('@') ? handleText : null;
+          const nameEl =
+            $('ytd-video-owner-renderer #channel-name') ||
+            $('ytd-video-owner-renderer #owner-name');
+          const authorName = nameEl?.textContent?.trim() || null;
+          if (handle || authorName) {
+            return { authorHandle: handle, author: authorName };
+          }
+          return {};
+        },
+      };
 
-        const use = /** @type {YouTubeStatsHelpers} */ (
-          helpers?.extractViews ? helpers : fallbackHelpers
-        );
+      const result = Object.assign(
+        {},
+        fallbackHelpers.extractViews(),
+        fallbackHelpers.extractLikes(),
+        fallbackHelpers.extractDislikes(),
+        fallbackHelpers.extractComments(),
+        fallbackHelpers.extractSubscribers(),
+        fallbackHelpers.extractThumbnail(),
+        fallbackHelpers.extractTitle(),
+        fallbackHelpers.extractAuthor()
+      );
 
-        // Merge all extracted stats (helpers may return partial objects)
-        const result = Object.assign(
-          {},
-          use.extractViews?.() || {},
-          use.extractLikes?.() || {},
-          use.extractDislikes?.() || {},
-          use.extractComments?.() || {},
-          use.extractSubscribers?.() || {},
-          use.extractThumbnail?.() || {},
-          use.extractTitle?.() || {},
-          use.extractAuthor?.() || {}
-        );
+      return Object.keys(result).length > 0 ? result : null;
+    }
 
-        return Object.keys(result).length > 0 ? result : null;
-      } catch (e) {
-        U?.logError?.('Stats', 'Failed to read page stats', /** @type {any} */ (e));
-        return null;
-      }
+    /**
+     * Core stats card renderer: assembles icon, label, value and exact into one HTML structure.
+     * @param {string} iconHtml - Complete icon div HTML or empty string
+     * @param {string} labelHtml - Label div HTML or empty string
+     * @param {string} valueHtml - Value div HTML or empty string
+     * @param {string} exactHtml - Exact div HTML or empty string
+     * @returns {string} Complete stats-card HTML fragment
+     * @private
+     */
+    function _buildStatCard(iconHtml, labelHtml, valueHtml, exactHtml) {
+      return `
+        <div class="stats-card">
+          ${iconHtml}
+          <div class="stats-info">
+            ${labelHtml}
+            ${valueHtml}
+            ${exactHtml}
+          </div>
+        </div>
+      `;
     }
 
     /**
@@ -1308,99 +1823,113 @@
       /** @type {string} */ iconSvg
     ) {
       if (value === undefined || value === null) return '';
-      return `
-        <div class="stats-card">
-          <div class="stats-icon ${iconClass}">
-            ${iconSvg}
-          </div>
-          <div class="stats-info">
-            <div class="stats-label">${t(labelKey)}</div>
-            <div class="stats-value">${formatNumber(Number(value))}</div>
-            <div class="stats-exact">${(value || 0).toLocaleString()}</div>
-          </div>
-        </div>
-      `;
+      const iconHtml = `<div class="stats-icon ${iconClass}">${iconSvg}</div>`;
+      const labelHtml = `<div class="stats-label">${t(labelKey)}</div>`;
+      const valueHtml = `<div class="stats-value">${formatNumber(Number(value))}</div>`;
+      const exactHtml = `<div class="stats-exact">${(value || 0).toLocaleString()}</div>`;
+      return _buildStatCard(iconHtml, labelHtml, valueHtml, exactHtml);
+    }
+
+    /**
+     * @param {boolean} showValue
+     * @param {unknown} value
+     * @returns {string}
+     */
+    function resolveCardDisplayVal_(showValue, value) {
+      if (!showValue) return '';
+      return value == null ? t('unknown') : String(value);
+    }
+
+    /**
+     * @param {boolean} showIcon
+     * @param {string} iconOrClass
+     * @returns {{ iconContent: string, extraClass: string }}
+     */
+    function resolveCardIconParts_(showIcon, iconOrClass) {
+      if (!showIcon || typeof iconOrClass !== 'string' || !iconOrClass) {
+        return { iconContent: '', extraClass: '' };
+      }
+      if (iconOrClass.includes('<')) {
+        return { iconContent: iconOrClass, extraClass: '' };
+      }
+      return { iconContent: '', extraClass: ` ${iconOrClass}` };
     }
 
     /**
      * Build a minimal stats card that displays only a value and/or icon
-     * @param {any} value - Value to display
+     * @param {unknown} value - Value to display
      * @param {string} [iconOrClass=''] - SVG markup or a CSS class name
      * @param {{showValue: boolean, showIcon: boolean}} [options] - Display options
      * @returns {string} HTML fragment or empty string
      * @private
      */
     function buildValueOnlyCard(
-      /** @type {any} */ value,
+      /** @type {unknown} */ value,
       /** @type {string} */ iconOrClass = '',
       /** @type {{showValue: boolean, showIcon: boolean}} */ options = {
         showValue: true,
         showIcon: true,
       }
     ) {
-      const { showValue, showIcon } = options;
+      const showValue = Boolean(options?.showValue);
+      const showIcon = Boolean(options?.showIcon);
       if (!(showValue || showIcon)) return '';
 
-      // If value is null/undefined and we are to show value, treat as unknown
-      let displayVal = '';
-      if (showValue) {
-        displayVal = value === undefined || value === null ? t('unknown') : value;
-      }
+      const displayVal = resolveCardDisplayVal_(showValue, value);
+      const { iconContent, extraClass } = resolveCardIconParts_(showIcon, iconOrClass);
 
-      // Determine whether iconOrClass is HTML (contains '<') or a plain class name
-      let iconContent = '';
-      let extraClass = '';
-      if (showIcon) {
-        if (iconOrClass && typeof iconOrClass === 'string' && iconOrClass.indexOf('<') >= 0) {
-          // it's HTML (SVG), render inside
-          iconContent = iconOrClass;
-        } else if (iconOrClass && typeof iconOrClass === 'string') {
-          // treat as a class name to apply to the icon wrapper
-          extraClass = ` ${iconOrClass}`;
-        }
-      }
-
-      return `
-      <div class="stats-card">
-        <div class="stats-icon${extraClass}">${iconContent}</div>
-        <div class="stats-info">
-          ${showValue ? `<div class="stats-value">${displayVal}</div>` : ''}
-        </div>
-      </div>
-    `;
+      const iconHtml = `<div class="stats-icon${extraClass}">${iconContent}</div>`;
+      const valueHtml = showValue ? `<div class="stats-value">${displayVal}</div>` : '';
+      return _buildStatCard(iconHtml, '', valueHtml, '');
     }
 
     /**
      * Build stat cards for all metrics
-     * @param {any} pageStats - Page statistics
+     * @param {PageStatsData} pageStats - Page statistics
      * @returns {Array<string>} Array of card HTML strings
      * @private
      */
-    function buildStatCards(pageStats) {
+    /** Shared globe artwork for country meta cards. */
+    const GLOBE_ICON_SVG =
+      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>';
+
+    // Shared stat-card icon artwork (single set reused by page + video cards).
+    const STAT_ICON_SVGS = {
+      views:
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+      likes:
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>',
+      dislikes:
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path></svg>',
+      comments:
+        '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
+    };
+
+    function buildStatCards(/** @type {PageStatsData} */ pageStats) {
       const cardConfigs = [
         {
           value: pageStats.views,
           key: 'views',
           icon: 'stats-icon-views',
-          svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>',
+          svg: STAT_ICON_SVGS.views,
         },
         {
           value: pageStats.likes,
           key: 'likes',
           icon: 'stats-icon-likes',
-          svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>',
+          svg: STAT_ICON_SVGS.likes,
         },
         {
           value: pageStats.dislikes,
           key: 'dislikes',
           icon: 'stats-icon-dislikes',
-          svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path></svg>',
+          svg: STAT_ICON_SVGS.dislikes,
         },
         {
           value: pageStats.comments,
           key: 'comments',
           icon: 'stats-icon-comments',
-          svg: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>',
+          svg: STAT_ICON_SVGS.comments,
         },
       ];
 
@@ -1409,18 +1938,16 @@
         .filter(card => card);
     }
 
-    // NOTE: getThumbnailUrl is defined below (after getFirstAvailableField) as the canonical
-    // single implementation. This comment replaces the former duplicate definition that had
-    // reversed parameter order (id, pageStats) vs the active (stats, id) — removing it
-    // eliminates the hoisting bug where the second definition always shadowed this one.
+    // getThumbnailUrl is defined once below (after getFirstAvailableField): the
+    // active signature is (stats, id).
 
     /**
      * Build extra metadata cards
-     * @param {any} extras - Extra metadata
+     * @param {ExtraMetadata} extras - Extra metadata
      * @returns {string} HTML for extra cards
      * @private
      */
-    function buildExtraCards(/** @type {any} */ extras) {
+    function buildExtraCards(/** @type {ExtraMetadata} */ extras) {
       const monetizationText = extras.monetization || t('unknown');
       const countryText = extras.country || t('unknown');
       const durationText = extras.duration || t('unknown');
@@ -1446,7 +1973,7 @@
      * @param {string} titleHtml - Title HTML
      * @param {string} thumbUrl - Thumbnail URL
      * @param {string} gridHtml - Grid HTML
-     * @param {any} extras - Extra metadata
+     * @param {ExtraMetadata} extras - Extra metadata
      * @returns {string} Complete HTML
      * @private
      */
@@ -1454,7 +1981,7 @@
       /** @type {string} */ titleHtml,
       /** @type {string} */ thumbUrl,
       /** @type {string} */ gridHtml,
-      /** @type {any} */ extras
+      /** @type {ExtraMetadata} */ extras
     ) {
       const extraCards = buildExtraCards(extras);
       const leftHtml = `<div class="stats-thumb-left"><img class="stats-thumb-img" src="${thumbUrl}" alt="thumbnail"><div class="stats-thumb-extras">${extraCards}</div></div>`;
@@ -1464,12 +1991,12 @@
     /**
      * Render page statistics fallback view
      * @param {HTMLElement} container - Container element
-     * @param {any} pageStats - Page statistics
+     * @param {PageStatsData} pageStats - Page statistics
      * @param {string} id - Video ID
      */
     function renderPageFallback(
       /** @type {HTMLElement} */ container,
-      /** @type {any} */ pageStats,
+      /** @type {PageStatsData} */ pageStats,
       /** @type {string} */ id
     ) {
       // Build stat cards
@@ -1483,8 +2010,7 @@
         ? `<div class="stats-thumb-title-centered">${safeTitle}</div>`
         : '';
 
-      // Get thumbnail and extras
-      // NOTE: getThumbnailUrl signature is (stats, id) — pass pageStats first, id second
+      // getThumbnailUrl signature is (stats, id): pass pageStats first, id second.
       const thumbUrl = getThumbnailUrl(pageStats, id);
       const extras = getVideoExtras(null, pageStats);
 
@@ -1521,53 +2047,35 @@
      * Create a stats card HTML fragment
      * @param {string} labelKey
      * @param {number|null} value
-     * @param {number|null} exact
-     * @param {string} iconClass
-     * @param {string} iconSvg
+     * @param {number|string|null} [exact]
+     * @param {string} [iconClass]
+     * @param {string} [iconSvg]
      * @returns {string}
      */
-    function makeStatsCard(labelKey, value, exact, iconClass, iconSvg) {
+    function makeStatsCard(labelKey, value, exact = null, iconClass = '', iconSvg = '') {
       const display = value == null ? t('unknown') : formatNumber(value);
-      // Show exact 0 as "0" (0 is falsy), only show dash when null/undefined
-      // Ensure numeric values are properly converted to integers for exact display
       let exactText = '—';
       if (exact !== null && exact !== undefined) {
         const numExact = Number(exact);
         exactText = !Number.isNaN(numExact) ? Math.floor(numExact).toLocaleString() : String(exact);
       }
-      return `
-        <div class="stats-card">
-          <div class="stats-icon ${iconClass}">
-            ${iconSvg}
-          </div>
-          <div class="stats-info">
-            <div class="stats-label">${t(labelKey)}</div>
-            <div class="stats-value">${display}</div>
-            <div class="stats-exact">${exactText}</div>
-          </div>
-        </div>
-      `;
+      const iconHtml = `<div class="stats-icon ${iconClass}">${iconSvg}</div>`;
+      const labelHtml = `<div class="stats-label">${t(labelKey)}</div>`;
+      const valueHtml = `<div class="stats-value">${display}</div>`;
+      const exactHtml = `<div class="stats-exact">${exactText}</div>`;
+      return _buildStatCard(iconHtml, labelHtml, valueHtml, exactHtml);
     }
 
     /**
-     * Normalize and pick preferred video fields
-     * @param {any} stats
-     * @returns {{views: number|null, likes: number|null, dislikes: number|null, comments: number|null, liveViewer: number|null, title: string, thumbUrl: string, country: string|null, monetized: boolean|null}}
-     */
-    /**
-     * Extract video fields from stats object
-     * Simplified by using more consistent field access
-     * @param {any} stats - Stats object
-     * @param {string} id - Video ID
-     * @returns {any} Extracted fields
-     */
-    /**
      * Get first available field from stats object
-     * @param {any} stats - Stats object
+     * @param {Record<string, unknown> | null | undefined} stats - Stats object
      * @param {string[]} fields - Field names to check
-     * @returns {*} First available value or null
+     * @returns {unknown} First available value or null
      */
-    function getFirstAvailableField(/** @type {any} */ stats, /** @type {string[]} */ ...fields) {
+    function getFirstAvailableField(
+      /** @type {Record<string, unknown> | null | undefined} */ stats,
+      /** @type {string[]} */ ...fields
+    ) {
       for (const field of fields) {
         if (stats?.[field] != null) return stats[field];
       }
@@ -1576,12 +2084,15 @@
 
     /**
      * Get thumbnail URL for video
-     * @param {any} stats - Stats object
+     * @param {Record<string, unknown> | null | undefined} stats - Stats object
      * @param {string} id - Video ID
      * @returns {string} Thumbnail URL
      */
-    function getThumbnailUrl(/** @type {any} */ stats, /** @type {string} */ id) {
-      const raw = stats?.thumbnail;
+    function getThumbnailUrl(
+      /** @type {Record<string, unknown> | null | undefined} */ stats,
+      /** @type {string} */ id
+    ) {
+      const raw = typeof stats?.thumbnail === 'string' ? stats.thumbnail : null;
       if (raw) {
         // Validate thumbnail URL is from a trusted domain to prevent attribute injection
         try {
@@ -1601,6 +2112,7 @@
             return raw;
           }
         } catch (_e) {
+          logS(_e);
           // Invalid URL - fall through to constructed URL
         }
       }
@@ -1609,35 +2121,51 @@
 
     /**
      * Extract video fields from stats object
-     * @param {any} stats - Stats data
+     * @param {Record<string, unknown> | null | undefined} stats - Stats data
      * @param {string} id - Video ID
-     * @returns {any} Extracted fields
+     * @returns {ExtractedVideoFields} Extracted fields
      */
-    function extractVideoFields(/** @type {any} */ stats, /** @type {string} */ id) {
+    function extractVideoFields(
+      /** @type {Record<string, unknown> | null | undefined} */ stats,
+      /** @type {string} */ id
+    ) {
       return {
-        views: getFirstAvailableField(stats, 'liveViews', 'views', 'viewCount'),
-        likes: getFirstAvailableField(stats, 'liveLikes', 'likes', 'likeCount'),
-        dislikes: getFirstAvailableField(stats, 'dislikes', 'liveDislikes', 'dislikeCount'),
-        comments: getFirstAvailableField(stats, 'liveComments', 'comments', 'commentCount'),
-        liveViewer: getFirstAvailableField(stats, 'liveViewer', 'live_viewers'),
-        title: stats?.title || document.title || '',
+        views: /** @type {number | string | null} */ (
+          getFirstAvailableField(stats, 'liveViews', 'views', 'viewCount')
+        ),
+        likes: /** @type {number | string | null} */ (
+          getFirstAvailableField(stats, 'liveLikes', 'likes', 'likeCount')
+        ),
+        dislikes: /** @type {number | string | null} */ (
+          getFirstAvailableField(stats, 'dislikes', 'liveDislikes', 'dislikeCount')
+        ),
+        comments: /** @type {number | string | null} */ (
+          getFirstAvailableField(stats, 'liveComments', 'comments', 'commentCount')
+        ),
+        liveViewer: /** @type {number | string | null} */ (
+          getFirstAvailableField(stats, 'liveViewer', 'live_viewers')
+        ),
+        title: (typeof stats?.title === 'string' && stats.title) || document.title || '',
         thumbUrl: getThumbnailUrl(stats, id),
-        country: getFirstAvailableField(stats, 'country'),
-        monetized: stats?.monetized ?? null,
-        duration: getFirstAvailableField(stats, 'duration'),
-        author: getFirstAvailableField(stats, 'author'),
-        authorHandle: getFirstAvailableField(stats, 'authorHandle'),
+        country: /** @type {string | null} */ (getFirstAvailableField(stats, 'country')),
+        monetized: typeof stats?.monetized === 'boolean' ? stats.monetized : null,
+        duration: /** @type {string | number | null} */ (getFirstAvailableField(stats, 'duration')),
+        author: /** @type {string | null} */ (getFirstAvailableField(stats, 'author')),
+        authorHandle: /** @type {string | null} */ (getFirstAvailableField(stats, 'authorHandle')),
       };
     }
 
     /**
      * Merge API-provided video stats with page-derived stats
      * Simplified to use helper function for field extraction
-     * @param {any|null} apiStats - API stats
-     * @param {any|null} pageStats - Page stats
-     * @returns {any} Merged stats
+     * @param {VideoStatsData|null|undefined} apiStats - API stats
+     * @param {PageStatsData|null|undefined} pageStats - Page stats
+     * @returns {VideoStatsData} Merged stats
      */
-    function mergeVideoStats(/** @type {any} */ apiStats, /** @type {any} */ pageStats) {
+    function mergeVideoStats(
+      /** @type {VideoStatsData|null|undefined} */ apiStats,
+      /** @type {PageStatsData|null|undefined} */ pageStats
+    ) {
       if (!pageStats) return apiStats || {};
 
       const getValue = (/** @type {string[]} */ ...fields) => {
@@ -1652,54 +2180,65 @@
 
       return {
         ...apiStats,
-        views: getValue('views', 'viewCount'),
-        likes: getValue('likes', 'likeCount'),
-        dislikes: getValue('dislikes'),
-        comments: getValue('comments', 'commentCount'),
-        thumbnail: getValue('thumbnail'),
-        title: getValue('title'),
-        liveViewer: getValue('liveViewer'),
+        views: /** @type {number | null} */ (getValue('views', 'viewCount')),
+        likes: /** @type {number | null} */ (getValue('likes', 'likeCount')),
+        dislikes: /** @type {number | null} */ (getValue('dislikes')),
+        comments: /** @type {number | null} */ (getValue('comments', 'commentCount')),
+        thumbnail: /** @type {string | null} */ (getValue('thumbnail')),
+        title: /** @type {string | undefined} */ (getValue('title')),
+        liveViewer: /** @type {number | string | null} */ (getValue('liveViewer')),
         // Preserve extra metadata when available (duration, country, monetization)
-        duration: getValue('duration'),
-        country: getValue('country'),
-        monetized: getValue('monetized', 'isMonetized', 'monetization'),
-        author: getValue('author'),
-        authorHandle: getValue('authorHandle'),
+        duration: /** @type {string | number | null} */ (getValue('duration')),
+        country: /** @type {string | null} */ (getValue('country')),
+        monetized: /** @type {boolean | null} */ (
+          getValue('monetized', 'isMonetized', 'monetization')
+        ),
+        author: /** @type {string | null} */ (getValue('author')),
+        authorHandle: /** @type {string | null} */ (getValue('authorHandle')),
       };
     }
 
     /**
      * Extract extra metadata (duration, monetization, country) from API or page
-     * @param {any|null} apiStats - API stats
-     * @param {any|null} pageStats - Page stats
-     * @returns {{duration: string|null, monetization: string|null, country: string|null}} Metadata
+     * @param {VideoStatsData|null|undefined} apiStats - API stats
+     * @param {PageStatsData|null|undefined} pageStats - Page stats
+     * @returns {ExtraMetadata} Metadata
      */
-    function getVideoExtras(/** @type {any} */ apiStats, /** @type {any} */ pageStats) {
-      const helpers = /** @type {YouTubeStatsHelpers} */ (window.YouTubeStatsHelpers || {});
-      // Prefer explicit fields on the stats objects first, then fall back to helper functions
-      const duration =
-        apiStats?.duration ??
-        pageStats?.duration ??
-        helpers.getDurationFromSources?.(apiStats, pageStats) ??
-        null;
-      const country =
-        apiStats?.country ??
-        pageStats?.country ??
-        helpers.getCountryFromSources?.(apiStats, pageStats) ??
-        null;
+    function getVideoExtras(
+      /** @type {VideoStatsData|null|undefined} */ apiStats,
+      /** @type {PageStatsData|null|undefined} */ pageStats
+    ) {
+      // Metadata comes from the stats objects themselves.
+      const rawDuration = apiStats?.duration ?? pageStats?.duration ?? null;
+      const duration = rawDuration != null ? String(rawDuration) : null;
+      const rawCountry = apiStats?.country ?? pageStats?.country ?? null;
+      const country = rawCountry != null ? String(rawCountry) : null;
 
-      // Monetization can be boolean or descriptive string from helpers
+      // Monetization can be boolean or descriptive string
       let monetization = null;
       if (apiStats?.monetized != null) {
         monetization = apiStats.monetized === true ? t('yes') : t('no');
       } else if (pageStats?.monetized != null) {
         monetization = pageStats.monetized === true ? t('yes') : t('no');
-      } else {
-        monetization = helpers.getMonetizationFromSources?.(apiStats, pageStats, t) ?? null;
       }
 
       return { duration, country, monetization };
     }
+
+    /**
+     * Shared close behavior for stats modal close buttons.
+     * prefer the overlay's bound close fn, fall back to removing it.
+     * @param {Event} e
+     * @param {HTMLElement} overlay
+     */
+    const closeOverlayFromEvent = (e, overlay) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const closeFn = /** @type {HTMLElement & { _ytpCloseOverlay?: () => void }} */ (overlay)
+        ._ytpCloseOverlay;
+      if (typeof closeFn === 'function') closeFn();
+      else overlay.remove();
+    };
 
     /**
      * Open stats modal with live data display
@@ -1713,21 +2252,23 @@
      */
     function createStatsModalCloseButton(overlay) {
       const closeBtn = document.createElement('button');
-      closeBtn.className = 'stats-modal-close thumbnail-modal-action-btn ytp-plus-settings-close';
-      closeBtn.setAttribute('data-shared-close-button', 'ytp-plus-close-settings');
+      closeBtn.className = 'stats-modal-close thumbnail-modal-action-btn yp-settings-close';
+      closeBtn.setAttribute('data-shared-close-button', 'yp-close-settings');
       _setSafeHTML(
         closeBtn,
         `
-            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M14.5 9.50002L9.5 14.5M9.49998 9.5L14.5 14.5" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg>
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"><path d="M18 6L6 18M6 6l12 12" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"></path></svg>
         `
       );
       closeBtn.title = t('closeButton') || t('close');
       closeBtn.setAttribute('aria-label', t('closeButton') || t('close'));
-      closeBtn.addEventListener('click', (/** @type {MouseEvent} */ e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        overlay.remove();
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        closeBtn,
+        'click',
+        (/** @type {MouseEvent} */ e) => closeOverlayFromEvent(e, overlay),
+        undefined,
+        false
+      );
       return closeBtn;
     }
 
@@ -1763,12 +2304,42 @@
       container.setAttribute('aria-label', t('videoStats') || 'Video Statistics');
 
       const content = document.createElement('div');
-      content.className = 'stats-modal-content ytp-plus-modal-content';
+      content.className = 'stats-modal-content yp-modal-content';
+
+      // Classic Header (Concept B)
+      const classicHeader = document.createElement('div');
+      classicHeader.className = 'stats-classic-header';
+      _setSafeHTML(
+        classicHeader,
+        `
+        <div class="stats-classic-title-group">
+          <div class="stats-classic-icon">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>
+          </div>
+          <span class="stats-classic-title">${t('videoStats') || 'Video Analytics'}</span>
+          <span class="stats-classic-channel-badge" id="stats-classic-channel-badge"></span>
+        </div>
+        <button class="stats-classic-close-btn" title="${t('closeButton') || t('close') || 'Close'}" aria-label="${t('closeButton') || t('close') || 'Close'}">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+        </button>
+      `
+      );
+      const classicCloseBtn = classicHeader.querySelector('.stats-classic-close-btn');
+      if (classicCloseBtn) {
+        window.YouTubePlusCleanupManager?.registerListener?.(
+          classicCloseBtn,
+          'click',
+          (/** @type {Event} */ e) => closeOverlayFromEvent(e, overlay),
+          undefined,
+          false
+        );
+      }
 
       const body = document.createElement('div');
       body.className = 'stats-modal-body';
       body.appendChild(createLoadingSpinner());
 
+      content.appendChild(classicHeader);
       content.appendChild(body);
 
       const wrapper = document.createElement('div');
@@ -1791,41 +2362,60 @@
      * @returns {void}
      */
     function setupModalEventHandlers(overlay) {
-      // Store previously focused element for focus restoration
+      // Store the element that had focus, for restoration.
       const previouslyFocused = document.activeElement;
 
-      // Close when clicking outside
-      overlay.addEventListener('click', (/** @type {MouseEvent} */ event) => {
-        const { target } = event;
-        if (target === overlay) {
-          overlay.remove();
-          try {
-            if (previouslyFocused) /** @type {HTMLElement} */ (previouslyFocused).focus();
-          } catch (_e) {
-            U.logSuppressed(_e, 'Stats');
-          }
+      // Single AbortController for all modal listeners (esc/backdrop/buttons).
+      // Aborting in any close path auto-removes every listener registered with
+      // this signal, so no handler leaks regardless of how the modal closes.
+      const modalController = new AbortController();
+      const restoreFocus = () => {
+        try {
+          if (previouslyFocused) /** @type {HTMLElement} */ (previouslyFocused).focus();
+        } catch (_e) {
+          logS(_e);
         }
-      });
+      };
+      const closeOverlay = () => {
+        overlay.remove();
+        restoreFocus();
+        modalController.abort();
+      };
+
+      // Expose closeOverlay on the overlay so close-button handlers can call it
+      /** @type {HTMLElement & { _ytpCloseOverlay?: () => void }} */ (overlay)._ytpCloseOverlay =
+        closeOverlay;
+
+      // Close when clicking outside
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        overlay,
+        'click',
+        (/** @type {MouseEvent} */ event) => {
+          const { target } = event;
+          if (target === overlay) closeOverlay();
+        },
+        undefined,
+        false
+      );
 
       // ESC to close
-      function escHandler(/** @type {KeyboardEvent} */ e) {
-        if (e.key === 'Escape') {
-          overlay.remove();
-          window.removeEventListener('keydown', escHandler, true);
-          try {
-            if (previouslyFocused) /** @type {HTMLElement} */ (previouslyFocused).focus();
-          } catch (_e) {
-            U.logSuppressed(_e, 'Stats');
-          }
-        }
-      }
-      window.addEventListener('keydown', escHandler, true);
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        window,
+        'keydown',
+        /** @param {KeyboardEvent} e */ e => {
+          if (e.key === 'Escape') closeOverlay();
+        },
+        { capture: true, signal: modalController.signal },
+        true
+      );
 
       // Move focus into the modal after it's appended
-      requestAnimationFrame(() => {
-        const focusTarget = overlay.querySelector('button, [tabindex="0"]');
-        if (focusTarget) /** @type {HTMLElement} */ (focusTarget).focus();
-      });
+      window.YouTubePlusCleanupManager?.registerAnimationFrame?.(
+        requestAnimationFrame(() => {
+          const focusTarget = overlay.querySelector('button, [tabindex="0"]');
+          if (focusTarget) /** @type {HTMLElement} */ (focusTarget).focus();
+        })
+      );
 
       // Apply focus trap if available
       if (window.YouTubePlusModalHandlers?.createFocusTrap) {
@@ -1844,7 +2434,12 @@
                 coordinator.unsubscribe(trapSubId);
               }
             },
-            { selector: null, childList: true, attributes: false, subtree: true }
+            {
+              selector: null,
+              childList: true,
+              attributes: false,
+              subtree: true,
+            }
           );
         }
       }
@@ -1853,14 +2448,12 @@
     /**
      * Render error message in modal
      * @param {HTMLElement} body - Body element
-     * @param {any} result - Fetch result
+     * @param {{ status?: number, url?: string } | null | undefined} result - Fetch result
      * @returns {void}
      */
     function renderErrorMessage(body, result) {
       const statusText = result?.status ? ` (${result.status})` : '';
-      const endpointHint = result?.url
-        ? `<div style="margin-top:8px;font-size:12px;opacity:0.8;word-break:break-all">${result.url}</div>`
-        : '';
+      const endpointHint = result?.url ? `<div class="stats-result-url">${result.url}</div>` : '';
       _setSafeHTML(
         body,
         `
@@ -1880,7 +2473,7 @@
     /**
      * Handle failed stats fetch
      * @param {HTMLElement} body - Body element
-     * @param {any} result - Fetch result
+     * @param {{ status?: number, url?: string } | null | undefined} result - Fetch result
      * @param {string} id - Video/channel ID
      * @returns {void}
      */
@@ -1897,21 +2490,17 @@
      * Display stats based on type
      * @param {HTMLElement} body - Body element
      * @param {string} type - Stats type (video/channel)
-     * @param {any} stats - Stats data
+     * @param {VideoStatsData | LivecountsChannelStats | null} stats - Stats data
      * @param {string} id - Video/channel ID
      * @returns {void}
      */
     function displayStatsBasedOnType(body, type, stats, id) {
       if (type === 'video') {
-        try {
-          const pageStats = getPageVideoStats();
-          const merged = mergeVideoStats(stats, pageStats);
-          displayVideoStats(body, merged, id);
-        } catch (_e) {
-          displayVideoStats(body, stats, id);
-        }
+        const pageStats = getPageVideoStats();
+        const merged = mergeVideoStats(/** @type {VideoStatsData | null} */ (stats), pageStats);
+        displayVideoStats(body, merged, id);
       } else {
-        displayChannelStats(body, stats);
+        displayChannelStats(body, /** @type {Record<string, unknown>} */ (stats || {}));
       }
     }
 
@@ -1927,19 +2516,14 @@
         return;
       }
 
-      // Remove existing overlays (cache NodeList to avoid repeated lookups)
-      const existingOverlays = $$('.stats-modal-overlay');
-      for (let i = 0; i < existingOverlays.length; i++) {
-        try {
-          existingOverlays[i].remove();
-        } catch (_e) {
-          /* ignore individual failures */
-        }
-      }
+      ensureStatsModalStyles();
+
+      // Remove existing overlays
+      $$('.stats-modal-overlay').forEach(el => el.remove());
 
       // Create modal structure
       const overlay = document.createElement('div');
-      overlay.className = 'stats-modal-overlay ytp-plus-modal-overlay';
+      overlay.className = 'stats-modal-overlay yp-modal-overlay';
 
       const { body, container } = createStatsModalStructure(overlay);
       overlay.appendChild(container);
@@ -1948,7 +2532,7 @@
       document.body.appendChild(overlay);
 
       // Fetch and display stats
-      const result = /** @type {any} */ (await fetchStats(type, id));
+      const result = await fetchStats(type, id);
 
       if (!result?.ok) {
         handleFailedFetch(body, result, id);
@@ -1961,67 +2545,84 @@
     /**
      * Display video statistics
      * @param {HTMLElement} container - Container element
-     * @param {any} stats - Stats data
+     * @param {VideoStatsData} stats - Stats data
      */
     /**
      * Get stat card definitions for video stats
-     * @param {any} fields - Extracted video fields
-     * @returns {any[]} Card definitions
+     * @param {ExtractedVideoFields} fields - Extracted video fields
+     * @returns {VideoStatCardDef[]} Card definitions
      */
     function getVideoStatDefinitions(fields) {
       const { views, likes, dislikes, comments } = fields;
       return [
         {
           label: 'views',
-          value: views,
-          exact: views,
+          value: typeof views === 'number' ? views : null,
+          exact: typeof views === 'number' ? views : null,
           iconClass: 'stats-icon-views',
-          iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path><circle cx="12" cy="12" r="3"></circle></svg>`,
+          iconSvg: STAT_ICON_SVGS.views,
         },
         {
           label: 'likes',
-          value: likes,
-          exact: likes,
+          value: typeof likes === 'number' ? likes : null,
+          exact: typeof likes === 'number' ? likes : null,
           iconClass: 'stats-icon-likes',
-          iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 9V5a3 3 0 0 0-3-3l-4 9v11h11.28a2 2 0 0 0 2-1.7l1.38-9a2 2 0 0 0-2-2.3zM7 22H4a2 2 0 0 1-2-2v-7a2 2 0 0 1 2-2h3"></path></svg>`,
+          iconSvg: STAT_ICON_SVGS.likes,
         },
         {
           label: 'dislikes',
-          value: dislikes,
-          exact: dislikes,
+          value: typeof dislikes === 'number' ? dislikes : null,
+          exact: typeof dislikes === 'number' ? dislikes : null,
           iconClass: 'stats-icon-dislikes',
-          iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 15v4a3 3 0 0 0 3 3l4-9V2H5.72a2 2 0 0 0-2 1.7l-1.38 9a2 2 0 0 0 2 2.3zm7-13h2.67A2.31 2.31 0 0 1 22 4v7a2.31 2.31 0 0 1-2.33 2H17"></path></svg>`,
+          iconSvg: STAT_ICON_SVGS.dislikes,
         },
         {
           label: 'comments',
-          value: comments,
-          exact: comments,
+          value: typeof comments === 'number' ? comments : null,
+          exact: typeof comments === 'number' ? comments : null,
           iconClass: 'stats-icon-comments',
-          iconSvg: `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"></path></svg>`,
+          iconSvg: STAT_ICON_SVGS.comments,
         },
       ];
     }
 
     /**
      * Create live viewer stats card if available
-     * @param {*} liveViewer - Live viewer count
+     * @param {number | string | null | undefined} liveViewer - Live viewer count
      * @returns {string} HTML string or empty string
      */
     function createLiveViewerCard(liveViewer) {
       if (liveViewer === undefined || liveViewer === null) return '';
+      const numViewer = typeof liveViewer === 'number' ? liveViewer : null;
       return makeStatsCard(
         'liveViewers',
-        liveViewer,
-        liveViewer,
+        numViewer,
+        numViewer,
         'stats-icon-viewers',
         `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path><circle cx="9" cy="7" r="4"></circle><path d="M23 21v-2a4 4 0 0 0-3-3.87"></path><path d="M16 3.13a4 4 0 0 1 0 7.75"></path></svg>`
       );
     }
 
     /**
+     * Build a meta card HTML structure (icon + label + value)
+     * @param {string} iconClass - CSS class for icon div
+     * @param {string} iconContent - HTML content for icon (SVG or img)
+     * @param {string} label - Card label text
+     * @param {string} value - Card value text
+     * @param {string} [extraIconAttrs=''] - Additional attributes for icon div (e.g., 'data-fallback-icon="globe"')
+     * @returns {string} HTML string
+     */
+    function _buildMetaCard(iconClass, iconContent, label, value, extraIconAttrs = '') {
+      const iconDiv = extraIconAttrs
+        ? `<div class="stats-icon ${iconClass}" ${extraIconAttrs}>${iconContent}</div>`
+        : `<div class="stats-icon ${iconClass}">${iconContent}</div>`;
+      return `<div class="stats-card stats-card--compact">${iconDiv}<div class="stats-info"><div class="stats-label">${label}</div><div class="stats-value">${value}</div></div></div>`;
+    }
+
+    /**
      * Create monetization meta card
-     * @param {any} extras - Video extras
-     * @param {any} stats - Stats object
+     * @param {ExtraMetadata} extras - Video extras
+     * @param {VideoStatsData} [stats] - Stats object
      * @returns {string} HTML string
      */
     function createMonetizationCard(extras, stats) {
@@ -2032,12 +2633,17 @@
       const monIcon = isMonetized
         ? `<svg viewBox="0 0 24 24" fill="none" stroke="#22c55e" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path></svg>`
         : `<svg viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="2"><path d="M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"></path><line x1="1" y1="1" x2="23" y2="23"></line></svg>`;
-      return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-subscribers">${monIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('monetization')}</div><div class="stats-value" style="font-size:16px;">${monetizationValue}</div></div></div>`;
+      return _buildMetaCard(
+        'stats-icon-subscribers',
+        monIcon,
+        t('monetization'),
+        monetizationValue
+      );
     }
 
     /**
      * Create country meta card with flag
-     * @param {any} extras - Video extras
+     * @param {ExtraMetadata} extras - Video extras
      * @returns {string} HTML string
      */
     function createCountryCard(extras) {
@@ -2046,126 +2652,119 @@
       const rawCode =
         extras.country && extras.country !== t('unknown') ? extras.country.toUpperCase() : '';
       const countryCode = /^[A-Z]{2}$/.test(rawCode) ? rawCode : '';
-      const globeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
+      const globeIcon = GLOBE_ICON_SVG;
 
       if (countryCode) {
         const flagUrl = `https://cdn.jsdelivr.net/gh/lipis/flag-icons@7.3.2/flags/4x3/${countryCode.toLowerCase()}.svg`;
-        return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views" data-fallback-icon="globe"><img class="country-flag" src="${flagUrl}" alt="${countryCode}" width="32" height="24" style="border-radius:4px;"/></div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryCode}</div></div></div>`;
+        const flagImg = `<img class="country-flag" src="${flagUrl}" alt="${countryCode}" width="32" height="24"/>`;
+        return _buildMetaCard(
+          'stats-icon-views',
+          flagImg,
+          t('country'),
+          countryCode,
+          'data-fallback-icon="globe"'
+        );
       }
-      return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-views">${globeIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('country')}</div><div class="stats-value" style="font-size:16px;">${countryValue}</div></div></div>`;
+      return _buildMetaCard('stats-icon-views', globeIcon, t('country'), countryValue);
     }
 
     /**
      * Create duration meta card
-     * @param {any} extras - Video extras
+     * @param {ExtraMetadata} extras - Video extras
      * @returns {string} HTML string
      */
     /**
-     * Format duration values into human readable strings.
-     * Accepts seconds (number or numeric string), ISO8601 (PT1H2M3S),
-     * or colon-formatted strings (MM:SS or HH:MM:SS).
-     * Returns null when value cannot be parsed.
-     * @param {number|string} value
-     * @returns {string|null}
+     * Zero-pad a number to two digits (helper for duration formatting).
+     * @param {number} n
+     * @returns {string}
      */
-    function formatDuration(value) {
+    function padTwo(/** @type {number} */ n) {
+      return String(n).padStart(2, '0');
+    }
+
+    function secToHms(/** @type {number} */ sec) {
+      sec = Math.max(0, Math.floor(Number(sec) || 0));
+      const h = Math.floor(sec / 3600);
+      const m = Math.floor((sec % 3600) / 60);
+      const s = sec % 60;
+      if (h > 0) return `${h}:${padTwo(m)}:${padTwo(s)}`;
+      return `${m}:${padTwo(s)}`;
+    }
+
+    function parseIso8601DurationToSeconds(/** @type {string} */ s) {
+      const match = /^PT(?:(\d+)H)?(?:(\d+)M)?(?:(\d+)S)?$/i.exec(s);
+      if (!match) return null;
+      const [, hStr, mStr, sStr] = match;
+      if (!(hStr || mStr || sStr)) return null;
+      const h = hStr ? parseInt(hStr, 10) : 0;
+      const m = mStr ? parseInt(mStr, 10) : 0;
+      const sec = sStr ? parseInt(sStr, 10) : 0;
+      return h * 3600 + m * 60 + sec;
+    }
+
+    function formatColonDuration(/** @type {string} */ s) {
+      const colonParts = s.split(':');
+      if (colonParts.length !== 2 && colonParts.length !== 3) return null;
+      const allDigits = colonParts.every(part => part.length > 0 && /^\d+$/.test(part));
+      if (!(allDigits && colonParts.slice(1).every(part => part.length <= 2))) return null;
+      const parts = colonParts.map(p => {
+        const trimmed = p.replace(/^0+/, '');
+        return trimmed === '' ? '0' : trimmed;
+      });
+      if (parts.length === 2) {
+        const [mm, ss] = parts;
+        return `${Number(mm)}:${padTwo(Number(ss))}`;
+      }
+      const [hh, mm, ss] = parts;
+      return `${Number(hh)}:${padTwo(Number(mm))}:${padTwo(Number(ss))}`;
+    }
+
+    function formatStringDuration(/** @type {string} */ s) {
+      if (/^\d+$/.test(s)) return secToHms(Number(s));
+
+      // ISO 8601 duration PT#H#M#S
+      if (s.length > 2 && s[0].toUpperCase() === 'P' && s[1].toUpperCase() === 'T') {
+        const total = parseIso8601DurationToSeconds(s);
+        if (total !== null) return secToHms(total);
+      }
+
+      // Already colon formatted like M:SS or H:MM:SS
+      const colon = formatColonDuration(s);
+      if (colon) return colon;
+
+      // fallback: return as-is (useful when API already provides formatted text)
+      return s || null;
+    }
+
+    function formatDuration(/** @type {number|string|null|undefined} */ value) {
       if (value == null) return null;
-
-      function pad(/** @type {number} */ n) {
-        return String(n).padStart(2, '0');
-      }
-
-      function secToHms(/** @type {number} */ sec) {
-        sec = Math.max(0, Math.floor(Number(sec) || 0));
-        const h = Math.floor(sec / 3600);
-        const m = Math.floor((sec % 3600) / 60);
-        const s = sec % 60;
-        if (h > 0) return `${h}:${pad(m)}:${pad(s)}`;
-        return `${m}:${pad(s)}`;
-      }
 
       // number -> seconds
       if (typeof value === 'number' && Number.isFinite(value)) return secToHms(value);
 
       // numeric string
-      if (typeof value === 'string') {
-        const s = value.trim();
-        if (/^\d+$/.test(s)) return secToHms(Number(s));
-
-        // ISO 8601 duration PT#H#M#S
-        if (s.length > 2 && s[0].toUpperCase() === 'P' && s[1].toUpperCase() === 'T') {
-          let h = 0;
-          let m = 0;
-          let sec = 0;
-          let current = '';
-          let valid = true;
-          for (let i = 2; i < s.length; i += 1) {
-            const ch = s[i];
-            if (ch >= '0' && ch <= '9') {
-              current += ch;
-              continue;
-            }
-            if (!current) {
-              valid = false;
-              break;
-            }
-            const n = parseInt(current, 10);
-            current = '';
-            if (ch === 'H' || ch === 'h') h = n;
-            else if (ch === 'M' || ch === 'm') m = n;
-            else if (ch === 'S' || ch === 's') sec = n;
-            else {
-              valid = false;
-              break;
-            }
-          }
-          if (valid && current === '') {
-            return secToHms(h * 3600 + m * 60 + sec);
-          }
-        }
-
-        // Already colon formatted like M:SS or H:MM:SS
-        const colonParts = s.split(':');
-        if (colonParts.length === 2 || colonParts.length === 3) {
-          const allDigits = colonParts.every(part => part.length > 0 && /^\d+$/.test(part));
-          if (allDigits && colonParts.slice(1).every(part => part.length <= 2)) {
-            const parts = colonParts.map(p => {
-              const trimmed = p.replace(/^0+/, '');
-              return trimmed === '' ? '0' : trimmed;
-            });
-            // normalize to pad minutes/seconds
-            if (parts.length === 2) {
-              const [mm, ss] = parts;
-              return `${Number(mm)}:${pad(Number(ss))}`;
-            }
-            if (parts.length === 3) {
-              const [hh, mm, ss] = parts;
-              return `${Number(hh)}:${pad(Number(mm))}:${pad(Number(ss))}`;
-            }
-          }
-        }
-
-        // fallback: return as-is (useful when API already provides formatted text)
-        return s || null;
-      }
+      if (typeof value === 'string') return formatStringDuration(value.trim());
 
       return null;
     }
-    function createDurationCard(/** @type {any} */ extras) {
+    function createDurationCard(/** @type {ExtraMetadata} */ extras) {
       const raw = extras?.duration ?? null;
       const formatted = formatDuration(raw);
       const durationValue = formatted || (raw ? String(raw) : null) || t('unknown');
       const durationIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>`;
-      return `<div class="stats-card" style="padding:10px;"><div class="stats-icon stats-icon-videos">${durationIcon}</div><div class="stats-info"><div class="stats-label" style="font-size:12px;">${t('duration')}</div><div class="stats-value" style="font-size:16px;">${durationValue}</div></div></div>`;
+      return _buildMetaCard('stats-icon-videos', durationIcon, t('duration'), durationValue);
     }
 
     /**
      * Build metadata cards HTML
-     * @param {any} stats - Stats object
-     * @param {any} extras - Video extras
+     * @param {VideoStatsData} stats - Stats object
+     * @param {ExtraMetadata} extras - Video extras
      * @returns {string} HTML string
      */
-    function buildMetaCardsHtml(stats, /** @type {any} */ extras) {
+    function buildMetaCardsHtml(
+      /** @type {VideoStatsData} */ stats,
+      /** @type {ExtraMetadata} */ extras
+    ) {
       const cards = [
         createMonetizationCard(extras, stats),
         createCountryCard(extras),
@@ -2175,110 +2774,121 @@
     }
 
     /**
-     * Display video statistics
-     * @param {HTMLElement} container - Container element
-     * @param {any} stats - Stats data
-     * @param {string} id - Video ID
+     * @param {VideoStatCardDef[]} defs
+     * @param {string} label
+     * @returns {string}
      */
-    function displayVideoStats(container, stats, id) {
-      const fields = extractVideoFields(stats, id);
-      const { liveViewer, title, thumbUrl } = fields;
+    function buildCardFromDef_(defs, label) {
+      const def = defs.find(d => d.label === label);
+      if (!def) return '';
+      return makeStatsCard(
+        def.label,
+        def.value ?? null,
+        def.exact ?? null,
+        def.iconClass,
+        def.iconSvg
+      );
+    }
 
-      // Escape title for XSS prevention
-      const safeTitle = escapeHtml(title);
-      const titleHtml = safeTitle
-        ? `<div class="stats-thumb-title-centered">${safeTitle}</div>`
-        : '';
-      const defs = getVideoStatDefinitions(fields);
-
-      // Build individual cards but group likes+dislikes into a single grid cell so
-      // they appear side-by-side on one line.
-      const viewsDef = defs.find(d => d.label === 'views');
-      const likesDef = defs.find(d => d.label === 'likes');
-      const dislikesDef = defs.find(d => d.label === 'dislikes');
-      const commentsDef = defs.find(d => d.label === 'comments');
-
-      const viewsHtml = viewsDef
-        ? makeStatsCard(
-            viewsDef.label,
-            viewsDef.value,
-            viewsDef.exact,
-            viewsDef.iconClass,
-            viewsDef.iconSvg
-          )
-        : '';
-      const likesHtml = likesDef
-        ? makeStatsCard(
-            likesDef.label,
-            likesDef.value,
-            likesDef.exact,
-            likesDef.iconClass,
-            likesDef.iconSvg
-          )
-        : '';
-      const dislikesHtml = dislikesDef
-        ? makeStatsCard(
-            dislikesDef.label,
-            dislikesDef.value,
-            dislikesDef.exact,
-            dislikesDef.iconClass,
-            dislikesDef.iconSvg
-          )
-        : '';
-      const commentsHtml = commentsDef
-        ? makeStatsCard(
-            commentsDef.label,
-            commentsDef.value,
-            commentsDef.exact,
-            commentsDef.iconClass,
-            commentsDef.iconSvg
-          )
-        : '';
-
+    /**
+     * @param {VideoStatCardDef[]} defs
+     * @param {number | string | null | undefined} liveViewer
+     * @returns {string}
+     */
+    function buildMainStatsGridHtml_(defs, liveViewer) {
+      const viewsHtml = buildCardFromDef_(defs, 'views');
+      const likesHtml = buildCardFromDef_(defs, 'likes');
+      const dislikesHtml = buildCardFromDef_(defs, 'dislikes');
+      const commentsHtml = buildCardFromDef_(defs, 'comments');
       const pairHtml =
         likesHtml || dislikesHtml
           ? `<div class="stats-card-pair">${likesHtml}${dislikesHtml}</div>`
           : '';
-
-      // Build centered large author/handle display (placed below stats grid)
-      const { author, authorHandle } = fields;
-      const safeAuthor = author ? escapeHtml(String(author)) : '';
-      const safeHandle = authorHandle ? escapeHtml(String(authorHandle)) : '';
-      const authorBigHtml =
-        safeHandle || safeAuthor
-          ? `<div class="stats-author-big">${
-              safeHandle
-                ? `<a class="stats-author-handle-big" href="https://www.youtube.com/${encodeURIComponent(
-                    authorHandle
-                  )}" target="_blank" rel="noopener noreferrer">${safeHandle}</a>`
-                : `<span class="stats-author-name-big">${safeAuthor}</span>`
-            }</div>`
-          : '';
-
       const parts = [viewsHtml, pairHtml, commentsHtml].filter(Boolean);
-
       const liveViewerCard = createLiveViewerCard(liveViewer);
       if (liveViewerCard) parts.push(liveViewerCard);
+      return `<div class="stats-grid">${parts.join('')}</div>`;
+    }
 
-      const gridHtml = `<div class="stats-grid">${parts.join('')}</div>`;
+    /**
+     * @param {unknown} author
+     * @param {unknown} authorHandle
+     * @returns {{ authorBigHtml: string, safeAuthor: string, safeHandle: string }}
+     */
+    function buildAuthorBigHtml_(author, authorHandle) {
+      const safeAuthor = author ? escapeHtml(String(author)) : '';
+      const safeHandle = authorHandle ? escapeHtml(String(authorHandle)) : '';
+      if (!(safeHandle || safeAuthor)) return { authorBigHtml: '', safeAuthor, safeHandle };
+
+      const inner = safeHandle
+        ? `<a class="stats-author-handle-big" href="https://www.youtube.com/${encodeURIComponent(
+            String(authorHandle)
+          )}" target="_blank" rel="noopener noreferrer">${safeHandle}</a>`
+        : `<span class="stats-author-name-big">${safeAuthor}</span>`;
+      return {
+        authorBigHtml: `<div class="stats-author-big">${inner}</div>`,
+        safeAuthor,
+        safeHandle,
+      };
+    }
+
+    /**
+     * @param {HTMLElement} container
+     * @param {string} safeHandle
+     * @param {string} safeAuthor
+     */
+    function updateClassicChannelBadge_(container, safeHandle, safeAuthor) {
+      if (!(safeHandle || safeAuthor)) return;
+      const badgeEl = container
+        .closest('.stats-modal-content')
+        ?.querySelector('#stats-classic-channel-badge');
+      if (badgeEl) {
+        badgeEl.textContent = safeHandle || `@${safeAuthor}`;
+        /** @type {HTMLElement} */ (badgeEl).style.display = 'inline-block';
+      }
+    }
+
+    /**
+     * @param {ExtractedVideoFields} fields
+     * @param {VideoStatsData} stats
+     * @param {string} sideColumnHtml
+     * @returns {string}
+     */
+    function buildVideoStatsLayoutHtml_(fields, stats, sideColumnHtml) {
+      const { title, thumbUrl } = fields;
+      const safeTitle = escapeHtml(title);
+      const titleHtml = safeTitle
+        ? `<div class="stats-thumb-title-centered">${safeTitle}</div>`
+        : '';
+      if (!thumbUrl) {
+        return `${titleHtml}${sideColumnHtml}`;
+      }
+      const extras = getVideoExtras(stats, null);
+      const metaCardsHtml = buildMetaCardsHtml(stats, extras);
+      const metaExtrasHtml = metaCardsHtml
+        ? `<div class="stats-thumb-extras stats-thumb-extras--wrap">${metaCardsHtml}</div>`
+        : '';
+      const leftHtml = `<div class="stats-thumb-left"><img class="stats-thumb-img" src="${thumbUrl}" alt="thumbnail">${metaExtrasHtml}</div>`;
+      return `${titleHtml}<div class="stats-thumb-row">${leftHtml}${sideColumnHtml}</div>`;
+    }
+
+    /**
+     * Display video statistics
+     * @param {HTMLElement} container - Container element
+     * @param {VideoStatsData} stats - Stats data
+     * @param {string} id - Video ID
+     */
+    function displayVideoStats(container, stats, id) {
+      const fields = extractVideoFields(stats, id);
+      const { liveViewer, author, authorHandle } = fields;
+      const defs = getVideoStatDefinitions(fields);
+
+      const gridHtml = buildMainStatsGridHtml_(defs, liveViewer);
+      const { authorBigHtml, safeAuthor, safeHandle } = buildAuthorBigHtml_(author, authorHandle);
       const sideColumnHtml = `<div class="stats-side-column">${gridHtml}${authorBigHtml}</div>`;
 
-      if (thumbUrl) {
-        const extras = getVideoExtras(stats, null);
-        const metaCardsHtml = buildMetaCardsHtml(stats, extras);
-        const metaExtrasHtml = metaCardsHtml
-          ? `<div class="stats-thumb-extras" style="display:flex;flex-wrap:wrap;gap:8px;margin-top:12px;">${metaCardsHtml}</div>`
-          : '';
-        const leftHtml = `<div class="stats-thumb-left"><img class="stats-thumb-img" src="${thumbUrl}" alt="thumbnail">${metaExtrasHtml}</div>`;
-        _setSafeHTML(
-          container,
-          `${titleHtml}<div class="stats-thumb-row">${leftHtml}${sideColumnHtml}</div>`
-        );
-      } else {
-        _setSafeHTML(container, `${titleHtml}${sideColumnHtml}`);
-      }
-
-      // Set up error handlers for country flag images
+      _setSafeHTML(container, buildVideoStatsLayoutHtml_(fields, stats, sideColumnHtml));
+      updateClassicChannelBadge_(container, safeHandle, safeAuthor);
       setupFlagImageErrorHandlers(container);
     }
 
@@ -2287,21 +2897,23 @@
      * @param {HTMLElement} container - Container element
      */
     function setupFlagImageErrorHandlers(container) {
-      const flagImages = $$('.country-flag', /** @type {any} */ (container));
-      const globeIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></svg>`;
+      const flagImages = $$('.country-flag', container);
+      const globeIcon = GLOBE_ICON_SVG;
 
-      flagImages.forEach((/** @type {any} */ img) => {
-        img.addEventListener(
+      flagImages.forEach((/** @type {Element} */ img) => {
+        window.YouTubePlusCleanupManager?.registerListener?.(
+          img,
           'error',
-          /** @this {any} */
+          /** @this {HTMLImageElement} */
           function () {
-            const iconContainer = this.parentElement;
+            const iconContainer = /** @type {HTMLElement | null} */ (this.parentElement);
             if (iconContainer && iconContainer.dataset.fallbackIcon === 'globe') {
               this.style.display = 'none';
               _setSafeHTML(iconContainer, globeIcon);
             }
           },
-          { once: true }
+          { once: true },
+          false
         );
       });
     }
@@ -2309,10 +2921,12 @@
     /**
      * Display channel statistics
      * @param {HTMLElement} container - Container element
-     * @param {any} stats - Stats data
+     * @param {LivecountsChannelStats | Record<string, unknown>} stats - Stats data
      */
     function displayChannelStats(container, stats) {
-      const { liveSubscriber, liveViews, liveVideos } = stats;
+      const { liveSubscriber, liveViews, liveVideos } = /** @type {Record<string, number>} */ (
+        stats
+      );
 
       _setSafeHTML(
         container,
@@ -2366,33 +2980,7 @@
       );
     }
 
-    /**
-     * Create and insert the stats horizontal menu below the video owner actions
-     * @returns {HTMLElement|undefined} The inserted menu container or undefined
-     */
-    function createStatsMenu() {
-      if (!statsButtonEnabled) return undefined;
-      if ($('.stats-menu-container')) {
-        return undefined;
-      }
-
-      const resolveActionContainer = () => {
-        const modernContainer = /** @type {HTMLElement | null} */ (
-          $('#owner #top-row #buttons, #top-row #owner #buttons, #buttons.ytd-video-owner-renderer')
-        );
-        if (modernContainer) return modernContainer;
-
-        const joinButton = /** @type {HTMLElement | null} */ (
-          $('.yt-flexible-actions-view-model-wiz__action:not(.stats-menu-container)')
-        );
-        if (joinButton?.parentElement) return joinButton.parentElement;
-
-        return /** @type {HTMLElement | null} */ ($('#subscribe-button + #buttons'));
-      };
-
-      const containerDiv = document.createElement('div');
-      containerDiv.className = 'yt-flexible-actions-view-model-wiz__action stats-menu-container';
-
+    function createStatsMainButtonViewModel_() {
       const mainButtonViewModel = document.createElement('button-view-model');
       mainButtonViewModel.className = 'yt-spec-button-view-model main-stats-view-model';
 
@@ -2411,7 +2999,7 @@
       const iconWrap = document.createElement('span');
       _setSafeHTML(
         iconWrap,
-        '<svg viewBox="0 0 512 512" style="width:20px;height:20px;fill:currentColor"><path d="M500 89c13.8-11 16-31.2 5-45s-31.2-16-45-5L319.4 151.5 211.2 70.4c-11.7-8.8-27.8-8.5-39.2 .6L12 199c-13.8 11-16 31.2-5 45s31.2 16 45 5L192.6 136.5l108.2 81.1c11.7 8.8 27.8 8.5 39.2-.6L500 89zM160 256l0 192c0 17.7 14.3 32 32 32s32-14.3 32-32l0-192c0-17.7-14.3-32-32-32s-32 14.3-32 32zM32 352l0 96c0 17.7 14.3 32 32 32s32-14.3 32-32l0-96c0-17.7-14.3-32-32-32s-32 14.3-32 32zm288-64c-17.7 0-32 14.3-32 32l0 128c0 17.7 14.3 32 32 32s32-14.3 32-32l0-128c0-17.7-14.3-32-32-32zm96-32l0 192c0 17.7 14.3 32 32 32s32-14.3 32-32l0-192c0-17.7-14.3-32-32-32s-32 14.3-32 32z"/></svg>'
+        '<svg viewBox="0 0 512 512" width="20" height="20" fill="currentColor"><path d="M500 89c13.8-11 16-31.2 5-45s-31.2-16-45-5L319.4 151.5 211.2 70.4c-11.7-8.8-27.8-8.5-39.2 .6L12 199c-13.8 11-16 31.2-5 45s31.2 16 45 5L192.6 136.5l108.2 81.1c11.7 8.8 27.8 8.5 39.2-.6L500 89zM160 256l0 192c0 17.7 14.3 32 32 32s32-14.3 32-32l0-192c0-17.7-14.3-32-32-32s-32 14.3-32 32zM32 352l0 96c0 17.7 14.3 32 32 32s32-14.3 32-32l0-96c0-17.7-14.3-32-32-32s-32 14.3-32 32zm288-64c-17.7 0-32 14.3-32 32l0 128c0 17.7 14.3 32 32 32s32-14.3 32-32l0-128c0-17.7-14.3-32-32-32zm96-32l0 192c0 17.7 14.3 32 32 32s32-14.3 32-32l0-192c0-17.7-14.3-32-32-32s-32 14.3-32 32z"/></svg>'
       );
       const svg = iconWrap.firstElementChild;
 
@@ -2423,23 +3011,8 @@
         buttonText.style.alignItems = 'center';
       }
 
-      const touchFeedback = document.createElement('yt-touch-feedback-shape');
+      const touchFeedback = createTouchFeedbackShape_();
       if (touchFeedback.style) touchFeedback.style.borderRadius = 'inherit';
-
-      const touchFeedbackDiv = document.createElement('div');
-      touchFeedbackDiv.className =
-        'yt-spec-touch-feedback-shape yt-spec-touch-feedback-shape--touch-response';
-      touchFeedbackDiv.setAttribute('aria-hidden', 'true');
-
-      const strokeDiv = document.createElement('div');
-      strokeDiv.className = 'yt-spec-touch-feedback-shape__stroke';
-
-      const fillDiv = document.createElement('div');
-      fillDiv.className = 'yt-spec-touch-feedback-shape__fill';
-
-      touchFeedbackDiv.appendChild(strokeDiv);
-      touchFeedbackDiv.appendChild(fillDiv);
-      touchFeedback.appendChild(touchFeedbackDiv);
 
       if (svg) {
         mainButton.appendChild(svg);
@@ -2447,74 +3020,94 @@
       mainButton.appendChild(buttonText);
       mainButton.appendChild(touchFeedback);
       mainButtonViewModel.appendChild(mainButton);
-      containerDiv.appendChild(mainButtonViewModel);
+      return mainButtonViewModel;
+    }
 
+    /**
+     * @param {string} label
+     * @param {string} pathData
+     * @param {string} viewBox
+     * @param {string} className
+     * @returns {HTMLElement}
+     */
+    function createStatsMenuButtonContainer_(label, pathData, viewBox, className) {
+      const container = document.createElement('div');
+      container.className = `stats-menu-button ${className}-container`;
+      const btn = createButton(label, pathData, viewBox, className, () => {
+        const channelId = getChannelIdentifier();
+        if (channelId) {
+          openStatsModal('channel', channelId);
+        }
+      });
+      container.appendChild(btn);
+      return container;
+    }
+
+    function createStatsHorizontalMenu_() {
       const horizontalMenu = document.createElement('div');
       horizontalMenu.className = 'stats-horizontal-menu';
 
-      const channelButtonContainer = document.createElement('div');
-      channelButtonContainer.className = 'stats-menu-button channel-stats-container';
-
-      const channelButton = createButton(
-        t('channel'),
-        'M64 48c-8.8 0-16 7.2-16 16l0 288c0 8.8 7.2 16 16 16l512 0c8.8 0 16-7.2 16-16l0-288c0-8.8-7.2-16-16-16L64 48zM0 64C0 28.7 28.7 0 64 0L576 0c35.3 0 64 28.7 64 64l0 288c0 35.3-28.7 64-64 64L64 416c-35.3 0-64-28.7-64-64L0 64zM120 464l400 0c13.3 0 24 10.7 24 24s-10.7 24-24 24l-400 0c-13.3 0-24-10.7-24-24s10.7-24 24-24z',
-        '0 0 640 512',
-        'channel-stats',
-        () => {
-          const channelId = getChannelIdentifier();
-          if (channelId) {
-            openStatsModal('channel', channelId);
-          }
-        }
+      horizontalMenu.appendChild(
+        createStatsMenuButtonContainer_(
+          t('channel'),
+          'M64 48c-8.8 0-16 7.2-16 16l0 288c0 8.8 7.2 16 16 16l512 0c8.8 0 16-7.2 16-16l0-288c0-8.8-7.2-16-16-16L64 48zM0 64C0 28.7 28.7 0 64 0L576 0c35.3 0 64 28.7 64 64l0 288c0 35.3-28.7 64-64 64L64 416c-35.3 0-64-28.7-64-64L0 64zM120 464l400 0c13.3 0 24 10.7 24 24s-10.7 24-24 24l-400 0c-13.3 0-24-10.7-24-24s10.7-24 24-24z',
+          '0 0 640 512',
+          'channel-stats'
+        )
       );
-      channelButtonContainer.appendChild(channelButton);
-      horizontalMenu.appendChild(channelButtonContainer);
 
       if (channelFeatures.hasStreams) {
-        const liveButtonContainer = document.createElement('div');
-        liveButtonContainer.className = 'stats-menu-button live-stats-container';
-
-        const liveButton = createButton(
-          t('live'),
-          'M99.8 69.4c10.2 8.4 11.6 23.6 3.2 33.8C68.6 144.7 48 197.9 48 256s20.6 111.3 55 152.8c8.4 10.2 7 25.3-3.2 33.8s-25.3 7-33.8-3.2C24.8 389.6 0 325.7 0 256S24.8 122.4 66 72.6c8.4-10.2 23.6-11.6 33.8-3.2zm376.5 0c10.2-8.4 25.3-7 33.8 3.2c41.2 49.8 66 113.8 66 183.4s-24.8 133.6-66 183.4c-8.4 10.2-23.6 11.6-33.8 3.2s-11.6-23.6-3.2-33.8c34.3-41.5 55-94.7 55-152.8s-20.6-111.3-55-152.8c-8.4-10.2-7-25.3 3.2-33.8zM248 256a40 40 0 1 1 80 0 40 40 0 1 1 -80 0zm-61.1-78.5C170 199.2 160 226.4 160 256s10 56.8 26.9 78.5c8.1 10.5 6.3 25.5-4.2 33.7s-25.5 6.3-33.7-4.2c-23.2-29.8-37-67.3-37-108s13.8-78.2 37-108c8.1-10.5 23.2-12.3 33.7-4.2s12.3 23.2 4.2 33.7zM427 148c23.2 29.8 37 67.3 37 108s-13.8 78.2-37 108c-8.1 10.5-23.2 12.3-33.7 4.2s-12.3-23.2-4.2-33.7C406 312.8 416 285.6 416 256s-10-56.8-26.9-78.5c-8.1-10.5-6.3-25.5 4.2-33.7s25.5-6.3 33.7 4.2z',
-          '0 0 576 512',
-          'live-stats',
-          () => {
-            const channelId = getChannelIdentifier();
-            if (channelId) {
-              openStatsModal('channel', channelId);
-            }
-          }
+        horizontalMenu.appendChild(
+          createStatsMenuButtonContainer_(
+            t('live'),
+            'M99.8 69.4c10.2 8.4 11.6 23.6 3.2 33.8C68.6 144.7 48 197.9 48 256s20.6 111.3 55 152.8c8.4 10.2 7 25.3-3.2 33.8s-25.3 7-33.8-3.2C24.8 389.6 0 325.7 0 256S24.8 122.4 66 72.6c8.4-10.2 23.6-11.6 33.8-3.2zm376.5 0c10.2-8.4 25.3-7 33.8 3.2c41.2 49.8 66 113.8 66 183.4s-24.8 133.6-66 183.4c-8.4 10.2-23.6 11.6-33.8 3.2s-11.6-23.6-3.2-33.8c34.3-41.5 55-94.7 55-152.8s-20.6-111.3-55-152.8c-8.4-10.2-7-25.3 3.2-33.8zM248 256a40 40 0 1 1 80 0 40 40 0 1 1 -80 0zm-61.1-78.5C170 199.2 160 226.4 160 256s10 56.8 26.9 78.5c8.1 10.5 6.3 25.5-4.2 33.7s-25.5 6.3-33.7-4.2c-23.2-29.8-37-67.3-37-108s13.8-78.2 37-108c8.1-10.5 23.2-12.3 33.7-4.2s12.3 23.2 4.2 33.7zM427 148c23.2 29.8 37 67.3 37 108s-13.8 78.2-37 108c-8.1 10.5-23.2 12.3-33.7 4.2s-12.3-23.2-4.2-33.7C406 312.8 416 285.6 416 256s-10-56.8-26.9-78.5c-8.1-10.5-6.3-25.5 4.2-33.7s25.5-6.3 33.7 4.2z',
+            '0 0 576 512',
+            'live-stats'
+          )
         );
-
-        liveButtonContainer.appendChild(liveButton);
-        horizontalMenu.appendChild(liveButtonContainer);
       }
 
       if (channelFeatures.hasShorts) {
-        const shortsButtonContainer = document.createElement('div');
-        shortsButtonContainer.className = 'stats-menu-button shorts-stats-container';
-
-        const shortsButton = createButton(
-          t('shorts'),
-          'M80 48c-8.8 0-16 7.2-16 16l0 384c0 8.8 7.2 16 16 16l224 0c8.8 0 16-7.2 16-16l0-384c0-8.8-7.2-16-16-16L80 48zM16 64C16 28.7 44.7 0 80 0L304 0c35.3 0 64 28.7 64 64l0 384c0 35.3-28.7 64-64 64L80 512c-35.3 0-64-28.7-64-64L16 64zM160 400l64 0c8.8 0 16 7.2 16 16s-7.2 16-16 16l-64 0c-8.8 0-16-7.2-16-16s7.2-16 16-16z',
-          '0 0 384 512',
-          'shorts-stats',
-          () => {
-            const channelId = getChannelIdentifier();
-            if (channelId) {
-              openStatsModal('channel', channelId);
-            }
-          }
+        horizontalMenu.appendChild(
+          createStatsMenuButtonContainer_(
+            t('shorts'),
+            'M80 48c-8.8 0-16 7.2-16 16l0 384c0 8.8 7.2 16 16 16l224 0c8.8 0 16-7.2 16-16l0-384c0-8.8-7.2-16-16-16L80 48zM16 64C16 28.7 44.7 0 80 0L304 0c35.3 0 64 28.7 64 64l0 384c0 35.3-28.7 64-64 64L80 512c-35.3 0-64-28.7-64-64L16 64zM160 400l64 0c8.8 0 16 7.2 16 16s-7.2 16-16 16l-64 0c-8.8 0-16-7.2-16-16s7.2-16 16-16z',
+            '0 0 384 512',
+            'shorts-stats'
+          )
         );
-
-        shortsButtonContainer.appendChild(shortsButton);
-        horizontalMenu.appendChild(shortsButtonContainer);
       }
 
-      containerDiv.appendChild(horizontalMenu);
+      return horizontalMenu;
+    }
 
-      const actionContainer = resolveActionContainer();
+    function resolveActionContainer_() {
+      const modernContainer = /** @type {HTMLElement | null} */ (
+        $('#owner #top-row #buttons, #top-row #owner #buttons, #buttons.ytd-video-owner-renderer')
+      );
+      if (modernContainer) return modernContainer;
+
+      const joinButton = /** @type {HTMLElement | null} */ (
+        $('.yt-flexible-actions-view-model-wiz__action:not(.stats-menu-container)')
+      );
+      if (joinButton?.parentElement) return joinButton.parentElement;
+
+      return /** @type {HTMLElement | null} */ ($('#subscribe-button + #buttons'));
+    }
+
+    /**
+     * Create and insert the stats horizontal menu below the video owner actions
+     * @returns {HTMLElement|undefined} The inserted menu container or undefined
+     */
+    function createStatsMenu() {
+      if (!statsButtonEnabled || $('.stats-menu-container')) return undefined;
+
+      const containerDiv = document.createElement('div');
+      containerDiv.className = 'yt-flexible-actions-view-model-wiz__action stats-menu-container';
+      containerDiv.appendChild(createStatsMainButtonViewModel_());
+      containerDiv.appendChild(createStatsHorizontalMenu_());
+
+      const actionContainer = resolveActionContainer_();
       if (actionContainer) {
         actionContainer.appendChild(containerDiv);
       }
@@ -2544,65 +3137,19 @@
      */
     function checkAndInsertIcon() {
       if (!statsButtonEnabled) return;
-      // Always ensure universal icon is present in the masthead
+      addStyles();
       insertUniversalIcon();
     }
 
-    const handleExperimentalNavClick = (/** @type {Event} */ e) => {
-      const { target } = e;
-      const el = /** @type {EventTarget & HTMLElement} */ (target);
-      const navItem = el?.closest?.('.ytp-plus-settings-nav-item');
-      if (navItem?.dataset?.section === 'experimental') {
-        attachSettingsHandler();
-      }
-    };
-
-    if (U?.cleanupManager?.registerListener) {
-      U.cleanupManager.registerListener(document, 'youtube-plus-language-changed', () => {
-        attachSettingsHandler();
-      });
-    } else {
-      document.addEventListener('youtube-plus-language-changed', () => {
-        attachSettingsHandler();
-      });
-    }
-
-    if (!experimentalNavListenerKey) {
-      if (U?.cleanupManager?.registerListener) {
-        experimentalNavListenerKey = U.cleanupManager.registerListener(
-          document,
-          'click',
-          handleExperimentalNavClick,
-          true
-        );
-      } else {
-        document.addEventListener('click', handleExperimentalNavClick, true);
-        experimentalNavListenerKey = 'native-click-listener';
-      }
-    }
-
     /**
-     * Initialize the video stats module: inject styles, icon, menu, and listeners
+     * Initialize the video stats module: channel-tab analysis only. Styles,
+     * icon, menu and navigation listeners are acquired through the feature's
+     * context on each route entry.
      * @returns {void}
      */
     function init() {
-      if (U?.isStudioPage?.()) return;
-      addStyles();
-      if (statsButtonEnabled) {
-        checkAndInsertIcon();
-        checkAndAddMenu();
-      }
-
-      // Use centralized pushState/replaceState event from utils.js instead of wrapping independently
-      if (U?.cleanupManager?.registerListener) {
-        U.cleanupManager.registerListener(window, 'ytp-history-navigate', checkUrlChange);
-        U.cleanupManager.registerListener(window, 'popstate', checkUrlChange);
-      } else {
-        window.addEventListener('ytp-history-navigate', checkUrlChange);
-        window.addEventListener('popstate', checkUrlChange);
-      }
-
-      if (U?.isChannelPage?.(location.href) ?? false) {
+      if (U.isStudioPage?.()) return;
+      if (U.isChannelPage?.(location.href)) {
         checkChannelTabs(location.href);
       }
     }
@@ -2615,6 +3162,7 @@
         try {
           init();
         } catch (e) {
+          logS(e);
           statsInitialized = false;
           throw e;
         }
@@ -2627,175 +3175,480 @@
       }
     };
 
-    runWhenReady(scheduleInit);
-
     const handleNavigate = () => {
       scheduleInit();
       if (!(statsInitialized && statsButtonEnabled)) return;
       checkAndInsertIcon();
       checkAndAddMenu();
-      if (U?.isChannelPage?.(location.href) ?? false) {
+      if (U.isChannelPage?.(location.href)) {
         checkChannelTabs(location.href);
       }
     };
 
-    const _cleanupManager = U?.cleanupManager;
-    if (_cleanupManager) {
-      _cleanupManager.registerListener(document, 'yt-navigate-finish', handleNavigate, {
-        passive: true,
-      });
-    } else {
-      document.addEventListener('yt-navigate-finish', handleNavigate);
-    }
-
-    // Safety net: LazyLoader dispatches ytp:nav-refresh after every SPA nav.
+    // Safety net: LazyLoader dispatches yp:nav-refresh after every SPA nav.
     // Re-evaluate icon/menu presence so we don't depend solely on the
     // yt-navigate-finish listener which can race with DOM re-mounts.
     const _navRefreshHandler = () => {
-      try {
-        if (statsInitialized && statsButtonEnabled) {
-          checkAndInsertIcon();
-          checkAndAddMenu();
-        }
-      } catch (e) {
-        void e;
+      if (statsInitialized && statsButtonEnabled) {
+        checkAndInsertIcon();
+        checkAndAddMenu();
       }
     };
-    if (_cleanupManager) {
-      _cleanupManager.registerListener(window, 'ytp:nav-refresh', _navRefreshHandler, {
-        passive: true,
-      });
-    } else {
-      window.addEventListener('ytp:nav-refresh', _navRefreshHandler);
-    }
 
     const handleAction = (/** @type {Event} */ event) => {
       scheduleInit();
       if (!(statsInitialized && statsButtonEnabled)) return;
-      const ev = /** @type {CustomEvent<any>} */ (event);
+      const ev = /** @type {CustomEvent<{ actionName?: string }>} */ (event);
       if (ev.detail && ev.detail.actionName === 'yt-reload-continuation-items-command') {
         checkAndInsertIcon();
         checkAndAddMenu();
       }
     };
 
-    if (_cleanupManager) {
-      _cleanupManager.registerListener(document, 'yt-action', handleAction, {
-        passive: true,
+    // Route-scoped stats button and menu: styles, insertion and the listeners
+    // that keep them in sync. The feature acquires these through its context,
+    // so leaving a listed route releases them.
+    videoStatsEnter = ctx => {
+      videoStatsCtx = ctx;
+      addStyles();
+      scheduleInit();
+      // The stats-button flag is written by the settings modal's general
+      // handler and the feature lifecycle restarts this feature on the change,
+      // so re-read it on every entry instead of tracking it locally.
+      statsButtonEnabled = isStatsButtonEnabled();
+      if (statsButtonEnabled) {
+        checkAndInsertIcon();
+        checkAndAddMenu();
+      }
+      ctx.listen(window, 'yp-history-navigate', checkUrlChange, { passive: true });
+      ctx.listen(window, 'popstate', checkUrlChange, { passive: true });
+      ctx.listen(document, 'yt-navigate-finish', handleNavigate, { passive: true });
+      ctx.listen(window, 'yp:nav-refresh', _navRefreshHandler, { passive: true });
+      ctx.listen(document, 'yt-action', handleAction, { passive: true });
+    };
+
+    videoStatsExit = () => {
+      clearStatsIcons_();
+      $$('.stats-menu-container').forEach(removeStatsNode_);
+      statsInitialized = false;
+      statsModalStylesAdded = false;
+      videoStatsCtx = null;
+    };
+
+    if (typeof window !== 'undefined') {
+      window.YouTubePlusStats = Object.assign(window.YouTubePlusStats || {}, {
+        openStatsModal,
+        initVideoStats,
+        ensureShortsStatsButton: checkAndInsertIcon,
+        // exported for direct test-table coverage and for any
+        // caller that needs locale-aware count parsing.
+        parseLocalizedCount: parseLocalizedCount_,
+        // Player/DOM extraction surface: the like-button aria-label and the
+        // live-player precedence are otherwise unreachable from unit tests.
+        getPageVideoStats,
       });
-    } else {
-      document.addEventListener('yt-action', handleAction);
     }
   }; // end initVideoStats
 
-  // Register settings modal listener at module scope so it fires
-  // regardless of route. Without this, the listener inside
-  // initVideoStats() would only be registered after whenRelevant
-  // decides the route is relevant, causing a race condition where
-  // opening the modal on the homepage would miss the event.
-  document.addEventListener('youtube-plus-settings-modal-opened', initVideoStats, {
+  // --- FeatureRegistry descriptor: stats (Vision dock surface) ---
+  /** Shared bar-chart artwork: dock descriptor + page icon both use it. */
+  const BAR_CHART_ICON_SVG =
+    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M18 20V10M12 20V4M6 20v-6"/></svg>';
+
+  DESCRIPTOR = Object.freeze({
+    id: 'stats',
+    titleKey: 'videoStats',
+    fallbackTitle: 'Stats',
+    settingsKey: 'enableStatsButton',
+    iconSVG: BAR_CHART_ICON_SVG,
+    command(/** @type {unknown} */ _shim) {
+      const videoId = U.getVideoIdFromUrl(window.location.href);
+      if (videoId) {
+        if (typeof window.YouTubePlusStats?.openStatsModal !== 'function') {
+          initVideoStats();
+        }
+        if (typeof window.YouTubePlusStats?.openStatsModal === 'function') {
+          window.YouTubePlusStats.openStatsModal('video', videoId);
+          return true;
+        }
+      }
+      return false;
+    },
+    mountDock(/** @type {HTMLElement} */ player, /** @type {HTMLElement} */ dock) {
+      void player;
+      const isEnabled = () => window.YouTubePlusSettingsStore?.get?.('enableStatsButton') !== false;
+      if (!isEnabled()) {
+        // Release the existing registration before removing the button.
+        if (statsDockKey) {
+          window.YouTubePlusCleanupManager?.unregisterListener?.(statsDockKey);
+          statsDockKey = null;
+        }
+        dock.querySelector('#yp-vision-stats-btn')?.remove();
+        return () => {};
+      }
+      let btn = /** @type {HTMLButtonElement|null} */ (dock.querySelector('#yp-vision-stats-btn'));
+      if (!btn) {
+        btn = /** @type {HTMLButtonElement} */ (document.createElement('button'));
+        btn.type = 'button';
+        btn.className = 'vision-dock-btn yp-vision-stats-btn yp-stats-button';
+        btn.id = 'yp-vision-stats-btn';
+        const title = U.t?.('videoStats') || 'Stats';
+        btn.setAttribute('title', title);
+        btn.setAttribute('aria-label', title);
+        btn.setAttribute('tabindex', '0');
+        btn.setAttribute('role', 'button');
+        U.renderTemplateClone?.(btn, BAR_CHART_ICON_SVG);
+        dock.appendChild(btn);
+      }
+      // stable per-button closure so re-mounts dedup to one registration.
+      let clickFn = statsClickHandlers.get(btn);
+      if (!clickFn) {
+        clickFn = /** @type {(e: Event) => void} */ (
+          e => {
+            e.preventDefault();
+            e.stopPropagation();
+            DESCRIPTOR?.command?.();
+          }
+        );
+        statsClickHandlers.set(btn, clickFn);
+      }
+      statsDockKey = window.YouTubePlusCleanupManager?.registerListener?.(
+        btn,
+        'click',
+        clickFn,
+        undefined,
+        false
+      );
+      // Idempotent dispose; the host calls it on remove/unmount/replace.
+      return () => {
+        if (statsDockKey) {
+          window.YouTubePlusCleanupManager?.unregisterListener?.(statsDockKey);
+          statsDockKey = null;
+        }
+      };
+    },
+  });
+
+  if (typeof window !== 'undefined') {
+    window.YouTubePlusStats = Object.assign(window.YouTubePlusStats || {}, {
+      DESCRIPTOR,
+      // Pure parser exported at module scope, testable without initVideoStats.
+      parseLocalizedCount: parseLocalizedCount_,
+    });
+    window.YouTubeStats = window.YouTubePlusStats;
+    window.YouTubePlusFeatureRegistry?.register?.(DESCRIPTOR);
+  }
+
+  // ── Shared RYD fetch service ──
+  // Registered at module scope so every consumer (enhanced dislike buttons,
+  // stats modal) can use it once this module loads, independent of
+  // route-gated initVideoStats and feature toggles. Consumers resolve it
+  // lazily at call time; no hidden local copy of the transport is kept.
+  //
+  // Contract in-flight dedupe per video ID (concurrent consumers
+  // share ONE network call), a shared 8s fetch deadline whose timer is
+  // cleared in finally, a bounded TTL cache (cap 100, FIFO eviction plus an
+  // expired-entry sweep), and strict validation that keeps real zeros apart
+  // from unknown/error. A failed, hung or shapeless response resolves to
+  // null and is never cached; per-consumer abandonment is safe (the shared
+  // promise is never aborted by one consumer).
+  const DISLIKES_TTL_MS = 30000;
+  const DISLIKES_CACHE_CAP = 100;
+  const DISLIKES_FETCH_DEADLINE_MS = 8000;
+  const inFlightDislikes = new Map();
+  const dislikesCache = new Map();
+
+  /** @param {unknown} v @returns {number|null} */
+  const toFiniteNumber_ = v => (typeof v === 'number' && Number.isFinite(v) ? v : null);
+  /** @param {unknown} v @returns {number|null} finite non-negative count */
+  const toCount_ = v => {
+    const n = toFiniteNumber_(v);
+    return n !== null && n >= 0 ? n : null;
+  };
+
+  /**
+   * Bounded-cache eviction sweep expired entries on every insert,
+   * then drop the oldest inserts (Map iteration is insertion-ordered) until
+   * under the cap. All growth sources stay bounded, including mass
+   * navigation, and expired entries never linger past the next write.
+   * @returns {void}
+   */
+  function evictDislikesCache_() {
+    const now = Date.now();
+    for (const [key, entry] of dislikesCache) {
+      if (now >= entry.expiresAt) dislikesCache.delete(key);
+    }
+    while (dislikesCache.size >= DISLIKES_CACHE_CAP) {
+      const oldest = dislikesCache.keys().next();
+      if (oldest.done) break;
+      dislikesCache.delete(oldest.value);
+    }
+  }
+
+  /**
+   * Validate a raw RYD payload. Valid zeros stay zeros; strings/objects/
+   * missing fields are unknown (null) per field, never coerced into a
+   * count. Returns null for shapeless bodies or payloads with no known
+   * field at all, never a silent empty success.
+   * @param {unknown} data
+   * @returns {{likes: number | null; dislikes: number | null; rating: number | null} | null}
+   */
+  function parseRydVotes_(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return null;
+    const row = /** @type {Record<string, unknown>} */ (data);
+    const result = {
+      likes: toCount_(row.likes),
+      dislikes: toCount_(row.dislikes),
+      rating: toFiniteNumber_(row.rating),
+    };
+    if (result.likes === null && result.dislikes === null && result.rating === null) return null;
+    return result;
+  }
+
+  /**
+   * Fetch the RYD aggregate for one video. Resolves to
+   * `{likes, dislikes, rating}` with valid numbers kept as-is (real zeros
+   * stay zeros) and unknown fields as null; resolves to null when the
+   * response is an error, hangs past the deadline or has no known field,
+   * never a silent empty success.
+   * @param {string} videoId - Video ID
+   * @returns {Promise<{likes: number | null; dislikes: number | null; rating: number | null} | null>}
+   */
+  /**
+   * GM_xmlhttpRequest transport (Tampermonkey/Violentmonkey/Greasemonkey).
+   * @param {string} videoId
+   * @returns {Promise<{likes: number | null; dislikes: number | null; rating: number | null} | null>}
+   */
+  function fetchRydVotesGM_(/** @type {string} */ videoId) {
+    return new Promise((resolve, reject) => {
+      const timeoutId = setTimeout(
+        () => reject(new Error('RYD request deadline')),
+        DISLIKES_FETCH_DEADLINE_MS
+      );
+      const done = /** @type {(v: RydVotesAggregate | null) => void} */ (
+        value => {
+          clearTimeout(timeoutId);
+          resolve(value);
+        }
+      );
+      GM_xmlhttpRequest({
+        method: 'GET',
+        url: `https://returnyoutubedislikeapi.com/votes?videoId=${encodeURIComponent(videoId)}`,
+        timeout: DISLIKES_FETCH_DEADLINE_MS,
+        headers: { Accept: 'application/json' },
+        /** @param {GMResponseLike} r */
+        onload: r => {
+          clearTimeout(timeoutId);
+          // A non-2xx response is unknown, never a zero aggregate.
+          if (r.status >= 200 && r.status < 300) {
+            let parsed;
+            try {
+              parsed = JSON.parse(r.responseText || 'null');
+            } catch (parseErr) {
+              logS(parseErr);
+              done(null);
+              return;
+            }
+            done(parseRydVotes_(parsed));
+          } else {
+            reject(new Error(`HTTP ${r.status}`));
+          }
+        },
+        /** @param {unknown} err */
+        onerror: err => {
+          clearTimeout(timeoutId);
+          reject(err || new Error('network'));
+        },
+        ontimeout: () => {
+          clearTimeout(timeoutId);
+          reject(new Error('RYD request timeout'));
+        },
+      });
+    }).then(
+      aggregate => aggregate,
+      e => {
+        // A deadline/HTTP/network rejection is unknown, never a zero.
+        logS(e);
+        return null;
+      }
+    );
+  }
+
+  /**
+   * fetch transport with an AbortController deadline (managers without GM).
+   * @param {string} videoId
+   * @returns {Promise<{likes: number | null; dislikes: number | null; rating: number | null} | null>}
+   */
+  async function fetchRydVotesHttp_(/** @type {string} */ videoId) {
+    const controller = typeof AbortController === 'function' ? new AbortController() : null;
+    const timeoutId = controller
+      ? setTimeout(() => controller.abort(), DISLIKES_FETCH_DEADLINE_MS)
+      : null;
+    try {
+      const response = await fetch(
+        `https://returnyoutubedislikeapi.com/votes?videoId=${encodeURIComponent(videoId)}`,
+        controller ? { signal: controller.signal } : undefined
+      );
+      // A non-2xx response is unknown, never a zero aggregate.
+      if (!response.ok) return null;
+
+      return parseRydVotes_(await response.json());
+    } finally {
+      if (timeoutId !== null) clearTimeout(timeoutId);
+    }
+  }
+
+  async function fetchDislikesData(/** @type {string} */ videoId) {
+    if (!videoId) return null;
+
+    // TTL cache: a fresh aggregate is served without a network call; an
+    // expired one is evicted.
+    const cached = dislikesCache.get(videoId);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    dislikesCache.delete(videoId);
+
+    // In-flight dedupe: concurrent consumers share one shared promise.
+    const inflight = inFlightDislikes.get(videoId);
+    if (inflight) return inflight;
+
+    const promise = (async () => {
+      // defer until browser is idle (non-critical enrichment data)
+      await new Promise(resolve => {
+        if (typeof requestIdleCallback === 'function') {
+          requestIdleCallback(resolve, { timeout: 3000 });
+        } else {
+          setTimeout(resolve, 0);
+        }
+      });
+      try {
+        // One result store; both transports stay available: GM_xmlhttpRequest
+        // where the manager provides it, plain fetch otherwise. Each carries
+        // its own deadline; the timer is cleared in finally.
+        const aggregate =
+          typeof GM_xmlhttpRequest === 'function'
+            ? await fetchRydVotesGM_(videoId)
+            : await fetchRydVotesHttp_(videoId);
+        return aggregate;
+      } catch (error) {
+        logS(error);
+        window.YouTubePlusLogger?.error?.('Stats', 'Failed to fetch dislikes:', error);
+        return null;
+      } finally {
+        inFlightDislikes.delete(videoId);
+      }
+    })();
+
+    inFlightDislikes.set(videoId, promise);
+    const result = await promise;
+    // Only verified aggregates are cached; failures/unknown retry on the next
+    // consumer action.
+    if (result) {
+      evictDislikesCache_();
+      dislikesCache.set(videoId, {
+        value: result,
+        expiresAt: Date.now() + DISLIKES_TTL_MS,
+      });
+    }
+    return result;
+  }
+
+  if (typeof window !== 'undefined') {
+    window.YouTubePlusStats = Object.assign(window.YouTubePlusStats || {}, {
+      initVideoStats,
+      /** The shared RYD fetch service. */
+      getDislikesData: fetchDislikesData,
+      /** Bounded-cache/in-flight observability for tests and benchmarks. */
+      getDislikesServiceStats: () => ({
+        cached: dislikesCache.size,
+        inFlight: inFlightDislikes.size,
+        cap: DISLIKES_CACHE_CAP,
+      }),
+    });
+  }
+
+  // The settings-modal listener stays at module scope so the experimental
+  // toggle is wired on any page, matching where the settings UI opens.
+  registerListenerSafe(document, 'youtube-plus-settings-modal-opened', initVideoStats, {
     once: false,
   });
 
-  // Defer video stats init and only load module code on relevant routes
-  // or when the settings modal is open (so the experimental tab can
-  // populate the "Statistics button" toggle regardless of route).
-  if (U?.whenRelevant) {
-    U.whenRelevant({
-      name: 'stats.video',
-      isRelevant: () => isVideoStatsTriggerRoute() || isSettingsModalOpen(),
-      onEnter: initVideoStats,
-    });
-  } else {
-    initVideoStats();
-  }
+  const videoStatsFeature = window.YouTubePlusFeatureRegistry?.FeatureLifecycle?.define?.({
+    id: 'videoStats',
+    settingsKey: 'enableStatsButton',
+    // Stats buttons and menus render on video and channel pages only.
+    routes: ['watch', 'shorts', 'channel'],
+    start(/** @type {YouTubePlusFeatureContext} */ ctx) {
+      videoStatsCtx = ctx;
+      initVideoStats();
+      videoStatsEnter?.(ctx);
+    },
+    stop() {
+      videoStatsExit?.();
+    },
+  });
+
+  // Starts on a listed page, then follows navigation between routes.
+  U.onDomReady(() => videoStatsFeature?.sync());
 })();
 
 // ═══════════════════════════════════════════════════════════════════
-// Channel Stats IIFE — separate scope for channel-level statistics
+// Channel Stats IIFE: separate scope for channel-level statistics
 // ═══════════════════════════════════════════════════════════════════
 (function () {
   const U = window.YouTubeUtils;
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U.logSuppressed?.(_err, _label || 'Stats');
   if (window.__ytpChannelStatsModuleInit) return;
 
-  const isChannelStatsTriggerRoute = () => {
-    try {
-      const path = location.pathname || '';
-      return path.startsWith('/@') || path.startsWith('/channel/') || path.startsWith('/c/');
-    } catch (_e) {
-      return false;
-    }
-  };
+  /** @type {YouTubePlusFeatureContext | null} */
+  let channelStatsCtx = null;
+  /** @type {((ctx: YouTubePlusFeatureContext) => void) | null} */
+  let channelStatsEnter = null;
+  /** @type {(() => void) | null} */
+  let channelStatsExit = null;
 
-  const isSettingsModalOpen = () => U.isSettingsModalOpen();
+  // Unified listener registration helper: uses cleanupManager, or falls back to
+  // addEventListener. Declared at module scope (not inside initChannelStats)
+  // because the module-scope registration below also uses it.
+  // Shared helper: delegates to YouTubeUtils.
+  /**
+   * @param {EventTarget} target
+   * @param {string} type
+   * @param {EventListenerOrEventListenerObject} handler
+   * @param {AddEventListenerOptions | boolean | { owner?: HTMLElement }} [opts]
+   * @returns {symbol | null}
+   */
+  const registerListenerSafe = (target, type, handler, opts) =>
+    /** @type {symbol | null} */ (U.registerListenerSafe?.(target, type, handler, opts));
 
   const initChannelStats = () => {
     if (window.__ytpChannelStatsModuleInit) return;
     window.__ytpChannelStatsModuleInit = true;
 
     const _setSafeHTML = U.setSafeHTML;
+    // utils.js is an earlier build-order dependency and always provides the
+    // visibility-aware scheduler, so there is no fallback to keep in sync.
     const createVisibilityAwareInterval =
-      /** @type {any} */ (U)?.createVisibilityAwareInterval ||
-      /**
-       * @type {(callback: () => void, delay: number) => { stop: () => void; pause: () => void; resume: () => void; active: boolean }}
-       */
-      (
-        (callback, delay) => {
-          // Interval fallback is used only when shared visibility-aware scheduler is unavailable.
-          const id = setInterval(() => {
-            if (!document.hidden) callback();
-          }, delay);
-          return {
-            stop() {
-              clearInterval(id);
-            },
-            pause() {
-              clearInterval(id);
-            },
-            resume() {},
-            get active() {
-              return true;
-            },
-          };
-        }
+      /** @type {(callback: () => void, delay: number) => { stop: () => void; pause: () => void; resume: () => void; active: boolean }} */ (
+        U.createVisibilityAwareInterval
       );
     const setTimeout_ = setTimeout.bind(window);
     // Shared helpers from YouTubeUtils (separate IIFE scope requires local aliases)
     const $ = U.$;
     const byId = U.byId;
 
-    // Shared translation helper — must be declared before "inject now"
-    // so addSettingsUI() doesn't hit TDZ on `t`.
+    // Shared translation helper, declared before "inject now" so
+    // addSettingsUI() doesn't hit TDZ on `t`.
     const t = U.t;
 
-    // Safe localStorage wrapper — guards against SecurityError in restricted contexts
-    const _safeLS = window.YouTubeUtils?.safeLS || {
-      /** @param {string} k @param {string|null} [def] @returns {string|null} */
-      getItem: (k, def = null) => {
-        try {
-          return localStorage.getItem(k) ?? def;
-        } catch (_e) {
-          return def;
-        }
-      },
-      /** @param {string} k @param {string} v @returns {boolean} */
-      setItem: (k, v) => {
-        try {
-          localStorage.setItem(k, v);
-          return true;
-        } catch (_e) {
-          return false;
-        }
-      },
-      /** @param {string} k */
-      removeItem: k => {
-        try {
-          localStorage.removeItem(k);
-        } catch (_e) {
-          /* non-critical */
-        }
-      },
-    };
+    const _safeLS = window.YouTubeUtils.storage;
+
+    /** Module namespace in the shared settings blob. */
+    const MODULE_NAME = 'channelStats';
+    const SETTINGS_KEY = 'enableChannelStats';
+
+    /** @returns {YouTubePlusSettingsStore | null} the store when the blob bridge is active */
+    const bridgedStore = () => window.YouTubePlusSettingsStore?.moduleBridge?.() ?? null;
 
     // Enhanced configuration with better defaults
     const CONFIG = {
@@ -2807,23 +3660,140 @@
       MAX_RETRIES: 3,
       CACHE_DURATION: 300000, // 5 minutes
       DEBOUNCE_DELAY: 100,
-      STORAGE_KEY: 'youtube_channel_stats_settings',
     };
 
+    /**
+     * Channel-overlay settings, owned by this namespace in the shared blob (or
+     * the legacy `youtubeEnhancer*`/`show-*` keys before the blob exists).
+     * @type {{
+     *   interval: number, opacity: number, fontSize: number, fontFamily: string,
+     *   showSubscribers: boolean, showViews: boolean, showVideos: boolean
+     * }}
+     */
+    const channelStatsSettings = {
+      interval: CONFIG.DEFAULT_UPDATE_INTERVAL,
+      opacity: CONFIG.DEFAULT_OVERLAY_OPACITY,
+      fontSize: 24,
+      fontFamily: 'Rubik, sans-serif',
+      showSubscribers: true,
+      showViews: true,
+      showVideos: true,
+    };
+
+    /** @type {Readonly<Record<string, 'showSubscribers'|'showViews'|'showVideos'>>} */
+    const SHOW_SETTING_KEYS = Object.freeze({
+      subscribers: 'showSubscribers',
+      views: 'showViews',
+      videos: 'showVideos',
+    });
+
+    /** @param {string} option @param {boolean} shown */
+    const setSectionShown_ = (option, shown) => {
+      const key = SHOW_SETTING_KEYS[option];
+      if (key) channelStatsSettings[key] = shown;
+    };
+
+    /** @param {string} option @returns {boolean} */
+    const isSectionShown_ = option => {
+      const key = SHOW_SETTING_KEYS[option];
+      return !key || channelStatsSettings[key] !== false;
+    };
+
+    /** @returns {typeof channelStatsSettings} the pre-blob legacy shape */
+    const readLegacyChannelSettings = () => ({
+      interval:
+        parseInt(_safeLS.getItem('youtubeEnhancerInterval') || '', 10) ||
+        CONFIG.DEFAULT_UPDATE_INTERVAL,
+      opacity:
+        parseFloat(_safeLS.getItem('youtubeEnhancerOpacity') || '') ||
+        CONFIG.DEFAULT_OVERLAY_OPACITY,
+      fontSize: parseInt(_safeLS.getItem('youtubeEnhancerFontSize') || '', 10) || 24,
+      fontFamily: _safeLS.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif',
+      showSubscribers: _safeLS.getItem('show-subscribers') !== 'false',
+      showViews: _safeLS.getItem('show-views') !== 'false',
+      showVideos: _safeLS.getItem('show-videos') !== 'false',
+    });
+
+    /** @param {unknown} value @param {number} fallback @returns {number} */
+    const positiveNumber_ = (value, fallback) => {
+      const n = Number(value);
+      return Number.isFinite(n) && n > 0 ? n : fallback;
+    };
+
+    /** @param {unknown} value @param {boolean} fallback @returns {boolean} */
+    const booleanOr_ = (value, fallback) => (typeof value === 'boolean' ? value : fallback);
+
+    /** @param {Record<string, unknown>|null|undefined} parsed */
+    const applyChannelSettings = parsed => {
+      if (!parsed || typeof parsed !== 'object') return;
+      channelStatsSettings.interval = positiveNumber_(
+        parsed.interval,
+        channelStatsSettings.interval
+      );
+      channelStatsSettings.opacity = positiveNumber_(parsed.opacity, channelStatsSettings.opacity);
+      channelStatsSettings.fontSize = positiveNumber_(
+        parsed.fontSize,
+        channelStatsSettings.fontSize
+      );
+      if (typeof parsed.fontFamily === 'string' && parsed.fontFamily) {
+        channelStatsSettings.fontFamily = parsed.fontFamily;
+      }
+      channelStatsSettings.showSubscribers = booleanOr_(
+        parsed.showSubscribers,
+        channelStatsSettings.showSubscribers
+      );
+      channelStatsSettings.showViews = booleanOr_(parsed.showViews, channelStatsSettings.showViews);
+      channelStatsSettings.showVideos = booleanOr_(
+        parsed.showVideos,
+        channelStatsSettings.showVideos
+      );
+    };
+
+    // From the blob once it exists (migrating the legacy keys on first read),
+    // otherwise the legacy keys stay authoritative.
+    const loadChannelSettings = () => {
+      const store = bridgedStore();
+      if (store) {
+        const mod = store.getModuleSettings(MODULE_NAME);
+        if (mod && Object.keys(mod).length) {
+          applyChannelSettings(mod);
+          return;
+        }
+        applyChannelSettings(readLegacyChannelSettings());
+        store.updateModuleSettings(MODULE_NAME, { ...channelStatsSettings });
+        return;
+      }
+      applyChannelSettings(readLegacyChannelSettings());
+    };
+
+    /** Persist the live settings through the bridge, or the legacy keys. */
+    const saveChannelSettings = () => {
+      const store = bridgedStore();
+      if (store) {
+        store.updateModuleSettings(MODULE_NAME, { ...channelStatsSettings });
+        return;
+      }
+      _safeLS.setItem('youtubeEnhancerInterval', String(channelStatsSettings.interval));
+      _safeLS.setItem('youtubeEnhancerOpacity', String(channelStatsSettings.opacity));
+      _safeLS.setItem('youtubeEnhancerFontSize', String(channelStatsSettings.fontSize));
+      _safeLS.setItem('youtubeEnhancerFontFamily', channelStatsSettings.fontFamily);
+      _safeLS.setItem('show-subscribers', String(channelStatsSettings.showSubscribers));
+      _safeLS.setItem('show-views', String(channelStatsSettings.showViews));
+      _safeLS.setItem('show-videos', String(channelStatsSettings.showVideos));
+    };
+
+    loadChannelSettings();
+
     // Global state management
-    const state = /** @type {any} */ ({
+    const state = /** @type {ChannelStatsState} */ ({
       overlay: null,
       isUpdating: false,
       intervalId: null,
       currentChannelName: null,
       currentChannelId: null,
-      enabled: _safeLS.getItem(CONFIG.STORAGE_KEY) !== 'false',
-      updateInterval:
-        parseInt(_safeLS.getItem('youtubeEnhancerInterval') || '', 10) ||
-        CONFIG.DEFAULT_UPDATE_INTERVAL,
-      overlayOpacity:
-        parseFloat(_safeLS.getItem('youtubeEnhancerOpacity') || '') ||
-        CONFIG.DEFAULT_OVERLAY_OPACITY,
+      enabled: window.YouTubePlusSettingsStore?.get?.(SETTINGS_KEY) !== false,
+      updateInterval: channelStatsSettings.interval,
+      overlayOpacity: channelStatsSettings.opacity,
       lastSuccessfulStats: new Map(),
       previousStats: new Map(),
       channelIdCache: new Map(),
@@ -2836,57 +3806,12 @@
       navigationListenerAttached: false,
     });
 
-    // Attach change handler to the static checkbox in settings modal
-    const attachSettingsHandler = () => {
-      try {
-        const checkbox = document.getElementById('ytp-plus-setting-enableChannelStats');
-        if (!(checkbox instanceof HTMLInputElement)) return;
-        if (checkbox.dataset.handlerAttached) return;
-        checkbox.dataset.handlerAttached = 'true';
-        checkbox.checked = state.enabled;
-        checkbox.addEventListener('change', e => {
-          const input = /** @type {EventTarget & HTMLInputElement} */ (e.target);
-          state.enabled = input.checked;
-          _safeLS.setItem(CONFIG.STORAGE_KEY, state.enabled ? 'true' : 'false');
-          if (state.enabled) {
-            observePageChanges();
-            addNavigationListener();
-            setTimeout_(() => {
-              const bannerElement = byId('page-header-banner-sizer');
-              if (bannerElement instanceof HTMLElement && (U?.isChannelPage?.() ?? false)) {
-                addOverlay(bannerElement);
-              }
-            }, 100);
-          } else {
-            clearExistingOverlay();
-          }
-        });
-      } catch (_e) {
-        // non-critical
-      }
-    };
-
-    if (isSettingsModalOpen()) {
-      attachSettingsHandler();
-    }
-
-    // Register settings modal listener for SUBSEQUENT opens.
-    if (U?.cleanupManager?.registerListener) {
-      U.cleanupManager.registerListener(document, 'youtube-plus-settings-modal-opened', () => {
-        attachSettingsHandler();
-      });
-    } else {
-      document.addEventListener('youtube-plus-settings-modal-opened', () => {
-        attachSettingsHandler();
-      });
-    }
-
     // LRU-evicting set helper for bounded Maps (max 50 entries)
     const MAX_CACHE_ENTRIES = 50;
     const boundedCacheSet = (
-      /** @type {Map<any, any>} */ map,
-      /** @type {any} */ key,
-      /** @type {any} */ value
+      /** @type {Map<unknown, unknown>} */ map,
+      /** @type {unknown} */ key,
+      /** @type {unknown} */ value
     ) => {
       if (map.size >= MAX_CACHE_ENTRIES) {
         const firstKey = map.keys().next().value;
@@ -2897,20 +3822,21 @@
 
     // Utility functions
     const utils = {
-      /** @param {string} message @param {...any} args */
+      /** @param {string} message @param {...unknown} args */
       log: (message, ...args) => {
-        const yt = /** @type {any} */ (U);
-        yt?.logger?.debug?.('[YouTube+][Stats]', message, ...args);
+        U.logger?.debug?.('[YouTube+][Stats]', message, ...args);
       },
 
-      /** @param {string} message @param {...any} args */
+      /** @param {string} message @param {...unknown} args */
       warn: (message, ...args) => {
-        window.console.warn('[YouTube+][Stats]', message, ...args);
+        if (U.logger?.warn) U.logger.warn('[YouTube+][Stats]', message, ...args);
+        else window.console.warn('[YouTube+][Stats]', message, ...args);
       },
 
-      /** @param {string} message @param {...any} args */
+      /** @param {string} message @param {...unknown} args */
       error: (message, ...args) => {
-        window.console.error('[YouTube+][Stats]', message, ...args);
+        if (U.logger?.error) U.logger.error('[YouTube+][Stats]', message, ...args);
+        else window.console.error('[YouTube+][Stats]', message, ...args);
       },
 
       // Use shared debounce from YouTubeUtils
@@ -2924,16 +3850,14 @@
     /**
      * Fetches channel data from YouTube
      * @param {string} url - The channel URL to fetch
-     * @returns {Promise<any|null>} The parsed channel data or null on error
+     * @returns {Promise<Record<string, unknown>|null>} The parsed channel data or null on error
      */
     async function fetchChannel(url) {
       if (state.isChecking) return null;
       state.isChecking = true;
 
       try {
-        const response = await fetch(url, {
-          credentials: 'same-origin',
-        });
+        const response = await fetchWithDeadline_(url, { credentials: 'same-origin' }, 10000);
 
         if (!response.ok) return null;
 
@@ -2941,7 +3865,8 @@
         const match = html.match(/var ytInitialData = (.+?);<\/script>/);
         return match?.[1] ? JSON.parse(match[1]) : null;
       } catch (error) {
-        utils.warn('Failed to fetch channel data:', /** @type {any} */ (error));
+        logS(error);
+        utils.warn('Failed to fetch channel data:', error);
         return null;
       } finally {
         state.isChecking = false;
@@ -2951,20 +3876,19 @@
     /**
      * Fetch basic channel metadata (name and ID) from a channel page
      * @param {string} url - Channel page URL
-     * @returns {Promise<{channelName: string, channelId: string}|null>} Channel info or null
+     * @returns {Promise<{channelName: string, channelId: string | null}|null>} Channel info or null
      */
     async function getChannelInfo(/** @type {string} */ url) {
-      const data = await fetchChannel(url);
+      const data =
+        /** @type {{ metadata?: { channelMetadataRenderer?: { title?: string, externalId?: string } } } | null} */ (
+          await fetchChannel(url)
+        );
       if (!data) return null;
 
-      try {
-        const channelName = data?.metadata?.channelMetadataRenderer?.title || t('unknown');
-        const channelId = data?.metadata?.channelMetadataRenderer?.externalId || null;
+      const channelName = data?.metadata?.channelMetadataRenderer?.title || t('unknown');
+      const channelId = data?.metadata?.channelMetadataRenderer?.externalId || null;
 
-        return { channelName, channelId };
-      } catch (_e) {
-        return null;
-      }
+      return { channelName, channelId };
     }
 
     /**
@@ -2975,57 +3899,31 @@
       const currentUrl = location.href;
       if (currentUrl !== state.previousUrl) {
         state.previousUrl = currentUrl;
-        if (U?.isChannelPage?.(currentUrl) ?? false) {
+        if (U.isChannelPage?.(currentUrl)) {
           setTimeout(() => getChannelInfo(currentUrl), 500);
         }
       }
     }
 
-    // YouTube SPA navigation — yt-navigate-finish fires for all pushState/replaceState
-    // transitions on youtube.com, so wrapping history APIs is redundant and creates
-    // an ever-growing wrapper chain when multiple modules do the same thing.
-    const _cm2 = U?.cleanupManager;
-    if (_cm2?.registerListener) {
-      _cm2.registerListener(document, 'yt-navigate-finish', checkUrlChange, { passive: true });
-      _cm2.registerListener(window, 'popstate', checkUrlChange, { passive: true });
-    } else {
-      document.addEventListener('yt-navigate-finish', checkUrlChange, { passive: true });
-      window.addEventListener('popstate', checkUrlChange, { passive: true });
-    }
+    // YouTube SPA navigation: yt-navigate-finish fires for all pushState and
+    // replaceState transitions on youtube.com, so wrapping the history APIs is
+    // redundant and creates an ever-growing wrapper chain across modules.
+    registerListenerSafe(document, 'yt-navigate-finish', checkUrlChange, {
+      passive: true,
+    });
+    registerListenerSafe(window, 'popstate', checkUrlChange, { passive: true });
 
     /**
      * Initialize the channel stats overlay, fonts, and listeners
      * @returns {void}
      */
     function init() {
-      if (U?.isStudioPage?.()) return;
-      try {
-        utils.log('Initializing YouTube Enhancer v1.6');
+      if (U.isStudioPage?.()) return;
+      utils.log('Initializing YouTube Enhancer v1.6');
 
-        loadFonts();
-        initializeLocalStorage();
-        addStyles();
-        if (state.enabled) {
-          observePageChanges();
-          addNavigationListener();
+      loadFonts();
 
-          if (U?.isChannelPage?.(location.href) ?? false) {
-            getChannelInfo(location.href);
-            // Kick off an overlay attempt immediately on initial load.
-            // Without this, the banner overlay only renders after the first
-            // SPA navigation event (i.e. after F5).
-            try {
-              ensureOverlayForCurrentPage();
-            } catch (e) {
-              utils.warn('Initial overlay attempt failed:', /** @type {any} */ (e));
-            }
-          }
-        }
-
-        utils.log('YouTube Enhancer initialized successfully');
-      } catch (error) {
-        utils.error('Failed to initialize YouTube Enhancer:', error);
-      }
+      utils.log('YouTube Enhancer initialized successfully');
     }
 
     /**
@@ -3040,61 +3938,11 @@
     }
 
     /**
-     * Initialize default localStorage display flags
-     * @returns {void}
-     */
-    function initializeLocalStorage() {
-      OPTIONS.forEach(option => {
-        if (_safeLS.getItem(`show-${option}`) === null) {
-          _safeLS.setItem(`show-${option}`, 'true');
-        }
-      });
-    }
-
-    /**
      * Inject channel stats overlay CSS
      * @returns {void}
      */
     function addStyles() {
-      const styles = `
-      .channel-banner-overlay{position:absolute;top:0;left:0;width:100%;height:100%;border-radius:12px;z-index:9;display:flex;justify-content:space-around;align-items:center;color:var(--yt-text-primary);font-family:var(--yt-stats-font-family,'Rubik',sans-serif);font-size:var(--yt-stats-font-size,24px);box-sizing:border-box;transition:background-color .3s ease;backdrop-filter:blur(2px)}        
-      .settings-button{position:absolute;top:12px;right:12px;width:32px;height:32px;border-radius:50%;cursor:pointer;z-index:11;transition:transform 0.2s cubic-bezier(0.2,0,0,1), opacity 0.2s ease, background-color 0.2s ease, border-color 0.2s ease;display:flex;align-items:center;justify-content:center;background:var(--yt-stats-channel-button-bg);backdrop-filter:blur(4px);border:1px solid var(--yt-stats-channel-button-border);opacity:0.7}
-      .channel-banner-overlay:hover .settings-button{opacity:1}
-      .settings-button:hover{transform:rotate(30deg) scale(1.1);opacity:1;background:var(--yt-stats-channel-button-hover);border-color:var(--yt-stats-channel-button-hover-border)}
-      .settings-button:active{transform:rotate(30deg) scale(0.96) !important;}
-      .settings-button svg{width:18px;height:18px;fill:var(--yt-text-primary);filter:drop-shadow(0 1px 2px var(--yt-stats-channel-filter-shadow))}        
-      .settings-menu{position:absolute;top:52px;right:12px;background:var(--yt-stats-channel-menu-bg);padding:16px;border-radius:16px;z-index:12;display:flex;flex-direction:column;gap:12px;backdrop-filter:blur(16px) saturate(180%);border:1px solid var(--yt-stats-channel-menu-border);box-shadow:0 8px 32px rgba(0,0,0,0.6);min-width:320px;opacity:0;visibility:hidden;transform:translateY(-10px) scale(0.98);transition:opacity 0.2s cubic-bezier(0.2,0,0.2,1), transform 0.2s cubic-bezier(0.2,0,0.2,1), visibility 0.2s cubic-bezier(0.2,0,0.2,1);pointer-events:none}
-      .settings-menu.show{opacity:1;visibility:visible;transform:translateY(0) scale(1);pointer-events:auto}        
-      .settings-menu .ytp-plus-settings-item{display:flex;align-items:center;justify-content:space-between;padding:8px 12px;border-radius:8px;background:var(--yt-stats-channel-menu-item-bg);}
-      .settings-menu .ytp-plus-settings-item + .ytp-plus-settings-item{margin-top:6px}
-      .settings-menu .ytp-plus-settings-item .ytp-plus-settings-item-label{color:var(--yt-stats-channel-label-text);font-size:14px;font-weight:500}
-      .settings-menu label{color:var(--yt-stats-channel-label-text)!important;font-size:14px!important;font-weight:500!important;margin-bottom:6px!important}        
-      .settings-menu input[type="range"]{-webkit-appearance:none;width:100%!important;height:4px;background:var(--yt-stats-channel-range-bg)!important;border-radius:2px;margin:12px 0 4px 0!important;cursor:pointer}
-      .settings-menu input[type="range"]::-webkit-slider-thumb{-webkit-appearance:none;height:16px;width:16px;border-radius:50%;background:var(--yt-stats-channel-range-thumb);margin-top:-6px;box-shadow:0 2px 4px var(--yt-stats-channel-text-shadow);border:2px solid var(--yt-text-primary);transition:transform .1s;cursor:pointer}
-      .settings-menu input[type="range"]::-webkit-slider-thumb:hover{transform:scale(1.2)}        
-      .settings-menu select{width:100%!important;background:var(--yt-stats-channel-input-bg)!important;border:1px solid var(--yt-stats-channel-input-bg)!important;color:var(--yt-text-primary)!important;padding:8px 12px!important;border-radius:6px!important;font-size:13px!important;margin-bottom:12px!important;cursor:pointer;outline:none}
-      .settings-menu select:hover{background:var(--yt-stats-channel-input-hover)!important}
-      .settings-menu select option{background:var(--yt-stats-channel-select-option-bg);color:var(--yt-text-primary)}        
-      /* Don't override the shared settings checkbox styling; only target non-shared inputs */
-      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox){appearance:none;width:18px!important;height:18px!important;border:2px solid var(--yt-stats-channel-checkbox-border)!important;border-radius:4px!important;background:transparent!important;cursor:pointer;position:relative;margin-right:12px!important;vertical-align:middle;transition:background-color .2s ease, border-color .2s ease, transform .1s cubic-bezier(0.2,0,0,1)}
-      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox):active{transform:scale(0.96) !important;}
-      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox):checked{background:var(--yt-stats-channel-range-thumb)!important;border-color:var(--yt-stats-channel-range-thumb)!important}
-      .settings-menu input[type="checkbox"]:not(.ytp-plus-settings-checkbox):checked::after{content:'';position:absolute;left:5px;top:1px;width:4px;height:10px;border:solid var(--yt-text-primary);border-width:0 2px 2px 0;transform:rotate(45deg)}
-      .stat-container{display:flex;flex-direction:column;align-items:center;justify-content:center;visibility:hidden;width:33%;height:100%;padding:0 1rem;text-shadow:0 2px 4px var(--yt-stats-channel-text-shadow)}
-      .number-container{display:flex;align-items:center;justify-content:center;font-weight:700;min-height:3rem}
-      .label-container{display:flex;align-items:center;margin-top:.5rem;font-size:1.2rem;opacity:.9}
-      .label-container svg{width:1.5rem;height:1.5rem;margin-right:.5rem;filter:drop-shadow(0 1px 2px var(--yt-stats-channel-text-shadow))}
-      .difference{font-size:1.8rem;height:2rem;margin-bottom:.5rem;transition:opacity .3s}
-      .spinner-container{position:absolute;top:0;left:0;width:100%;height:100%;display:flex;justify-content:center;align-items:center}
-      .spinner-container .stats-spinner{width:60px;height:60px;animation:spin 1s linear infinite}
-      .spinner-container .stats-spinner circle{stroke-dasharray:80;stroke-dashoffset:60;animation:dash 1.5s ease-in-out infinite}
-      /* @keyframes spin already defined in video stats CSS above */
-      @media(max-width:768px){.channel-banner-overlay{flex-direction:column;padding:8px;min-height:160px}.settings-menu{width:280px!important;right:4px!important;top:48px!important}}
-      .setting-group{margin-bottom:12px}
-      .setting-group:last-child{margin-bottom:0}
-      .setting-value{color:var(--yt-stats-channel-text-value);font-size:12px;margin-top:4px}
-      `;
-      U.StyleManager.add('channel-stats-overlay', styles);
+      channelStatsCtx?.style('yp-video-stats-styles', getStatsStyles_('yp-video-stats-styles'));
     }
 
     /**
@@ -3119,7 +3967,7 @@
     function createSettingsMenu() {
       const menu = document.createElement('div');
       menu.className = 'settings-menu';
-      menu.classList.add('ytp-stats-channel-menu');
+      menu.classList.add('yp-stats-channel-menu');
       menu.setAttribute('tabindex', '-1');
       menu.setAttribute('aria-modal', 'true');
 
@@ -3142,31 +3990,38 @@
 
       const displayLabel = document.createElement('label');
       displayLabel.textContent = t('displayOptions');
-      displayLabel.classList.add('ytp-stats-display-label');
+      displayLabel.classList.add('yp-stats-display-label');
       displaySection.appendChild(displayLabel);
 
       // Use event delegation for all checkboxes
-      displaySection.addEventListener('change', (/** @type {Event} */ e) => {
-        const checkbox = e.target;
-        if (
-          checkbox instanceof HTMLInputElement &&
-          checkbox.type === 'checkbox' &&
-          checkbox.id.startsWith('show-')
-        ) {
-          const option = checkbox.id.replace('show-', '');
-          _safeLS.setItem(`show-${option}`, String(checkbox.checked));
-          updateDisplayState();
-        }
-      });
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        displaySection,
+        'change',
+        (/** @type {Event} */ e) => {
+          const checkbox = e.target;
+          if (
+            checkbox instanceof HTMLInputElement &&
+            checkbox.type === 'checkbox' &&
+            checkbox.id.startsWith('show-')
+          ) {
+            const option = checkbox.id.replace('show-', '');
+            setSectionShown_(option, checkbox.checked);
+            saveChannelSettings();
+            updateDisplayState();
+          }
+        },
+        undefined,
+        false
+      );
       // Render options as single-line settings items using shared classes
       OPTIONS.forEach(option => {
         const item = document.createElement('div');
-        item.className = 'ytp-plus-settings-item';
+        item.className = 'yp-settings-item';
 
         const left = document.createElement('div');
 
         const label = document.createElement('label');
-        label.className = 'ytp-plus-settings-item-label';
+        label.className = 'yp-settings-item-label';
         label.htmlFor = `show-${option}`;
         label.textContent = t(option);
         left.appendChild(label);
@@ -3174,8 +4029,8 @@
         const checkbox = document.createElement('input');
         checkbox.type = 'checkbox';
         checkbox.id = `show-${option}`;
-        checkbox.checked = _safeLS.getItem(`show-${option}`) !== 'false';
-        checkbox.className = 'ytp-plus-settings-checkbox';
+        checkbox.checked = isSectionShown_(option);
+        checkbox.className = 'yp-settings-checkbox';
 
         item.appendChild(left);
         item.appendChild(checkbox);
@@ -3189,67 +4044,108 @@
      * Build the controls section (font, interval, opacity) of the settings menu
      * @returns {HTMLElement} Controls section element
      */
+    /**
+     * @param {Element | HTMLElement | null | undefined} overlay
+     * @param {'fontSize' | 'fontFamily'} property
+     * @param {string} value
+     */
+    function updateOverlayNumbersStyle_(overlay, property, value) {
+      if (!overlay) return;
+      overlay
+        .querySelectorAll('.subscribers-number,.views-number,.videos-number')
+        .forEach((/** @type {Element} */ el) => {
+          if (el instanceof HTMLElement && el.style) {
+            el.style[property] = value;
+          }
+        });
+    }
+
+    /**
+     * @param {EventTarget | null} target
+     * @param {HTMLElement} controlsSection
+     */
+    function handleFontSizeSliderChange_(target, controlsSection) {
+      if (!(target instanceof HTMLElement && target.classList.contains('font-size-slider'))) return;
+      const input = /** @type {HTMLInputElement} */ (target);
+      const fontSizeValue = controlsSection.querySelector('.font-size-value');
+      if (fontSizeValue) fontSizeValue.textContent = `${input.value}px`;
+      channelStatsSettings.fontSize = Number(input.value) || channelStatsSettings.fontSize;
+      updateOverlayNumbersStyle_(state.overlay, 'fontSize', `${input.value}px`);
+    }
+
+    /**
+     * @param {EventTarget | null} target
+     * @param {HTMLElement} controlsSection
+     */
+    function handleIntervalSliderChange_(target, controlsSection) {
+      if (!(target instanceof HTMLElement && target.classList.contains('interval-slider'))) return;
+      const input = /** @type {HTMLInputElement} */ (target);
+      const newInterval = parseInt(input.value, 10) * 1000;
+      const intervalValue = controlsSection.querySelector('.interval-value');
+      if (intervalValue) intervalValue.textContent = `${input.value}s`;
+      state.updateInterval = newInterval;
+      channelStatsSettings.interval = newInterval;
+
+      if (state.intervalId) {
+        state.intervalId.stop?.();
+        state.intervalId = createVisibilityAwareInterval(() => {
+          if (state.overlay && state.currentChannelName) {
+            updateOverlayContent(state.overlay, state.currentChannelName);
+          }
+        }, newInterval);
+      }
+    }
+
+    /**
+     * @param {EventTarget | null} target
+     * @param {HTMLElement} controlsSection
+     */
+    function handleOpacitySliderChange_(target, controlsSection) {
+      if (!(target instanceof HTMLElement && target.classList.contains('opacity-slider'))) return;
+      const input = /** @type {HTMLInputElement} */ (target);
+      const newOpacity = parseInt(input.value, 10) / 100;
+      const opacityValue = controlsSection.querySelector('.opacity-value');
+      if (opacityValue) opacityValue.textContent = `${input.value}%`;
+      state.overlayOpacity = newOpacity;
+      channelStatsSettings.opacity = newOpacity;
+
+      if (state.overlay) {
+        state.overlay.style.backgroundColor = `rgba(0, 0, 0, ${newOpacity})`;
+      }
+    }
+
     function createControlsSection() {
       const controlsSection = document.createElement('div');
       if (controlsSection.style) controlsSection.style.flex = '1';
 
       // Use event delegation for all sliders and selects
-      controlsSection.addEventListener('input', (/** @type {Event} */ e) => {
-        const target = e.target;
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        controlsSection,
+        'input',
+        (/** @type {Event} */ e) => {
+          const target = e.target;
+          handleFontSizeSliderChange_(target, controlsSection);
+          handleIntervalSliderChange_(target, controlsSection);
+          handleOpacitySliderChange_(target, controlsSection);
+        },
+        undefined,
+        false
+      );
 
-        // Handle font size slider
-        if (target instanceof HTMLElement && target.classList.contains('font-size-slider')) {
-          const input = /** @type {HTMLInputElement} */ (target);
-          const fontSizeValue = controlsSection.querySelector('.font-size-value');
-          if (fontSizeValue) fontSizeValue.textContent = `${input.value}px`;
-          _safeLS.setItem('youtubeEnhancerFontSize', input.value);
-          if (state.overlay) {
-            state.overlay
-              .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-              .forEach((/** @type {Element} */ el) => {
-                if (el instanceof HTMLElement && el.style) {
-                  el.style.fontSize = `${input.value}px`;
-                }
-              });
-          }
-        }
-
-        // Handle interval slider
-        if (target instanceof HTMLElement && target.classList.contains('interval-slider')) {
-          const input = /** @type {HTMLInputElement} */ (target);
-          const newInterval = parseInt(input.value, 10) * 1000;
-          const intervalValue = controlsSection.querySelector('.interval-value');
-          if (intervalValue) intervalValue.textContent = `${input.value}s`;
-          state.updateInterval = newInterval;
-          _safeLS.setItem('youtubeEnhancerInterval', String(newInterval));
-
-          if (state.intervalId) {
-            state.intervalId.stop();
-            state.intervalId = createVisibilityAwareInterval(() => {
-              updateOverlayContent(state.overlay, state.currentChannelName);
-            }, newInterval);
-          }
-        }
-
-        // Handle opacity slider
-        if (target instanceof HTMLElement && target.classList.contains('opacity-slider')) {
-          const input = /** @type {HTMLInputElement} */ (target);
-          const newOpacity = parseInt(input.value, 10) / 100;
-          const opacityValue = controlsSection.querySelector('.opacity-value');
-          if (opacityValue) opacityValue.textContent = `${input.value}%`;
-          state.overlayOpacity = newOpacity;
-          _safeLS.setItem('youtubeEnhancerOpacity', String(newOpacity));
-
-          if (state.overlay) {
-            state.overlay.style.backgroundColor = `rgba(0, 0, 0, ${newOpacity})`;
-          }
-        }
-      });
+      // Persist once the slider settles: dragging must not rewrite the store on
+      // every input step.
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        controlsSection,
+        'change',
+        () => saveChannelSettings(),
+        undefined,
+        false
+      );
 
       // Font family selector - using glass-dropdown style
-      const fontLabel = /** @type {any} */ (document.createElement('label'));
+      const fontLabel = document.createElement('label');
       fontLabel.textContent = t('fontFamily');
-      fontLabel.classList.add('ytp-stats-font-label');
+      fontLabel.classList.add('yp-stats-font-label');
 
       const fonts = [
         { name: 'Rubik', value: 'Rubik, sans-serif' },
@@ -3257,11 +4153,11 @@
         { name: 'Verdana', value: 'Verdana, Geneva, sans-serif' },
         { name: 'Tahoma', value: 'Tahoma, Geneva, sans-serif' },
       ];
-      const savedFont = _safeLS.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif';
+      const savedFont = channelStatsSettings.fontFamily;
       const savedFontName = fonts.find(f => f.value === savedFont)?.name || 'Rubik';
 
       // Hidden native select for compatibility
-      const fontSelect = /** @type {any} */ (document.createElement('select'));
+      const fontSelect = document.createElement('select');
       fontSelect.className = 'font-family-select';
       fontSelect.style.display = 'none';
       fonts.forEach(f => {
@@ -3273,7 +4169,7 @@
       });
 
       // Glass dropdown
-      const fontDropdown = /** @type {any} */ (document.createElement('div'));
+      const fontDropdown = document.createElement('div');
       fontDropdown.className = 'glass-dropdown';
       fontDropdown.id = 'stats-font-dropdown';
       fontDropdown.tabIndex = 0;
@@ -3283,11 +4179,11 @@
       _setSafeHTML(
         fontDropdown,
         `
-      <button class="glass-dropdown__toggle" type="button" aria-haspopup="listbox">
+      <button class="glass-dropdown__toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
         <span class="glass-dropdown__label">${savedFontName}</span>
         <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
       </button>
-      <ul class="glass-dropdown__list" role="presentation">
+      <ul class="glass-dropdown__list" role="listbox" style="display:none;">
         ${fonts
           .map(f => {
             const sel = f.value === savedFont ? ' aria-selected="true"' : '';
@@ -3298,102 +4194,39 @@
     `
       );
 
-      // Initialize glass dropdown interactions
-      const initFontDropdown = () => {
-        const toggle = fontDropdown.querySelector('.glass-dropdown__toggle');
-        const list = fontDropdown.querySelector('.glass-dropdown__list');
-        const label = fontDropdown.querySelector('.glass-dropdown__label');
-
-        const closeList = () => {
-          fontDropdown.setAttribute('aria-expanded', 'false');
-          if (list) list.style.display = 'none';
-        };
-
-        const openList = () => {
-          fontDropdown.setAttribute('aria-expanded', 'true');
-          if (list) list.style.display = 'block';
-        };
-
-        closeList();
-
-        if (toggle) {
-          toggle.addEventListener('click', (/** @type {MouseEvent} */ e) => {
-            e.stopPropagation();
-            const expanded = fontDropdown.getAttribute('aria-expanded') === 'true';
-            if (expanded) closeList();
-            else openList();
-          });
-        }
-
-        const _docClickHandler = (/** @type {Event} */ e) => {
-          const target = e.target;
-          if (!(target instanceof Node && fontDropdown.contains(target))) closeList();
-        };
-        if (U?.cleanupManager?.registerListener) {
-          U.cleanupManager.registerListener(document, 'click', _docClickHandler);
-        } else {
-          document.addEventListener('click', _docClickHandler);
-          // Store ref for potential manual cleanup
-          if (state?.documentListenerKeys) state.documentListenerKeys.add('_docClickHandler');
-        }
-
-        if (list) {
-          list.addEventListener('click', (/** @type {MouseEvent} */ e) => {
-            const target = e.target;
-            if (!(target instanceof HTMLElement)) return;
-            const it = target.closest('.glass-dropdown__item');
-            if (!it) return;
-            const val = /** @type {any} */ (it).dataset?.value || '';
-            fontDropdown
-              .querySelectorAll('.glass-dropdown__item')
-              .forEach((/** @type {Element} */ i) => i.removeAttribute('aria-selected'));
-            it.setAttribute('aria-selected', 'true');
-            if (label) label.textContent = it.textContent;
-            fontSelect.value = val;
-            closeList();
-
-            // Apply font change
-            _safeLS.setItem('youtubeEnhancerFontFamily', val);
-            if (state.overlay) {
-              state.overlay
-                .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-                .forEach((/** @type {Element} */ el) => {
-                  if (el instanceof HTMLElement && el.style) {
-                    el.style.fontFamily = val;
-                  }
-                });
-            }
-          });
-        }
-      };
-
-      // Delay initialization to ensure DOM is ready
-      (typeof queueMicrotask === 'function'
-        ? queueMicrotask
-        : (/** @type {() => void} */ fn) => Promise.resolve().then(fn))(initFontDropdown);
+      // Initialize glass dropdown via shared design system component if available
+      window.YouTubePlusDesignSystem?.initGlassDropdown?.({
+        dropdown: fontDropdown,
+        hiddenSelect: fontSelect,
+        onChange: (/** @type {string} */ val) => {
+          channelStatsSettings.fontFamily = val;
+          saveChannelSettings();
+          updateOverlayNumbersStyle_(state.overlay, 'fontFamily', val);
+        },
+      });
 
       // Font size slider
-      const fontSizeLabel = /** @type {any} */ (document.createElement('label'));
+      const fontSizeLabel = document.createElement('label');
       fontSizeLabel.textContent = t('fontSize');
-      fontSizeLabel.classList.add('ytp-stats-font-label');
+      fontSizeLabel.classList.add('yp-stats-font-label');
 
       const fontSizeSlider = document.createElement('input');
       fontSizeSlider.type = 'range';
       fontSizeSlider.min = '16';
       fontSizeSlider.max = '72';
-      fontSizeSlider.value = _safeLS.getItem('youtubeEnhancerFontSize') || '24';
+      fontSizeSlider.value = String(channelStatsSettings.fontSize);
       fontSizeSlider.step = '1';
       fontSizeSlider.className = 'font-size-slider';
 
-      const fontSizeValue = /** @type {any} */ (document.createElement('div'));
+      const fontSizeValue = document.createElement('div');
       fontSizeValue.className = 'font-size-value';
       fontSizeValue.textContent = `${fontSizeSlider.value}px`;
-      fontSizeValue.classList.add('ytp-stats-font-value');
+      fontSizeValue.classList.add('yp-stats-font-value');
 
       // Update interval slider
-      const intervalLabel = /** @type {any} */ (document.createElement('label'));
+      const intervalLabel = document.createElement('label');
       intervalLabel.textContent = t('updateInterval');
-      intervalLabel.classList.add('ytp-stats-font-label');
+      intervalLabel.classList.add('yp-stats-font-label');
 
       const intervalSlider = document.createElement('input');
       intervalSlider.type = 'range';
@@ -3403,15 +4236,15 @@
       intervalSlider.step = '1';
       intervalSlider.className = 'interval-slider';
 
-      const intervalValue = /** @type {any} */ (document.createElement('div'));
+      const intervalValue = document.createElement('div');
       intervalValue.className = 'interval-value';
       intervalValue.textContent = `${intervalSlider.value}s`;
-      intervalValue.classList.add('ytp-stats-font-value');
+      intervalValue.classList.add('yp-stats-font-value');
 
       // Opacity slider
-      const opacityLabel = /** @type {any} */ (document.createElement('label'));
+      const opacityLabel = document.createElement('label');
       opacityLabel.textContent = t('backgroundOpacity');
-      opacityLabel.classList.add('ytp-stats-font-label');
+      opacityLabel.classList.add('yp-stats-font-label');
 
       const opacitySlider = document.createElement('input');
       opacitySlider.type = 'range';
@@ -3421,10 +4254,10 @@
       opacitySlider.step = '5';
       opacitySlider.className = 'opacity-slider';
 
-      const opacityValue = /** @type {any} */ (document.createElement('div'));
+      const opacityValue = document.createElement('div');
       opacityValue.className = 'opacity-value';
       opacityValue.textContent = `${opacitySlider.value}%`;
-      opacityValue.classList.add('ytp-stats-font-value');
+      opacityValue.classList.add('yp-stats-font-value');
 
       controlsSection.appendChild(fontLabel);
       controlsSection.appendChild(fontSelect);
@@ -3447,8 +4280,8 @@
      * @returns {HTMLElement} Spinner container element
      */
     function createSpinner() {
-      const spinnerContainer = /** @type {any} */ (document.createElement('div'));
-      spinnerContainer.classList.add('ytp-stats-spinner');
+      const spinnerContainer = document.createElement('div');
+      spinnerContainer.classList.add('yp-stats-spinner');
       spinnerContainer.classList.add('spinner-container');
 
       _setSafeHTML(
@@ -3489,64 +4322,28 @@
      */
     function createStatContainer(/** @type {string} */ className, /** @type {string} */ iconPath) {
       const container = document.createElement('div');
-      Object.assign(/** @type {any} */ (container).style || {}, {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-        visibility: 'hidden',
-        width: '33%',
-        height: '100%',
-        padding: '0 1rem',
-      });
+      container.className = 'channel-stat channel-stat--hidden';
 
       const numberContainer = document.createElement('div');
-      Object.assign(/** @type {any} */ (numberContainer).style || {}, {
-        display: 'flex',
-        flexDirection: 'column',
-        alignItems: 'center',
-        justifyContent: 'center',
-      });
+      numberContainer.className = 'channel-stat-number-col';
 
       const differenceElement = document.createElement('div');
-      differenceElement.classList.add(`${className}-difference`);
-      Object.assign(/** @type {any} */ (differenceElement).style || {}, {
-        fontSize: '2.5rem',
-        height: '2.5rem',
-        marginBottom: '1rem',
-      });
+      differenceElement.classList.add(`${className}-difference`, 'channel-stat-difference');
 
       const digitContainer = createNumberContainer();
-      digitContainer.classList.add(`${className}-number`);
-      Object.assign(/** @type {any} */ (digitContainer).style || {}, {
-        fontSize: `${_safeLS.getItem('youtubeEnhancerFontSize') || '24'}px`,
-        fontWeight: 'bold',
-        lineHeight: '1',
-        height: '4rem',
-        fontFamily: _safeLS.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif',
-        letterSpacing: '0.025em',
-      });
+      digitContainer.classList.add(`${className}-number`, 'channel-stat-number');
 
       numberContainer.appendChild(differenceElement);
       numberContainer.appendChild(digitContainer);
 
       const labelContainer = document.createElement('div');
-      Object.assign(/** @type {any} */ (labelContainer).style || {}, {
-        display: 'flex',
-        alignItems: 'center',
-        marginTop: '0.5rem',
-      });
+      labelContainer.className = 'channel-stat-label-row';
 
       const icon = createSVGIcon(iconPath);
-      Object.assign(/** @type {any} */ (icon).style || {}, {
-        width: '2rem',
-        height: '2rem',
-        marginRight: '0.75rem',
-      });
+      icon.classList.add('channel-stat-icon');
 
-      const labelElement = /** @type {any} */ (document.createElement('div'));
-      labelElement.classList.add(`${className}-label`);
-      labelElement.style.fontSize = '2rem';
+      const labelElement = document.createElement('div');
+      labelElement.classList.add(`${className}-label`, 'channel-stat-label');
 
       labelContainer.appendChild(icon);
       labelContainer.appendChild(labelElement);
@@ -3564,24 +4361,10 @@
     function createOverlayElement() {
       const overlay = document.createElement('div');
       overlay.classList.add('channel-banner-overlay');
-      Object.assign(/** @type {any} */ (overlay).style || {}, {
-        position: 'absolute',
-        top: '0',
-        left: '0',
-        width: '100%',
-        height: '100%',
-        backgroundColor: `rgba(0, 0, 0, ${state.overlayOpacity})`,
-        borderRadius: '15px',
-        zIndex: '10',
-        display: 'flex',
-        justifyContent: 'space-around',
-        alignItems: 'center',
-        color: 'white',
-        fontFamily: _safeLS.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif',
-        fontSize: `${_safeLS.getItem('youtubeEnhancerFontSize') || '24'}px`,
-        boxSizing: 'border-box',
-        transition: 'background-color 0.3s ease',
-      });
+      // Dynamic values: overlay opacity and the user-chosen number font.
+      overlay.style.backgroundColor = `rgba(0, 0, 0, ${state.overlayOpacity})`;
+      overlay.style.setProperty('--yt-stats-font-family', channelStatsSettings.fontFamily);
+      overlay.style.setProperty('--yt-stats-font-size', `${channelStatsSettings.fontSize}px`);
       return overlay;
     }
 
@@ -3642,17 +4425,29 @@
         if (show) settingsMenu.focus();
       };
 
-      settingsButton.addEventListener('click', (/** @type {MouseEvent} */ e) => {
-        e.stopPropagation();
-        toggleMenu(!settingsMenu.classList.contains('show'));
-      });
-
-      settingsButton.addEventListener('keydown', (/** @type {KeyboardEvent} */ e) => {
-        if (e.key === 'Enter' || e.key === ' ') {
-          e.preventDefault();
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        settingsButton,
+        'click',
+        (/** @type {MouseEvent} */ e) => {
+          e.stopPropagation();
           toggleMenu(!settingsMenu.classList.contains('show'));
-        }
-      });
+        },
+        undefined,
+        false
+      );
+
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        settingsButton,
+        'keydown',
+        (/** @type {KeyboardEvent} */ e) => {
+          if (e.key === 'Enter' || e.key === ' ') {
+            e.preventDefault();
+            toggleMenu(!settingsMenu.classList.contains('show'));
+          }
+        },
+        undefined,
+        false
+      );
 
       // Register document-level event handlers
       const clickHandler = (/** @type {Event} */ e) => {
@@ -3670,10 +4465,10 @@
         }
       };
 
-      const clickKey = U.cleanupManager.registerListener(document, 'click', clickHandler);
-      const keyKey = U.cleanupManager.registerListener(document, 'keydown', keyHandler);
-      state.documentListenerKeys.add(clickKey);
-      state.documentListenerKeys.add(keyKey);
+      const clickKey = registerListenerSafe(document, 'click', clickHandler);
+      const keyKey = registerListenerSafe(document, 'keydown', keyHandler);
+      if (clickKey) state.documentListenerKeys.add(clickKey);
+      if (keyKey) state.documentListenerKeys.add(keyKey);
     }
 
     /**
@@ -3734,7 +4529,7 @@
      * Fetch JSON from a URL using GM_xmlhttpRequest with a fetch fallback
      * @param {string} url - URL to fetch
      * @param {Record<string, string>} [headers={}] - Extra request headers
-     * @returns {Promise<any>} Parsed JSON response
+     * @returns {Promise<unknown>} Parsed JSON response
      */
     function fetchWithGM(
       /** @type {string} */ url,
@@ -3744,8 +4539,11 @@
         Accept: 'application/json',
         ...headers,
       };
-      // Access GM_xmlhttpRequest via window to avoid TS "Cannot find name" when d.ts isn't picked up
-      const gm = /** @type {any} */ (window).GM_xmlhttpRequest;
+      // Read from `window`, as before the typing pass: where the grant is only a
+      // sandbox variable this falls back to fetch().
+      const gm = /** @type {{ GM_xmlhttpRequest?: typeof GM_xmlhttpRequest }} */ (
+        /** @type {unknown} */ (window)
+      ).GM_xmlhttpRequest;
       if (typeof gm === 'function') {
         return new Promise((resolve, reject) => {
           gm({
@@ -3753,11 +4551,12 @@
             url,
             headers: requestHeaders,
             timeout: 10000,
-            onload: (/** @type {any} */ response) => {
+            onload: (/** @type {GMResponseLike} */ response) => {
               if (response.status >= 200 && response.status < 300) {
                 try {
-                  resolve(JSON.parse(response.responseText));
+                  resolve(JSON.parse(String(response.responseText)));
                 } catch (parseError) {
+                  logS(parseError);
                   const message =
                     parseError instanceof Error ? parseError.message : String(parseError);
                   reject(new Error(`Failed to parse response: ${message}`));
@@ -3766,29 +4565,90 @@
                 reject(new Error(`Failed to fetch: ${response.status}`));
               }
             },
-            onerror: (/** @type {any} */ error) => reject(error),
+            onerror: (/** @type {unknown} */ error) => reject(error),
             ontimeout: () => reject(new Error('Request timed out')),
           });
         });
       }
 
       utils.warn('GM_xmlhttpRequest unavailable, falling back to fetch API');
-      return fetch(url, {
-        method: 'GET',
-        headers: requestHeaders,
-        credentials: 'omit',
-        mode: 'cors',
-      })
+      return fetchWithDeadline_(
+        url,
+        {
+          method: 'GET',
+          headers: requestHeaders,
+          credentials: 'omit',
+          mode: 'cors',
+        },
+        10000
+      )
         .then((/** @type {Response} */ response) => {
           if (!response.ok) {
             throw new Error(`Failed to fetch: ${response.status}`);
           }
           return response.json();
         })
-        .catch((/** @type {any} */ error) => {
+        .catch((/** @type {unknown} */ error) => {
           utils.error('Fallback fetch failed:', error);
           throw error;
         });
+    }
+
+    /**
+     * @param {string | null | undefined} cacheKey
+     * @param {string} channelId
+     * @returns {string}
+     */
+    function cacheChannelId_(cacheKey, channelId) {
+      state.currentChannelId = channelId;
+      if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, channelId);
+      return channelId;
+    }
+
+    /**
+     * @returns {string | null}
+     */
+    function resolveChannelIdFromDom_() {
+      const metaTag = /** @type {HTMLMetaElement | null} */ ($('meta[itemprop="channelId"]'));
+      if (metaTag?.content) return metaTag.content;
+
+      const urlMatch = window.location.href.match(/channel\/(UC[\w-]+)/);
+      if (urlMatch?.[1]) return urlMatch[1];
+
+      const initialData =
+        /** @type {{ metadata?: { channelMetadataRenderer?: { externalId?: string } }, header?: { c4TabbedHeaderRenderer?: { channelId?: string } } } | undefined} */ (
+          window.ytInitialData
+        );
+      const id =
+        initialData?.metadata?.channelMetadataRenderer?.externalId ||
+        initialData?.header?.c4TabbedHeaderRenderer?.channelId;
+      if (id && /^UC[\w-]{22}$/.test(id)) return id;
+
+      if (window.ytcfg?.get) {
+        const cfgId = window.ytcfg.get('CHANNEL_ID');
+        if (cfgId && /^UC[\w-]{22}$/.test(cfgId)) return cfgId;
+      }
+
+      return null;
+    }
+
+    /**
+     * @param {number} [maxAttempts=10]
+     * @param {number} [interval=100]
+     * @returns {Promise<string | null>}
+     */
+    function pollChannelIdFromDom_(maxAttempts = 10, interval = 100) {
+      return new Promise(resolve => {
+        let attempts = 0;
+        const tick = () => {
+          attempts += 1;
+          const id = resolveChannelIdFromDom_();
+          if (id) return resolve(id);
+          if (attempts >= maxAttempts) return resolve(null);
+          setTimeout(tick, interval);
+        };
+        tick();
+      });
     }
 
     /**
@@ -3802,7 +4662,7 @@
       const cacheKey = channelName || state.currentChannelName || window.location.pathname;
 
       if (cacheKey && state.channelIdCache.has(cacheKey)) {
-        return state.channelIdCache.get(cacheKey);
+        return state.channelIdCache.get(cacheKey) || null;
       }
 
       if (state.currentChannelId) {
@@ -3810,62 +4670,18 @@
       }
 
       if (typeof channelName === 'string' && /^UC[\w-]{22}$/.test(channelName)) {
-        state.currentChannelId = channelName;
-        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, channelName);
-        return channelName;
+        return cacheChannelId_(cacheKey, channelName);
       }
 
-      const resolveFromDom = () => {
-        const metaTag = $('meta[itemprop="channelId"]');
-        if (metaTag?.content) return metaTag.content;
-
-        const urlMatch = window.location.href.match(/channel\/(UC[\w-]+)/);
-        if (urlMatch?.[1]) return urlMatch[1];
-
-        const initialData = window.ytInitialData;
-        const id =
-          initialData?.metadata?.channelMetadataRenderer?.externalId ||
-          initialData?.header?.c4TabbedHeaderRenderer?.channelId;
-        if (id && /^UC[\w-]{22}$/.test(id)) return id;
-
-        if (window.ytcfg?.get) {
-          const cfgId = window.ytcfg.get('CHANNEL_ID');
-          if (cfgId && /^UC[\w-]{22}$/.test(cfgId)) return cfgId;
-        }
-
-        return null;
-      };
-
-      let channelId = resolveFromDom();
-      if (!channelId) {
-        // Retry a few times while the SPA page data is settling.
-        channelId = await new Promise(resolve => {
-          let attempts = 0;
-          const maxAttempts = 10;
-          const interval = 100;
-          const tick = () => {
-            attempts += 1;
-            const id = resolveFromDom();
-            if (id) return resolve(id);
-            if (attempts >= maxAttempts) return resolve(null);
-            setTimeout(tick, interval);
-          };
-          tick();
-        });
-      }
-
+      const channelId = resolveChannelIdFromDom_() || (await pollChannelIdFromDom_());
       if (channelId) {
-        state.currentChannelId = channelId;
-        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, channelId);
-        return channelId;
+        return cacheChannelId_(cacheKey, channelId);
       }
 
       // Last resort: fetch the channel page HTML and parse ytInitialData.
       const channelInfo = await getChannelInfo(window.location.href);
       if (channelInfo?.channelId) {
-        state.currentChannelId = channelInfo.channelId;
-        if (cacheKey) boundedCacheSet(state.channelIdCache, cacheKey, channelInfo.channelId);
-        return channelInfo.channelId;
+        return cacheChannelId_(cacheKey, channelInfo.channelId);
       }
 
       return null;
@@ -3874,16 +4690,48 @@
     /**
      * Fetch channel statistics with retry logic and fallback
      * @param {string} channelId - Channel ID
-     * @returns {Promise<any>} Channel stats
+     * @returns {Promise<LivecountsChannelStats>} Channel stats
      */
-    async function fetchChannelStats(channelId) {
-      const fetchFn = () =>
-        fetchWithGM(`${STATS_API_URL}${channelId}`, {
-          origin: 'https://livecounts.io',
-          referer: 'https://livecounts.io/',
-        });
+    /** @type {Record<string, number>} */
+    const SUBSCRIBER_MULTIPLIERS = {
+      k: 1e3,
+      m: 1e6,
+      b: 1e9,
+    };
 
-      // Retry with exponential backoff
+    /**
+     * @param {string} raw
+     * @returns {number}
+     */
+    function parseSubscriberRawText_(raw) {
+      if (!raw) return 0;
+      const num = parseFloat(raw);
+      if (Number.isNaN(num)) return 0;
+      const suffix = raw.slice(-1).toLowerCase();
+      const mult = SUBSCRIBER_MULTIPLIERS[suffix] || 1;
+      return Math.round(num * mult);
+    }
+
+    /**
+     * Extract subscriber count from page DOM as a best-effort fallback
+     * @returns {number}
+     */
+    function extractSubscriberCountFromDom() {
+      const subEl =
+        document.querySelector('#subscriber-count') ||
+        document.querySelector('yt-formatted-string#subscriber-count');
+      const raw = subEl?.textContent?.replace(/[^0-9.KkMmBb]/g, '') || '';
+      return parseSubscriberRawText_(raw);
+    }
+
+    /**
+     * Fetch with retry + exponential backoff; returns stats or null.
+     * @template {LivecountsChannelStats} T
+     * @param {string} channelId
+     * @param {() => Promise<T | null>} fetchFn
+     * @returns {Promise<{stats: T | null, lastError: unknown}>}
+     */
+    async function fetchStatsWithRetries(channelId, fetchFn) {
       let lastError = null;
       for (let attempt = 0; attempt <= CONFIG.MAX_RETRIES; attempt++) {
         try {
@@ -3894,9 +4742,10 @@
               stats,
               timestamp: Date.now(),
             });
-            return stats;
+            return { stats, lastError };
           }
         } catch (err) {
+          logS(err);
           lastError = err;
           if (attempt < CONFIG.MAX_RETRIES) {
             const delay = Math.min(1000 * 2 ** attempt, 10000);
@@ -3904,6 +4753,26 @@
           }
         }
       }
+      return { stats: null, lastError };
+    }
+
+    /**
+     * @param {string} channelId
+     * @returns {Promise<LivecountsChannelStats>}
+     */
+    async function fetchChannelStats(channelId) {
+      const fetchFn = async () => {
+        const stats = await fetchWithGM(`${STATS_API_URL}${channelId}`, {
+          origin: 'https://livecounts.io',
+          referer: 'https://livecounts.io/',
+        });
+        // A malformed counter payload is a failure, never a partial result.
+        return numbersAreValidCounts_(stats) ? /** @type {LivecountsChannelStats} */ (stats) : null;
+      };
+
+      // Retry with exponential backoff
+      const { stats, lastError } = await fetchStatsWithRetries(channelId, fetchFn);
+      if (stats) return stats;
 
       // Try cached data
       const cached = state.lastSuccessfulStats.get(channelId);
@@ -3912,28 +4781,10 @@
       }
 
       // Fallback: extract subscriber count from page DOM
-      let fallbackCount = 0;
-      try {
-        const subEl =
-          document.querySelector('#subscriber-count') ||
-          document.querySelector('yt-formatted-string#subscriber-count');
-        if (subEl?.textContent) {
-          const raw = subEl.textContent.replace(/[^0-9.KkMmBb]/g, '');
-          if (raw) {
-            const num = parseFloat(raw);
-            if (!Number.isNaN(num)) {
-              const suffix = raw.slice(-1).toLowerCase();
-              const mult = suffix === 'k' ? 1e3 : suffix === 'm' ? 1e6 : suffix === 'b' ? 1e9 : 1;
-              fallbackCount = Math.round(num * mult);
-            }
-          }
-        }
-      } catch (_e) {
-        /* DOM extraction is best-effort */
-      }
+      const fallbackCount = extractSubscriberCountFromDom();
 
       if (lastError) {
-        utils.error('Failed to fetch channel stats:', /** @type {any} */ (lastError));
+        utils.error('Failed to fetch channel stats:', lastError);
       }
       return {
         followerCount: fallbackCount,
@@ -3947,30 +4798,28 @@
      * Remove the existing overlay, interval, and registered document listeners
      * @returns {void}
      */
-    function clearExistingOverlay() {
-      const existingOverlay = $('.channel-banner-overlay');
-      if (existingOverlay) {
-        try {
-          existingOverlay.remove();
-        } catch (_e) {
-          window.YouTubePlusLogger?.warn?.('Stats', 'Failed to remove overlay');
-        }
+    /** Remove every overlay together with the listeners inside it. */
+    function removeOverlays() {
+      // Direct query, not the DOM cache: a cached miss would leave the overlay.
+      const overlays = new Set(document.querySelectorAll('.channel-banner-overlay'));
+      if (state.overlay) overlays.add(state.overlay);
+      for (const existingOverlay of overlays) {
+        // The overlay's settings panel and dropdown are discarded with it.
+        window.YouTubePlusCleanupManager?.disconnectSubtree?.(existingOverlay);
+        existingOverlay.remove();
       }
+      state.overlay = null;
+    }
+
+    function clearExistingOverlay() {
+      removeOverlays();
       if (state.intervalId) {
-        try {
-          state.intervalId.stop();
-        } catch (_e) {
-          window.YouTubePlusLogger?.warn?.('Stats', 'Failed to clear interval');
-        }
+        state.intervalId.stop?.();
         state.intervalId = null;
       }
       if (state.documentListenerKeys?.size) {
-        state.documentListenerKeys.forEach((/** @type {any} */ key) => {
-          try {
-            U.cleanupManager.unregisterListener?.(key);
-          } catch (_e) {
-            window.YouTubePlusLogger?.warn?.('Stats', 'Failed to unregister listener');
-          }
+        state.documentListenerKeys.forEach(key => {
+          U.cleanupManager?.unregisterListener?.(key);
         });
         state.documentListenerKeys.clear();
       }
@@ -3988,13 +4837,7 @@
      */
     function createDigitElement() {
       const digit = document.createElement('span');
-      Object.assign(/** @type {any} */ (digit).style || {}, {
-        display: 'inline-block',
-        width: '0.6em',
-        textAlign: 'center',
-        marginRight: '0.025em',
-        marginLeft: '0.025em',
-      });
+      digit.className = 'channel-stat-digit';
       return digit;
     }
 
@@ -4005,11 +4848,7 @@
     function createCommaElement() {
       const comma = document.createElement('span');
       comma.textContent = ',';
-      Object.assign(/** @type {any} */ (comma).style || {}, {
-        display: 'inline-block',
-        width: '0.3em',
-        textAlign: 'center',
-      });
+      comma.className = 'channel-stat-comma';
       return comma;
     }
 
@@ -4019,12 +4858,7 @@
      */
     function createNumberContainer() {
       const container = document.createElement('div');
-      Object.assign(/** @type {any} */ (container).style || {}, {
-        display: 'flex',
-        justifyContent: 'center',
-        alignItems: 'center',
-        letterSpacing: '0.025em',
-      });
+      container.className = 'channel-stat-number-row';
       return container;
     }
 
@@ -4134,11 +4968,11 @@
         element.textContent = String(current);
 
         if (progress < 1) {
-          requestAnimationFrame(update);
+          window.YouTubePlusCleanupManager?.registerAnimationFrame?.(requestAnimationFrame(update));
         }
       }
 
-      requestAnimationFrame(update);
+      window.YouTubePlusCleanupManager?.registerAnimationFrame?.(requestAnimationFrame(update));
     }
 
     /**
@@ -4152,27 +4986,24 @@
         spinnerContainer.remove();
       }
 
-      const containers = overlay.querySelectorAll('div[style*="visibility: hidden"]');
+      const containers = overlay.querySelectorAll('.channel-stat--hidden');
       containers.forEach((/** @type {Element} */ container) => {
-        if (container instanceof HTMLElement && container.style) {
-          container.style.visibility = 'visible';
-        }
+        container.classList.remove('channel-stat--hidden');
       });
 
       const icons = overlay.querySelectorAll('svg[style*="display: none"]');
       icons.forEach((/** @type {Element} */ icon) => {
         if (icon instanceof SVGElement || icon instanceof HTMLElement) {
-          const styled = /** @type {any} */ (icon);
-          if (styled.style) styled.style.display = 'block';
+          if (icon.style) icon.style.display = 'block';
         }
       });
     }
 
     /**
-     * Render the numeric difference between current and previous stat values
+     * Render the numeric difference between current and earlier stat values.
      * @param {HTMLElement} element - Difference element
      * @param {number} currentValue - Current stat value
-     * @param {number} previousValue - Previous stat value
+     * @param {number} previousValue - Earlier stat value
      * @returns {void}
      */
     function updateDifferenceElement(
@@ -4193,7 +5024,7 @@
       // Maps to design tokens: #1ed760 = --yt-stats-positive-indicator, #f3727f = --yt-stats-negative-indicator
       // (element.style computed inline styles don't support CSS var() at runtime)
       element.classList.add(
-        difference > 0 ? 'ytp-stats-change-positive' : 'ytp-stats-change-negative'
+        difference > 0 ? 'yp-stats-change-positive' : 'yp-stats-change-negative'
       );
 
       setTimeout_(() => {
@@ -4209,7 +5040,7 @@
       const overlay = $('.channel-banner-overlay');
       if (!overlay) return;
 
-      const statContainers = overlay.querySelectorAll('div[style*="width"]');
+      const statContainers = overlay.querySelectorAll('.channel-stat');
       if (!statContainers.length) return;
 
       let visibleCount = 0;
@@ -4220,9 +5051,12 @@
         const numberContainer = container.querySelector('[class$="-number"]');
         if (!numberContainer) return;
 
-        const type = numberContainer.className.replace('-number', '');
+        // The number element carries several classes, so match the section by
+        // its known `<option>-number` class rather than by trimming the string.
+        const type =
+          OPTIONS.find(option => numberContainer.classList.contains(`${option}-number`)) || '';
 
-        const isVisible = _safeLS.getItem(`show-${type}`) !== 'false';
+        const isVisible = isSectionShown_(type);
 
         if (isVisible) {
           if (container instanceof HTMLElement && container.style) {
@@ -4256,18 +5090,13 @@
       });
 
       // Only update font size and font family for .subscribers-number, .views-number, .videos-number
-      const fontSize = _safeLS.getItem('youtubeEnhancerFontSize') || '24';
-      const fontFamily = _safeLS.getItem('youtubeEnhancerFontFamily') || 'Rubik, sans-serif';
-      overlay
-        .querySelectorAll('.subscribers-number,.views-number,.videos-number')
-        .forEach((/** @type {Element} */ el) => {
-          if (el instanceof HTMLElement && el.style) {
-            el.style.fontSize = `${fontSize}px`;
-            el.style.fontFamily = fontFamily;
-          }
-        });
+      const fontSize = String(channelStatsSettings.fontSize);
+      const fontFamily = channelStatsSettings.fontFamily;
+      updateOverlayNumbersStyle_(overlay, 'fontSize', `${fontSize}px`);
+      updateOverlayNumbersStyle_(overlay, 'fontFamily', fontFamily);
 
-      if (overlay.style) overlay.style.display = 'flex';
+      if (/** @type {HTMLElement} */ (overlay).style)
+        /** @type {HTMLElement} */ (overlay).style.display = 'flex';
     }
 
     /**
@@ -4282,7 +5111,7 @@
     /**
      * Handle stats error by showing fallback values
      * @param {HTMLElement} overlay - Overlay element
-     * @param {any} stats - Stats object with error
+     * @param {LivecountsChannelStats} stats - Stats object with error
      * @returns {void}
      */
     function handleStatsError(overlay, stats) {
@@ -4298,10 +5127,10 @@
     }
 
     /**
-     * Get previous stat value for comparison
+     * Get the earlier stat value for comparison.
      * @param {string} channelId - Channel ID
      * @param {string} className - Stat type class name
-     * @returns {number|null} Previous value or null
+     * @returns {number|null} Earlier value or null
      */
     function getPreviousStatValue(channelId, className) {
       const prevStats = state.previousStats.get(channelId);
@@ -4352,7 +5181,7 @@
      * Update all stat elements in overlay
      * @param {HTMLElement} overlay - Overlay element
      * @param {string} channelId - Channel ID
-     * @param {any} stats - Stats object
+     * @param {LivecountsChannelStats} stats - Stats object
      * @returns {void}
      */
     function updateAllStatElements(overlay, channelId, stats) {
@@ -4374,6 +5203,45 @@
     }
 
     /**
+     * @param {HTMLElement} overlay
+     * @param {string} channelName
+     */
+    function handleMissingChannelId_(overlay, channelName) {
+      const now = Date.now();
+      if (now - state.lastChannelIdWarnAt > 15000) {
+        state.lastChannelIdWarnAt = now;
+        utils.warn('Skipping overlay update: channel ID is not available yet');
+      }
+      setTimeout(() => {
+        if (overlay?.isConnected && channelName === state.currentChannelName) {
+          updateOverlayContent(overlay, channelName);
+        }
+      }, 500);
+    }
+
+    /**
+     * @param {HTMLElement} overlay
+     * @param {string} channelId
+     * @param {string} channelName
+     * @param {LivecountsChannelStats} stats
+     */
+    function applyChannelStatsUpdate_(overlay, channelId, channelName, stats) {
+      if (stats.error) {
+        handleStatsError(overlay, stats);
+        return;
+      }
+
+      updateAllStatElements(overlay, channelId, stats);
+
+      if (!state.previousStats.has(channelId)) {
+        showContent(overlay);
+        utils.log('Displayed initial stats for channel:', channelName);
+      }
+
+      state.previousStats.set(channelId, stats);
+    }
+
+    /**
      * Update overlay content with channel stats
      * @param {HTMLElement} overlay - Overlay element
      * @param {string} channelName - Channel name
@@ -4388,18 +5256,7 @@
       try {
         const channelId = await fetchChannelId(channelName);
         if (!channelId) {
-          const now = Date.now();
-          if (now - state.lastChannelIdWarnAt > 15000) {
-            state.lastChannelIdWarnAt = now;
-            utils.warn('Skipping overlay update: channel ID is not available yet');
-          }
-          // Schedule a one-off retry so the overlay populates as soon as the
-          // channel ID becomes available, instead of waiting for the next interval.
-          setTimeout(() => {
-            if (overlay?.isConnected && channelName === state.currentChannelName) {
-              updateOverlayContent(overlay, channelName);
-            }
-          }, 500);
+          handleMissingChannelId_(overlay, channelName);
           return;
         }
         state.currentChannelId = channelId;
@@ -4410,21 +5267,10 @@
           return;
         }
 
-        if (stats.error) {
-          handleStatsError(overlay, stats);
-          return;
-        }
-
-        updateAllStatElements(overlay, channelId, stats);
-
-        if (!state.previousStats.has(channelId)) {
-          showContent(overlay);
-          utils.log('Displayed initial stats for channel:', channelName);
-        }
-
-        state.previousStats.set(channelId, stats);
+        applyChannelStatsUpdate_(overlay, channelId, channelName, stats);
       } catch (error) {
-        utils.error('Failed to update overlay content:', /** @type {any} */ (error));
+        logS(error);
+        utils.error('Failed to update overlay content:', error);
         showOverlayError(overlay);
       } finally {
         state.isUpdating = false;
@@ -4439,103 +5285,12 @@
     function createSafeRetryScheduler(
       /** @type {{check: () => boolean, maxAttempts?: number, interval?: number}} */ opts
     ) {
-      const factory = U?.createRetryScheduler;
-      if (typeof factory === 'function') {
-        try {
-          return /** @type {{ stop: () => void } | null} */ (
-            /** @type {unknown} */ (factory(opts))
-          );
-        } catch (error) {
-          U?.logError?.(
-            'ChannelStats',
-            'Retry scheduler factory failed',
-            /** @type {any} */ (error)
-          );
-        }
-      }
-
-      const { check, maxAttempts = 20, interval = 100 } = opts || {};
-      let attempts = 0;
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let timerId = null;
-      let stopped = false;
-
-      const tick = () => {
-        if (stopped) return;
-        attempts += 1;
-
-        try {
-          if (typeof check === 'function' && check()) {
-            stopped = true;
-            return;
-          }
-        } catch (error) {
-          U?.logError?.('ChannelStats', 'Fallback retry check failed', /** @type {any} */ (error));
-        }
-
-        if (attempts >= maxAttempts) {
-          stopped = true;
-          return;
-        }
-
-        timerId = setTimeout(tick, interval);
-      };
-
-      timerId = setTimeout(tick, 0);
-
-      return {
-        stop() {
-          stopped = true;
-          if (timerId) clearTimeout(timerId);
-          timerId = null;
-        },
-      };
-    }
-
-    const experimentalNavClickHandler = (/** @type {Event} */ e) => {
-      const { target } = e;
-      const el = /** @type {EventTarget & HTMLElement} */ (target);
-      const navItem = el?.closest?.('.ytp-plus-settings-nav-item');
-      if (navItem?.dataset?.section === 'experimental') {
-        attachSettingsHandler();
-      }
-    };
-
-    if (_cm2?.registerListener) {
-      _cm2.registerListener(document, 'youtube-plus-language-changed', () => {
-        attachSettingsHandler();
-      });
-    } else {
-      const _langHandler = () => {
-        attachSettingsHandler();
-      };
-      document.addEventListener('youtube-plus-language-changed', _langHandler);
-      try {
-        U?.cleanupManager?.register?.(() =>
-          document.removeEventListener('youtube-plus-language-changed', _langHandler)
-        );
-      } catch (_e) {
-        U.logSuppressed(_e, 'Stats');
-      }
-    }
-
-    if (_cm2?.registerListener) {
-      const listenerKey = _cm2.registerListener(
-        document,
-        'click',
-        experimentalNavClickHandler,
-        true
-      );
-      state.documentListenerKeys.add(listenerKey);
-    } else {
-      document.addEventListener('click', experimentalNavClickHandler, true);
-      try {
-        U?.cleanupManager?.register?.(() =>
-          document.removeEventListener('click', experimentalNavClickHandler, true)
-        );
-      } catch (_e) {
-        U.logSuppressed(_e, 'Stats');
-      }
+      // utils.js is an earlier build-order dependency and always provides the
+      // coordinator-backed scheduler, so there is no inline fallback to keep
+      // in sync.
+      const factory = U.createRetryScheduler;
+      if (typeof factory !== 'function') return null;
+      return /** @type {{ stop: () => void } | null} */ (/** @type {unknown} */ (factory(opts)));
     }
 
     /**
@@ -4589,7 +5344,7 @@
      */
     function clearUpdateInterval() {
       if (state.intervalId) {
-        state.intervalId.stop();
+        state.intervalId.stop?.();
         state.intervalId = null;
       }
     }
@@ -4598,7 +5353,7 @@
      * Create debounced update function
      * @param {HTMLElement} overlay - Overlay element
      * @param {string} channelName - Channel name
-     * @returns {Function} Debounced update function
+     * @returns {() => void} Debounced update function
      */
     function createDebouncedUpdate(overlay, channelName) {
       let lastUpdateTime = 0;
@@ -4620,7 +5375,7 @@
      */
     function setupUpdateInterval(overlay, channelName) {
       if (state.intervalId) {
-        state.intervalId.stop();
+        state.intervalId.stop?.();
       }
       const debouncedUpdate = createDebouncedUpdate(overlay, channelName);
       state.intervalId = createVisibilityAwareInterval(debouncedUpdate, state.updateInterval);
@@ -4631,6 +5386,9 @@
      * @param {HTMLElement} bannerElement - Banner element
      */
     function addOverlay(bannerElement) {
+      // Deferred callers (the 100 ms toggle delay, page observers) can land
+      // after the feature was switched off again.
+      if (!state.enabled) return;
       const channelName = extractChannelName(window.location.pathname);
 
       if (shouldSkipOverlay(channelName, bannerElement) || !channelName) {
@@ -4671,7 +5429,7 @@
       }
       if (!(bannerElement instanceof HTMLElement)) return null;
 
-      // Banner must actually be rendered (non-zero size) — empty <div> shells
+      // Banner must actually be rendered (non-zero size); empty <div> shells
       // exist on channels with no banner uploaded and would otherwise pass.
       const rect = bannerElement.getBoundingClientRect?.();
       if (rect && (rect.width < 8 || rect.height < 8)) return null;
@@ -4701,7 +5459,7 @@
       state.overlayEnsureScheduler = createSafeRetryScheduler({
         check: () => {
           if (!state.enabled) return true;
-          if (!(U?.isChannelPage?.() ?? false)) {
+          if (!U.isChannelPage?.()) {
             clearExistingOverlay();
             state.currentChannelName = null;
             return true;
@@ -4735,7 +5493,7 @@
      * @returns {void}
      */
     function handleBannerUpdate() {
-      if (!(U?.isChannelPage?.() ?? false)) {
+      if (!U.isChannelPage?.()) {
         clearExistingOverlay();
         state.currentChannelName = null;
         stopOverlayEnsureScheduler();
@@ -4756,20 +5514,17 @@
      * @returns {undefined}
      */
     function observePageChanges() {
-      if (!state.enabled || state.pageObserversAttached) return undefined;
+      if (!state.enabled || state.pageObserversAttached || !channelStatsCtx) return undefined;
       state.pageObserversAttached = true;
 
-      const debouncedBannerUpdate = U.debounce
-        ? U.debounce(handleBannerUpdate, 150)
-        : handleBannerUpdate;
+      const debouncedBannerUpdate = U.debounce(handleBannerUpdate, 150);
 
-      if (_cm2?.registerListener) {
-        _cm2.registerListener(document, 'yt-navigate-finish', debouncedBannerUpdate);
-        _cm2.registerListener(document, 'yt-page-data-updated', debouncedBannerUpdate);
-      } else {
-        document.addEventListener('yt-navigate-finish', debouncedBannerUpdate);
-        document.addEventListener('yt-page-data-updated', debouncedBannerUpdate);
-      }
+      channelStatsCtx.listen(document, 'yt-navigate-finish', debouncedBannerUpdate, {
+        passive: true,
+      });
+      channelStatsCtx.listen(document, 'yt-page-data-updated', debouncedBannerUpdate, {
+        passive: true,
+      });
 
       return undefined;
     }
@@ -4779,11 +5534,11 @@
      * @returns {void}
      */
     function addNavigationListener() {
-      if (!state.enabled || state.navigationListenerAttached) return;
+      if (!state.enabled || state.navigationListenerAttached || !channelStatsCtx) return;
       state.navigationListenerAttached = true;
 
       const _navHandler = () => {
-        if (U?.isChannelPage?.() ?? false) {
+        if (U.isChannelPage?.()) {
           ensureOverlayForCurrentPage();
           utils.log('Navigated to channel page');
         } else {
@@ -4793,26 +5548,15 @@
           utils.log('Navigated away from channel page');
         }
       };
-      if (_cm2?.registerListener) {
-        _cm2.registerListener(document, 'yt-navigate-finish', _navHandler);
-      } else {
-        document.addEventListener('yt-navigate-finish', _navHandler);
-      }
+      channelStatsCtx.listen(document, 'yt-navigate-finish', _navHandler, { passive: true });
 
-      // Safety net: LazyLoader dispatches ytp:nav-refresh after every SPA nav.
+      // Safety net: LazyLoader dispatches yp:nav-refresh after every SPA nav.
       // Re-render channel overlay so it appears when arriving at /@channel via
       // in-page navigation (not only on hard reload).
-      try {
-        window.addEventListener('ytp:nav-refresh', () => {
-          try {
-            _navHandler();
-          } catch (e) {
-            void e;
-          }
-        });
-      } catch (e) {
-        void e;
-      }
+      const navRefreshHandler = () => {
+        _navHandler();
+      };
+      channelStatsCtx.listen(window, 'yp:nav-refresh', navRefreshHandler, { passive: true });
     }
 
     // Cleanup function for page unload
@@ -4829,46 +5573,80 @@
     }
 
     // Register cleanup on page unload
-    if (_cm2?.registerListener) {
-      _cm2.registerListener(window, 'beforeunload', cleanup);
-    } else {
-      window.addEventListener('beforeunload', cleanup);
-    }
+    registerListenerSafe(window, 'beforeunload', cleanup);
 
-    // Export module to global scope for module loader
     if (typeof window !== 'undefined') {
-      window.YouTubeStats = {
+      window.YouTubePlusStats = Object.assign(window.YouTubePlusStats || {}, {
         init,
         cleanup,
-        version: '2.4.5',
-      };
+      });
     }
 
-    // Run initialization on first entry to the channel route. The IIFE guard
-    // (window.__ytpChannelStatsModuleInit) only ensures this closure runs once;
-    // the actual overlay creation and listener registration happen here.
+    // Route-scoped overlay: styles, observers, navigation listeners and the
+    // live-counter interval are acquired through the feature context, so
+    // leaving the channel route releases them.
+    channelStatsEnter = ctx => {
+      channelStatsCtx = ctx;
+      // The channel-stats flag is written by the settings modal's general
+      // handler and the feature lifecycle restarts this feature on the change,
+      // so re-read it on every entry instead of tracking it locally.
+      state.enabled = window.YouTubePlusSettingsStore?.get?.(SETTINGS_KEY) !== false;
+      addStyles();
+      // Blob changes arrive through the unified event; only channelStats keys
+      // matter. Re-read and re-apply so another tab's change reaches the overlay.
+      ctx.listen(window, 'youtube-plus-settings-updated', (/** @type {Event} */ e) => {
+        if (window.YouTubePlusSettingsStore?.affectsModule?.(e, MODULE_NAME) === false) return;
+        loadChannelSettings();
+        state.overlayOpacity = channelStatsSettings.opacity;
+        state.updateInterval = channelStatsSettings.interval;
+        if (state.overlay) {
+          state.overlay.style.backgroundColor = `rgba(0, 0, 0, ${state.overlayOpacity})`;
+        }
+        updateDisplayState();
+      });
+      if (!state.enabled) return;
+      observePageChanges();
+      addNavigationListener();
+      if (U.isChannelPage?.(location.href)) {
+        getChannelInfo(location.href);
+        ensureOverlayForCurrentPage();
+      }
+    };
+
+    channelStatsExit = () => {
+      clearExistingOverlay();
+      stopOverlayEnsureScheduler();
+      state.pageObserversAttached = false;
+      state.navigationListenerAttached = false;
+      channelStatsCtx = null;
+    };
+
+    // One-time module setup: fonts and default display flags. The route work
+    // runs through channelStatsEnter once the feature starts.
     init();
   }; // end initChannelStats
 
-  // Ensure settings UI shows even when modal opens before idle callback fires
-  document.addEventListener('youtube-plus-settings-modal-opened', initChannelStats, {
+  // The settings-modal listener stays at module scope so the experimental
+  // toggle is wired on any page, matching where the settings UI opens.
+  registerListenerSafe(document, 'youtube-plus-settings-modal-opened', initChannelStats, {
     once: false,
   });
 
-  // Defer channel stats init and only load module code on channel routes
-  // or when the settings modal is open (so the experimental tab can
-  // populate the "Channel statistics" toggle regardless of route).
-  if (U?.whenRelevant) {
-    U.whenRelevant({
-      name: 'stats.channel',
-      isRelevant: () => isChannelStatsTriggerRoute() || isSettingsModalOpen(),
-      onEnter: initChannelStats,
-    });
-  } else {
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(initChannelStats, { timeout: 2000 });
-    } else {
-      setTimeout(initChannelStats, 0);
-    }
-  }
+  const channelStatsFeature = window.YouTubePlusFeatureRegistry?.FeatureLifecycle?.define?.({
+    id: 'channelStats',
+    settingsKey: 'enableChannelStats',
+    // The live-counter overlay belongs to the channel banner only.
+    routes: ['channel'],
+    start(/** @type {YouTubePlusFeatureContext} */ ctx) {
+      channelStatsCtx = ctx;
+      initChannelStats();
+      channelStatsEnter?.(ctx);
+    },
+    stop() {
+      channelStatsExit?.();
+    },
+  });
+
+  // Starts on the channel route, then follows navigation.
+  U.onDomReady(() => channelStatsFeature?.sync());
 })();

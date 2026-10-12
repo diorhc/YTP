@@ -1,0 +1,70 @@
+{
+  "total": 45,
+  "byFacade": {
+    "YouTubePlusDownload": 13,
+    "YouTubePlusMain": 12,
+    "YouTubePlusPlaylistSearch": 9,
+    "YouTubePlusSettingsHelpers": 11
+  },
+  "trackedFacades": {
+    "YouTubePlusDownload": "src/download.js",
+    "YouTubePlusMain": "src/main.js",
+    "YouTubePlusPlaylistSearch": "src/playlist-search.js",
+    "YouTubePlusSettingsHelpers": "src/settings-helpers.js"
+  },
+  "members": {
+    "YouTubePlusDownload": [
+      "downloadVideo",
+      "downloadViaCobalt",
+      "downloadViaDirectStream",
+      "enqueueDownload",
+      "getSubtitles",
+      "downloadSubtitle",
+      "DownloadConfig",
+      "init",
+      "isHttpUrl",
+      "isHttpsUrl",
+      "_installPotHooksOnce",
+      "gmXmlHttpRequest",
+      "downloadBlobFromUrl"
+    ],
+    "YouTubePlusMain": [
+      "communicationKey",
+      "isEnabled",
+      "isReady",
+      "getActiveTab",
+      "getTabs",
+      "switchToTab",
+      "preloadComments",
+      "releaseCommentsScroller",
+      "expandLiveChat",
+      "collapseLiveChat",
+      "onTabChange",
+      "onReady"
+    ],
+    "YouTubePlusPlaylistSearch": [
+      "isPlaylistPage",
+      "shouldRunOnThisPage",
+      "isRelevantRoute",
+      "getCurrentPlaylistId",
+      "getPlaylistDisplayName",
+      "getPlaylistContext",
+      "deleteSelectedItems",
+      "removeItemViaMenu",
+      "cancelBatchDeletion"
+    ],
+    "YouTubePlusSettingsHelpers": [
+      "createSettingsSidebar",
+      "createMainContent",
+      "createSettingsItem",
+      "createSettingsSelect",
+      "createDownloadSiteOption",
+      "createBasicSettingsSection",
+      "createAdvancedSettingsSection",
+      "createExperimentalSettingsSection",
+      "createVotingSection",
+      "getMusicSettings",
+      "buildScreenshotSettingsHTML"
+    ]
+  }
+}

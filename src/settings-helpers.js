@@ -1,870 +1,21 @@
 /**
- * Settings Modal Helpers
+ * Settings Modal HTML Helpers
  *
- * Canonical settings store + modal HTML helpers.
- *
- * Canonical responsibility: settings storage and access.
- *   - storage key registry
- *   - defaults registry
- *   - load / save with safe JSON I/O
- *   - get / set / update with dot-path support
- *   - feature-scoped accessors (getFeature / updateFeature)
- *   - subscriptions (path or feature id)
- *   - storage-shape migration from legacy keys
- *
- * The settings modal HTML helpers below are preserved unchanged for
- * backward compatibility with `window.YouTubePlusSettingsHelpers`.
+ * Modal HTML builders preserved for backward compatibility with
+ * window.YouTubePlusSettingsHelpers. The settings store
+ * lives in settings-store.js (window.YouTubePlusSettingsStore).
+ * @version 2.5.3
  */
 
-/* global GM_getValue, GM_setValue */
-
 (function () {
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    window.YouTubeUtils?.logSuppressed?.(_err, _label || 'SettingsHelpers');
   // ============================================================
-  // CANONICAL SETTINGS STORE
+  // SETTINGS MODAL HTML HELPERS
   // ------------------------------------------------------------
-  // settings-helpers.js is the canonical owner of settings state.
-  // No other module should call localStorage / GM_getValue /
-  // GM_setValue directly for the canonical keys registered in
-  // STORAGE_KEYS. Other modules that need to read or write settings
-  // should use `window.YouTubePlusSettingsStore` instead. Direct
-  // localStorage usage outside this module is treated as legacy
-  // and is migrated module-by-module in subsequent refactors.
-  // ============================================================
-
-  /** Storage key registry. Stable for backward compatibility. */
-  const STORAGE_KEYS = Object.freeze({
-    main: 'youtube_plus_settings', // canonical main settings (utils.SETTINGS_KEY)
-    all: 'youtube_plus_all_settings_v2', // basic.js SettingsManager v2 legacy
-    music: 'youtube-plus-music-settings', // music cross-domain (youtube.com <-> music.youtube.com)
-  });
-
-  /** YouTube Music settings defaults. Mirrors music.js. */
-  const MUSIC_DEFAULTS = Object.freeze({
-    enableMusic: true,
-    immersiveSearchStyles: true,
-    hoverStyles: true,
-    playerSidebarStyles: true,
-    playerBarStyles: true,
-    centeredPlayerStyles: true,
-    centeredPlayerBarStyles: true,
-    miniPlayerStyles: true,
-    scrollToTopStyles: true,
-  });
-
-  /**
-   * Canonical settings defaults. Used to backfill missing fields on
-   * load() and to provide stable defaults for getFeature().
-   */
-  const DEFAULTS = Object.freeze({
-    enableDownload: true,
-    enableZenStyles: true,
-    enableSpeedControl: true,
-    enableScreenshot: true,
-    enableEnhanced: true,
-    enableLoop: true,
-    enableTabview: true,
-    enableCommentTranslate: true,
-    enablePlayAll: true,
-    enableResumeTime: true,
-    enableZoom: true,
-    enableThumbnail: true,
-    enablePlaylistSearch: true,
-    enableScrollToTopButton: true,
-    enableRememberManualQuality: true,
-    hideSideGuide: false,
-    zenStyles: {
-      thumbnailHover: true,
-      immersiveSearch: true,
-      hideVoiceSearch: true,
-      transparentHeader: true,
-      hideSideGuide: true,
-      cleanSideGuide: true,
-      fixFeedLayout: true,
-      compactFeed: true,
-      betterCaptions: true,
-      playerBlur: true,
-      theaterEnhancements: true,
-
-      sideVideosColumns: 0,
-      sideVideosColumnsEnabled: false,
-      themeVariant: 'glass',
-    },
-    speedControlHotkeys: { decrease: 'g', increase: 'h', reset: 'b' },
-    loopHotkeys: { setPointA: 'k', setPointB: 'l', resetPoints: 'o' },
-    downloadSites: { externalDownloader: true, ytdl: true, direct: true },
-    downloadSiteCustomization: {
-      externalDownloader: {
-        name: 'SSYouTube',
-        url: 'https://ssyoutube.com/watch?v={videoId}',
-      },
-    },
-    music: { ...MUSIC_DEFAULTS },
-  });
-
-  /**
-   * Formal key registry — every valid top-level settings key.
-   * Derived from DEFAULTS at definition time. Used by `hasKey()`
-   * to validate paths before get/set and to prevent accidental
-   * typos or undocumented key additions from silently persisting.
-   * @type {ReadonlySet<string>}
-   */
-  const KEY_REGISTRY = Object.freeze(new Set(Object.keys(DEFAULTS)));
-
-  /**
-   * Per-feature default subsets. Used by getFeature / updateFeature.
-   * Typed as `Record<string, any>` so featureId can be indexed with an
-   * arbitrary string; unknown ids return undefined and the caller
-   * falls back to a generic read.
-   * @type {Readonly<Record<string, any>>}
-   */
-  const FEATURE_DEFAULTS = Object.freeze({
-    music: MUSIC_DEFAULTS,
-    download: {
-      enableDownload: true,
-      downloadSites: { externalDownloader: true, ytdl: true, direct: true },
-    },
-    styles: DEFAULTS.zenStyles,
-    speed: {
-      enableSpeedControl: true,
-      speedControlHotkeys: DEFAULTS.speedControlHotkeys,
-    },
-    loop: { enableLoop: true, loopHotkeys: DEFAULTS.loopHotkeys },
-    enhanced: {
-      enableEnhanced: true,
-      enableTabview: true,
-      enableCommentTranslate: true,
-      enablePlayAll: true,
-      enableResumeTime: true,
-      enableZoom: true,
-      enableThumbnail: true,
-      enablePlaylistSearch: true,
-      enableScrollToTopButton: true,
-      enableRememberManualQuality: true,
-    },
-    screenshot: { enableScreenshot: true },
-  });
-
-  const storeLogger =
-    (typeof window !== 'undefined' && window.YouTubeUtils && window.YouTubeUtils.logger) || null;
-  const safeLogWarn = (
-    /** @type {string} */ label,
-    /** @type {string} */ msg,
-    /** @type {*} */ err
-  ) => {
-    try {
-      storeLogger?.warn?.(label, msg, err);
-    } catch {}
-  };
-
-  /**
-   * Read raw value from localStorage safely.
-   * @param {string} key
-   * @returns {string|null}
-   */
-  function readRaw(/** @type {string} */ key) {
-    if (typeof localStorage === 'undefined') return null;
-    try {
-      return localStorage.getItem(key);
-    } catch (e) {
-      safeLogWarn('SettingsStore', 'readRaw failed', e);
-      return null;
-    }
-  }
-
-  /**
-   * Write raw value to localStorage safely.
-   * @param {string} key
-   * @param {string} value
-   * @returns {boolean}
-   */
-  function writeRaw(/** @type {string} */ key, /** @type {string} */ value) {
-    if (typeof localStorage === 'undefined') return false;
-    try {
-      localStorage.setItem(key, value);
-      return true;
-    } catch (e) {
-      safeLogWarn('SettingsStore', 'writeRaw failed', e);
-      return false;
-    }
-  }
-
-  /**
-   * Remove a key from localStorage safely.
-   * @param {string} key
-   */
-  function removeRaw(/** @type {string} */ key) {
-    if (typeof localStorage === 'undefined') return;
-    try {
-      localStorage.removeItem(key);
-    } catch (e) {
-      safeLogWarn('SettingsStore', 'removeRaw failed', e);
-    }
-  }
-
-  /**
-   * Parse JSON safely with a fallback.
-   * @param {string|null|undefined} raw
-   * @param {*} fallback
-   * @returns {*}
-   */
-  function safeJSONParse(/** @type {string|null|undefined} */ raw, /** @type {*} */ fallback) {
-    if (typeof raw !== 'string' || !raw) return fallback;
-    try {
-      return JSON.parse(raw);
-    } catch (_e) {
-      return fallback;
-    }
-  }
-
-  /**
-   * Get nested value via dot-path, with defensive access.
-   * @param {Record<string, any>|null|undefined} obj
-   * @param {string} path
-   * @returns {*}
-   */
-  function getByPath(
-    /** @type {Record<string, any>|null|undefined} */ obj,
-    /** @type {string} */ path
-  ) {
-    if (!obj || typeof obj !== 'object' || !path) return undefined;
-    return path
-      .split('.')
-      .filter(Boolean)
-      .reduce((acc, key) => (acc == null ? undefined : acc[key]), obj);
-  }
-
-  /**
-   * Set nested value via dot-path, creating intermediate objects as needed.
-   * Returns true on success.
-   * @param {Record<string, any>} obj
-   * @param {string} path
-   * @param {*} value
-   * @returns {boolean}
-   */
-  function setByPath(
-    /** @type {Record<string, any>} */ obj,
-    /** @type {string} */ path,
-    /** @type {*} */ value
-  ) {
-    if (!obj || typeof obj !== 'object' || !path || typeof path !== 'string') return false;
-    const keys = path.split('.').filter(Boolean);
-    if (!keys.length) return false;
-    /** @type {string|null|undefined} */
-    const last = keys.pop();
-    if (!last) return false;
-    let cur = obj;
-    for (const k of keys) {
-      if (!Object.hasOwn(cur, k) || typeof cur[k] !== 'object' || cur[k] === null) {
-        cur[k] = {};
-      }
-      cur = cur[k];
-    }
-    cur[last] = value;
-    return true;
-  }
-
-  /**
-   * Deep-clone a JSON-safe value.
-   * @param {*} value
-   * @returns {*}
-   */
-  function cloneJSON(/** @type {*} */ value) {
-    if (value == null) return value;
-    try {
-      return JSON.parse(JSON.stringify(value));
-    } catch (_e) {
-      return value;
-    }
-  }
-
-  // ----- Music compatibility layer -----
-  // YouTube Music settings are shared between youtube.com and
-  // music.youtube.com. Storage is dual (GM_* + localStorage) for
-  // cross-subdomain sync, and the shape includes legacy flag
-  // migration. The store exposes a read/write pair that any caller
-  // can use. The historical getMusicSettings() function below is
-  // preserved unchanged for back-compat; the store's music
-  // accessors are a parallel canonical path that new modules can
-  // opt into without duplicating logic.
-
-  /**
-   * @param {string} key
-   * @returns {string|null}
-   */
-  function readRawGM(/** @type {string} */ key) {
-    try {
-      if (typeof GM_getValue !== 'undefined') {
-        const v = GM_getValue(key, null);
-        return typeof v === 'string' && v ? v : null;
-      }
-    } catch {}
-    return null;
-  }
-
-  /**
-   * @param {string} key
-   * @param {string} value
-   * @returns {boolean}
-   */
-  function writeRawGM(/** @type {string} */ key, /** @type {string} */ value) {
-    try {
-      if (typeof GM_setValue !== 'undefined') {
-        GM_setValue(key, value);
-        return true;
-      }
-    } catch {}
-    return false;
-  }
-
-  /**
-   * Merge a parsed music settings object with defaults + legacy flags.
-   * Mirrors music.js mergeMusicSettings and the historical
-   * getMusicSettings() function to keep cross-module compatibility.
-   * @param {any} parsed
-   * @returns {Record<string, any>}
-   */
-  function mergeMusicWithDefaults(/** @type {any} */ parsed) {
-    /** @type {Record<string, any>} */
-    const merged = { ...MUSIC_DEFAULTS };
-    if (!parsed || typeof parsed !== 'object') return merged;
-
-    if (typeof parsed.enableMusic === 'boolean') merged.enableMusic = parsed.enableMusic;
-    for (const key of Object.keys(MUSIC_DEFAULTS)) {
-      if (key === 'enableMusic') continue;
-      if (typeof parsed[key] === 'boolean') merged[key] = parsed[key];
-    }
-
-    // Legacy flags mapping
-    if (typeof parsed.enableImmersiveSearch === 'boolean') {
-      merged.immersiveSearchStyles = parsed.enableImmersiveSearch;
-    }
-    if (typeof parsed.enableSidebarHover === 'boolean') {
-      merged.hoverStyles = parsed.enableSidebarHover;
-    }
-    if (typeof parsed.enableCenteredPlayer === 'boolean') {
-      merged.centeredPlayerStyles = parsed.enableCenteredPlayer;
-    }
-    if (typeof parsed.enableScrollToTop === 'boolean') {
-      merged.scrollToTopStyles = parsed.enableScrollToTop;
-    }
-
-    // Backward-compat: enable if any legacy flags are enabled
-    const legacyEnabled = !!(
-      parsed.enableMusicStyles ||
-      parsed.enableMusicEnhancements ||
-      parsed.enableImmersiveSearch ||
-      parsed.enableSidebarHover ||
-      parsed.enableCenteredPlayer ||
-      parsed.enableScrollToTop
-    );
-    if (legacyEnabled && typeof parsed.enableMusic !== 'boolean') merged.enableMusic = true;
-
-    return merged;
-  }
-
-  /**
-   * Read YouTube Music settings from canonical store. Dual storage:
-   * GM_* first (cross-subdomain), then localStorage. Returns defaults
-   * if nothing is found.
-   * @returns {Record<string, any>}
-   */
-  function readMusic() {
-    // Prefer userscript-global storage so youtube.com and music.youtube.com share.
-    const gm = readRawGM(STORAGE_KEYS.music);
-    if (gm) {
-      const parsed = safeJSONParse(gm, null);
-      if (parsed && typeof parsed === 'object') return mergeMusicWithDefaults(parsed);
-    }
-
-    const ls = readRaw(STORAGE_KEYS.music);
-    if (ls) {
-      const parsed = safeJSONParse(ls, null);
-      if (parsed && typeof parsed === 'object') return mergeMusicWithDefaults(parsed);
-    }
-
-    return { ...MUSIC_DEFAULTS };
-  }
-
-  /**
-   * Persist YouTube Music settings to both GM_* and localStorage.
-   * Returns the merged settings that were written.
-   * @param {Record<string, any>|null|undefined} settings
-   * @returns {Record<string, any>}
-   */
-  function writeMusic(/** @type {Record<string, any>|null|undefined} */ settings) {
-    const merged =
-      settings && typeof settings === 'object'
-        ? mergeMusicWithDefaults(settings)
-        : { ...MUSIC_DEFAULTS };
-    const serialized = JSON.stringify(merged);
-    writeRaw(STORAGE_KEYS.music, serialized);
-    writeRawGM(STORAGE_KEYS.music, serialized);
-    return merged;
-  }
-
-  // ----- Migration from basic.js SettingsManager (v2) -----
-  // The legacy `youtube_plus_all_settings_v2` store used by
-  // basic.js had a nested shape like
-  //   { speedControl: { enabled }, download: { enabled } }
-  // This function migrates a legacy object to the canonical flat
-  // shape used by the rest of the codebase.
-  /**
-   * @param {any} parsed
-   * @returns {Record<string, any>|null}
-   */
-  function migrateLegacyV2(/** @type {any} */ parsed) {
-    if (!parsed || typeof parsed !== 'object') return null;
-    /** @type {Record<string, any>} */
-    const out = {};
-    const sc = parsed.speedControl;
-    if (sc && typeof sc.enabled === 'boolean') out.enableSpeedControl = sc.enabled;
-    const ss = parsed.screenshot;
-    if (ss && typeof ss.enabled === 'boolean') out.enableScreenshot = ss.enabled;
-    const dl = parsed.download;
-    if (dl && typeof dl.enabled === 'boolean') out.enableDownload = dl.enabled;
-    if (parsed.downloadSites && typeof parsed.downloadSites === 'object') {
-      out.downloadSites = cloneJSON(parsed.downloadSites);
-    }
-    return Object.keys(out).length ? out : null;
-  }
-
-  // ----- Subscriptions -----
-  /** @type {Map<string, Set<Function>>} */
-  const subscribers = new Map();
-  /**
-   * @param {string} path
-   * @param {*} value
-   */
-  function notifySubscribers(/** @type {string} */ path, /** @type {*} */ value) {
-    if (!subscribers.size) return;
-    const set = subscribers.get(path);
-    if (!set) return;
-    for (const cb of set) {
-      try {
-        cb(value, path);
-      } catch (e) {
-        safeLogWarn('SettingsStore', 'subscriber callback failed', e);
-      }
-    }
-  }
-
-  // ----- Public API -----
-
-  /**
-   * In-memory cache of the last `load()` result. Set after a load
-   * and cleared by `save()`, by cross-tab `storage` events, and by
-   * any `youtube-plus-settings-updated` dispatch so the next
-   * `get()`/`set()`/`update()` call returns the cached object
-   * without re-parsing localStorage JSON.
-   * @type {Record<string, any>|null}
-   */
-  let _cache = null;
-
-  /**
-   * Load the canonical settings object. Falls back to defaults for
-   * any missing keys. Migrates from `youtube_plus_all_settings_v2`
-   * (basic.js SettingsManager legacy) if the canonical key is
-   * missing. The result is cached so repeated calls within the
-   * same save-cycle skip the localStorage read, JSON parse,
-   * defaults merge, and deep clone.
-   * @returns {Record<string, any>}
-   */
-  function load() {
-    if (_cache) return _cache;
-
-    const raw = readRaw(STORAGE_KEYS.main);
-    /** @type {any} */
-    let parsed = safeJSONParse(raw, null);
-    let migrated = false;
-
-    if (!parsed || typeof parsed !== 'object') {
-      const legacyRaw = readRaw(STORAGE_KEYS.all);
-      const legacyParsed = safeJSONParse(legacyRaw, null);
-      const migratedLegacy = migrateLegacyV2(legacyParsed);
-      if (migratedLegacy) {
-        parsed = migratedLegacy;
-        migrated = true;
-      }
-    }
-
-    /** @type {Record<string, any>} */
-    const out = cloneJSON(DEFAULTS);
-    if (parsed && typeof parsed === 'object') {
-      for (const k of Object.keys(parsed)) {
-        if (k === '__proto__' || k === 'constructor' || k === 'prototype') continue;
-        const v = parsed[k];
-        if (
-          v &&
-          typeof v === 'object' &&
-          !Array.isArray(v) &&
-          out[k] &&
-          typeof out[k] === 'object' &&
-          !Array.isArray(out[k])
-        ) {
-          out[k] = { ...out[k], ...cloneJSON(v) };
-        } else {
-          out[k] = cloneJSON(v);
-        }
-      }
-    }
-
-    if (migrated) {
-      // Persist the migrated shape under the canonical key so future
-      // loads are fast and we don't keep re-running migration.
-      try {
-        writeRaw(STORAGE_KEYS.main, JSON.stringify(out));
-      } catch {}
-    }
-
-    _cache = out;
-    return out;
-  }
-
-  /**
-   * Save the canonical settings object. Dispatches the
-   * `youtube-plus-settings-updated` event so modules that listen to
-   * it (time.js, zoom.js, playlist-search.js, enhanced.js, etc.)
-   * keep working without changes. Invalidates the in-memory cache
-   * so the next `load()` re-reads from localStorage.
-   * @param {Record<string, any>|null|undefined} settings
-   */
-  function save(/** @type {Record<string, any>|null|undefined} */ settings) {
-    const safe = settings && typeof settings === 'object' ? settings : {};
-    const serialized = JSON.stringify(safe);
-    writeRaw(STORAGE_KEYS.main, serialized);
-    _cache = null;
-
-    if (typeof window !== 'undefined') {
-      try {
-        window.dispatchEvent(new CustomEvent('youtube-plus-settings-updated', { detail: safe }));
-      } catch {}
-    }
-  }
-
-  /**
-   * Get a setting by dot-path, with optional default.
-   * @param {string} path
-   * @param {*} [defaultValue]
-   * @returns {*}
-   */
-  function get(/** @type {string} */ path, /** @type {*} */ defaultValue) {
-    const v = getByPath(load(), path);
-    return v === undefined ? defaultValue : v;
-  }
-
-  // ----- Cache invalidation on external writes -----
-  // `storage` fires in other tabs/windows that mutate localStorage; we
-  // must drop the cache so the next read in this tab sees the new value.
-  // `youtube-plus-settings-updated` is dispatched by this module on every
-  // save(), but it's also a public coordination point for any code path
-  // that may have written the canonical key out-of-band. Both listeners
-  // are installed once per IIFE; they're window-scoped and live for the
-  // lifetime of the page, so no per-instance teardown is needed.
-  if (typeof window !== 'undefined') {
-    try {
-      window.addEventListener('storage', () => {
-        _cache = null;
-      });
-    } catch (_e) {
-      void _e;
-    }
-    try {
-      window.addEventListener('youtube-plus-settings-updated', () => {
-        _cache = null;
-      });
-    } catch (_e) {
-      void _e;
-    }
-  }
-
-  /**
-   * Set a setting by dot-path, persist, and notify subscribers.
-   * @param {string} path
-   * @param {*} value
-   * @returns {boolean}
-   */
-  function set(/** @type {string} */ path, /** @type {*} */ value) {
-    const current = load();
-    if (!setByPath(current, path, value)) return false;
-    save(current);
-    notifySubscribers(path, value);
-    return true;
-  }
-
-  /**
-   * Patch a setting by dot-path. The patch is shallow-merged into
-   * the existing object at `path` (if it is an object) or replaces
-   * the value (if it is a primitive). Persists and notifies.
-   * @param {string} path
-   * @param {Record<string, any>|*} patch
-   * @returns {boolean}
-   */
-  function update(/** @type {string} */ path, /** @type {Record<string, any>|*} */ patch) {
-    const current = load();
-    const existing = getByPath(current, path);
-    let next;
-    if (
-      existing &&
-      typeof existing === 'object' &&
-      !Array.isArray(existing) &&
-      patch &&
-      typeof patch === 'object' &&
-      !Array.isArray(patch)
-    ) {
-      next = { ...existing, ...patch };
-    } else {
-      next = patch;
-    }
-    if (!setByPath(current, path, next)) return false;
-    save(current);
-    notifySubscribers(path, next);
-    return true;
-  }
-
-  /**
-   * Get a feature's settings subset. Music uses the dual-storage
-   * music bridge; other features return the canonical store values
-   * overlaid on the feature defaults.
-   * @param {string} featureId
-   * @returns {Record<string, any>}
-   */
-  function getFeature(/** @type {string} */ featureId) {
-    if (featureId === 'music') return getMusicSettings();
-    const defaults = FEATURE_DEFAULTS[featureId];
-    const current = load();
-    if (!defaults) {
-      return current[featureId] != null ? cloneJSON(current[featureId]) : {};
-    }
-    /** @type {Record<string, any>} */
-    const out = cloneJSON(defaults);
-    for (const k of Object.keys(defaults)) {
-      if (Object.hasOwn(current, k)) {
-        out[k] = cloneJSON(current[k]);
-      }
-    }
-    return out;
-  }
-
-  /**
-   * Update a feature's settings subset. Patches are shallow-merged
-   * into the feature's top-level keys. Persists and notifies.
-   * @param {string} featureId
-   * @param {Record<string, any>|null|undefined} patch
-   * @returns {boolean}
-   */
-  function updateFeature(
-    /** @type {string} */ featureId,
-    /** @type {Record<string, any>|null|undefined} */ patch
-  ) {
-    if (!(featureId && patch) || typeof patch !== 'object') return false;
-    if (featureId === 'music') {
-      // Delegate to the canonical music bridge so all music writes
-      // share a single notification + persistence path.
-      return updateMusicSettings(patch);
-    }
-    const defaults = FEATURE_DEFAULTS[featureId];
-    if (!defaults) return false;
-    const current = load();
-    /** @type {Record<string, any>} */
-    const out = cloneJSON(defaults);
-    for (const k of Object.keys(defaults)) {
-      if (Object.hasOwn(current, k) && current[k] !== null && current[k] !== undefined) {
-        out[k] = current[k];
-      }
-    }
-    Object.assign(out, patch);
-    for (const k of Object.keys(out)) {
-      current[k] = out[k];
-    }
-    save(current);
-    notifySubscribers(featureId, out);
-    return true;
-  }
-
-  // ============================================================
-  // CANONICAL MUSIC BRIDGE
-  // ------------------------------------------------------------
-  // YouTube Music settings are shared between youtube.com and
-  // music.youtube.com. Persistence is dual (GM_* + localStorage)
-  // for cross-subdomain sync, and the merged shape includes
-  // legacy flag migration. These four helpers are the canonical
-  // public surface for music settings — new code should call
-  // them instead of touching GM_*/localStorage directly.
-  // ============================================================
-
-  /**
-   * Read YouTube Music settings from the canonical store. Returns
-   * a fresh merged object on every call. Falls back to defaults
-   * if nothing is stored.
-   * @returns {Record<string, any>}
-   */
-  function getMusicSettings() {
-    return readMusic();
-  }
-
-  /**
-   * Persist the full music settings object. The provided value is
-   * merged with defaults + legacy flags before being written to
-   * both GM_* and localStorage. Returns the merged value that was
-   * actually written.
-   * @param {Record<string, any>|null|undefined} settings
-   * @returns {Record<string, any>}
-   */
-  function saveMusicSettings(/** @type {Record<string, any>|null|undefined} */ settings) {
-    return writeMusic(settings);
-  }
-
-  /**
-   * Shallow-merge a patch into the current music settings, persist
-   * to GM_* + localStorage, notify `subscribe('music', ...)` and
-   * dispatch the unified `youtube-plus-settings-updated` event.
-   * @param {Record<string, any>|null|undefined} patch
-   * @returns {boolean}
-   */
-  function updateMusicSettings(/** @type {Record<string, any>|null|undefined} */ patch) {
-    if (!patch || typeof patch !== 'object') return false;
-    const next = { ...readMusic(), ...patch };
-    writeMusic(next);
-    notifySubscribers('music', next);
-    if (typeof window !== 'undefined') {
-      try {
-        window.dispatchEvent(
-          new CustomEvent('youtube-plus-settings-updated', {
-            detail: { music: next },
-          })
-        );
-      } catch {}
-    }
-    return true;
-  }
-
-  /**
-   * Subscribe to in-page music settings changes. Returns an
-   * unsubscribe function. Note: cross-subdomain changes delivered
-   * via `GM_addValueChangeListener` are not captured here — the
-   * music module owns that listener for live sync.
-   * @param {(value: Record<string, any>, target: string) => void} callback
-   * @returns {() => void}
-   */
-  function subscribeMusicSettings(
-    /** @type {(value: Record<string, any>, target: string) => void} */ callback
-  ) {
-    return subscribe('music', /** @type {any} */ (callback));
-  }
-
-  /**
-   * Subscribe to changes for a path or feature id. Returns an
-   * unsubscribe function. The callback receives `(value, target)`.
-   * @param {string} pathOrFeature
-   * @param {(value: any, target: string) => void} callback
-   * @returns {() => void}
-   */
-  function subscribe(
-    /** @type {string} */ pathOrFeature,
-    /** @type {(value: any, target: string) => void} */ callback
-  ) {
-    if (typeof pathOrFeature !== 'string' || typeof callback !== 'function') {
-      return () => {};
-    }
-    let set = subscribers.get(pathOrFeature);
-    if (!set) {
-      set = new Set();
-      subscribers.set(pathOrFeature, set);
-    }
-    set.add(/** @type {Function} */ (/** @type {unknown} */ (callback)));
-    return () => {
-      const s = subscribers.get(pathOrFeature);
-      if (!s) return;
-      s.delete(/** @type {Function} */ (/** @type {unknown} */ (callback)));
-      if (!s.size) subscribers.delete(pathOrFeature);
-    };
-  }
-
-  /**
-   * Reset to defaults. Removes the canonical key and dispatches an
-   * update event. Use with care — module-level caches (e.g.
-   * music.js snapshot) are not touched; callers should reload
-   * after reset.
-   */
-  function reset() {
-    removeRaw(STORAGE_KEYS.main);
-    if (typeof window !== 'undefined') {
-      try {
-        window.dispatchEvent(
-          new CustomEvent('youtube-plus-settings-updated', {
-            detail: cloneJSON(DEFAULTS),
-          })
-        );
-      } catch {}
-    }
-  }
-
-  /** Internal helpers exposed for testing and advanced callers. */
-  const _internals = Object.freeze({
-    STORAGE_KEYS,
-    DEFAULTS,
-    MUSIC_DEFAULTS,
-    FEATURE_DEFAULTS,
-    KEY_REGISTRY,
-    readMusic,
-    writeMusic,
-    migrateLegacyV2,
-    mergeMusicWithDefaults,
-  });
-
-  /**
-   * Validate that a top-level settings key is registered in KEY_REGISTRY.
-   * Accepts dot-paths and validates only the root segment.
-   * @param {string} key - A settings key or dot-path (e.g. "enableDownload" or "zenStyles.themeVariant")
-   * @returns {boolean}
-   */
-  function hasKey(/** @type {string} */ key) {
-    if (typeof key !== 'string' || !key) return false;
-    const root = key.split('.')[0];
-    return KEY_REGISTRY.has(root);
-  }
-
-  /** Canonical settings store. The single source of truth for the
-   *  public settings API. */
-  const SettingsStore = Object.freeze({
-    // Storage key / defaults registries (read-only).
-    STORAGE_KEYS,
-    DEFAULTS,
-    MUSIC_DEFAULTS,
-    FEATURE_DEFAULTS,
-    KEY_REGISTRY,
-    // Core I/O.
-    load,
-    save,
-    // Generic access.
-    get,
-    set,
-    update,
-    hasKey,
-    // Feature-scoped access.
-    getFeature,
-    updateFeature,
-    // Subscriptions.
-    subscribe,
-    // Music bridge (canonical accessors for youtube-plus-music-settings).
-    getMusicSettings,
-    saveMusicSettings,
-    updateMusicSettings,
-    subscribeMusicSettings,
-    // Lifecycle.
-    reset,
-    // Advanced (testing / migration tooling).
-    _internals,
-  });
-
-  // ============================================================
-  // SETTINGS MODAL HTML HELPERS (preserved unchanged)
-  // ------------------------------------------------------------
-  // These functions are part of the existing public API on
-  // `window.YouTubePlusSettingsHelpers`. They are intentionally
-  // left untouched in this refactor so that callers (notably
-  // basic.js#createSettingsModal) continue to work without
-  // changes.
+  // These functions are the public API on
+  // `window.YouTubePlusSettingsHelpers`; callers (notably
+  // basic.js#createSettingsModal) rely on them.
   // ============================================================
 
   /**
@@ -874,7 +25,7 @@
    */
   function createSettingsSidebar(t) {
     return `
-    <div class="ytp-plus-settings-nav ytp-plus-settings-nav-rail">
+    <div class="yp-settings-nav yp-settings-nav-rail" role="tablist" aria-label="${escapeHTML(t('settingsTitle') || 'Settings')}">
       ${createNavItem('basic', t('basicTab'), createBasicIcon(), true)}
       ${createNavItem('advanced', t('advancedTab'), createAdvancedIcon())}
       ${createNavItem('experimental', t('experimentalTab'), createExperimentalIcon())}
@@ -895,13 +46,7 @@
    */
   function escapeHTML(/** @type {string} */ str) {
     if (window.YouTubeSafeDOM?.escapeHTML) return window.YouTubeSafeDOM.escapeHTML(str);
-    if (typeof str !== 'string') return '';
-    return str
-      .replace(/&/g, '&amp;')
-      .replace(/</g, '&lt;')
-      .replace(/>/g, '&gt;')
-      .replace(/"/g, '&quot;')
-      .replace(/'/g, '&#x27;');
+    return window.YouTubeUtils?.escapeHTML?.(str) ?? '';
   }
 
   /**
@@ -917,9 +62,9 @@
     const sectionEsc = escapeHTML(section);
     const labelEsc = escapeHTML(label);
     return `
-    <div class="ytp-plus-settings-nav-item${activeClass}" data-section="${sectionEsc}" data-label="${labelEsc}" title="${labelEsc}" aria-label="${labelEsc}">
+    <div class="yp-settings-nav-item${activeClass}" data-section="${sectionEsc}" data-label="${labelEsc}" title="${labelEsc}" role="tab" aria-selected="${active ? 'true' : 'false'}" tabindex="${active ? '0' : '-1'}" aria-label="${labelEsc}">
       ${icon}
-      <span class="ytp-plus-settings-nav-item-label">${labelEsc}</span>
+      <span class="yp-settings-nav-item-label">${labelEsc}</span>
     </div>
   `;
   }
@@ -984,68 +129,59 @@
   }
 
   /**
-   * Creates a settings checkbox item
-   * @param {string} label - Item label
-   * @param {string} description - Item description
-   * @param {string} setting - Setting data attribute
-   * @param {boolean} checked - Whether checkbox is checked
-   * @returns {string} Settings item HTML
+   * Read a module's stored settings for the modal: from `modules.<name>` when
+   * it has content, otherwise from its legacy key. The legacy fallback keeps a
+   * preference visible before the module has run and written the blob.
+   * @param {string} moduleName
+   * @param {string} legacyKey
+   * @returns {Record<string, unknown> | null}
    */
-  /**
-   * Read a boolean setting from a legacy module-specific localStorage key.
-   * Handles both JSON object format ({ enabled: true }) and plain string format ('true'/'false').
-   * @param {string} key - localStorage key
-   * @param {boolean} defaultValue - Default value if key is missing or unreadable
-   * @returns {boolean}
-   */
-  function readLegacyModuleSetting(key, defaultValue) {
+  function readModuleSettings(moduleName, legacyKey) {
     try {
-      const raw = localStorage.getItem(key);
-      if (raw === null || raw === undefined) return defaultValue;
-      try {
-        const parsed = JSON.parse(raw);
-        if (typeof parsed === 'object' && parsed !== null && 'enabled' in parsed) {
-          return Boolean(parsed.enabled);
-        }
-      } catch (_jsonErr) {
-        // Not JSON — treat as plain string
+      const store = window.YouTubePlusSettingsStore?.moduleBridge?.();
+      if (store) {
+        const mod = store.getModuleSettings?.(moduleName);
+        if (mod && typeof mod === 'object' && Object.keys(mod).length) return mod;
       }
-      return raw !== 'false';
+      const raw = window.YouTubeUtils?.storage?.getItem(legacyKey);
+      if (!raw) return null;
+      const parsed = JSON.parse(raw);
+      return parsed && typeof parsed === 'object' ? parsed : null;
     } catch (_e) {
-      return defaultValue;
+      logS(_e);
+      return null;
     }
   }
 
   /**
-   * Read a shortcut object from a legacy module-specific localStorage key.
-   * @param {string} key - localStorage key
+   * Shortcut object from a module's settings, filling absent fields.
+   * @param {string} moduleName
+   * @param {string} legacyKey
    * @param {{ ctrlKey: boolean, altKey: boolean, shiftKey: boolean, key: string }} defaultValue
    * @returns {{ ctrlKey: boolean, altKey: boolean, shiftKey: boolean, key: string }}
    */
-  function readLegacyShortcutSetting(key, defaultValue) {
-    try {
-      const raw = localStorage.getItem(key);
-      if (!raw) return defaultValue;
-      const parsed = JSON.parse(raw);
-      if (parsed && typeof parsed === 'object' && parsed.shortcut) {
-        return { ...defaultValue, ...parsed.shortcut };
-      }
-    } catch (_e) {}
-    return defaultValue;
+  function readModuleShortcut(moduleName, legacyKey, defaultValue) {
+    const stored = readModuleSettings(moduleName, legacyKey);
+    return stored?.shortcut && typeof stored.shortcut === 'object'
+      ? { ...defaultValue, ...stored.shortcut }
+      : defaultValue;
   }
 
   /**
-   * Read submenu expanded state from localStorage.
+   * Read submenu expanded state from storage.
    * @param {string} key - Submenu key (e.g. 'pip', 'timecode')
    * @returns {boolean|null} - true/false if stored, null if missing
    */
   function readSubmenuExpanded(/** @type {string} */ key) {
     try {
-      const raw = localStorage.getItem('ytp-plus-submenu-states');
+      const raw = window.YouTubeUtils?.storage?.getItem('ytp-plus-submenu-states');
       if (!raw) return null;
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed[key] === 'boolean') return parsed[key];
-    } catch (_e) {}
+    } catch (_e) {
+      logS(_e);
+      /* Corrupt submenu state is non-critical; treat as missing. */
+    }
     return null;
   }
 
@@ -1096,18 +232,18 @@
         ${optionItems}
       </select>
 
-      <div class="glass-dropdown" id="${id}-modifier-dropdown" tabindex="0" role="listbox" aria-expanded="false">
-        <button class="glass-dropdown__toggle" type="button" aria-haspopup="listbox">
+      <div class="glass-dropdown" id="${id}-modifier-dropdown">
+        <button class="glass-dropdown__toggle" id="${id}-modifier-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
           <span class="glass-dropdown__label">${formatLabel(modifierValue)}</span>
           <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
         </button>
-        <ul class="glass-dropdown__list" role="presentation">
+        <ul class="glass-dropdown__list" role="listbox" aria-labelledby="${id}-modifier-toggle">
           ${dropdownItems}
         </ul>
       </div>
 
       <span class="${id}-shortcut-plus">+</span>
-      <input type="text" id="${id}-key" class="${id}-key-input" value="${escapeHTML(shortcut.key)}" maxlength="1" autocomplete="off" spellcheck="false">
+      <input type="text" id="${id}-key" class="${id}-key-input" value="${escapeHTML(shortcut.key)}" maxlength="1" autocomplete="off" spellcheck="false" aria-label="${escapeHTML(t('keyboardShortcut'))}">
     `;
   }
 
@@ -1121,14 +257,14 @@
    */
   function createSettingsItem(label, description, setting, checked) {
     const settingEsc = escapeHTML(setting);
-    const inputId = `ytp-plus-setting-${settingEsc}`;
+    const inputId = `yp-setting-${settingEsc}`;
     return `
-    <div class="ytp-plus-settings-item">
+    <div class="yp-settings-item">
       <div>
-        <label class="ytp-plus-settings-item-label" for="${inputId}">${escapeHTML(label)}</label>
-        <div class="ytp-plus-settings-item-description">${escapeHTML(description)}</div>
+        <label class="yp-settings-item-label" for="${inputId}">${escapeHTML(label)}</label>
+        <div class="yp-settings-item-description">${escapeHTML(description)}</div>
       </div>
-      <input type="checkbox" id="${inputId}" class="ytp-plus-settings-checkbox" data-setting="${settingEsc}" ${checked ? 'checked' : ''}>
+      <input type="checkbox" id="${inputId}" class="yp-settings-checkbox" data-setting="${settingEsc}" ${checked ? 'checked' : ''}>
     </div>
   `;
   }
@@ -1150,20 +286,37 @@
     /** @type {Array<{value: string|number, label: string}>} */ options
   ) {
     const settingEsc = escapeHTML(setting);
-    const inputId = `ytp-plus-setting-${settingEsc}`;
+    const inputId = `yp-setting-${settingEsc}`;
     const opts = options
       .map(
         o =>
           `<option value="${escapeHTML(String(o.value))}"${String(value) === String(o.value) ? ' selected' : ''}>${escapeHTML(o.label)}</option>`
       )
       .join('');
+    const selectedOpt = options.find(o => String(o.value) === String(value)) || options[0];
+    const selectedLabel = selectedOpt ? selectedOpt.label : '';
+    const dropdownItems = options
+      .map(
+        o =>
+          `<li class="glass-dropdown__item" data-value="${escapeHTML(String(o.value))}" role="option"${String(value) === String(o.value) ? ' aria-selected="true"' : ''}>${escapeHTML(o.label)}</li>`
+      )
+      .join('');
     return `
-    <div class="ytp-plus-settings-item">
+    <div class="yp-settings-item">
       <div>
-        <label class="ytp-plus-settings-item-label" for="${inputId}">${escapeHTML(label)}</label>
-        <div class="ytp-plus-settings-item-description">${escapeHTML(description)}</div>
+        <label class="yp-settings-item-label" for="${inputId}-toggle">${escapeHTML(label)}</label>
+        <div class="yp-settings-item-description">${escapeHTML(description)}</div>
       </div>
-      <select id="${inputId}" class="ytp-plus-settings-select" data-setting="${settingEsc}">${opts}</select>
+      <select id="${inputId}" class="yp-settings-select" data-setting="${settingEsc}" style="display:none;" tabindex="-1" aria-hidden="true">${opts}</select>
+      <div class="glass-dropdown" id="${inputId}-dropdown">
+        <button class="glass-dropdown__toggle" id="${inputId}-toggle" type="button" aria-haspopup="listbox" aria-expanded="false">
+          <span class="glass-dropdown__label">${escapeHTML(selectedLabel)}</span>
+          <svg class="glass-dropdown__chev" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+        </button>
+        <ul class="glass-dropdown__list" role="listbox" aria-labelledby="${inputId}-toggle">
+          ${dropdownItems}
+        </ul>
+      </div>
     </div>
   `;
   }
@@ -1178,8 +331,8 @@
    * @param {string} selectLabel
    * @param {string} selectDescription
    * @param {string} selectSetting
-   * @param {any} selectValue
-   * @param {Array<{value: any, label: string}>} options
+   * @param {string|number} selectValue
+   * @param {Array<{value: string|number, label: string}>} options
    * @returns {string}
    */
   function createSettingsToggleWithSelectSubmenu(
@@ -1196,17 +349,17 @@
   ) {
     const toggleSettingEsc = escapeHTML(toggleSetting);
     const submenuKeyEsc = escapeHTML(submenuKey);
-    const toggleInputId = `ytp-plus-setting-${toggleSettingEsc}`;
+    const toggleInputId = `yp-setting-${toggleSettingEsc}`;
     return `
-    <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
+    <div class="yp-settings-item yp-settings-item--with-submenu">
       <div>
-        <label class="ytp-plus-settings-item-label" for="${toggleInputId}">${escapeHTML(label)}</label>
-        <div class="ytp-plus-settings-item-description">${escapeHTML(description)}</div>
+        <label class="yp-settings-item-label" for="${toggleInputId}">${escapeHTML(label)}</label>
+        <div class="yp-settings-item-description">${escapeHTML(description)}</div>
       </div>
-      <div class="ytp-plus-settings-item-actions">
+      <div class="yp-settings-item-actions">
         <button
           type="button"
-          class="ytp-plus-submenu-toggle"
+          class="yp-submenu-toggle"
           data-submenu="${submenuKeyEsc}"
           aria-label="Toggle ${submenuKeyEsc} submenu"
           aria-expanded="${checked ? 'true' : 'false'}"
@@ -1217,11 +370,11 @@
             <polyline points="6 9 12 15 18 9"></polyline>
           </svg>
         </button>
-        <input type="checkbox" id="${toggleInputId}" class="ytp-plus-settings-checkbox" data-setting="${toggleSettingEsc}" ${checked ? 'checked' : ''} aria-label="${escapeHTML(label)}">
+        <input type="checkbox" id="${toggleInputId}" class="yp-settings-checkbox" data-setting="${toggleSettingEsc}" ${checked ? 'checked' : ''} aria-label="${escapeHTML(label)}">
       </div>
     </div>
     <div class="style-side-videos-submenu" data-submenu="${submenuKeyEsc}" style="display:${checked ? 'block' : 'none'};">
-      <div class="glass-card ytp-plus-settings-submenu-card">
+      <div class="glass-card yp-settings-submenu-card">
         ${createSettingsSelect(selectLabel, selectDescription, selectSetting, selectValue, options)}
       </div>
     </div>
@@ -1246,7 +399,7 @@
           <div class="download-site-name">${escapeHTML(name)}</div>
           <div class="download-site-desc">${escapeHTML(description)}</div>
         </label>
-        <input type="checkbox" id="${inputId}" class="ytp-plus-settings-checkbox" data-setting="downloadSite_${keyEsc}" ${checked ? 'checked' : ''}>
+        <input type="checkbox" id="${inputId}" class="yp-settings-checkbox" data-setting="downloadSite_${keyEsc}" ${checked ? 'checked' : ''}>
       </div>
       ${hasControls ? `<div class="download-site-controls" style="display:${checked ? 'flex' : 'none'};">${controls}</div>` : ''}
     </div>
@@ -1300,7 +453,7 @@
 
   /**
    * Creates the download submenu with all site options
-   * @param {Record<string, any>} settings - Settings object
+   * @param {YoutubePlusSettings} settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string} Download submenu HTML
    */
@@ -1351,100 +504,101 @@
    * @param {string} key - Translation key
    * @returns {string}
    */
-  function tr(t, key) {
+  function tr(t, key, fallback = '') {
     try {
       const v = t(key);
       if (typeof v === 'string' && v && v !== key) return v;
     } catch (_e) {
+      logS(_e);
       window.YouTubePlusErrorBoundary?.logError?.(
         _e instanceof Error ? _e : new Error(String(_e)),
         { module: 'SettingsHelpers' }
       );
     }
-    return key;
+    return fallback || key;
   }
 
   /**
    * Creates the styles submenu (style.js feature flags)
-   * @param {Record<string, any>} settings - Settings object
+   * @param {YoutubePlusSettings} settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string}
    */
   function createStyleSubmenu(settings, t) {
-    const display = settings.enableZenStyles ? 'block' : 'none';
-    const rawSideVideosColumns = Number(settings.zenStyles?.sideVideosColumns);
+    const display = settings.enableStyles ? 'block' : 'none';
+    const rawSideVideosColumns = Number(settings.styles?.sideVideosColumns);
     const sideVideosColumnsValue = Number.isFinite(rawSideVideosColumns)
       ? Math.max(0, Math.min(2, rawSideVideosColumns))
       : 0;
     const sideVideosColumnsEnabled =
-      settings.zenStyles?.sideVideosColumnsEnabled === true || sideVideosColumnsValue > 0;
+      settings.styles?.sideVideosColumnsEnabled === true || sideVideosColumnsValue > 0;
 
     const rows = [
       {
-        label: tr(t, 'zenStyleThumbnailHoverLabel'),
-        desc: tr(t, 'zenStyleThumbnailHoverDesc'),
-        key: 'zenStyles.thumbnailHover',
-        value: settings.zenStyles?.thumbnailHover,
+        label: tr(t, 'styleThumbnailHoverLabel'),
+        desc: tr(t, 'styleThumbnailHoverDesc'),
+        key: 'styles.thumbnailHover',
+        value: settings.styles?.thumbnailHover,
       },
       {
-        label: tr(t, 'zenStyleImmersiveSearchLabel'),
-        desc: tr(t, 'zenStyleImmersiveSearchDesc'),
-        key: 'zenStyles.immersiveSearch',
-        value: settings.zenStyles?.immersiveSearch,
+        label: tr(t, 'styleImmersiveSearchLabel'),
+        desc: tr(t, 'styleImmersiveSearchDesc'),
+        key: 'styles.immersiveSearch',
+        value: settings.styles?.immersiveSearch,
       },
       {
-        label: tr(t, 'zenStyleHideVoiceSearchLabel'),
-        desc: tr(t, 'zenStyleHideVoiceSearchDesc'),
-        key: 'zenStyles.hideVoiceSearch',
-        value: settings.zenStyles?.hideVoiceSearch,
+        label: tr(t, 'styleHideVoiceSearchLabel'),
+        desc: tr(t, 'styleHideVoiceSearchDesc'),
+        key: 'styles.hideVoiceSearch',
+        value: settings.styles?.hideVoiceSearch,
       },
       {
-        label: tr(t, 'zenStyleTransparentHeaderLabel'),
-        desc: tr(t, 'zenStyleTransparentHeaderDesc'),
-        key: 'zenStyles.transparentHeader',
-        value: settings.zenStyles?.transparentHeader,
+        label: tr(t, 'styleTransparentHeaderLabel'),
+        desc: tr(t, 'styleTransparentHeaderDesc'),
+        key: 'styles.transparentHeader',
+        value: settings.styles?.transparentHeader,
       },
       {
-        label: tr(t, 'zenStyleHideSideGuideLabel'),
-        desc: tr(t, 'zenStyleHideSideGuideDesc'),
-        key: 'zenStyles.hideSideGuide',
-        value: settings.zenStyles?.hideSideGuide,
+        label: tr(t, 'styleHideSideGuideLabel'),
+        desc: tr(t, 'styleHideSideGuideDesc'),
+        key: 'styles.hideSideGuide',
+        value: settings.styles?.hideSideGuide,
       },
       {
-        label: tr(t, 'zenStyleCleanSideGuideLabel'),
-        desc: tr(t, 'zenStyleCleanSideGuideDesc'),
-        key: 'zenStyles.cleanSideGuide',
-        value: settings.zenStyles?.cleanSideGuide,
+        label: tr(t, 'styleCleanSideGuideLabel'),
+        desc: tr(t, 'styleCleanSideGuideDesc'),
+        key: 'styles.cleanSideGuide',
+        value: settings.styles?.cleanSideGuide,
       },
       {
-        label: tr(t, 'zenStyleFixFeedLayoutLabel'),
-        desc: tr(t, 'zenStyleFixFeedLayoutDesc'),
-        key: 'zenStyles.fixFeedLayout',
-        value: settings.zenStyles?.fixFeedLayout,
+        label: tr(t, 'styleFixFeedLayoutLabel'),
+        desc: tr(t, 'styleFixFeedLayoutDesc'),
+        key: 'styles.fixFeedLayout',
+        value: settings.styles?.fixFeedLayout,
       },
       {
-        label: tr(t, 'zenStyleCompactFeedLabel'),
-        desc: tr(t, 'zenStyleCompactFeedDesc'),
-        key: 'zenStyles.compactFeed',
-        value: settings.zenStyles?.compactFeed,
+        label: tr(t, 'styleCompactFeedLabel'),
+        desc: tr(t, 'styleCompactFeedDesc'),
+        key: 'styles.compactFeed',
+        value: settings.styles?.compactFeed,
       },
       {
-        label: tr(t, 'zenStyleBetterCaptionsLabel'),
-        desc: tr(t, 'zenStyleBetterCaptionsDesc'),
-        key: 'zenStyles.betterCaptions',
-        value: settings.zenStyles?.betterCaptions,
+        label: tr(t, 'styleBetterCaptionsLabel'),
+        desc: tr(t, 'styleBetterCaptionsDesc'),
+        key: 'styles.betterCaptions',
+        value: settings.styles?.betterCaptions,
       },
       {
-        label: tr(t, 'zenStylePlayerBlurLabel'),
-        desc: tr(t, 'zenStylePlayerBlurDesc'),
-        key: 'zenStyles.playerBlur',
-        value: settings.zenStyles?.playerBlur,
+        label: tr(t, 'stylePlayerBlurLabel'),
+        desc: tr(t, 'stylePlayerBlurDesc'),
+        key: 'styles.playerBlur',
+        value: settings.styles?.playerBlur,
       },
       {
-        label: tr(t, 'zenStyleTheaterEnhancementsLabel'),
-        desc: tr(t, 'zenStyleTheaterEnhancementsDesc'),
-        key: 'zenStyles.theaterEnhancements',
-        value: settings.zenStyles?.theaterEnhancements,
+        label: tr(t, 'styleTheaterEnhancementsLabel'),
+        desc: tr(t, 'styleTheaterEnhancementsDesc'),
+        key: 'styles.theaterEnhancements',
+        value: settings.styles?.theaterEnhancements,
       },
     ];
 
@@ -1453,14 +607,14 @@
       <div class="glass-card style-submenu-container">
         ${rows.map(r => createSettingsItem(r.label, r.desc, r.key, r.value)).join('')}
         ${createSettingsToggleWithSelectSubmenu(
-          tr(t, 'zenStyleSideVideosColumnsLabel'),
-          tr(t, 'zenStyleSideVideosColumnsDesc'),
-          'zenStyles.sideVideosColumnsEnabled',
+          tr(t, 'styleSideVideosColumnsLabel'),
+          tr(t, 'styleSideVideosColumnsDesc'),
+          'styles.sideVideosColumnsEnabled',
           sideVideosColumnsEnabled,
           'style-side-videos',
-          tr(t, 'zenStyleSideVideosColumnsLabel'),
-          tr(t, 'zenStyleSideVideosColumnsDesc'),
-          'zenStyles.sideVideosColumns',
+          tr(t, 'styleSideVideosColumnsLabel'),
+          tr(t, 'styleSideVideosColumnsDesc'),
+          'styles.sideVideosColumns',
           sideVideosColumnsValue,
           [
             { value: 0, label: 'Default (Off)' },
@@ -1475,7 +629,7 @@
 
   /**
    * Creates the speed control submenu (hotkey customization)
-   * @param {Record<string, any>} settings - Settings object
+   * @param {YoutubePlusSettings} settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string}
    */
@@ -1488,10 +642,10 @@
     return `
     <div class="speed-submenu" data-submenu="speed" style="display:${display};">
       <div class="glass-card speed-submenu-container">
-        <div class="ytp-plus-settings-item speed-hotkeys-row">
+        <div class="yp-settings-item speed-hotkeys-row">
           <div class="speed-hotkeys-info">
-            <div class="ytp-plus-settings-item-label">${tr(t, 'speedHotkeysTitle')}</div>
-            <div class="ytp-plus-settings-item-description">${tr(t, 'speedHotkeysDesc')}</div>
+            <div class="yp-settings-item-label">${tr(t, 'speedHotkeysTitle')}</div>
+            <div class="yp-settings-item-description">${tr(t, 'speedHotkeysDesc')}</div>
             <div class="speed-hotkeys-fields">
               <label class="speed-hotkey-field">
                 <input
@@ -1539,7 +693,7 @@
 
   /**
    * Creates the loop control submenu (hotkey customization for A → B)
-   * @param {Record<string, any>} settings - Settings object
+   * @param {YoutubePlusSettings} settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string}
    */
@@ -1551,10 +705,10 @@
 
     return `
     <div class="loop-submenu loop-submenu-compact" data-submenu="loop" style="display:${display};">
-      <div class="ytp-plus-settings-item loop-hotkeys-row loop-hotkeys-row-no-margin">
+      <div class="yp-settings-item loop-hotkeys-row loop-hotkeys-row-no-margin">
         <div class="loop-hotkeys-info">
-          <div class="ytp-plus-settings-item-label">${tr(t, 'loopSegmentTitle')}</div>
-          <div class="ytp-plus-settings-item-description">${tr(t, 'loopSegmentDesc')}</div>
+          <div class="yp-settings-item-label">${tr(t, 'loopSegmentTitle')}</div>
+          <div class="yp-settings-item-description">${tr(t, 'loopSegmentDesc')}</div>
           <div class="loop-hotkeys-fields">
             <label class="loop-hotkey-field">
               <input
@@ -1600,105 +754,108 @@
   }
 
   /**
+   * Build a "checkbox + submenu toggle button" header row, shared by the
+   * style/speed/download/enhanced/music settings sections. Output must stay
+   * byte-identical to the inline markup it replaces.
+   * @param {{
+   *   inputId?: string,        // if set, label gets for="X" and input gets id="X"
+   *   labelHtml: string,       // already-resolved label text (call site passes the exact translation call result)
+   *   descHtml: string,
+   *   submenuKey: string,      // data-submenu value
+   *   ariaLabel: string,       // exact aria-label text
+   *   enabled: boolean,        // drives aria-expanded / disabled / style display
+   *   dataSetting: string,     // data-setting attribute on the checkbox
+   *   checked: boolean         // drives the checkbox's checked attribute (may differ from `enabled`!)
+   * }} cfg
+   * @returns {string}
+   */
+  function buildToggleWithSubmenuHeader(cfg) {
+    const { inputId, labelHtml, descHtml, submenuKey, ariaLabel, enabled, dataSetting, checked } =
+      cfg;
+    const forAttr = inputId ? ` for="${inputId}"` : '';
+    const idAttr = inputId ? ` id="${inputId}"` : '';
+    return `<div class="yp-settings-item yp-settings-item--with-submenu">
+        <div>
+          <label class="yp-settings-item-label"${forAttr}>${labelHtml}</label>
+          <div class="yp-settings-item-description">${descHtml}</div>
+        </div>
+        <div class="yp-settings-item-actions">
+          <button
+            type="button"
+            class="yp-submenu-toggle"
+            data-submenu="${submenuKey}"
+            aria-label="${ariaLabel}"
+            aria-expanded="${enabled ? 'true' : 'false'}"
+            ${enabled ? '' : 'disabled'}
+            style="display:${enabled ? 'inline-flex' : 'none'};"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <input type="checkbox"${idAttr} class="yp-settings-checkbox" data-setting="${dataSetting}" ${checked ? 'checked' : ''}>
+        </div>
+      </div>`;
+  }
+
+  /**
    * Creates the basic settings section
-   * @param {Record<string, any>} settings - Settings object
+   * @param {YoutubePlusSettings} settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string} Basic section HTML
    */
   function createBasicSettingsSection(settings, t) {
     const downloadEnabled = !!settings.enableDownload;
-    const styleEnabled = settings.enableZenStyles !== false;
+    const styleEnabled = settings.enableStyles !== false;
     const speedEnabled = !!settings.enableSpeedControl;
     return `
-    <div class="ytp-plus-settings-section" data-section="basic">
-      <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
-        <div>
-          <label class="ytp-plus-settings-item-label" for="ytp-plus-setting-enableZenStyles">${tr(
-            t,
-            'zenStylesTitle'
-          )}</label>
-          <div class="ytp-plus-settings-item-description">${tr(t, 'zenStylesDesc')}</div>
-        </div>
-        <div class="ytp-plus-settings-item-actions">
-          <button
-            type="button"
-            class="ytp-plus-submenu-toggle"
-            data-submenu="style"
-            aria-label="Toggle styles submenu"
-            aria-expanded="${styleEnabled ? 'true' : 'false'}"
-            ${styleEnabled ? '' : 'disabled'}
-            style="display:${styleEnabled ? 'inline-flex' : 'none'};"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-          <input type="checkbox" id="ytp-plus-setting-enableZenStyles" class="ytp-plus-settings-checkbox" data-setting="enableZenStyles" ${
-            styleEnabled ? 'checked' : ''
-          }>
-        </div>
-      </div>
+    <div class="yp-settings-section" data-section="basic">
+      ${buildToggleWithSubmenuHeader({
+        inputId: 'yp-setting-enableStyles',
+        labelHtml: tr(t, 'stylesTitle'),
+        descHtml: tr(t, 'stylesDesc'),
+        submenuKey: 'style',
+        ariaLabel: 'Toggle styles submenu',
+        enabled: styleEnabled,
+        dataSetting: 'enableStyles',
+        checked: styleEnabled,
+      })}
       ${createStyleSubmenu(settings, t)}
-      <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
-        <div>
-          <label class="ytp-plus-settings-item-label" for="ytp-plus-setting-enableSpeedControl">${t(
-            'speedControl'
-          )}</label>
-          <div class="ytp-plus-settings-item-description">${t('speedControlDesc')}</div>
-        </div>
-        <div class="ytp-plus-settings-item-actions">
-          <button
-            type="button"
-            class="ytp-plus-submenu-toggle"
-            data-submenu="speed"
-            aria-label="Toggle speed submenu"
-            aria-expanded="${speedEnabled ? 'true' : 'false'}"
-            ${speedEnabled ? '' : 'disabled'}
-            style="display:${speedEnabled ? 'inline-flex' : 'none'};"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-          <input type="checkbox" id="ytp-plus-setting-enableSpeedControl" class="ytp-plus-settings-checkbox" data-setting="enableSpeedControl" ${
-            speedEnabled ? 'checked' : ''
-          }>
-        </div>
-      </div>
+      ${createSettingsItem(
+        tr(t, 'animationsLabel'),
+        tr(t, 'animationsDesc'),
+        'enableAnimations',
+        settings.enableAnimations === true
+      )}
+      ${buildPerformanceModeHTML(settings, t)}
+      ${buildToggleWithSubmenuHeader({
+        inputId: 'yp-setting-enableSpeedControl',
+        labelHtml: t('speedControl'),
+        descHtml: t('speedControlDesc'),
+        submenuKey: 'speed',
+        ariaLabel: 'Toggle speed submenu',
+        enabled: speedEnabled,
+        dataSetting: 'enableSpeedControl',
+        checked: speedEnabled,
+      })}
       ${createSpeedControlSubmenu(settings, t)}
-      ${createSettingsItem(t('screenshotButton'), t('screenshotButtonDesc'), 'enableScreenshot', settings.enableScreenshot)}
-      <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
-        <div>
-          <label class="ytp-plus-settings-item-label" for="ytp-plus-setting-enableDownload">${t(
-            'downloadButton'
-          )}</label>
-          <div class="ytp-plus-settings-item-description">${t('downloadButtonDesc')}</div>
-        </div>
-        <div class="ytp-plus-settings-item-actions">
-          <button
-            type="button"
-            class="ytp-plus-submenu-toggle"
-            data-submenu="download"
-            aria-label="Toggle download submenu"
-            aria-expanded="${downloadEnabled ? 'true' : 'false'}"
-            ${downloadEnabled ? '' : 'disabled'}
-            style="display:${downloadEnabled ? 'inline-flex' : 'none'};"
-          >
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-              <polyline points="6 9 12 15 18 9"></polyline>
-            </svg>
-          </button>
-          <input type="checkbox" id="ytp-plus-setting-enableDownload" class="ytp-plus-settings-checkbox" data-setting="enableDownload" ${
-            settings.enableDownload ? 'checked' : ''
-          }>
-        </div>
-      </div>
+      ${buildScreenshotSettingsHTML(settings, t)}
+      ${buildToggleWithSubmenuHeader({
+        inputId: 'yp-setting-enableDownload',
+        labelHtml: t('downloadButton'),
+        descHtml: t('downloadButtonDesc'),
+        submenuKey: 'download',
+        ariaLabel: 'Toggle download submenu',
+        enabled: downloadEnabled,
+        dataSetting: 'enableDownload',
+        checked: settings.enableDownload,
+      })}
       ${createDownloadSubmenu(settings, t)}
       ${createSettingsItem(
         t('adBlocker'),
         t('adBlockerDescription'),
         'enableAdBlocker',
-        readLegacyModuleSetting('youtube_adblocker_settings', true)
+        settings.enableAdBlocker !== false
       )}
     </div>
   `;
@@ -1711,20 +868,20 @@
    */
   function createAboutSection(t) {
     return `
-    <div class="ytp-plus-settings-section hidden" data-section="about">
+    <div class="yp-settings-section hidden" data-section="about">
       <div class="about-section-content">
         <svg class="app-icon" width="90" height="90" viewBox="0 0 64 64" xmlns="http://www.w3.org/2000/svg" xmlns:svg="http://www.w3.org/2000/svg" version="1.1">
           <path d="m23.24,4.62c-0.85,0.45 -2.19,2.12 -4.12,5.13c-1.54,2.41 -2.71,4.49 -3.81,6.8c-0.55,1.14 -1.05,2.2 -1.13,2.35c-0.08,0.16 -0.78,0.7 -1.66,1.28c-1.38,0.91 -1.8,1.29 -1.4,1.28c0.08,0 0.67,-0.35 1.31,-0.77c0.64,-0.42 1.19,-0.76 1.2,-0.74c0.02,0.02 -0.1,0.31 -0.25,0.66c-1.03,2.25 -1.84,5.05 -1.84,6.37c0.01,1.89 0.84,2.67 2.86,2.67c1.08,0 1.94,-0.31 3.66,-1.29c1.84,-1.06 3.03,-1.93 4.18,-3.09c1.69,-1.7 2.91,-3.4 3.28,-4.59c0.59,-1.9 -0.1,-3.08 -2.02,-3.44c-0.87,-0.16 -2.85,-0.14 -3.75,0.06c-1.78,0.38 -2.74,0.76 -2.5,1c0.03,0.03 0.5,-0.1 1.05,-0.28c1.49,-0.48 2.34,-0.59 3.88,-0.53c1.64,0.07 2.09,0.19 2.69,0.75l0.46,0.43l0,0.87c0,0.74 -0.05,0.98 -0.35,1.6c-0.69,1.45 -2.69,3.81 -4.37,5.14c-0.93,0.74 -2.88,1.94 -4.07,2.5c-1.64,0.77 -3.56,0.72 -4.21,-0.11c-0.39,-0.5 -0.5,-1.02 -0.44,-2.11c0.05,-0.85 0.16,-1.32 0.67,-2.86c0.34,-1.01 0.86,-2.38 1.15,-3.04c0.52,-1.18 0.55,-1.22 1.6,-2.14c4.19,-3.65 8.42,-9.4 9.02,-12.26c0.2,-0.94 0.13,-1.46 -0.21,-1.7c-0.31,-0.22 -0.38,-0.21 -0.89,0.06m0.19,0.26c-0.92,0.41 -3.15,3.44 -5.59,7.6c-1.05,1.79 -3.12,5.85 -3.02,5.95c0.07,0.07 1.63,-1.33 2.58,-2.34c1.57,-1.65 3.73,-4.39 4.88,-6.17c1.31,-2.03 2.06,-4.11 1.77,-4.89c-0.13,-0.34 -0.16,-0.35 -0.62,-0.15m11.69,13.32c-0.3,0.6 -1.19,2.54 -1.98,4.32c-1.6,3.62 -1.67,3.71 -2.99,4.34c-1.13,0.54 -2.31,0.85 -3.54,0.92c-0.99,0.06 -1.08,0.04 -1.38,-0.19c-0.28,-0.22 -0.31,-0.31 -0.26,-0.7c0.03,-0.25 0.64,-1.63 1.35,-3.08c1.16,-2.36 2.52,-5.61 2.52,-6.01c0,-0.49 -0.36,0.19 -1.17,2.22c-0.51,1.26 -1.37,3.16 -1.93,4.24c-0.55,1.08 -1.04,2.17 -1.09,2.43c-0.1,0.59 0.07,1.03 0.49,1.28c0.78,0.46 3.3,0.06 5.13,-0.81l0.93,-0.45l-0.66,1.25c-0.7,1.33 -3.36,6.07 -4.31,7.67c-2.02,3.41 -3.96,5.32 -6.33,6.21c-2.57,0.96 -4.92,0.74 -6.14,-0.58c-0.81,-0.88 -0.82,-1.71 -0.04,-3.22c1.22,-2.36 6.52,-6.15 10.48,-7.49c0.52,-0.18 0.95,-0.39 0.95,-0.46c0,-0.21 -0.19,-0.18 -1.24,0.2c-1.19,0.43 -3.12,1.37 -4.34,2.11c-2.61,1.59 -5.44,4.09 -6.13,5.43c-1.15,2.2 -0.73,3.61 1.4,4.6c0.59,0.28 0.75,0.3 2.04,0.3c1.67,0 2.42,-0.18 3.88,-0.89c1.87,-0.92 3.17,-2.13 4.72,-4.41c0.98,-1.44 4.66,-7.88 5.91,-10.33c0.25,-0.49 0.68,-1.19 0.96,-1.56c0.28,-0.37 0.76,-1.15 1.06,-1.73c0.82,-1.59 2.58,-6.10 2.58,-6.6c0,-0.06 -0.07,-0.1 -0.17,-0.1c-0.10,0 -0.39,0.44 -0.71,1.09m-1.34,3.7c-0.93,2.08 -1.09,2.48 -0.87,2.2c0.19,-0.24 1.66,-3.65 1.6,-3.71c-0.02,-0.02 -0.35,0.66 -0.73,1.51" fill="none" fill-rule="evenodd" stroke="currentColor" />
         </svg>
         <h1>YouTube +</h1>
       </div>
-      <div class="ytp-plus-about-actions">
-        <button class="glass-button" id="open-ytp-github" type="button">${t('openGitHubButton')}</button>
-                <button class="glass-button" id="open-ytp-discussions" type="button">${t('openDiscussionsButton')}</button>
-                <button class="glass-button" id="open-ytp-greasyfork" type="button">${t('openGreasyForkButton')}</button>
+      <div class="yp-about-actions">
+        <button class="glass-button" id="open-ytp-github" type="button">${escapeHTML(t('openGitHubButton'))}</button>
+                <button class="glass-button" id="open-ytp-discussions" type="button">${escapeHTML(t('openDiscussionsButton'))}</button>
+                <button class="glass-button" id="open-ytp-greasyfork" type="button">${escapeHTML(t('openGreasyForkButton'))}</button>
       </div>
-      <div class="ytp-plus-about-footer">
-        <div>Made with ❤️ by <a href="https://github.com/diorhc" target="_blank" rel="noopener noreferrer" class="ytp-plus-about-author-link">diorhc</a></div>
+      <div class="yp-about-footer">
+        <div>Made with ❤️ by <a href="https://github.com/diorhc" target="_blank" rel="noopener noreferrer" class="yp-about-author-link" aria-label="diorhc"><svg class="yp-about-author-svg" viewBox="0 0 96 61" width="41" height="26" fill="currentColor" role="img" aria-hidden="true"><path d="M5.8 59.3Q5.7 59.1 5.7 58.8Q5.7 57.3 7.9 53Q10.5 47.7 14.9 41.1Q18 36.3 21.2 32.4Q24.3 28.5 28.4 24.1Q31.8 20.7 31.8 20.4Q31.6 20.4 27.4 23.8Q24.7 26 21 29.1Q17.3 32.2 14.4 34.8Q11.5 37.3 11.2 37.8Q11.2 37.9 11.1 38Q11 38.1 10.9 38.1Q10.8 38.1 10.2 38.5Q9.5 39 8.6 39.8Q4.6 43.2 3.2 43.8Q2.8 44 2.5 44Q2.3 44 1.9 43.8Q1 43.4 1 42.4Q1 41.2 2.3 39.2Q6.1 33.5 9 33.5Q9.2 33.5 9.3 33.5Q9.9 33.7 10.6 34.3Q11.3 34.9 11.5 35.5Q11.6 35.8 11.6 35.8Q11.7 35.9 11.7 35.9Q11.8 35.9 12 35.7Q13.9 34 17.8 30.8Q21.7 27.6 26 24.1Q30.4 20.6 33.7 18.1Q37 15.6 37.7 15.3Q37.8 15.3 37.9 15.4Q38.1 15.4 38.2 15.6Q38.2 15.6 38.2 15.7Q38.2 15.8 38.2 15.9Q38.1 16.1 37.8 16.5Q37.5 16.9 36.9 17.6Q36.3 18.2 35.3 19.3Q34.2 20.4 32.6 22Q30.2 24.6 27.9 27.1Q25.7 29.5 24.7 30.6Q20.2 36.3 15.6 42.7Q11.1 49.2 8.5 53.9Q7.3 56.1 6.9 57.3Q6.4 58.4 6.4 58.8Q6.4 58.9 6.5 59Q6.6 59 6.6 59.1Q6.7 59.2 6.7 59.2Q6.7 59.3 6.6 59.4Q6.4 59.4 6.3 59.4L6.1 59.4Q5.9 59.4 5.8 59.3ZM4.9 41.4Q6.3 40.4 7.6 39.3Q9 38.2 9.9 37.4Q10.9 36.5 10.9 36.3Q10.9 35.1 10 35.1L9.8 35.1Q8.7 35.2 7.1 36.5Q5.5 37.9 3.9 40Q3.2 40.9 2.8 41.7Q2.3 42.5 2.3 42.7Q2.3 42.8 2.4 42.8Q2.5 42.8 2.7 42.7Q3.1 42.5 3.7 42.2Q4.3 41.8 4.9 41.4ZM31.1 30.2Q30.9 30.1 30.9 29.9Q30.9 29.4 32 28.1Q32.9 27 33.4 27Q33.9 27 33.9 27.3Q33.9 27.8 32.9 28.8Q31.6 30.2 31.2 30.2Q31.1 30.2 31.1 30.2ZM22.8 44.8Q21.8 44.2 21.8 42.8Q21.8 42.4 22 41.8Q22.4 39.6 24.5 36.8Q25.7 35.4 26.6 34.6Q27.1 34.3 27.5 34.3Q27.7 34.3 27.9 34.3Q28.5 34.5 28.6 34.9Q28.7 35.2 28.7 35.3Q28.7 35.8 28 36.3Q26.8 37.1 25.6 38.7Q24.3 40.4 23.7 41.6Q23.1 42.9 23.1 43.4Q23.1 43.7 23.2 43.8Q23.2 44 23.5 44Q24.9 44 33.8 38.9Q34.3 38.6 34.9 38.4Q35 38.3 35.1 38.2Q36.5 37.5 37 37.5L37.1 37.5Q37.2 37.5 37.2 37.6Q37.2 37.9 35.8 38.7Q34.3 39.6 32.5 40.6Q30.7 41.7 29.1 42.6Q27.5 43.5 26.6 44Q25.4 44.6 24.8 44.8Q24.1 45.1 23.8 45.1L23.7 45.1Q23.2 45.1 22.8 44.8ZM34.7 44.8Q34.5 44.7 34.3 44.4Q34.2 44.2 34.1 43.9Q33.8 43.3 33.8 42.5Q33.8 41.2 34.5 39.6Q35.7 37 38.6 34.2Q40 32.8 40.3 32.7Q40.6 32.6 40.7 32.6Q41.3 32.6 41.9 33.5Q42.2 33.9 42.2 34.1Q42.3 34.3 42.3 34.5Q42.3 34.7 42.2 35Q42.2 35.3 42.2 35.5Q42.2 35.9 42.4 36.1Q42.8 36.4 44.1 36.5Q44.5 36.5 44.9 36.5Q45.6 36.5 46.3 36.4Q47.4 36.2 48.2 35.6Q48.7 35.3 48.9 35.3Q49 35.3 49 35.4Q49.1 35.4 49.1 35.6Q49.1 35.7 48.9 36Q48.7 36.5 47.8 36.9Q46.7 37.5 45.9 37.5Q45.1 37.6 44.8 37.6Q43.9 37.6 43.1 37.4Q42.7 37.2 42.5 37.2Q42.3 37.1 42.2 37.1Q42.2 37.1 42.1 37.2Q42 37.2 41.9 37.5Q41.8 37.8 41.7 38.2Q40.9 40.5 39 42.7Q37.1 44.8 35.7 45Q35.4 44.9 35.1 44.9Q34.8 44.8 34.7 44.8ZM36.4 43.3Q37.4 42.7 38.5 41.5Q39.6 40.2 40.3 38.6Q40.9 37.3 41 37Q41.1 36.6 41.1 36.4Q41.1 36.1 40.8 36Q40.8 35.9 40.7 35.9Q40.3 35.9 39.4 36.8Q38.4 37.8 37.2 39.2Q36.1 40.7 35.5 42Q35 42.9 35 43.4Q35 43.7 35.3 43.7Q35.7 43.7 36.4 43.3ZM42.5 44.3Q42.3 44 42.3 43.8Q42.3 43.5 42.5 43.1Q42.8 42.4 44.3 40.4Q45.7 38.3 47.2 36.3Q48.8 34.3 49.3 33.8Q49.5 33.7 49.6 33.7L49.7 33.7Q49.8 33.7 50.1 34Q50.6 34.4 50.6 34.8L50.6 34.9Q50.6 35.3 49.9 36.1Q49.6 36.5 49.4 36.8Q49.2 37 49.2 37.1L49.4 37.1Q49.6 37.1 49.8 37.1Q50.4 37.1 51 37.6Q51.5 38.1 52 38.9Q52.5 39.8 53.4 39.8Q53.9 39.8 54.4 39.6Q55 39.4 55.7 38.9Q56.4 38.5 56.9 38.1Q57.4 37.7 57.4 37.5Q57.4 37.4 57.4 37.4Q57.5 37.4 57.6 37.5Q57.7 37.7 57.7 37.8Q57.7 38.4 56.2 39.5Q54.6 40.6 53.5 40.6L53.4 40.6Q52.3 40.5 51.3 39Q50.7 38 50.2 38Q49.4 38 47.7 39.8Q45.9 41.5 44.1 44Q43.5 44.8 43.3 44.8Q43.1 44.8 43.1 44.8Q42.8 44.8 42.5 44.3ZM62.8 44.1Q61.9 43.6 61.9 42.5Q61.9 40.6 64.6 37.1Q65.3 36.2 65.6 35.6Q66 35.1 66 35Q65.8 35 65.2 35.3Q64.4 35.7 63.4 36.4Q62.4 37 61.5 37.6Q60.8 38.2 59.7 39Q58.6 39.9 57.7 40.7Q55.8 42.3 54.8 43Q53.8 43.8 53.6 43.8Q53.3 43.9 53.2 43.9Q53 43.9 52.9 43.6Q52.9 43.2 54.7 40.4Q56.6 37.5 59.3 33.8Q61.9 30.1 64.2 27.1Q67.1 23.4 69.4 20.7Q71.8 17.9 75.4 14.2Q84.6 4.5 89.7 1.9Q91.4 1 92.5 1Q93.2 1 93.7 1.4Q94.2 1.8 94.2 2.6Q94.2 3.5 93.4 5.1Q90.4 10.4 81.9 18Q73.4 25.6 65.7 29.7L63.3 30.9L60.1 35.1Q59.5 35.9 59.1 36.5Q58.4 37.4 57.9 38Q57.4 38.6 57.2 39Q56.9 39.4 56.8 39.6Q56.6 39.8 56.6 39.8Q56.6 39.9 56.6 39.9L56.7 39.9L56.7 39.8Q56.9 39.7 57.3 39.4Q57.7 39 58.2 38.6Q59.7 37.4 61.5 36.3Q63.3 35.1 64.7 34.3Q66.2 33.4 66.7 33.4Q67.1 33.4 67.4 33.9Q67.7 34.3 67.7 34.9Q67.7 35.4 65.9 37.9Q63 41.9 63 42.9Q63 43.2 63.3 43.2Q65.1 43.2 71.2 38.7Q72 38.1 72.5 37.7Q72.9 37.4 73 37.4Q73.1 37.4 73.1 37.5Q73.1 37.6 73 37.7Q72.9 37.9 72.7 38.1Q72.4 38.3 71.4 39Q71 39.4 70.5 39.8Q66.1 43.2 64.5 43.9Q63.9 44.1 63.7 44.2Q63.5 44.3 63.4 44.3L63.2 44.3Q63.1 44.2 62.8 44.1ZM70.4 25.7Q72.7 24.1 75.9 21.6Q79.1 19.1 81.9 16.7Q85.7 13.3 88.6 9.9Q91.6 6.6 92.7 4.4Q93.1 3.3 93.1 2.9Q93.1 2.4 92.8 2.4L92.6 2.4Q91.9 2.4 90.6 3.1Q86.9 5 80.8 11Q74.7 16.9 67.9 25.1Q67 26.3 66.2 27.2Q65.5 28.1 65.3 28.4Q65 28.8 65 28.8Q65 28.9 65.1 28.9Q65.2 28.9 65.4 28.8Q65.6 28.6 66.5 28.2Q67.2 27.8 68.3 27.1Q69.4 26.4 70.4 25.7ZM71 43.8Q70 42.8 70 41.6Q70 41.1 70.2 40.5Q71 37.8 73.8 35.3Q76.5 32.8 79 32.5Q79.4 32.4 79.6 32.4Q79.9 32.4 80 32.5Q80.2 32.6 80.6 33.1Q81.1 33.7 81.1 34.2Q81.1 34.9 80.4 35.5Q79.9 36 79.5 36.2Q79 36.4 78.8 36.4Q78.7 36.4 78.6 36.4Q78.6 36.3 78.8 36.1Q79 35.8 79.3 35.4Q80.1 34.4 80.1 34.1Q80.1 33.8 79.8 33.8L79.6 33.8Q77.9 34.3 76 35.8Q74.1 37.4 72.8 39.3Q71.4 41.1 71.4 42.5Q71.4 42.9 71.5 43Q71.7 43.1 72.2 43.2Q72.4 43.3 72.8 43.3Q74.8 43.3 79.3 41.1Q80.2 40.6 81.4 39.9Q82.5 39.2 83.6 38.5Q84.4 38.1 85 37.7Q85.4 37.5 85.5 37.5Q85.6 37.5 85.7 37.6Q85.7 37.6 85.7 37.7Q85.7 37.8 85.3 38.1L85.3 38.2Q84.7 38.6 83.2 39.7Q81.7 40.7 79.7 41.9Q76.8 43.4 75.2 44Q73.7 44.6 72.6 44.6Q72 44.6 71.7 44.5Q71.4 44.3 71 43.8Z"/></svg></a></div>
         <div>License: MIT</div>
       </div>
     </div>
@@ -1741,27 +898,92 @@
    * no behavioral change for existing callers.
    *
    * Falls back to a defaults-only object if the store is not yet
-   * ready, throws, or localStorage is unavailable (e.g. when the
+   * ready, throws, or storage is unavailable (e.g. when the
    * page context is sandboxed). This keeps `createMainContent`
    * robust: a single broken accessor must not blank out every
    * section of the settings modal.
-   * @returns {{ enableMusic: boolean; immersiveSearchStyles: boolean; hoverStyles: boolean; playerSidebarStyles: boolean; playerBarStyles: boolean; centeredPlayerStyles: boolean; centeredPlayerBarStyles: boolean; miniPlayerStyles: boolean; scrollToTopStyles: boolean; }} YouTube Music settings
+   * @returns {{ enableMusic?: boolean; immersiveSearchStyles?: boolean; hoverStyles?: boolean; playerSidebarStyles?: boolean; playerBarStyles?: boolean; centeredPlayerStyles?: boolean; centeredPlayerBarStyles?: boolean; miniPlayerStyles?: boolean; scrollToTopStyles?: boolean; }} YouTube Music settings
    */
   function getMusicSettingsCompat() {
     try {
-      return /** @type {any} */ (SettingsStore.getMusicSettings());
+      const store = window.YouTubePlusSettingsStore;
+      return store.getMusicSettings();
     } catch (_e) {
-      // SettingsStore is missing or threw (e.g. localStorage blocked,
+      logS(_e);
+      // SettingsStore is missing or threw (e.g. storage blocked,
       // module init order issue, partial load). Return a defaults-only
       // object so the modal still renders every section.
-      return { ...MUSIC_DEFAULTS };
+      return {
+        enableMusic: true,
+        immersiveSearchStyles: false,
+        hoverStyles: true,
+        playerSidebarStyles: true,
+        playerBarStyles: true,
+        centeredPlayerStyles: true,
+        centeredPlayerBarStyles: true,
+        miniPlayerStyles: true,
+        scrollToTopStyles: true,
+      };
     }
+  }
+
+  /**
+   * Performance mode: the master switch with a submenu of the route-scoped
+   * parts. The submenu follows the master switch like every other submenu.
+   * @param {YoutubePlusSettings} settings
+   * @param {Function} t
+   * @returns {string}
+   */
+  function buildPerformanceModeHTML(settings, t) {
+    const enabled = settings.performanceMode === true;
+    return `
+      ${buildToggleWithSubmenuHeader({
+        inputId: 'yp-setting-performanceMode',
+        labelHtml: escapeHTML(tr(t, 'performanceModeLabel')),
+        descHtml: escapeHTML(tr(t, 'performanceModeDesc')),
+        submenuKey: 'performance-mode',
+        ariaLabel: escapeHTML(tr(t, 'performanceModeToggleSubmenu')),
+        enabled,
+        dataSetting: 'performanceMode',
+        checked: enabled,
+      })}
+      <div class="performance-mode-submenu" data-submenu="performance-mode" style="display:${
+        enabled ? 'block' : 'none'
+      };">
+        <div class="glass-card yp-settings-submenu-card">
+          ${createSettingsItem(
+            tr(t, 'performanceModeAmbientLabel'),
+            tr(t, 'performanceModeAmbientDesc'),
+            'performanceModeAmbient',
+            settings.performanceModeAmbient !== false
+          )}
+          ${createSettingsItem(
+            tr(t, 'performanceModeHoverPreviewLabel'),
+            tr(t, 'performanceModeHoverPreviewDesc'),
+            'performanceModeHoverPreview',
+            settings.performanceModeHoverPreview !== false
+          )}
+          ${createSettingsItem(
+            tr(t, 'performanceModeContentVisibilityLabel'),
+            tr(t, 'performanceModeContentVisibilityDesc'),
+            'performanceModeContentVisibility',
+            settings.performanceModeContentVisibility !== false
+          )}
+          ${createSettingsItem(
+            tr(t, 'performanceModeLazyChatLabel'),
+            tr(t, 'performanceModeLazyChatDesc'),
+            'performanceModeLazyChat',
+            settings.performanceModeLazyChat !== false
+          )}
+        </div>
+      </div>
+    `;
   }
 
   /**
    * Creates the advanced settings section.
    * Note: other modules may append additional items to this section.
-   * @param {Record<string, any>} settings - Settings object
+   * @param {YoutubePlusSettings} settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string} Advanced section HTML
    */
@@ -1784,37 +1006,22 @@
     };
 
     return `
-    <div class="ytp-plus-settings-section hidden" data-section="advanced">
-      <div class="ytp-plus-settings-group">
-        <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
-          <div>
-            <label class="ytp-plus-settings-item-label">${tr(t, 'enhancedFeaturesTitle')}</label>
-            <div class="ytp-plus-settings-item-description">${tr(t, 'enhancedFeaturesDesc')}</div>
-          </div>
-          <div class="ytp-plus-settings-item-actions">
-            <button
-              type="button"
-              class="ytp-plus-submenu-toggle"
-              data-submenu="enhanced"
-              aria-label="Toggle enhanced features submenu"
-              aria-expanded="${enhancedEnabled ? 'true' : 'false'}"
-              ${enhancedEnabled ? '' : 'disabled'}
-              style="display:${enhancedEnabled ? 'inline-flex' : 'none'};"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
-            </button>
-            <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableEnhanced" ${
-              enhancedEnabled ? 'checked' : ''
-            }>
-          </div>
-        </div>
+    <div class="yp-settings-section hidden" data-section="advanced">
+      <div class="yp-settings-group">
+        ${buildToggleWithSubmenuHeader({
+          labelHtml: tr(t, 'enhancedFeaturesTitle'),
+          descHtml: tr(t, 'enhancedFeaturesDesc'),
+          submenuKey: 'enhanced',
+          ariaLabel: 'Toggle enhanced features submenu',
+          enabled: enhancedEnabled,
+          dataSetting: 'enableEnhanced',
+          checked: enhancedEnabled,
+        })}
 
         <div class="enhanced-submenu" data-submenu="enhanced" style="display:${
           enhancedEnabled ? 'block' : 'none'
         };">
-          <div class="glass-card ytp-plus-settings-submenu-card">
+          <div class="glass-card yp-settings-submenu-card">
             <div class="endscreen-settings-slot"></div>
             ${createSettingsItem(
               tr(t, 'enableTabviewLabel'),
@@ -1870,13 +1077,13 @@
               'enableRememberManualQuality',
               enhancedSettings.enableRememberManualQuality
             )}
-            <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu ytp-plus-settings-item--top-gap">
+            <div class="yp-settings-item yp-settings-item--with-submenu yp-settings-item--top-gap">
               <div>
-                <label class="ytp-plus-settings-item-label">${tr(t, 'enableLoopLabel')}</label>
-                <div class="ytp-plus-settings-item-description">${tr(t, 'enableLoopDesc')}</div>
+                <label class="yp-settings-item-label">${tr(t, 'enableLoopLabel')}</label>
+                <div class="yp-settings-item-description">${tr(t, 'enableLoopDesc')}</div>
               </div>
-              <div class="ytp-plus-settings-item-actions">
-                <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableLoop" ${
+              <div class="yp-settings-item-actions">
+                <input type="checkbox" class="yp-settings-checkbox" data-setting="enableLoop" ${
                   settings.enableLoop ? 'checked' : ''
                 }>
               </div>
@@ -1885,76 +1092,61 @@
           </div>
         </div>
 
-        <div class="ytp-plus-settings-item ytp-plus-settings-item--with-submenu">
-          <div>
-            <label class="ytp-plus-settings-item-label">${t('youtubeMusicTitle')}</label>
-            <div class="ytp-plus-settings-item-description">${t('youtubeMusicDesc')}</div>
-          </div>
-          <div class="ytp-plus-settings-item-actions">
-            <button
-              type="button"
-              class="ytp-plus-submenu-toggle"
-              data-submenu="music"
-              aria-label="Toggle YouTube Music submenu"
-              aria-expanded="${musicEnabled ? 'true' : 'false'}"
-              ${musicEnabled ? '' : 'disabled'}
-              style="display:${musicEnabled ? 'inline-flex' : 'none'};"
-            >
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"></polyline>
-              </svg>
-            </button>
-            <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enableMusic" ${
-              musicSettings.enableMusic ? 'checked' : ''
-            }>
-          </div>
-        </div>
+        ${buildToggleWithSubmenuHeader({
+          labelHtml: t('youtubeMusicTitle'),
+          descHtml: t('youtubeMusicDesc'),
+          submenuKey: 'music',
+          ariaLabel: 'Toggle YouTube Music submenu',
+          enabled: musicEnabled,
+          dataSetting: 'enableMusic',
+          checked: !!musicSettings.enableMusic,
+        })}
 
         <div class="music-submenu" data-submenu="music" style="display:${
           musicEnabled ? 'block' : 'none'
         };">
-          <div class="glass-card ytp-plus-settings-submenu-card">
+          <div class="glass-card yp-settings-submenu-card">
             ${createSettingsItem(
               t('immersiveSearchLabel'),
               t('immersiveSearchDesc'),
               'immersiveSearchStyles',
-              musicSettings.immersiveSearchStyles
+              !!musicSettings.immersiveSearchStyles
             )}
             ${createSettingsItem(
               t('sidebarHoverLabel'),
               t('sidebarHoverDesc'),
               'hoverStyles',
-              musicSettings.hoverStyles
+              !!musicSettings.hoverStyles
             )}
             ${createSettingsItem(
               t('playerSidebarStylesLabel'),
               t('playerSidebarStylesDesc'),
               'playerSidebarStyles',
-              musicSettings.playerSidebarStyles
+              !!musicSettings.playerSidebarStyles
             )}
             ${createSettingsItem(
               t('centeredPlayerLabel'),
               t('centeredPlayerDesc'),
               'centeredPlayerStyles',
-              musicSettings.centeredPlayerStyles
+              !!musicSettings.centeredPlayerStyles
             )}
             ${createSettingsItem(
               t('playerBarStylesLabel'),
               t('playerBarStylesDesc'),
               'playerBarStyles',
-              musicSettings.playerBarStyles
+              !!musicSettings.playerBarStyles
             )}
             ${createSettingsItem(
               t('centeredPlayerBarStylesLabel'),
               t('centeredPlayerBarStylesDesc'),
               'centeredPlayerBarStyles',
-              musicSettings.centeredPlayerBarStyles
+              !!musicSettings.centeredPlayerBarStyles
             )}
             ${createSettingsItem(
               t('miniPlayerStylesLabel'),
               t('miniPlayerStylesDesc'),
               'miniPlayerStyles',
-              musicSettings.miniPlayerStyles
+              !!musicSettings.miniPlayerStyles
             )}
           </div>
         </div>
@@ -1969,13 +1161,13 @@
 
   /**
    * Build PiP settings HTML for the Advanced section.
-   * @param {Record<string, any>} _settings
+   * @param {YoutubePlusSettings} settings
    * @param {Function} t
    * @returns {string}
    */
-  function buildPipSettingsHTML(_settings, t) {
-    const pipEnabled = readLegacyModuleSetting('youtube_pip_settings', true);
-    const pipShortcut = readLegacyShortcutSetting('youtube_pip_settings', {
+  function buildPipSettingsHTML(settings, t) {
+    const pipEnabled = settings.enablePip !== false;
+    const pipShortcut = readModuleShortcut('pip', 'youtube_pip_settings', {
       key: 'P',
       shiftKey: true,
       altKey: false,
@@ -1986,15 +1178,15 @@
     const submenuVisible = pipEnabled && initialExpanded;
 
     return `
-      <div class="ytp-plus-settings-item pip-settings-item ytp-plus-settings-item--with-submenu">
+      <div class="yp-settings-item pip-settings-item yp-settings-item--with-submenu">
         <div>
-          <label class="ytp-plus-settings-item-label" for="pip-enable-checkbox">${escapeHTML(t('pipTitle'))}</label>
-          <div class="ytp-plus-settings-item-description">${escapeHTML(t('pipDescription'))}</div>
+          <label class="yp-settings-item-label" for="pip-enable-checkbox">${escapeHTML(t('pipTitle'))}</label>
+          <div class="yp-settings-item-description">${escapeHTML(t('pipDescription'))}</div>
         </div>
-        <div class="ytp-plus-settings-item-actions">
+        <div class="yp-settings-item-actions">
           <button
             type="button"
-            class="ytp-plus-submenu-toggle${pipEnabled ? '' : ' pip-submenu-toggle-hidden'}"
+            class="yp-submenu-toggle${pipEnabled ? '' : ' pip-submenu-toggle-hidden'}"
             data-submenu="pip"
             aria-label="${escapeHTML(t('togglePipSubmenu'))}"
             aria-expanded="${initialExpanded ? 'true' : 'false'}"
@@ -2004,16 +1196,16 @@
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </button>
-          <input type="checkbox" class="ytp-plus-settings-checkbox" data-setting="enablePiP" id="pip-enable-checkbox" ${pipEnabled ? 'checked' : ''}>
+          <input type="checkbox" class="yp-settings-checkbox" data-setting="enablePip" id="pip-enable-checkbox" ${pipEnabled ? 'checked' : ''}>
         </div>
       </div>
 
       <div class="pip-submenu pip-submenu-layout${submenuVisible ? '' : ' is-hidden'}" data-submenu="pip">
         <div class="glass-card pip-submenu-card">
-          <div class="ytp-plus-settings-item pip-shortcut-item">
+          <div class="yp-settings-item pip-shortcut-item">
             <div>
-              <label class="ytp-plus-settings-item-label">${escapeHTML(t('pipShortcutTitle'))}</label>
-              <div class="ytp-plus-settings-item-description">${escapeHTML(t('pipShortcutDescription'))}</div>
+              <label class="yp-settings-item-label">${escapeHTML(t('pipShortcutTitle'))}</label>
+              <div class="yp-settings-item-description">${escapeHTML(t('pipShortcutDescription'))}</div>
             </div>
             <div class="pip-shortcut-editor">
               ${buildShortcutEditorHTML('pip', pipShortcut, t)}
@@ -2026,13 +1218,15 @@
 
   /**
    * Build Timecode settings HTML for the Advanced section.
-   * @param {Record<string, any>} _settings
+   * @param {YoutubePlusSettings} _settings
    * @param {Function} t
    * @returns {string}
    */
   function buildTimecodeSettingsHTML(_settings, t) {
-    const timecodeEnabled = readLegacyModuleSetting('youtube_timecode_settings', true);
-    const timecodeShortcut = readLegacyShortcutSetting('youtube_timecode_settings', {
+    // The on/off flag lives in the settings store (`timecodeEnabled`); the
+    // legacy key only keeps the module preferences (shortcut, position).
+    const timecodeEnabled = window.YouTubePlusSettingsStore?.get?.('timecodeEnabled') ?? true;
+    const timecodeShortcut = readModuleShortcut('timecode', 'youtube_timecode_settings', {
       key: 'T',
       shiftKey: true,
       altKey: false,
@@ -2043,17 +1237,17 @@
     const submenuVisible = timecodeEnabled && initialExpanded;
 
     return `
-      <div class="ytp-plus-settings-item timecode-settings-item ytp-plus-settings-item--with-submenu">
+      <div class="yp-settings-item timecode-settings-item yp-settings-item--with-submenu">
         <div>
-          <label class="ytp-plus-settings-item-label" for="timecode-enable-checkbox">${escapeHTML(t('enableTimecode'))}</label>
-          <div class="ytp-plus-settings-item-description">${escapeHTML(t('enableDescription'))}</div>
+          <label class="yp-settings-item-label" for="timecode-enable-checkbox">${escapeHTML(t('enableTimecode'))}</label>
+          <div class="yp-settings-item-description">${escapeHTML(t('enableDescription'))}</div>
         </div>
-        <div class="ytp-plus-settings-item-actions">
+        <div class="yp-settings-item-actions">
           <button
             type="button"
-            class="ytp-plus-submenu-toggle timecode-submenu-toggle${timecodeEnabled ? '' : ' timecode-submenu-toggle-hidden'}"
+            class="yp-submenu-toggle timecode-submenu-toggle${timecodeEnabled ? '' : ' timecode-submenu-toggle-hidden'}"
             data-submenu="timecode"
-            aria-label="Toggle timecode submenu"
+            aria-label="${tr(t, 'timecodeSubmenuToggle', 'Toggle timecode submenu')}"
             aria-expanded="${initialExpanded ? 'true' : 'false'}"
             ${timecodeEnabled ? '' : 'disabled'}
           >
@@ -2061,16 +1255,16 @@
               <polyline points="6 9 12 15 18 9"></polyline>
             </svg>
           </button>
-          <input type="checkbox" id="timecode-enable-checkbox" class="ytp-plus-settings-checkbox" data-setting="timecodeEnabled" ${timecodeEnabled ? 'checked' : ''}>
+          <input type="checkbox" id="timecode-enable-checkbox" class="yp-settings-checkbox" data-setting="timecodeEnabled" ${timecodeEnabled ? 'checked' : ''}>
         </div>
       </div>
 
       <div class="timecode-submenu timecode-submenu-layout${submenuVisible ? '' : ' is-hidden'}" data-submenu="timecode">
         <div class="glass-card timecode-submenu-card">
-          <div class="ytp-plus-settings-item timecode-settings-item timecode-shortcut-item timecode-shortcut-row">
+          <div class="yp-settings-item timecode-settings-item timecode-shortcut-item timecode-shortcut-row">
             <div>
-              <label class="ytp-plus-settings-item-label">${escapeHTML(t('keyboardShortcut'))}</label>
-              <div class="ytp-plus-settings-item-description">${escapeHTML(t('shortcutDescription'))}</div>
+              <label class="yp-settings-item-label">${escapeHTML(t('keyboardShortcut'))}</label>
+              <div class="yp-settings-item-description">${escapeHTML(t('shortcutDescription'))}</div>
             </div>
             <div class="timecode-shortcut-editor">
               ${buildShortcutEditorHTML('timecode', timecodeShortcut, t)}
@@ -2082,62 +1276,191 @@
   }
 
   /**
+   * Build Screenshot settings HTML for the General section.
+   * @param {Record<string, unknown>} settings
+   * @param {Function} t
+   * @returns {string}
+   */
+  function buildScreenshotSettingsHTML(settings, t) {
+    const screenshotEnabled = settings?.enableScreenshot !== false;
+    const screenshotShortcut = readModuleShortcut('screenshot', 'youtube_screenshot_settings', {
+      key: 'S',
+      shiftKey: false,
+      altKey: false,
+      ctrlKey: false,
+    });
+    const storedExpanded = readSubmenuExpanded('screenshot');
+    const initialExpanded = typeof storedExpanded === 'boolean' ? storedExpanded : true;
+    const submenuVisible = screenshotEnabled && initialExpanded;
+
+    return `
+      <div class="yp-settings-item screenshot-settings-item yp-settings-item--with-submenu">
+        <div>
+          <label class="yp-settings-item-label" for="yp-setting-enableScreenshot">${escapeHTML(t('screenshotButton'))}</label>
+          <div class="yp-settings-item-description">${escapeHTML(t('screenshotButtonDesc'))}</div>
+        </div>
+        <div class="yp-settings-item-actions">
+          <button
+            type="button"
+            class="yp-submenu-toggle screenshot-submenu-toggle${screenshotEnabled ? '' : ' screenshot-submenu-toggle-hidden'}"
+            data-submenu="screenshot"
+            aria-label="${escapeHTML(t('toggleScreenshotSubmenu'))}"
+            aria-expanded="${initialExpanded ? 'true' : 'false'}"
+            ${screenshotEnabled ? '' : 'disabled'}
+            style="display:${screenshotEnabled ? 'inline-flex' : 'none'};"
+          >
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polyline points="6 9 12 15 18 9"></polyline>
+            </svg>
+          </button>
+          <input type="checkbox" id="yp-setting-enableScreenshot" class="yp-settings-checkbox" data-setting="enableScreenshot" ${screenshotEnabled ? 'checked' : ''}>
+        </div>
+      </div>
+
+      <div class="screenshot-submenu screenshot-submenu-layout${submenuVisible ? '' : ' is-hidden'}" data-submenu="screenshot" style="display:${submenuVisible ? 'block' : 'none'};">
+        <div class="glass-card screenshot-submenu-card">
+          <div class="yp-settings-item screenshot-shortcut-item screenshot-shortcut-row">
+            <div>
+              <label class="yp-settings-item-label">${escapeHTML(t('keyboardShortcut'))}</label>
+              <div class="yp-settings-item-description">${escapeHTML(t('screenshotShortcutDescription'))}</div>
+            </div>
+            <div class="screenshot-shortcut-editor">
+              ${buildShortcutEditorHTML('screenshot', screenshotShortcut, t)}
+            </div>
+          </div>
+        </div>
+      </div>
+    `;
+  }
+
+  /** @param {boolean} on @returns {string} */
+  const themeActiveClass = on => (on ? 'active' : '');
+  /** @param {boolean} on @returns {string} */
+  const themeAriaChecked = on => (on ? 'true' : 'false');
+
+  /**
+   * One material-style radio button of a theme card (Glass or Solid).
+   * @param {{ layout: string, style: string, activeVariant: string, activeStyle: string, t: Function }} args
+   * @returns {string}
+   */
+  const themeStyleButton = ({ layout, style, activeVariant, activeStyle, t }) => {
+    const on = activeVariant === layout && activeStyle === style;
+    const label =
+      style === 'glass'
+        ? tr(t, 'themeVariantGlass', 'Glassmorphism')
+        : tr(t, 'themeVariantSolid', 'Solid');
+    return `<button type="button" class="yp-theme-style-btn ${themeActiveClass(on)}" role="radio" aria-checked="${themeAriaChecked(on)}" data-layout="${layout}" data-style="${style}">${label}</button>`;
+  };
+
+  /**
+   * Helper to render the 2 theme layout cards (Vision and Classic)
+   * with inner Glass/Solid material style toggle.
+   * @param {YoutubePlusSettings} settings
+   * @param {Function} t
+   * @returns {string}
+   */
+  function createThemeCardsGrid(settings, t) {
+    const rawVariant = settings?.styles?.themeVariant;
+    const activeVariant = rawVariant === 'classic' || rawVariant === 'solid' ? 'classic' : 'vision';
+    const activeStyle =
+      settings?.styles?.themeStyle || (rawVariant === 'solid' ? 'solid' : 'glass');
+
+    return `
+    <div class="yp-theme-grid" role="radiogroup" aria-label="${tr(t, 'styleThemeVariantLabel', 'Theme')}">
+      <div
+        class="yp-theme-card ${themeActiveClass(activeVariant === 'vision')}"
+        role="radio"
+        tabindex="0"
+        aria-checked="${themeAriaChecked(activeVariant === 'vision')}"
+        data-setting-card="styles.themeVariant"
+        data-value="vision"
+      >
+        <div class="yp-theme-card-icon">
+          <!-- 3D Floating Pods / Vision Icon -->
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <rect x="3" y="5" width="4.5" height="14" rx="2" opacity="0.9"/>
+            <rect x="9.5" y="4" width="11.5" height="16" rx="2.5" opacity="0.45"/>
+            <rect x="11.5" y="7" width="7.5" height="2" rx="1" opacity="0.8"/>
+            <rect x="11.5" y="11" width="5" height="2" rx="1" opacity="0.8"/>
+          </svg>
+        </div>
+        <span class="yp-theme-card-title">${tr(t, 'themeVariantVision', 'Vision')}</span>
+        <span class="yp-theme-card-desc">${tr(t, 'themeVariantVisionDesc', 'Floating pods interface with detached sidebar.')}</span>
+        <div class="yp-theme-style-bar" role="radiogroup" aria-label="${tr(t, 'themeVariantMaterial', 'Material')}">
+          ${themeStyleButton({ layout: 'vision', style: 'glass', activeVariant, activeStyle, t })}
+          ${themeStyleButton({ layout: 'vision', style: 'solid', activeVariant, activeStyle, t })}
+        </div>
+      </div>
+      <div
+        class="yp-theme-card ${themeActiveClass(activeVariant === 'classic')}"
+        role="radio"
+        tabindex="0"
+        aria-checked="${themeAriaChecked(activeVariant === 'classic')}"
+        data-setting-card="styles.themeVariant"
+        data-value="classic"
+      >
+        <div class="yp-theme-card-icon">
+          <!-- Classic Window Monolith Icon -->
+          <svg viewBox="0 0 24 24" fill="currentColor">
+            <path opacity="0.9" d="M4 4a2 2 0 0 1 2-2h12a2 2 0 0 1 2 2v3H4V4z"/>
+            <path opacity="0.65" d="M4 7h5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V7z"/>
+            <path opacity="0.4" d="M9 7h11v13a2 2 0 0 1-2 2H9V7z"/>
+          </svg>
+        </div>
+        <span class="yp-theme-card-title">${tr(t, 'themeVariantClassic', 'Classic')}</span>
+        <span class="yp-theme-card-desc">${tr(t, 'themeVariantClassicDesc', 'Monolithic window layout with integrated sidebar.')}</span>
+        <div class="yp-theme-style-bar" role="radiogroup" aria-label="${tr(t, 'themeVariantMaterial', 'Material')}">
+          ${themeStyleButton({ layout: 'classic', style: 'glass', activeVariant, activeStyle, t })}
+          ${themeStyleButton({ layout: 'classic', style: 'solid', activeVariant, activeStyle, t })}
+        </div>
+      </div>
+    </div>
+  `;
+  }
+
+  /**
    * Creates the experimental settings section with YouTube Music options
-   * @param {Record<string, any>} settings - Settings object
+   * @param {YoutubePlusSettings} settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string} Experimental section HTML
    */
   function createExperimentalSettingsSection(settings, t) {
-    const themeVariant = settings?.zenStyles?.themeVariant === 'solid' ? 'solid' : 'glass';
+    const themePref = settings?.styles?.themePreference || 'device';
 
     return `
-    <div class="ytp-plus-settings-section hidden" data-section="experimental">
-        <div class="ytp-plus-settings-item ytp-plus-theme-item">
-          <div>
-            <label class="ytp-plus-settings-item-label">${tr(t, 'zenStyleThemeVariantLabel')}</label>
-            <div class="ytp-plus-settings-item-description">${tr(t, 'zenStyleThemeVariantDesc')}</div>
+    <div class="yp-settings-section hidden" data-section="experimental">
+        <div class="yp-settings-item yp-theme-item">
+          <div class="yp-theme-header">
+            <div>
+              <label class="yp-settings-item-label">${tr(t, 'styleThemeVariantLabel', 'Theme')}</label>
+              <div class="yp-settings-item-description">${tr(t, 'styleThemeVariantDesc', 'Choose the visual style and appearance for YouTube+')}</div >
+            </div>
+            <div class="yp-theme-pref-bar" role="radiogroup" aria-label="${tr(t, 'themePreferenceLabel', 'Appearance')}">
+              <button type="button" class="yp-theme-pref-btn ${themePref === 'device' ? 'active' : ''}" role="radio" aria-checked="${themePref === 'device' ? 'true' : 'false'}" data-setting-card="styles.themePreference" data-value="device">${tr(t, 'themePrefDevice', 'Device')}</button>
+              <button type="button" class="yp-theme-pref-btn ${themePref === 'dark' ? 'active' : ''}" role="radio" aria-checked="${themePref === 'dark' ? 'true' : 'false'}" data-setting-card="styles.themePreference" data-value="dark">${tr(t, 'themePrefDark', 'Dark')}</button>
+              <button type="button" class="yp-theme-pref-btn ${themePref === 'light' ? 'active' : ''}" role="radio" aria-checked="${themePref === 'light' ? 'true' : 'false'}" data-setting-card="styles.themePreference" data-value="light">${tr(t, 'themePrefLight', 'Light')}</button>
+            </div>
           </div>
-          <div class="ytp-plus-theme-grid" role="radiogroup" aria-label="${tr(t, 'zenStyleThemeVariantLabel')}">
-            <button
-              type="button"
-              class="ytp-plus-theme-card ${themeVariant === 'glass' ? 'active' : ''}"
-              role="radio"
-              aria-checked="${themeVariant === 'glass' ? 'true' : 'false'}"
-              data-setting-card="zenStyles.themeVariant"
-              data-value="glass"
-            >
-              <span class="ytp-plus-theme-card-title">${tr(t, 'themeVariantGlass')}</span>
-            </button>
-            <button
-              type="button"
-              class="ytp-plus-theme-card ${themeVariant === 'solid' ? 'active' : ''}"
-              role="radio"
-              aria-checked="${themeVariant === 'solid' ? 'true' : 'false'}"
-              data-setting-card="zenStyles.themeVariant"
-              data-value="solid"
-            >
-              <span class="ytp-plus-theme-card-title">${tr(t, 'themeVariantSolid')}</span>
-            </button>
-          </div>
+          ${createThemeCardsGrid(settings, t)}
         </div>
         ${createSettingsItem(
           t('statisticsButton'),
           t('statisticsButtonDescription'),
           'enableStatsButton',
-          readLegacyModuleSetting('youtube_stats_button_enabled', true)
+          settings.enableStatsButton !== false
         )}
         ${createSettingsItem(
           t('channelStatsTitle'),
           t('channelStatsDescription'),
           'enableChannelStats',
-          readLegacyModuleSetting('youtube_channel_stats_settings', true)
+          settings.enableChannelStats !== false
         )}
-        <div class="ytp-plus-settings-item comment-manager-settings-item">
+        <div class="yp-settings-item comment-manager-settings-item">
           <div>
-            <label class="ytp-plus-settings-item-label">${t('commentManagement')}</label>
-            <div class="ytp-plus-settings-item-description">${t('bulkDeleteDescription')}</div>
+            <label class="yp-settings-item-label">${escapeHTML(t('commentManagement'))}</label>
+            <div class="yp-settings-item-description">${escapeHTML(t('bulkDeleteDescription'))}</div>
           </div>
-          <button class="ytp-plus-button update-open-page-btn comment-manager-settings-open-button" id="open-comment-history-page">
+          <button class="yp-button update-open-page-btn comment-manager-settings-open-button" id="open-comment-history-page">
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/>
               <polyline points="15,3 21,3 21,9"/>
@@ -2151,68 +1474,60 @@
 
   /**
    * Creates the voting section
-   * @param {Record<string, any>} _settings - Settings object
+   * @param {YoutubePlusSettings} _settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string} Voting section HTML
    */
   function createVotingSection(_settings, t) {
-    const previewBefore = tr(t, 'votingPreviewBefore');
-    const previewAfter = tr(t, 'votingPreviewAfter');
-
     return `
-    <div class="ytp-plus-settings-section hidden" data-section="voting">
-      <div class="ytp-plus-settings-voting-header">
-        <h3>${tr(t, 'votingTitle')}</h3>
-        <p class="ytp-plus-settings-voting-desc">${tr(t, 'votingDesc')}</p>
+    <div class="yp-settings-section hidden" data-section="voting">
+      <div class="yp-settings-voting-header">
+        <h3>${tr(t, 'votingTitle', 'Feature Requests')}</h3>
+        <p class="yp-settings-voting-desc">${tr(t, 'votingDesc', 'Vote for features you want to see in YouTube+')}</p>
       </div>
 
-      <div class="ytp-plus-voting-preview">
-        <div class="ytp-plus-ba-container">
-          <div class="ytp-plus-ba-before">
-            <img src="https://i.imgur.com/FVW4tdH.jpeg" alt="${previewBefore}" draggable="false" />
-            <span class="ytp-plus-ba-label ytp-plus-ba-label-before">${previewBefore}</span>
-          </div>
-          <div class="ytp-plus-ba-after">
-            <img src="https://i.imgur.com/ljq1KeL.jpeg" alt="${previewAfter}" draggable="false" />
-            <span class="ytp-plus-ba-label ytp-plus-ba-label-after">${previewAfter}</span>
-          </div>
-          <div class="ytp-plus-ba-divider" role="separator" tabindex="0" aria-valuemin="0" aria-valuemax="100" aria-valuenow="50"></div>
-        </div>
-
-        <div class="ytp-plus-vote-bar-section" id="ytp-plus-vote-bar-section">
-          <div class="ytp-plus-vote-bar-buttons">
-            <div class="ytp-plus-vote-bar-track" id="ytp-plus-vote-bar-fill"></div>
-            <button class="ytp-plus-vote-bar-btn" id="ytp-plus-vote-bar-up" type="button" aria-label="${tr(t, 'like')}" data-vote="1">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"> <path d="M20.9751 12.1852L20.2361 12.0574L20.9751 12.1852ZM20.2696 16.265L19.5306 16.1371L20.2696 16.265ZM6.93776 20.4771L6.19055 20.5417H6.19055L6.93776 20.4771ZM6.1256 11.0844L6.87281 11.0198L6.1256 11.0844ZM13.9949 5.22142L14.7351 5.34269V5.34269L13.9949 5.22142ZM13.3323 9.26598L14.0724 9.38725V9.38725L13.3323 9.26598ZM6.69813 9.67749L6.20854 9.10933H6.20854L6.69813 9.67749ZM8.13687 8.43769L8.62646 9.00585H8.62646L8.13687 8.43769ZM10.518 4.78374L9.79207 4.59542L10.518 4.78374ZM10.9938 2.94989L11.7197 3.13821L11.7197 3.13821L10.9938 2.94989ZM12.6676 2.06435L12.4382 2.77841L12.4382 2.77841L12.6676 2.06435ZM12.8126 2.11093L13.0419 1.39687L13.0419 1.39687L12.8126 2.11093ZM9.86194 6.46262L10.5235 6.81599V6.81599L9.86194 6.46262ZM13.9047 3.24752L13.1787 3.43584V3.43584L13.9047 3.24752ZM11.6742 2.13239L11.3486 1.45675L11.3486 1.45675L11.6742 2.13239ZM20.2361 12.0574L19.5306 16.1371L21.0086 16.3928L21.7142 12.313L20.2361 12.0574ZM13.245 21.25H8.59634V22.75H13.245V21.25ZM7.68497 20.4125L6.87281 11.0198L5.37839 11.149L6.19055 20.5417L7.68497 20.4125ZM19.5306 16.1371C19.0238 19.0677 16.3813 21.25 13.245 21.25V22.75C17.0712 22.75 20.3708 20.081 21.0086 16.3928L19.5306 16.1371ZM13.2548 5.10015L12.5921 9.14472L14.0724 9.38725L14.7351 5.34269L13.2548 5.10015ZM7.18772 10.2456L8.62646 9.00585L7.64728 7.86954L6.20854 9.10933L7.18772 10.2456ZM11.244 4.97206L11.7197 3.13821L10.2678 2.76157L9.79207 4.59542L11.244 4.97206ZM12.4382 2.77841L12.5832 2.82498L13.0419 1.39687L12.897 1.3503L12.4382 2.77841ZM10.5235 6.81599C10.8354 6.23198 11.0777 5.61339 11.244 4.97206L9.79207 4.59542C9.65572 5.12107 9.45698 5.62893 9.20041 6.10924L10.5235 6.81599ZM12.5832 2.82498C12.8896 2.92342 13.1072 3.16009 13.1787 3.43584L14.6306 3.05921C14.4252 2.26719 13.819 1.64648 13.0419 1.39687L12.5832 2.82498ZM11.7197 3.13821C11.7547 3.0032 11.8522 2.87913 11.9998 2.80804L11.3486 1.45675C10.8166 1.71309 10.417 2.18627 10.2678 2.76157L11.7197 3.13821ZM11.9998 2.80804C12.1345 2.74311 12.2931 2.73181 12.4382 2.77841L12.897 1.3503C12.3872 1.18655 11.8312 1.2242 11.3486 1.45675L11.9998 2.80804ZM14.1537 10.9842H19.3348V9.4842H14.1537V10.9842ZM14.7351 5.34269C14.8596 4.58256 14.824 3.80477 14.6306 3.0592L13.1787 3.43584C13.3197 3.97923 13.3456 4.54613 13.2548 5.10016L14.7351 5.34269ZM8.59634 21.25C8.12243 21.25 7.726 20.887 7.68497 20.4125L6.19055 20.5417C6.29851 21.7902 7.34269 22.75 8.59634 22.75V21.25ZM8.62646 9.00585C9.30632 8.42 10.0391 7.72267 10.5235 6.81599L9.20041 6.10924C8.85403 6.75767 8.30249 7.30493 7.64728 7.86954L8.62646 9.00585ZM21.7142 12.313C21.9695 10.8365 20.8341 9.4842 19.3348 9.4842V10.9842C19.9014 10.9842 20.3332 11.4959 20.2361 12.0574L21.7142 12.313ZM12.5921 9.14471C12.4344 10.1076 13.1766 10.9842 14.1537 10.9842V9.4842C14.1038 9.4842 14.0639 9.43901 14.0724 9.38725L12.5921 9.14471ZM6.87281 11.0198C6.84739 10.7258 6.96474 10.4378 7.18772 10.2456L6.20854 9.10933C5.62021 9.61631 5.31148 10.3753 5.37839 11.149L6.87281 11.0198Z" fill="currentColor"></path> <path opacity="0.5" d="M3.9716 21.4709L3.22439 21.5355L3.9716 21.4709ZM3 10.2344L3.74721 10.1698C3.71261 9.76962 3.36893 9.46776 2.96767 9.48507C2.5664 9.50239 2.25 9.83274 2.25 10.2344L3 10.2344ZM4.71881 21.4063L3.74721 10.1698L2.25279 10.299L3.22439 21.5355L4.71881 21.4063ZM3.75 21.5129V10.2344H2.25V21.5129H3.75ZM3.22439 21.5355C3.2112 21.383 3.33146 21.2502 3.48671 21.2502V22.7502C4.21268 22.7502 4.78122 22.1281 4.71881 21.4063L3.22439 21.5355ZM3.48671 21.2502C3.63292 21.2502 3.75 21.3686 3.75 21.5129H2.25C2.25 22.1954 2.80289 22.7502 3.48671 22.7502V21.2502Z" fill="currentColor"></path> </svg>
-            </button>
-            <button class="ytp-plus-vote-bar-btn" id="ytp-plus-vote-bar-down" type="button" aria-label="${tr(t, 'dislike')}" data-vote="-1">
-              <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg"> <path d="M20.9751 11.8148L20.2361 11.9426L20.9751 11.8148ZM20.2696 7.73505L19.5306 7.86285L20.2696 7.73505ZM6.93776 3.52293L6.19055 3.45832H6.19055L6.93776 3.52293ZM6.1256 12.9156L6.87281 12.9802L6.1256 12.9156ZM13.9949 18.7786L14.7351 18.6573V18.6573L13.9949 18.7786ZM13.3323 14.734L14.0724 14.6128V14.6128L13.3323 14.734ZM6.69813 14.3225L6.20854 14.8907H6.20854L6.69813 14.3225ZM8.13687 15.5623L8.62646 14.9942H8.62646L8.13687 15.5623ZM10.518 19.2163L9.79207 19.4046L10.518 19.2163ZM10.9938 21.0501L11.7197 20.8618L11.7197 20.8618L10.9938 21.0501ZM12.6676 21.9356L12.4382 21.2216L12.4382 21.2216L12.6676 21.9356ZM12.8126 21.8891L13.0419 22.6031L13.0419 22.6031L12.8126 21.8891ZM9.86194 17.5374L10.5235 17.184V17.184L9.86194 17.5374ZM13.9047 20.7525L13.1787 20.5642V20.5642L13.9047 20.7525ZM11.6742 21.8676L11.3486 22.5433L11.3486 22.5433L11.6742 21.8676ZM20.2361 11.9426L19.5306 7.86285L21.0086 7.60724L21.7142 11.687L20.2361 11.9426ZM13.245 2.75H8.59634V1.25H13.245V2.75ZM7.68497 3.58754L6.87281 12.9802L5.37839 12.851L6.19055 3.45832L7.68497 3.58754ZM19.5306 7.86285C19.0238 4.93226 16.3813 2.75 13.245 2.75V1.25C17.0712 1.25 20.3708 3.91895 21.0086 7.60724L19.5306 7.86285ZM13.2548 18.8998L12.5921 14.8553L14.0724 14.6128L14.7351 18.6573L13.2548 18.8998ZM7.18772 13.7544L8.62646 14.9942L7.64728 16.1305L6.20854 14.8907L7.18772 13.7544ZM11.244 19.0279L11.7197 20.8618L10.2678 21.2384L9.79207 19.4046L11.244 19.0279ZM12.4382 21.2216L12.5832 21.175L13.0419 22.6031L12.897 22.6497L12.4382 21.2216ZM10.5235 17.184C10.8354 17.768 11.0777 18.3866 11.244 19.0279L9.79207 19.4046C9.65572 18.8789 9.45698 18.3711 9.20041 17.8908L10.5235 17.184ZM12.5832 21.175C12.8896 21.0766 13.1072 20.8399 13.1787 20.5642L14.6306 20.9408C14.4252 21.7328 13.819 22.3535 13.0419 22.6031L12.5832 21.175ZM11.7197 20.8618C11.7547 20.9968 11.8522 21.1209 11.9998 21.192L11.3486 22.5433C10.8166 22.2869 10.417 21.8137 10.2678 21.2384L11.7197 20.8618ZM11.9998 21.192C12.1345 21.2569 12.2931 21.2682 12.4382 21.2216L12.897 22.6497C12.3872 22.8135 11.8312 22.7758 11.3486 22.5433L11.9998 21.192ZM14.1537 13.0158H19.3348V14.5158H14.1537V13.0158ZM14.7351 18.6573C14.8596 19.4174 14.824 20.1952 14.6306 20.9408L13.1787 20.5642C13.3197 20.0208 13.3456 19.4539 13.2548 18.8998L14.7351 18.6573ZM8.59634 2.75C8.12243 2.75 7.726 3.11302 7.68497 3.58754L6.19055 3.45832C6.29851 2.20975 7.34269 1.25 8.59634 1.25V2.75ZM8.62646 14.9942C9.30632 15.58 10.0391 16.2773 10.5235 17.184L9.20041 17.8908C8.85403 17.2423 8.30249 16.6951 7.64728 16.1305L8.62646 14.9942ZM21.7142 11.687C21.9695 13.1635 20.8341 14.5158 19.3348 14.5158V13.0158C19.9014 13.0158 20.3332 12.5041 20.2361 11.9426L21.7142 11.687ZM12.5921 14.8553C12.4344 13.8924 13.1766 13.0158 14.1537 13.0158V14.5158C14.1038 14.5158 14.0639 14.561 14.0724 14.6128L12.5921 14.8553ZM6.87281 12.9802C6.84739 13.2742 6.96474 13.5622 7.18772 13.7544L6.20854 14.8907C5.62021 14.3837 5.31148 13.6247 5.37839 12.851L6.87281 12.9802Z" fill="currentColor"></path> <path opacity="0.5" d="M3.9716 2.52911L3.22439 2.4645L3.9716 2.52911ZM3 13.7656L3.74721 13.8302C3.71261 14.2304 3.36893 14.5322 2.96767 14.5149C2.5664 14.4976 2.25 14.1673 2.25 13.7656L3 13.7656ZM4.71881 2.59372L3.74721 13.8302L2.25279 13.701L3.22439 2.4645L4.71881 2.59372ZM3.75 2.48709V13.7656H2.25V2.48709H3.75ZM3.22439 2.4645C3.2112 2.61704 3.33146 2.74983 3.48671 2.74983V1.24983C4.21268 1.24983 4.78122 1.87192 4.71881 2.59372L3.22439 2.4645ZM3.48671 2.74983C3.63292 2.74983 3.75 2.63139 3.75 2.48709H2.25C2.25 1.80457 2.80289 1.24983 3.48671 1.24983V2.74983Z" fill="currentColor"></path> </svg>
+      <div class="yp-voting-preview" id="yp-voting-preview">
+        <div class="yp-vote-bar-section" id="yp-vote-bar-section">
+          <div class="yp-vote-bar-row">
+            <div class="yp-vote-bar-count" id="yp-vote-bar-count">0</div>
+            <div class="yp-vote-bar-divider"></div>
+            <div class="yp-vote-bar-buttons">
+              <div class="yp-vote-bar-track" id="yp-vote-bar-fill"></div>
+              <button class="yp-vote-bar-btn" id="yp-vote-bar-up" type="button" aria-label="${tr(t, 'like', 'Like')}" data-vote="1">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M1 21h4V9H1v12zm22-11c0-1.1-.9-2-2-2h-6.31l.95-4.57.03-.32c0-.41-.17-.79-.44-1.06L14.17 1 7.59 7.59C7.22 7.95 7 8.45 7 9v10c0 1.1.9 2 2 2h9c.83 0 1.54-.5 1.84-1.22l3.02-7.05c.09-.23.14-.47.14-.73v-2z"/></svg>
+              </button>
+              <button class="yp-vote-bar-btn" id="yp-vote-bar-down" type="button" aria-label="${tr(t, 'dislike', 'Dislike')}" data-vote="-1">
+                <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
+              </button>
+            </div>
+            <div class="yp-vote-bar-divider"></div>
+            <button class="yp-voting-comments-icon" data-preview-comments="1" type="button" aria-label="${tr(t, 'comments', 'Comments')} (0)">
+              <span>&#128172;</span> 0
             </button>
           </div>
-          <div class="ytp-plus-vote-bar-count" id="ytp-plus-vote-bar-count">0</div>
         </div>
       </div>
 
-      <div id="ytp-plus-voting-container"></div>
+      <div id="yp-voting-container"></div>
     </div>
   `;
   }
 
   /**
    * Creates the main content area
-   * @param {Record<string, any>} settings - Settings object
+   * @param {YoutubePlusSettings} settings - Settings object
    * @param {Function} t - Translation function
    * @returns {string} Main content HTML
    */
   function createMainContent(settings, t) {
     return `
-    <div class="ytp-plus-settings-main">
-      <div class="ytp-plus-settings-content">
+    <div class="yp-settings-main">
+      <div class="yp-settings-content">
         ${createBasicSettingsSection(settings, t)}
         ${createAdvancedSettingsSection(settings, t)}
         ${createExperimentalSettingsSection(settings, t)}
         ${createVotingSection(settings, t)}
-        <div class="ytp-plus-settings-section hidden" data-section="report"></div>
+        <div class="yp-settings-section hidden" data-section="report"></div>
         ${createAboutSection(t)}
       </div>
     </div>
@@ -2232,16 +1547,8 @@
       createExperimentalSettingsSection,
       createVotingSection,
       readSubmenuExpanded,
-      buildShortcutEditorHTML,
       getMusicSettings: getMusicSettingsCompat,
+      buildScreenshotSettingsHTML,
     };
-    // Canonical settings store — single source of truth for the
-    // settings API. Exposed on both window and unsafeWindow so
-    // both page and userscript contexts can reach it.
-    window.YouTubePlusSettingsStore = SettingsStore;
-    if (typeof unsafeWindow !== 'undefined') {
-      unsafeWindow.YouTubePlusSettingsHelpers = window.YouTubePlusSettingsHelpers;
-      unsafeWindow.YouTubePlusSettingsStore = window.YouTubePlusSettingsStore;
-    }
   }
 })();

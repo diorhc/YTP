@@ -1,5 +1,5 @@
 /**
- * YouTube+ Logger — canonical owner of structured, level-based logging.
+ * YouTube+ Logger: owner of structured, level-based logging.
  *
  * Responsibilities:
  *   - Buffer recent log entries (with rate limiting per module).
@@ -37,12 +37,12 @@
  *     - getErrorRate()                      [back-compat bridge → YouTubePlusErrorBoundary]
  *
  *   window.YouTubePlusErrorBoundary             [re-exposed for back-compat with existing
- *                                            callers; canonical owner is error-boundary.js]
+ *                                            callers; owner is error-boundary.js]
  */
 (function () {
   // Allow Node-based tests to load error-boundary.js via this module so that
   // requiring logger.js still surfaces both `YouTubePlusLogger` and
-  // `YouTubePlusErrorBoundary` globals (matches the previous single-file behavior).
+  // `YouTubePlusErrorBoundary` globals (as if both shipped in one file).
   // In the bundled userscript, build order loads error-boundary.js first.
   /** @type {((id: string) => unknown) | null} */
   const nodeRequire =
@@ -74,7 +74,12 @@
   const MAX_LOGS_PER_MINUTE = 60;
 
   /**
-   * @typedef {{timestamp: number, level: LogLevel, module: string, message: string, data?: any}} LogEntry
+   * @typedef {{timestamp: number, level: LogLevel, module: string, message: string, data?: unknown}} LogEntry
+   */
+
+  /**
+   * The four level methods shared by the root logger and every scoped child.
+   * @typedef {{ error: (message: string, data?: unknown) => void; warn: (message: string, data?: unknown) => void; info: (message: string, data?: unknown) => void; debug: (message: string, data?: unknown) => void }} LoggerMethods
    */
 
   /** @type {LogEntry[]} */
@@ -85,22 +90,25 @@
 
   /**
    * Determine if we're in development mode.
-   * Kept side-effect free — reads window flags / localStorage defensively.
+   * Kept side-effect free: reads window flags / storage defensively.
    * @returns {boolean}
    */
+  /**
+   * @typedef {{ debugMode?: boolean }} LoggerSettings
+   */
+
   function isDevMode() {
     try {
       if (typeof window !== 'undefined') {
         if (window.__ytpDevMode) return true;
-        const store = /** @type {any} */ (window).YouTubePlusSettingsStore;
+        const store = window.YouTubePlusSettingsStore;
         if (store && typeof store.get === 'function') {
           if (store.get('debugMode')) return true;
         } else {
-          const settings = localStorage.getItem('youtube_plus_settings');
-          if (settings) {
-            const parsed = JSON.parse(settings);
-            if (parsed?.debugMode) return true;
-          }
+          const parsed = /** @type {LoggerSettings | null} */ (
+            window.YouTubeUtils?.storage?.get('youtube_plus_settings')
+          );
+          if (parsed && typeof parsed === 'object' && parsed.debugMode) return true;
         }
       }
     } catch (_e) {
@@ -147,7 +155,7 @@
    * @param {LogLevel} level
    * @param {string} module
    * @param {string} message
-   * @param {any} [data]
+   * @param {unknown} [data]
    */
   function log(level, module, message, data) {
     if (LOG_LEVELS[level] > LOG_LEVELS[currentLevel]) return;
@@ -187,8 +195,8 @@
   /**
    * Normalize log payloads so stored entries and console output are
    * consistent and never carry non-serializable values.
-   * @param {any} data
-   * @returns {any}
+   * @param {unknown} data
+   * @returns {unknown}
    */
   function serializeData(data) {
     if (data instanceof Error) {
@@ -210,208 +218,140 @@
     }
   }
 
-  /** @type {any} */
-  const logger = {
-    /**
-     * Log an error message
-     * @param {string} module - Module name
-     * @param {string} message - Error message
-     * @param {any} [data] - Additional data (e.g., error object)
-     */
-    error(module, message, data) {
-      log('error', module, message, data);
-    },
-
-    /**
-     * Log a warning message
-     * @param {string} module - Module name
-     * @param {string} message - Warning message
-     * @param {any} [data] - Additional data
-     */
-    warn(module, message, data) {
-      log('warn', module, message, data);
-    },
-
-    /**
-     * Log an info message
-     * @param {string} module - Module name
-     * @param {string} message - Info message
-     * @param {any} [data] - Additional data
-     */
-    info(module, message, data) {
-      log('info', module, message, data);
-    },
-
-    /**
-     * Log a debug message
-     * @param {string} module - Module name
-     * @param {string} message - Debug message
-     * @param {any} [data] - Additional data
-     */
-    debug(module, message, data) {
-      log('debug', module, message, data);
-    },
-
-    /**
-     * Set the current log level
-     * @param {LogLevel} level
-     */
-    setLevel(level) {
-      if (LOG_LEVELS[level] !== undefined) {
-        currentLevel = level;
-      }
-    },
-
-    /**
-     * Get the current log level
-     * @returns {LogLevel}
-     */
-    getLevel() {
-      return currentLevel;
-    },
-
-    /**
-     * Get recent log entries
-     * @param {number} [count=50] - Number of entries to return
-     * @param {LogLevel} [filterLevel] - Optional level filter
-     * @returns {LogEntry[]}
-     */
-    getRecent(count, filterLevel) {
-      let entries = logBuffer;
-      if (filterLevel) {
-        entries = entries.filter(e => e.level === filterLevel);
-      }
-      const limit = typeof count === 'number' ? count : 50;
-      return entries.slice(-limit);
-    },
-
-    /**
-     * Export all log entries as JSON string (for bug reports)
-     * @returns {string}
-     */
-    export() {
-      return JSON.stringify(logBuffer, null, 2);
-    },
-
-    /**
-     * Clear all log entries
-     */
-    clear() {
-      logBuffer.length = 0;
-      rateLimitMap.clear();
-    },
-
-    /**
-     * Get logging statistics
-     * @returns {{ totalEntries: number; byLevel: Record<LogLevel, number>; byModule: Record<string, number>; currentLevel: LogLevel }}
-     */
-    getStats() {
-      const byLevel = { error: 0, warn: 0, info: 0, debug: 0 };
-      const byModule = /** @type {Record<string, number>} */ ({});
-      for (const entry of logBuffer) {
-        byLevel[entry.level]++;
-        byModule[entry.module] = (byModule[entry.module] || 0) + 1;
-      }
-      return {
-        totalEntries: logBuffer.length,
-        byLevel,
-        byModule,
-        currentLevel,
+  /**
+   * Factory for generating error/warn/info/debug methods.
+   * @param {(args: unknown[]) => {module: string, message: string, data?: unknown}} argsResolver
+   *        Extracts module, message, and data from the arguments passed to the generated methods.
+   * @returns {LoggerMethods}
+   */
+  function makeLevelMethods(argsResolver) {
+    /** @type {Record<string, (message: string, data?: unknown) => void>} */
+    const methods = {};
+    for (const level of /** @type {LogLevel[]} */ (['error', 'warn', 'info', 'debug'])) {
+      /** @type {(message: string, data?: unknown) => void} */
+      methods[level] = (...args) => {
+        const { module, message, data } = argsResolver(args);
+        log(level, module, message, data);
       };
-    },
+    }
+    return /** @type {LoggerMethods} */ (methods);
+  }
 
-    /**
-     * Create a scoped logger for a specific module.
-     * Returns an object with error/warn/info/debug methods
-     * that automatically set the module name.
-     * @param {string} moduleName - Module identifier
-     * @returns {{error: (message: string, data?: any) => void, warn: (message: string, data?: any) => void, info: (message: string, data?: any) => void, debug: (message: string, data?: any) => void}}
-     */
-    createLogger(moduleName) {
-      return {
-        /**
-         * @param {string} message
-         * @param {any} [data]
-         */
-        error(message, data) {
-          log('error', moduleName, message, data);
-        },
-        /**
-         * @param {string} message
-         * @param {any} [data]
-         */
-        warn(message, data) {
-          log('warn', moduleName, message, data);
-        },
-        /**
-         * @param {string} message
-         * @param {any} [data]
-         */
-        info(message, data) {
-          log('info', moduleName, message, data);
-        },
-        /**
-         * @param {string} message
-         * @param {any} [data]
-         */
-        debug(message, data) {
-          log('debug', moduleName, message, data);
-        },
-      };
-    },
+  const logger = /** @type {YouTubePlusLogger} */ (
+    /** @type {unknown} */ ({
+      ...makeLevelMethods(args => ({
+        module: /** @type {string} */ (args[0]),
+        message: /** @type {string} */ (args[1]),
+        data: args[2],
+      })),
 
-    /**
-     * Create a child logger that prepends a sub-scope to the module name.
-     * Useful for nested contexts (e.g. `Download:Thumbnails`).
-     * @param {string} context - Sub-scope name
-     * @returns {{error: (message: string, data?: any) => void, warn: (message: string, data?: any) => void, info: (message: string, data?: any) => void, debug: (message: string, data?: any) => void}}
-     */
-    createChild(context) {
-      return {
-        /**
-         * @param {string} module
-         * @param {string} message
-         * @param {any} [data]
-         */
-        error(module, message, data) {
-          log('error', `${context}:${module}`, message, data);
-        },
-        /**
-         * @param {string} module
-         * @param {string} message
-         * @param {any} [data]
-         */
-        warn(module, message, data) {
-          log('warn', `${context}:${module}`, message, data);
-        },
-        /**
-         * @param {string} module
-         * @param {string} message
-         * @param {any} [data]
-         */
-        info(module, message, data) {
-          log('info', `${context}:${module}`, message, data);
-        },
-        /**
-         * @param {string} module
-         * @param {string} message
-         * @param {any} [data]
-         */
-        debug(module, message, data) {
-          log('debug', `${context}:${module}`, message, data);
-        },
-      };
-    },
-  };
+      /**
+       * Set the current log level
+       * @param {LogLevel} level
+       */
+      setLevel(level) {
+        if (LOG_LEVELS[level] !== undefined) {
+          currentLevel = level;
+        }
+      },
+
+      /**
+       * Get the current log level
+       * @returns {LogLevel}
+       */
+      getLevel() {
+        return currentLevel;
+      },
+
+      /**
+       * Get recent log entries
+       * @param {number} [count=50] - Number of entries to return
+       * @param {LogLevel} [filterLevel] - Optional level filter
+       * @returns {LogEntry[]}
+       */
+      getRecent(count, filterLevel) {
+        let entries = logBuffer;
+        if (filterLevel) {
+          entries = entries.filter(e => e.level === filterLevel);
+        }
+        const limit = typeof count === 'number' ? count : 50;
+        return entries.slice(-limit);
+      },
+
+      /**
+       * Export all log entries as JSON string (for bug reports)
+       * @returns {string}
+       */
+      export() {
+        return JSON.stringify(logBuffer, null, 2);
+      },
+
+      /**
+       * Clear all log entries
+       */
+      clear() {
+        logBuffer.length = 0;
+        rateLimitMap.clear();
+      },
+
+      /**
+       * Get logging statistics
+       * @returns {{ totalEntries: number; byLevel: Record<LogLevel, number>; byModule: Record<string, number>; currentLevel: LogLevel }}
+       */
+      getStats() {
+        const byLevel = { error: 0, warn: 0, info: 0, debug: 0 };
+        const byModule = /** @type {Record<string, number>} */ ({});
+        for (const entry of logBuffer) {
+          byLevel[entry.level]++;
+          byModule[entry.module] = (byModule[entry.module] || 0) + 1;
+        }
+        return {
+          totalEntries: logBuffer.length,
+          byLevel,
+          byModule,
+          currentLevel,
+        };
+      },
+
+      /**
+       * Create a scoped logger for a specific module.
+       * Returns an object with error/warn/info/debug methods
+       * that automatically set the module name.
+       * @param {string} moduleName - Module identifier
+       * @returns {LoggerMethods}
+       */
+      createLogger(moduleName) {
+        return makeLevelMethods(args => ({
+          module: moduleName,
+          message: /** @type {string} */ (args[0]),
+          data: args[1],
+        }));
+      },
+
+      /**
+       * Create a child logger that prepends a sub-scope to the module name.
+       * Useful for nested contexts (e.g. `Download:Thumbnails`).
+       * @param {string} context - Sub-scope name
+       * @returns {LoggerMethods}
+       */
+      createChild(context) {
+        return makeLevelMethods(args => ({
+          module: `${context}:${args[0]}`,
+          message: /** @type {string} */ (args[1]),
+          data: args[2],
+        }));
+      },
+    })
+  );
 
   // ---------------------------------------------------------------------------
   // Back-compat bridge for error-boundary methods.
   // These existed on the legacy YouTubePlusLogger surface. They now delegate
-  // to window.YouTubePlusErrorBoundary (canonical owner: error-boundary.js).
+  // to window.YouTubePlusErrorBoundary (owner: error-boundary.js).
   // If error-boundary.js has not been loaded for any reason, methods become
   // safe no-ops so callers do not crash.
   // ---------------------------------------------------------------------------
-  /** @type {(...args: any[]) => void} */
+  /** @type {(...args: unknown[]) => void} */
   const NOOP = () => {};
   const NOOP_STATS = () => ({
     totalErrors: 0,
@@ -429,31 +369,39 @@
   };
 
   function getBoundary() {
-    return /** @type {any} */ (window).YouTubePlusErrorBoundary || null;
+    return window.YouTubePlusErrorBoundary || null;
   }
 
   /**
-   * @param {Error | unknown} error
+   * @param {unknown} error
    * @param {Record<string, unknown>} [context]
    */
   logger.logError = (error, context) => {
     const b = getBoundary();
-    return b && typeof b.logError === 'function'
-      ? b.logError(error, context)
-      : NOOP(error, context);
+    const err = error instanceof Error ? error : new Error(String(error));
+    return b && typeof b.logError === 'function' ? b.logError(err, context) : NOOP(err, context);
   };
   /**
-   * @template {(...args: any[]) => any} T
+   * @template {(...args: never[]) => unknown} T
    * @param {T} fn
    * @param {string} [context]
    * @returns {T}
    */
   logger.withErrorBoundary = (fn, context) => {
     const b = getBoundary();
-    return b && typeof b.withErrorBoundary === 'function' ? b.withErrorBoundary(fn, context) : fn;
+    return b && typeof b.withErrorBoundary === 'function'
+      ? /** @type {T} */ (
+          /** @type {unknown} */ (
+            b.withErrorBoundary(
+              /** @type {(...args: unknown[]) => unknown} */ (/** @type {unknown} */ (fn)),
+              context
+            )
+          )
+        )
+      : fn;
   };
   /**
-   * @template {(...args: any[]) => Promise<any>} T
+   * @template {(...args: never[]) => Promise<unknown>} T
    * @param {T} fn
    * @param {string} [context]
    * @returns {T}
@@ -461,7 +409,14 @@
   logger.withAsyncErrorBoundary = (fn, context) => {
     const b = getBoundary();
     return b && typeof b.withAsyncErrorBoundary === 'function'
-      ? b.withAsyncErrorBoundary(fn, context)
+      ? /** @type {T} */ (
+          /** @type {unknown} */ (
+            b.withAsyncErrorBoundary(
+              /** @type {(...args: unknown[]) => Promise<unknown>} */ (/** @type {unknown} */ (fn)),
+              context
+            )
+          )
+        )
       : fn;
   };
   logger.getErrorStats = () => {
@@ -476,22 +431,18 @@
     const b = getBoundary();
     return b && typeof b.getErrorRate === 'function' ? b.getErrorRate() : 0;
   };
-  logger.config = () => {
-    const b = getBoundary();
-    return b?.config ? b.config : NOOP_CONFIG;
-  };
+  Object.defineProperty(logger, 'config', {
+    get() {
+      const b = getBoundary();
+      return b?.config ? b.config : NOOP_CONFIG;
+    },
+    enumerable: true,
+  });
 
   if (typeof window !== 'undefined') {
-    window.YouTubePlusLogger = /** @type {any} */ (logger);
-    if (typeof unsafeWindow !== 'undefined') {
-      unsafeWindow.YouTubePlusLogger = /** @type {any} */ (logger);
-    }
-
-    // Re-expose the error-boundary global for callers that looked it up
-    // through logger.js (e.g. legacy tests). Canonical owner is
-    // error-boundary.js; this line is a no-op once it has run there.
-    if (!window.YouTubePlusErrorBoundary) {
-      window.YouTubePlusErrorBoundary = /** @type {any} */ (getBoundary());
-    }
+    window.YouTubePlusLogger = logger;
+    // YouTubePlusErrorBoundary is owned exclusively by error-boundary.js,
+    // which evaluates earlier (build order 1 vs 2); logger only reads the
+    // boundary via getBoundary() and never writes the facade.
   }
 })();

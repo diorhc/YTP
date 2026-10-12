@@ -8,28 +8,36 @@ describe('YouTubeErrorBoundary (real integration)', () => {
   /** @type {any} */
   let errorBoundary;
 
+  /** Build an Event-shaped object that mimics a failed <script> load error event. */
+  const evt_likeScriptError = target => {
+    const e = new Event('loaderror');
+    Object.defineProperty(e, 'target', { value: target, configurable: true });
+    return e;
+  };
+
   beforeEach(() => {
     jest.resetModules();
 
     delete window.YouTubePlusLogger;
     delete window.YouTubePlusErrorBoundary;
     delete window.YouTubeUtils;
-    delete window.YouTubePlusErrorRecovery;
+    delete window.YouTubePlusCleanupManager;
 
-    window.YouTubeUtils = {
-      NotificationManager: {
-        show: jest.fn(),
-      },
-    };
-
-    window.YouTubePlusErrorRecovery = {
-      attemptRecovery: jest.fn(),
-    };
-
-    jest.spyOn(window.console, 'error').mockImplementation(() => {});
-    jest.spyOn(window.console, 'warn').mockImplementation(() => {});
-
+    require('../src/cleanup-manager.js');
+    require('../src/utils.js');
+    require('../src/error-boundary.js');
     require('../src/logger.js');
+
+    window.YouTubeUtils.NotificationManager = {
+      show: jest.fn(),
+    };
+
+    jest.spyOn(window.console, 'error').mockImplementation(() => {
+      /* mock */
+    });
+    jest.spyOn(window.console, 'warn').mockImplementation(() => {
+      /* mock */
+    });
 
     logger = window.YouTubePlusLogger;
     errorBoundary = window.YouTubePlusErrorBoundary;
@@ -64,7 +72,8 @@ describe('YouTubeErrorBoundary (real integration)', () => {
     expect(stats.totalErrors).toBe(0);
     expect(stats.recentErrors).toBe(1);
     expect(stats.errorsByType.medium).toBeGreaterThanOrEqual(1);
-    expect(window.YouTubePlusErrorRecovery.attemptRecovery).toHaveBeenCalled();
+    expect(stats.isRecovering).toBe(true);
+    expect(window.YouTubeUtils.NotificationManager.show).toHaveBeenCalled();
   });
 
   test('withAsyncErrorBoundary captures async error and logs via logger', async () => {
@@ -77,7 +86,7 @@ describe('YouTubeErrorBoundary (real integration)', () => {
     expect(result).toBeNull();
     const recentErrors = logger.getRecent(10, 'error');
     expect(recentErrors.some(e => e.module === 'ErrorBoundary')).toBe(true);
-    expect(window.YouTubePlusErrorRecovery.attemptRecovery).toHaveBeenCalled();
+    expect(errorBoundary.getErrorStats().isRecovering).toBe(true);
   });
 
   test('logError stores fallback message from context when message is empty', () => {
@@ -127,7 +136,9 @@ describe('YouTubeErrorBoundary (real integration)', () => {
       configurable: true,
     });
     Object.defineProperty(rejectionEvent, 'promise', {
-      value: Promise.reject(new Error('inner reject')).catch(() => {}),
+      value: Promise.reject(new Error('inner reject')).catch(() => {
+        /* handled for test */
+      }),
       configurable: true,
     });
 
@@ -137,8 +148,54 @@ describe('YouTubeErrorBoundary (real integration)', () => {
     expect(stats.totalErrors).toBeGreaterThanOrEqual(1);
   });
 
+  test('third-party resource load errors are ignored (no counters, no "[object Event]" spam)', () => {
+    // Firefox fires a capture-phase `error` Event (no message/error payload)
+    // for a failed <script>. Simulate YouTube's failing lottie script.
+    const script = document.createElement('script');
+    script.setAttribute('src', 'https://www.youtube.com/lottie-light.js');
+    const evt = new Event('error');
+    Object.defineProperty(evt, 'target', { value: script, configurable: true });
+
+    window.dispatchEvent(evt);
+
+    const stats = errorBoundary.getErrorStats();
+    expect(stats.totalErrors).toBe(0);
+
+    const recentErrors = logger.getRecent(10, 'error');
+    const boundaryEntry = recentErrors.find(e => e.module === 'ErrorBoundary');
+    expect(boundaryEntry).toBeUndefined();
+  });
+
+  test('rejection reason that is a raw script-load Event is suppressed, not "[object Event]"', () => {
+    const script = document.createElement('script');
+    script.setAttribute('src', 'https://www.youtube.com/other-failing.js');
+    const rejectionEvent = new Event('unhandledrejection');
+    rejectionEvent.preventDefault = jest.fn();
+    Object.defineProperty(rejectionEvent, 'reason', {
+      // Firefox can surface a failed script load as an unhandled rejection
+      // whose reason is the Event object itself.
+      value: evt_likeScriptError(script),
+      configurable: true,
+    });
+
+    window.dispatchEvent(rejectionEvent);
+
+    const recentErrors = logger.getRecent(10, 'error');
+    const boundaryEntry = recentErrors.find(e => e.module === 'ErrorBoundary');
+    expect(boundaryEntry).toBeUndefined();
+    expect(rejectionEvent.preventDefault).toHaveBeenCalled();
+  });
+
+  test('identical errors within 500ms are logged once (dedup)', () => {
+    errorBoundary.logError(new Error('dup probe'));
+    errorBoundary.logError(new Error('dup probe'));
+
+    const recentErrors = logger.getRecent(10, 'error');
+    const dupLogs = recentErrors.filter(e => e.message === 'dup probe');
+    expect(dupLogs).toHaveLength(1);
+  });
+
   test('critical errors notify but skip recovery attempts', () => {
-    window.YouTubePlusErrorRecovery.attemptRecovery.mockClear();
     window.YouTubeUtils.NotificationManager.show.mockClear();
 
     errorBoundary.logError(new Error('security csp violation detected'));
@@ -149,7 +206,7 @@ describe('YouTubeErrorBoundary (real integration)', () => {
     wrapped();
 
     expect(window.YouTubeUtils.NotificationManager.show).toHaveBeenCalled();
-    expect(window.YouTubePlusErrorRecovery.attemptRecovery).not.toHaveBeenCalled();
+    expect(errorBoundary.getErrorStats().isRecovering).toBe(false);
   });
 
   test('error context redacts full URL and navigator.userAgent', () => {
@@ -185,5 +242,31 @@ describe('YouTubeErrorBoundary (real integration)', () => {
     const serialized = JSON.stringify(boundaryEntry.data);
     expect(serialized).not.toContain(secret);
     expect(serialized).not.toContain('p@ssw0rd');
+  });
+
+  test('security and CSP messages escalate to CRITICAL severity notice', () => {
+    const wrapped = errorBoundary.withErrorBoundary(() => {
+      throw new Error('inline script blocked by csp policy');
+    }, 'csp-module');
+
+    expect(wrapped('input')).toBeNull();
+    const show = window.YouTubeUtils.NotificationManager.show;
+    expect(show).toHaveBeenCalled();
+    const call = show.mock.calls.at(-1);
+    expect(call?.[0]).toBe(
+      'A critical error occurred. YouTube+ may not function properly. Please report this issue.'
+    );
+    expect(call?.[1]).toEqual({ duration: 7000, type: 'error' });
+  });
+
+  test('type messages escalate to HIGH severity notice', () => {
+    const wrapped = errorBoundary.withErrorBoundary(() => {
+      throw new Error('a type error probe');
+    }, 'type-module');
+
+    expect(wrapped('input')).toBeNull();
+    const call = window.YouTubeUtils.NotificationManager.show.mock.calls.at(-1);
+    expect(call?.[0]).toBe('A serious error occurred. Please refresh the page if issues persist.');
+    expect(call?.[1]).toEqual({ duration: 5000, type: 'error' });
   });
 });

@@ -1,6 +1,14 @@
 // Jest test setup file
 // Global setup for all tests
 
+// Feature modules publish internal testHooks bags only when this flag is
+// on (see U.exposeTestHooks); release pages never receive them.
+window.__YTP_TEST_HOOKS__ = true;
+
+const { TextEncoder, TextDecoder } = require('node:util');
+if (!global.TextEncoder) global.TextEncoder = TextEncoder;
+if (!global.TextDecoder) global.TextDecoder = TextDecoder;
+
 // Mock browser APIs
 global.localStorage = {
   data: {},
@@ -83,7 +91,7 @@ if (typeof global.structuredClone !== 'function') {
    * @param {{ transfer?: unknown[] }} [options]
    * @returns {unknown}
    */
-  global.structuredClone = (obj, options) => {
+  global.structuredClone = (obj, _options) => {
     // Handle primitives and null
     if (obj === null || typeof obj !== 'object') return obj;
 
@@ -123,7 +131,11 @@ if (typeof global.structuredClone !== 'function') {
 
     // Handle DataView
     if (obj instanceof DataView) {
-      const clone = new DataView(global.structuredClone(obj.buffer), obj.byteOffset, obj.byteLength);
+      const clone = new DataView(
+        global.structuredClone(obj.buffer),
+        obj.byteOffset,
+        obj.byteLength
+      );
       return clone;
     }
 
@@ -164,7 +176,15 @@ if (typeof global.performance.mark !== 'function') {
   };
 }
 
-// Mock userscript globals
+// Polyfill URL.createObjectURL and URL.revokeObjectURL for jsdom
+if (typeof URL !== 'undefined') {
+  if (typeof URL.createObjectURL !== 'function') {
+    URL.createObjectURL = jest.fn(() => `blob:mock-${Math.random().toString(36).slice(2)}`);
+  }
+  if (typeof URL.revokeObjectURL !== 'function') {
+    URL.revokeObjectURL = jest.fn();
+  }
+}
 // expose GM_xmlhttpRequest on both global and window to match how code references it
 const gmMock = jest.fn();
 Object.defineProperty(globalThis, 'GM_xmlhttpRequest', {
@@ -182,6 +202,49 @@ Object.defineProperty(globalThis, 'unsafeWindow', {
   writable: true,
   value: window,
 });
+
+// Polyfill AbortController for jsdom / older Node if missing.
+if (typeof globalThis.AbortController === 'undefined') {
+  class AbortSignalPolyfill {
+    constructor() {
+      this.aborted = false;
+      /** @type {Set<Function>} */
+      this._listeners = new Set();
+    }
+    addEventListener(type, listener) {
+      if (type === 'abort') this._listeners.add(listener);
+    }
+    removeEventListener(type, listener) {
+      if (type === 'abort') this._listeners.delete(listener);
+    }
+    dispatchEvent() {
+      // no-op polyfill
+    }
+  }
+  globalThis.AbortController = class AbortControllerPolyfill {
+    constructor() {
+      this.signal = new AbortSignalPolyfill();
+    }
+    abort() {
+      if (this.signal.aborted) return;
+      this.signal.aborted = true;
+      this.signal._listeners.forEach(listener => {
+        try {
+          listener();
+        } catch (_e) {
+          /* ignore */
+        }
+      });
+    }
+  };
+}
+
+// Install the real CleanupManager in every jsdom test file. Source modules now
+// register listeners/observers/timers through it via optional chaining; without
+// it those calls are silent no-ops and listeners never attach.
+// cleanup-manager.test.js deletes the key in its own beforeEach and re-requires
+// the module, so per-suite behavior is unaffected.
+require('../src/cleanup-manager.js');
 
 // Mock console methods for cleaner test output
 global.console = {
@@ -285,5 +348,144 @@ beforeEach(() => {
   sessionStorage.clear();
   jest.clearAllMocks();
 
+  // Voting.js routes community traffic through
+  // GM_xmlhttpRequest when the manager provides it. Tests emulate the manager
+  // by delegating GM requests to the (per-test mocked) global fetch, so
+  // existing fetch mocks keep driving every suite. Tests that need a raw GM
+  // mock (e.g. the secure-transport spy suite) override this in place.
+  const gmTransport = /** @type {any} */ (globalThis).GM_xmlhttpRequest;
+  if (typeof gmTransport?.mockImplementation === 'function') {
+    gmTransport.mockImplementation(options => {
+      const { method = 'GET', url, headers = {}, data, onload, onerror, onabort, signal } = options;
+      let settled = false;
+      globalThis
+        .fetch(url, { method, headers, body: data, signal })
+        .then(async res => {
+          if (settled) return;
+          settled = true;
+          let text = '';
+          try {
+            if (typeof res.json === 'function') text = JSON.stringify(await res.json());
+            else if (typeof res.text === 'function') text = await res.text();
+          } catch (_e) {
+            text = '';
+          }
+          onload?.({ status: res.status ?? 200, response: text, responseText: text });
+        })
+        .catch(() => {
+          if (settled) return;
+          settled = true;
+          (
+            onerror ||
+            onabort ||
+            (() => {
+              /* noop */
+            })
+          )?.();
+        });
+      return { abort: () => onabort?.() };
+    });
+  }
+
+  // Minimal SettingsStore raw-IO shim so utils.storage (which now delegates to
+  // the store boundary) behaves like plain localStorage when a test has not
+  // installed the real store. Re-installed per test because the afterEach
+  // cleanup below wipes every window.YouTubePlus* key.
+  if (!window.YouTubePlusSettingsStore) {
+    window.YouTubePlusSettingsStore = {
+      readRaw: key => localStorage.getItem(key),
+      writeRaw: (key, value) => {
+        localStorage.setItem(key, value);
+        return true;
+      },
+      // Standalone-key IO (outside the blob), same localStorage fallback the
+      // real store uses when GM storage is unavailable.
+      readGmKey: key => localStorage.getItem(key),
+      writeGmKey: (key, value) => {
+        localStorage.setItem(key, value);
+        return true;
+      },
+      removeRaw: key => {
+        localStorage.removeItem(key);
+      },
+      clearRaw: prefixes => {
+        let removed = 0;
+        const ls = window.localStorage;
+        for (let i = 0; i < ls.length; i++) {
+          const key = ls.key(i);
+          if (key && prefixes.some(p => key.startsWith(p))) removed += 1;
+        }
+        for (const key of [...Array(ls.length)].map((_, i) => ls.key(i))) {
+          if (key && prefixes.some(p => key.startsWith(p))) {
+            ls.removeItem(key);
+          }
+        }
+        return removed;
+      },
+    };
+  }
+
   // Don't reset location here - let individual tests control it
+});
+
+// Isolate tests under --randomize: clear module cache and all YouTubePlus* /
+// legacy facade keys so a leak in one suite cannot seed state in another.
+// Mirrors the cleanup the audit (PR1) recommends; runs after every test.
+afterEach(() => {
+  jest.resetModules();
+
+  // Drop every canonical facade (window.YouTubePlus<Feature>) and the legacy
+  // aliases (YouTubeUtils, YouTubeStats, YouTubeMusic, YouTubeSafeDOM, …) so
+  // the next suite starts from a clean window.
+  // Object.keys() misses non-enumerable defineProperty assignments, so scan
+  // a known allowlist plus any enumerable YouTubePlus* / youtubePlus* keys.
+  const knownLegacyKeys = [
+    'YouTubeUtils',
+    'YouTubeSafeDOM',
+    'YouTubeTrustedTypes',
+    'YouTubeStats',
+    'YouTubeMusic',
+    'youtubeMusic',
+    'youtubePlusEndscreen',
+    '__ytpBasicInitDone__',
+    '__ytp_history_wrapped',
+  ];
+  const enumerableKeys = Object.keys(window).filter(
+    k => k.startsWith('YouTubePlus') || k.startsWith('youtubePlus') || knownLegacyKeys.includes(k)
+  );
+  // Non-enumerable legacy keys set via Object.defineProperty still need
+  // explicit deletion; Object.keys() won't list them.
+  const nonEnumerableKeys = knownLegacyKeys.filter(k => k in window && !enumerableKeys.includes(k));
+  // NEVER delete the settings-store pair: facade-contract restores canonical+alias
+  // from beforeAll capture and relies on identity (alias === canonical). The shim
+  // installed by beforeEach when canonical is missing would otherwise replace the
+  // real store between afterEach and the next beforeEach.
+  // Same for the cleanup-manager pair: required once at the top of this file,
+  // migrated src code registers every listener through it via optional chaining,
+  // so wiping it silently no-ops all listener registration.
+  const settingsStoreKeys = [
+    'YouTubePlusSettingsStore',
+    'youtubePlusSettingsStore',
+    'YouTubePlusCleanupManager',
+    'youtubePlusCleanupManager',
+  ];
+  const keysToDelete = [...enumerableKeys, ...nonEnumerableKeys].filter(
+    k => !settingsStoreKeys.includes(k)
+  );
+  for (const k of keysToDelete) {
+    try {
+      delete window[k];
+    } catch {
+      // Some jsdom props are non-configurable; force via defineProperty.
+      Object.defineProperty(window, k, {
+        configurable: true,
+        value: undefined,
+        writable: true,
+      });
+    }
+  }
+
+  // Reset DOM so injected styles/nodes from one suite don't bleed into next.
+  document.body.innerHTML = '';
+  document.head.innerHTML = '';
 });

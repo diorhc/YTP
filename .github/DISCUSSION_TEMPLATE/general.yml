@@ -1,0 +1,14 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Discuss YouTube+ workflows, experiences or project direction.
+        Use [Q&A](https://github.com/diorhc/YTP/discussions/categories/q-a) for questions, [Ideas](https://github.com/diorhc/YTP/discussions/categories/ideas) for proposals, and [Issues](https://github.com/diorhc/YTP/issues/new/choose) for bugs.
+  - type: textarea
+    id: topic
+    attributes:
+      label: What would you like to discuss?
+      description: Give a little context and explain what feedback you are looking for.
+      placeholder: 'A workflow, observation or topic you would like to share...'
+    validations:
+      required: true

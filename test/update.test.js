@@ -1,15 +1,17 @@
 /**
- * Unit tests for YouTube+ Update module (update.js)
+ * @jest-environment jsdom
  *
- * Tests version comparison, metadata parsing, update URL validation,
- * and notification logic.
+ * Tests the real update.js module surface through window.YouTubePlusUpdate.
+ * Exercises actual version comparison, metadata parsing, time formatting,
+ * and settings persistence against real module logic.
  */
 
-const setupUpdateDeps = () => {
-  Object.defineProperty(window, 'YouTubeUtils', {
-    configurable: true,
-    writable: true,
-    value: {
+describe('Update Module', () => {
+  const setupUpdateDeps = () => {
+    document.body.innerHTML = '';
+    document.head.innerHTML = '';
+
+    const utils = {
       $: jest.fn(sel => document.querySelector(sel)),
       $$: jest.fn(sel => Array.from(document.querySelectorAll(sel))),
       byId: jest.fn(id => document.getElementById(id)),
@@ -17,8 +19,13 @@ const setupUpdateDeps = () => {
       cleanupManager: {
         registerInterval: jest.fn(id => id),
         registerTimeout: jest.fn(id => id),
+        // The real manager schedules through setTimeout; the mocks mirror it.
+        timeout: jest.fn((fn, ms) => setTimeout(fn, ms)),
         registerObserver: jest.fn(obs => obs),
-        registerListener: jest.fn(),
+        registerListener: jest.fn((target, type, handler, opts) => {
+          target?.addEventListener?.(type, handler, opts);
+          return Symbol('listener-key');
+        }),
         register: jest.fn(),
         cleanup: jest.fn(),
         registerAnimationFrame: jest.fn(id => id),
@@ -30,257 +37,469 @@ const setupUpdateDeps = () => {
       SETTINGS_KEY: 'youtube_plus_settings',
       NotificationManager: { show: jest.fn(), remove: jest.fn() },
       getLanguage: jest.fn(() => 'en'),
-      renderTemplateClone: jest.fn((el, html) => { el.innerHTML = html; }),
+      renderTemplateClone: jest.fn((el, html) => {
+        el.innerHTML = html;
+      }),
       onSectionActive: jest.fn(() => ({ dispose: jest.fn() })),
       logSuppressed: jest.fn(),
-    },
-  });
-
-  Object.defineProperty(window, 'YouTubePlusLogger', {
-    configurable: true,
-    writable: true,
-    value: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
-  });
-
-  Object.defineProperty(window, 'YouTubePlusDesignSystem', {
-    configurable: true,
-    writable: true,
-    value: {
-      StyleManager: window.YouTubeUtils.StyleManager,
-      getStyle: jest.fn(() => ''),
-    },
-  });
-
-  Object.defineProperty(window, 'YouTubePlusSafeDOM', {
-    configurable: true,
-    writable: true,
-    value: { sanitizeHTML: jest.fn(s => s), setHTML: jest.fn((el, h) => { el.innerHTML = h; }) },
-  });
-
-  global.mockLocation({
-    hostname: 'www.youtube.com',
-    pathname: '/watch',
-    href: 'https://www.youtube.com/watch?v=test',
-  });
-};
-
-describe('Update Module', () => {
-  beforeEach(() => {
-    setupUpdateDeps();
-  });
-
-  describe('Version string validation', () => {
-    test('should accept valid semver format', () => {
-      const isVersionString = v => typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v);
-      expect(isVersionString('2.5.2')).toBe(true);
-      expect(isVersionString('1.0.0')).toBe(true);
-      expect(isVersionString('10.20.30')).toBe(true);
-    });
-
-    test('should reject invalid version strings', () => {
-      const isVersionString = v => typeof v === 'string' && /^\d+\.\d+\.\d+/.test(v);
-      expect(isVersionString('abc')).toBe(false);
-      expect(isVersionString('1.0')).toBe(false);
-      expect(isVersionString('')).toBe(false);
-      expect(isVersionString(null)).toBe(false);
-    });
-  });
-
-  describe('Version comparison', () => {
-    test('should detect newer version', () => {
-      const compare = (a, b) => {
-        const pa = a.split('.').map(Number);
-        const pb = b.split('.').map(Number);
-        for (let i = 0; i < 3; i++) {
-          if (pa[i] > pb[i]) return 1;
-          if (pa[i] < pb[i]) return -1;
-        }
-        return 0;
-      };
-      expect(compare('2.5.3', '2.5.2')).toBe(1);
-      expect(compare('3.0.0', '2.9.9')).toBe(1);
-    });
-
-    test('should detect older version', () => {
-      const compare = (a, b) => {
-        const pa = a.split('.').map(Number);
-        const pb = b.split('.').map(Number);
-        for (let i = 0; i < 3; i++) {
-          if (pa[i] > pb[i]) return 1;
-          if (pa[i] < pb[i]) return -1;
-        }
-        return 0;
-      };
-      expect(compare('2.5.1', '2.5.2')).toBe(-1);
-    });
-
-    test('should detect equal versions', () => {
-      const compare = (a, b) => {
-        const pa = a.split('.').map(Number);
-        const pb = b.split('.').map(Number);
-        for (let i = 0; i < 3; i++) {
-          if (pa[i] > pb[i]) return 1;
-          if (pa[i] < pb[i]) return -1;
-        }
-        return 0;
-      };
-      expect(compare('2.5.2', '2.5.2')).toBe(0);
-    });
-  });
-
-  describe('Metadata parsing', () => {
-    test('should extract field from userscript header', () => {
-      const extractField = (text, field) => {
-        const regex = new RegExp(`@${field}\\s+(.+)`, 'm');
-        const match = text.match(regex);
-        return match ? match[1].trim() : null;
-      };
-
-      const header = '// ==UserScript==\n// @name YouTube+\n// @version 2.5.2\n// ==/UserScript==';
-      expect(extractField(header, 'name')).toBe('YouTube+');
-      expect(extractField(header, 'version')).toBe('2.5.2');
-      expect(extractField(header, 'nonexistent')).toBeNull();
-    });
-
-    test('should parse multiple metadata fields', () => {
-      const header = '// @name Test\n// @version 1.0.0\n// @author testuser';
-      const fields = {};
-      header.split('\n').forEach(line => {
-        const match = line.match(/@(\w+)\s+(.+)/);
-        if (match) fields[match[1]] = match[2].trim();
-      });
-      expect(fields.name).toBe('Test');
-      expect(fields.version).toBe('1.0.0');
-      expect(fields.author).toBe('testuser');
-    });
-  });
-
-  describe('Update URL validation', () => {
-    test('should accept valid GreasyFork URL', () => {
-      const isValid = url => {
-        try {
-          const u = new URL(url);
-          return u.protocol === 'https:' && u.hostname === 'greasyfork.org';
-        } catch { return false; }
-      };
-      expect(isValid('https://greasyfork.org/ru/scripts/537017-youtube')).toBe(true);
-    });
-
-    test('should reject non-HTTPS URLs', () => {
-      const isValid = url => {
-        try {
-          const u = new URL(url);
-          return u.protocol === 'https:' && u.hostname === 'greasyfork.org';
-        } catch { return false; }
-      };
-      expect(isValid('http://greasyfork.org/script')).toBe(false);
-    });
-
-    test('should reject non-GreasyFork domains', () => {
-      const isValid = url => {
-        try {
-          const u = new URL(url);
-          return u.protocol === 'https:' && u.hostname === 'greasyfork.org';
-        } catch { return false; }
-      };
-      expect(isValid('https://example.com/script')).toBe(false);
-    });
-
-    test('should reject invalid URLs', () => {
-      const isValid = url => {
-        try {
-          new URL(url);
+      storage: {
+        get: (key, def = null) => {
+          const raw = localStorage.getItem(key);
+          return raw ? JSON.parse(raw) : def;
+        },
+        set: (key, val) => {
+          localStorage.setItem(key, JSON.stringify(val));
           return true;
-        } catch { return false; }
-      };
-      expect(isValid('not-a-url')).toBe(false);
+        },
+        remove: key => localStorage.removeItem(key),
+        has: key => localStorage.getItem(key) !== null,
+        getItem: key => localStorage.getItem(key),
+        setItem: (key, val) => {
+          localStorage.setItem(key, val);
+          return true;
+        },
+        removeItem: key => localStorage.removeItem(key),
+      },
+      openSafe: jest.fn(() => true),
+      // The installed version, as the userscript manager reports it.
+      getScriptVersion: () => '3.0.0',
+    };
+    window.open = jest.fn(() => ({}));
+
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: utils,
+    });
+
+    Object.defineProperty(window, 'YouTubePlusLogger', {
+      configurable: true,
+      writable: true,
+      value: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+    });
+
+    Object.defineProperty(window, 'YouTubePlusDesignSystem', {
+      configurable: true,
+      writable: true,
+      value: {
+        StyleManager: window.YouTubeUtils.StyleManager,
+        getStyle: jest.fn(() => ''),
+      },
+    });
+
+    Object.defineProperty(window, 'YouTubePlusSafeDOM', {
+      configurable: true,
+      writable: true,
+      value: {
+        sanitizeHTML: jest.fn(s => s),
+        setHTML: jest.fn((el, h) => {
+          el.innerHTML = h;
+        }),
+      },
+    });
+
+    Object.defineProperty(window, 'YouTubePlusCleanupManager', {
+      configurable: true,
+      writable: true,
+      value: {
+        registerListener: (target, type, handler, opts) => {
+          target?.addEventListener?.(type, handler, opts);
+          return Symbol('listener-key');
+        },
+        registerInterval: jest.fn(id => id),
+        registerTimeout: jest.fn(id => id),
+        cleanup: jest.fn(),
+      },
+    });
+
+    global.mockLocation({
+      hostname: 'www.youtube.com',
+      pathname: '/watch',
+      href: 'https://www.youtube.com/watch?v=test',
+    });
+  };
+
+  beforeEach(() => {
+    jest.resetModules();
+    delete window.YouTubePlusUpdate;
+    localStorage.clear();
+    sessionStorage.clear();
+
+    setupUpdateDeps();
+    require('../src/update.js');
+  });
+
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
+
+  test('exposes the real API facade on window.YouTubePlusUpdate', () => {
+    expect(window.YouTubePlusUpdate).toBeDefined();
+    expect(typeof window.YouTubePlusUpdate.compareVersions).toBe('function');
+    expect(typeof window.YouTubePlusUpdate.parseMetadata).toBe('function');
+    expect(typeof window.YouTubePlusUpdate.formatTimeAgo).toBe('function');
+    expect(typeof window.YouTubePlusUpdate.loadSettings).toBe('function');
+    expect(typeof window.YouTubePlusUpdate.saveSettings).toBe('function');
+    expect(typeof window.YouTubePlusUpdate.checkForUpdates).toBe('function');
+  });
+
+  test('init wires the update runtime once', () => {
+    jest.useFakeTimers();
+    try {
+      window.YouTubePlusUpdate.init();
+      window.YouTubePlusUpdate.init();
+
+      expect(window.YouTubePlusCleanupManager.registerInterval).toHaveBeenCalledTimes(1);
+      // E7: the session-scoped check interval must be registered exactly once,
+      // on the canonical manager, and must never leak into the page-scope set.
+      expect(window.YouTubePlusCleanupManager.registerInterval).toHaveBeenCalledWith(
+        expect.anything(),
+        { scope: 'session' }
+      );
+      expect(window.YouTubeUtils.cleanupManager.registerListener).toHaveBeenCalled();
+    } finally {
+      jest.clearAllTimers();
+      jest.useRealTimers();
+    }
+  });
+
+  describe('compareVersions (real API)', () => {
+    test('accurately compares semver version strings', () => {
+      const { compareVersions } = window.YouTubePlusUpdate;
+
+      expect(compareVersions('2.5.3', '2.5.2')).toBeGreaterThan(0);
+      expect(compareVersions('2.5.2', '2.5.3')).toBeLessThan(0);
+      expect(compareVersions('2.5.2', '2.5.2')).toBe(0);
+      expect(compareVersions('3.0.0', '2.9.9')).toBeGreaterThan(0);
+      expect(compareVersions('2.5.10', '2.5.9')).toBeGreaterThan(0);
+    });
+
+    test('handles invalid version inputs gracefully', () => {
+      const { compareVersions } = window.YouTubePlusUpdate;
+      expect(compareVersions(null, '2.5.2')).toBe(0);
+      expect(compareVersions('2.5.2', undefined)).toBe(0);
     });
   });
 
-  describe('Time ago formatting', () => {
-    test('should format recent time', () => {
-      const formatTimeAgo = ts => {
-        const diff = Date.now() - ts;
-        const mins = Math.floor(diff / 60000);
-        if (mins < 60) return `${mins}m ago`;
-        const hrs = Math.floor(mins / 60);
-        if (hrs < 24) return `${hrs}h ago`;
-        const days = Math.floor(hrs / 24);
-        return `${days}d ago`;
-      };
+  describe('parseMetadata (real API)', () => {
+    test('extracts version and description from userscript metadata header', () => {
+      const metadata = `
+// ==UserScript==
+// @name         YouTube +
+// @version      2.6.0
+// @description  A powerful YouTube enhancement script
+// @author       diorhc
+// ==/UserScript==
+      `;
+
+      const parsed = window.YouTubePlusUpdate.parseMetadata(metadata);
+      expect(parsed.version).toBe('2.6.0');
+      expect(parsed.description).toBe('A powerful YouTube enhancement script');
+    });
+
+    test('handles malformed or empty metadata gracefully', () => {
+      const emptyParsed = window.YouTubePlusUpdate.parseMetadata('');
+      expect(emptyParsed.version).toBeNull();
+
+      const nullParsed = window.YouTubePlusUpdate.parseMetadata(null);
+      expect(nullParsed.version).toBeNull();
+
+      const invalidParsed = window.YouTubePlusUpdate.parseMetadata('Random text without header');
+      expect(invalidParsed.version).toBeNull();
+    });
+  });
+
+  describe('formatTimeAgo (real API)', () => {
+    test('formats recent timestamp relative to current time', () => {
       const now = Date.now();
-      expect(formatTimeAgo(now - 60000)).toBe('1m ago');
-      expect(formatTimeAgo(now - 3600000)).toBe('1h ago');
-      expect(formatTimeAgo(now - 86400000)).toBe('1d ago');
+      const justNow = window.YouTubePlusUpdate.formatTimeAgo(now - 30 * 1000);
+      expect(typeof justNow).toBe('string');
+      expect(justNow.length).toBeGreaterThan(0);
+
+      const hoursAgo = window.YouTubePlusUpdate.formatTimeAgo(now - 3 * 3600 * 1000);
+      expect(typeof hoursAgo).toBe('string');
+    });
+
+    test('handles zero / null timestamp gracefully', () => {
+      const never = window.YouTubePlusUpdate.formatTimeAgo(0);
+      expect(typeof never).toBe('string');
     });
   });
 
-  describe('Update notification', () => {
-    test('should create update notification element', () => {
-      const el = document.createElement('div');
-      el.className = 'ytp-update-notification';
-      expect(el.className).toBe('ytp-update-notification');
+  describe('Settings persistence (real API)', () => {
+    test('saves and restores update state in localStorage', () => {
+      window.YouTubePlusUpdate.updateState.lastCheck = 1700000000000;
+      window.YouTubePlusUpdate.updateState.lastVersion = '3.0.0';
+      window.YouTubePlusUpdate.updateState.updateAvailable = true;
+
+      window.YouTubePlusUpdate.saveSettings();
+
+      const raw = localStorage.getItem('ytp_update_check_v1');
+      expect(raw).toBeTruthy();
+      const parsed = JSON.parse(raw || '{}');
+      expect(parsed.lastCheck).toBe(1700000000000);
+      expect(parsed.updateAvailable).toBe(true);
+
+      window.YouTubePlusUpdate.updateState.lastCheck = 0;
+      window.YouTubePlusUpdate.updateState.updateAvailable = false;
+
+      window.YouTubePlusUpdate.loadSettings();
+      expect(window.YouTubePlusUpdate.updateState.lastCheck).toBe(1700000000000);
+      expect(window.YouTubePlusUpdate.updateState.updateAvailable).toBe(true);
     });
 
-    test('should contain version info', () => {
-      const el = document.createElement('div');
-      el.textContent = 'Update available: v2.6.0';
-      expect(el.textContent).toContain('2.6.0');
-    });
-
-    test('should have install button', () => {
-      const el = document.createElement('button');
-      el.textContent = 'Install';
-      expect(el.textContent).toBe('Install');
-    });
-  });
-
-  describe('Settings storage', () => {
-    test('should store last check timestamp', () => {
-      const key = 'ytp_update_last_check';
-      const now = Date.now();
-      localStorage.setItem(key, String(now));
-      expect(Number(localStorage.getItem(key))).toBe(now);
-    });
-
-    test('should store dismissed updates', () => {
-      const key = 'ytp_update_dismissed';
-      localStorage.setItem(key, '2.5.2');
-      expect(localStorage.getItem(key)).toBe('2.5.2');
-    });
-
-    test('should handle missing update settings', () => {
-      const lastCheck = Number(localStorage.getItem('ytp_update_last_check') || '0');
-      expect(lastCheck).toBe(0);
-    });
-  });
-
-  describe('Changelog fetching', () => {
-    test('should construct GreasyFork versions URL', () => {
-      const version = '2.6.0';
-      const url = `https://greasyfork.org/ru/scripts/537017-youtube/versions/${version}`;
-      expect(url).toContain('greasyfork.org');
-      expect(url).toContain(version);
-    });
-  });
-
-  describe('Error handling', () => {
-    test('should handle network errors gracefully', async () => {
-      let error = null;
+    test('a check recorded on one host is read by the next host that boots', () => {
+      // Stands in for the GM storage every host shares.
+      const shared = new Map();
+      const previousStore = window.YouTubePlusSettingsStore;
+      window.YouTubePlusSettingsStore = {
+        readGmKey: key => (shared.has(key) ? shared.get(key) : null),
+        writeGmKey: (key, value) => {
+          shared.set(key, value);
+          return true;
+        },
+      };
       try {
-        throw new Error('Network error');
-      } catch (e) {
-        error = e;
+        // Host A records a fresh check under the shared key.
+        const seenAt = Date.now();
+        window.YouTubePlusUpdate.updateState.lastCheck = seenAt;
+        window.YouTubePlusUpdate.saveSettings();
+        expect(shared.has('ytp_update_check_v1')).toBe(true);
+
+        // Host B boots fresh and reads the shared key instead of defaulting to
+        // 0, so its start-up check is skipped by the 24h interval rule.
+        jest.resetModules();
+        delete window.YouTubePlusUpdate;
+        require('../src/update.js');
+        window.YouTubePlusUpdate.loadSettings();
+        expect(window.YouTubePlusUpdate.updateState.lastCheck).toBe(seenAt);
+      } finally {
+        window.YouTubePlusSettingsStore = previousStore;
       }
-      expect(error).toBeTruthy();
-      expect(error.message).toBe('Network error');
+    });
+  });
+
+  describe('checkForUpdates runtime flow (real API)', () => {
+    test('executes update check and handles newer version notification', async () => {
+      const meta = `
+// ==UserScript==
+// @name         YouTube +
+// @version      3.1.0
+// @description  Next release
+// ==/UserScript==
+      `;
+      globalThis.GM_xmlhttpRequest = jest.fn(options => {
+        options.onload?.({
+          status: 200,
+          responseText: meta,
+        });
+      });
+
+      await window.YouTubePlusUpdate.checkForUpdates(true);
+
+      expect(window.YouTubePlusUpdate.updateState.updateAvailable).toBe(true);
+      expect(window.YouTubePlusUpdate.updateState.lastVersion).toBe('3.1.0');
     });
 
-    test('should handle timeout errors', () => {
-      const isTransient = err => err?.message?.includes('timeout') || err?.message?.includes('network');
-      expect(isTransient(new Error('timeout'))).toBe(true);
-      expect(isTransient(new Error('network error'))).toBe(true);
-      expect(isTransient(new Error('parse error'))).toBe(false);
+    test('handles up-to-date and error cases in checkForUpdates', async () => {
+      // Up-to-date case
+      const sameMeta = `
+// ==UserScript==
+// @name YouTube +
+// @version 2.5.3
+// ==/UserScript==
+      `;
+      globalThis.GM_xmlhttpRequest = jest.fn(options => {
+        options.onload?.({ status: 200, responseText: sameMeta });
+      });
+      await window.YouTubePlusUpdate.checkForUpdates(true);
+      expect(window.YouTubePlusUpdate.updateState.updateAvailable).toBe(false);
+
+      // Missing update info case
+      globalThis.GM_xmlhttpRequest = jest.fn(options => {
+        options.onload?.({ status: 200, responseText: '' });
+      });
+      await window.YouTubePlusUpdate.checkForUpdates(true);
+      expect(window.YouTubePlusUpdate.updateState.updateAvailable).toBe(false);
+
+      // Non-forced check when interval has not elapsed
+      window.YouTubePlusUpdate.updateState.lastCheck = Date.now();
+      await window.YouTubePlusUpdate.checkForUpdates(false);
+
+      // Error case with retry
+      globalThis.GM_xmlhttpRequest = jest.fn(options => {
+        options.onerror?.(new Error('network failure'));
+      });
+      await window.YouTubePlusUpdate.checkForUpdates(true);
+    });
+
+    test('interacts with notification buttons after update is found', async () => {
+      const meta = `
+// ==UserScript==
+// @name YouTube +
+// @version 3.1.0
+// ==/UserScript==
+      `;
+      globalThis.GM_xmlhttpRequest = jest.fn(options => {
+        options.onload?.({ status: 200, responseText: meta });
+      });
+      await window.YouTubePlusUpdate.checkForUpdates(true);
+
+      const notification = document.querySelector('.update-notification');
+      expect(notification).toBeTruthy();
+
+      const installBtn = notification.querySelector('#update-install-btn');
+      if (installBtn) {
+        installBtn.click();
+      }
+
+      const dismissBtn = notification.querySelector('#update-dismiss-btn');
+      if (dismissBtn) {
+        dismissBtn.click();
+      }
+    });
+
+    test('addUpdateSettings injects settings card and handles buttons', async () => {
+      const aboutSection = document.createElement('div');
+      aboutSection.className = 'yp-settings-section';
+      aboutSection.setAttribute('data-section', 'about');
+      document.body.appendChild(aboutSection);
+
+      document.dispatchEvent(new CustomEvent('youtube-plus-settings-modal-opened'));
+
+      await new Promise(r => setTimeout(r, 150));
+
+      const card = aboutSection.querySelector('.update-settings-container');
+      expect(card).toBeTruthy();
+
+      const manualCheckBtn = aboutSection.querySelector('#manual-update-check');
+      expect(manualCheckBtn).toBeTruthy();
+      manualCheckBtn.click();
+
+      const openPageBtn = aboutSection.querySelector('#open-update-page');
+      expect(openPageBtn).toBeTruthy();
+      openPageBtn.click();
+    });
+  });
+
+  describe('formatTimeAgo & parseMetadata & loadSettings branches', () => {
+    test('formatTimeAgo handles various time ranges', () => {
+      const now = Date.now();
+      expect(typeof window.YouTubePlusUpdate.formatTimeAgo(now - 2 * 86400000)).toBe('string');
+      expect(typeof window.YouTubePlusUpdate.formatTimeAgo(now - 5 * 60000)).toBe('string');
+      expect(typeof window.YouTubePlusUpdate.formatTimeAgo(now - 1000)).toBe('string');
+      expect(typeof window.YouTubePlusUpdate.formatTimeAgo(0)).toBe('string');
+    });
+
+    test('parseMetadata handles payload variants', () => {
+      const metaWithUrl = `
+// ==UserScript==
+// @name YouTube +
+// @version 2.7.0
+// @downloadURL https://update.greasyfork.org/scripts/537017/YouTube%20%2B.user.js
+// ==/UserScript==
+      `;
+      expect(window.YouTubePlusUpdate.parseMetadata(metaWithUrl).downloadUrl).toContain(
+        'greasyfork.org'
+      );
+      expect(window.YouTubePlusUpdate.parseMetadata({ responseText: metaWithUrl }).version).toBe(
+        '2.7.0'
+      );
+      expect(window.YouTubePlusUpdate.parseMetadata('a'.repeat(100005)).version).toBeNull();
+      expect(
+        window.YouTubePlusUpdate.parseMetadata(
+          '// ==UserScript==\n// @version invalid\n// ==/UserScript=='
+        ).version
+      ).toBeNull();
+    });
+
+    test('loadSettings validates input structure', () => {
+      localStorage.setItem(
+        'youtube_plus_update_check',
+        JSON.stringify({
+          lastCheck: 500,
+          lastVersion: 'v2.8.0',
+          updateAvailable: true,
+          updateDetails: { version: '2.8.0' },
+        })
+      );
+      window.YouTubePlusUpdate.loadSettings();
+      expect(window.YouTubePlusUpdate.updateState.lastVersion).toBe('2.8.0');
+      expect(window.YouTubePlusUpdate.updateState.updateDetails?.version).toBe('2.8.0');
+
+      // Invalid JSON structure
+      localStorage.setItem('youtube_plus_update_check', 'null');
+      window.YouTubePlusUpdate.loadSettings();
+
+      localStorage.setItem(
+        'youtube_plus_update_check',
+        JSON.stringify({
+          lastVersion: 'invalid',
+          updateDetails: { version: 'bad-format' },
+        })
+      );
+      window.YouTubePlusUpdate.loadSettings();
+    });
+
+    test('saveSettings and loadSettings handle storage exceptions gracefully', () => {
+      const origSetItem = window.YouTubeUtils.storage.setItem;
+      window.YouTubeUtils.storage.setItem = () => {
+        throw new Error('quota exceeded');
+      };
+      expect(() => window.YouTubePlusUpdate.saveSettings()).not.toThrow();
+      window.YouTubeUtils.storage.setItem = origSetItem;
+
+      const origGetItem = window.YouTubeUtils.storage.getItem;
+      window.YouTubeUtils.storage.getItem = () => {
+        throw new Error('access denied');
+      };
+      expect(() => window.YouTubePlusUpdate.loadSettings()).not.toThrow();
+      window.YouTubeUtils.storage.getItem = origGetItem;
+    });
+
+    test('compareVersions handles non-string and mismatched inputs', () => {
+      // @ts-expect-error test non-string types
+      expect(window.YouTubePlusUpdate.compareVersions(123, '1.0.0')).toBe(0);
+      // @ts-expect-error test non-string types
+      expect(window.YouTubePlusUpdate.compareVersions('1.0.0', null)).toBe(0);
+    });
+
+    test('handles changelog and fallback metadata retrieval flows', async () => {
+      const meta = '// ==UserScript==\n// @version 3.1.0\n// ==/UserScript==';
+      const changelogHtml =
+        '<div class="version-item"><a href="#">3.1.0</a><div class="version-changelog">Bug fixes\nPerformance improvements</div></div>';
+
+      globalThis.GM_xmlhttpRequest = jest.fn(options => {
+        if (options.url.includes('versions')) {
+          options.onload?.({ status: 200, responseText: changelogHtml });
+        } else {
+          options.onload?.({ status: 200, responseText: meta });
+        }
+      });
+
+      await window.YouTubePlusUpdate.checkForUpdates(true);
+      const notification = document.querySelector('.update-notification');
+      expect(notification).toBeTruthy();
+
+      const closeBtn = notification?.querySelector('#update-close-btn');
+      if (closeBtn) {
+        /** @type {HTMLElement} */ (closeBtn).click();
+      }
+
+      // Fallback metadata flow when primary has no version
+      globalThis.GM_xmlhttpRequest = jest.fn(options => {
+        if (options.url.endsWith('.meta.js')) {
+          options.onload?.({ status: 200, responseText: '// ==UserScript==\n// ==/UserScript==' });
+        } else if (options.url.endsWith('.user.js')) {
+          options.onload?.({
+            status: 200,
+            responseText: '// ==UserScript==\n// @version 3.2.0\n// ==/UserScript==',
+          });
+        } else {
+          options.onload?.({ status: 200, responseText: changelogHtml });
+        }
+      });
+      await window.YouTubePlusUpdate.checkForUpdates(true);
     });
   });
 });

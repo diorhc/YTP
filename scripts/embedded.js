@@ -1,0 +1,157 @@
+/**
+ * Embed Translations into Dev Build
+ * Usage: npm run dev:embed (runs node scripts/embedded.js after npm run build)
+ */
+
+/* Allow console usage in this build/tool script. These logs are for developer output. */
+
+const fs = require('fs');
+const path = require('path');
+
+const projectRoot = path.join(__dirname, '..');
+const localesDir = path.join(projectRoot, 'locales');
+const buildFiles = [
+  path.join(projectRoot, 'youtube.user.js'),
+  ...(fs.existsSync(path.join(projectRoot, 'youtube.user.unoptimized.js'))
+    ? [path.join(projectRoot, 'youtube.user.unoptimized.js')]
+    : []),
+];
+
+// Read all locale files
+const locales = [
+  'en',
+  'ru',
+  'ko',
+  'fr',
+  'nl',
+  'zh-CN',
+  'zh-TW',
+  'ja',
+  'tr',
+  'de',
+  'es',
+  'ar',
+  'hi',
+  'id',
+  'it',
+  'pl',
+  'pt',
+  'uk',
+  'vi',
+  'uz',
+  'kk',
+  'ky',
+  'be',
+  'bg',
+  'az',
+];
+/** @type {Record<string, Record<string, string>>} */
+const translations = {};
+
+console.log('📦 Embedding translations into build...\n');
+
+locales.forEach(lang => {
+  const filePath = path.join(localesDir, `${lang}.json`);
+  try {
+    const content = fs.readFileSync(filePath, 'utf8');
+    translations[lang] = JSON.parse(content);
+    console.log(`✓ Loaded ${lang}.json (${Object.keys(translations[lang]).length} keys)`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`✗ Failed to load ${lang}.json:`, message);
+  }
+});
+
+// Read and patch each dev build file
+for (const buildFile of buildFiles) {
+  if (!fs.existsSync(buildFile)) {
+    console.warn(`⚠️ Build file not found, skipping: ${buildFile}`);
+    continue;
+  }
+
+  let buildContent = fs.readFileSync(buildFile, 'utf8');
+
+  // Check if translations are already embedded and remove old versions
+  const embeddedMarker = '// Embedded translations for offline/immediate use';
+  if (buildContent.includes(embeddedMarker)) {
+    console.log(
+      `⚠️  Translations already embedded in ${path.basename(buildFile)}, removing old version...`
+    );
+
+    // Find and remove each embedded translation block
+    let startIndex;
+    while ((startIndex = buildContent.indexOf(embeddedMarker)) !== -1) {
+      // Find the end of the embedded translations line (ends with };)
+      const endMarker = '};';
+      let endIndex = buildContent.indexOf(endMarker, startIndex);
+
+      if (endIndex !== -1) {
+        // Move past the }; and any trailing newlines
+        endIndex += endMarker.length;
+        while (
+          endIndex < buildContent.length &&
+          (buildContent[endIndex] === '\n' || buildContent[endIndex] === '\r')
+        ) {
+          endIndex++;
+        }
+
+        // Remove this embedded translation block
+        buildContent = buildContent.slice(0, startIndex) + buildContent.slice(endIndex);
+      } else {
+        // Safety: if we can't find the end, break to avoid infinite loop
+        console.warn('⚠️  Could not find end of embedded translations block');
+        break;
+      }
+    }
+  }
+
+  // Create the embedded translations code
+  const embeddedCode = `
+// Embedded translations for offline/immediate use
+window.YouTubePlusEmbeddedTranslations = ${JSON.stringify(translations, null, 0)};
+`;
+
+  // Find the i18n module section and inject the embedded translations before it.
+  // Keep this resilient to build-time constant folding/minification.
+  const i18nMarkers = [
+    'const GITHUB_CONFIG = {',
+    'const GITHUB_CONFIG_owner = ',
+    'window.YouTubePlusI18n =',
+    'const CDN_URLS = {',
+  ];
+  let i18nLoaderStart = -1;
+  let markerUsed = '';
+  for (const marker of i18nMarkers) {
+    const idx = buildContent.indexOf(marker);
+    if (idx !== -1) {
+      i18nLoaderStart = idx;
+      markerUsed = marker;
+      break;
+    }
+  }
+
+  if (i18nLoaderStart === -1) {
+    console.error('✗ Could not find i18n module section in build file');
+    console.error(`   Tried markers: ${i18nMarkers.join(' | ')}`);
+    process.exit(1);
+  }
+
+  // Go back to find the start of this IIFE/module (the (function () { before GITHUB_CONFIG)
+  const functionStart = buildContent.lastIndexOf('(function () {', i18nLoaderStart);
+  if (functionStart !== -1 && i18nLoaderStart - functionStart < 100) {
+    i18nLoaderStart = functionStart;
+  }
+
+  // Insert the embedded translations before the i18n-loader
+  buildContent = `${buildContent.slice(0, i18nLoaderStart)}${embeddedCode}\n${buildContent.slice(i18nLoaderStart)}`;
+
+  // Write back to file
+  fs.writeFileSync(buildFile, buildContent, 'utf8');
+
+  console.log(
+    `\n✅ Successfully embedded translations into ${path.basename(buildFile)} (marker: ${markerUsed})`
+  );
+}
+
+console.log(`\n📊 Total translations embedded: ${locales.length} languages`);
+console.log('🔄 The userscript(s) will now use embedded translations instead of CDN');

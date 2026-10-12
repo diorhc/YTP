@@ -1,11 +1,14 @@
 blank_issues_enabled: false
 contact_links:
-  - name: 💬 GitHub Discussions
-    url: https://github.com/diorhc/YTP/discussions
-    about: Ask questions and discuss ideas with the community
-  - name: 📖 Documentation
+  - name: Ask a question
+    url: https://github.com/diorhc/YTP/discussions/categories/q-a
+    about: Get help with installation, settings, hotkeys or compatibility.
+  - name: Discuss an idea
+    url: https://github.com/diorhc/YTP/discussions/categories/ideas
+    about: Explore a proposal and get feedback before opening a feature request.
+  - name: Read the documentation
     url: https://github.com/diorhc/YTP#readme
-    about: Read the project documentation
-  - name: 🔒 Security Issue
+    about: Learn about features, installation and keyboard shortcuts.
+  - name: Report a security vulnerability
     url: https://github.com/diorhc/YTP/security/advisories/new
-    about: Report security vulnerabilities privately
+    about: Report privately through a GitHub security advisory. See SECURITY.md for the project's process.

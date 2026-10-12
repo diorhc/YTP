@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1100" height="82" viewBox="0 0 1100 82" role="img" aria-labelledby="title desc">
+  <title id="title">YouTube+ — Vision and Classic</title>
+  <desc id="desc">YouTube+ wordmark with a red plus. Vision and Classic styles, with Vision highlighted. Transparent background; dark appearance.</desc>
+  <g font-family="Arial,Helvetica,sans-serif">
+    <text x="14" y="59" fill="#f0f6fc" font-size="48" font-weight="700" letter-spacing="-2.4">YouTube<tspan fill="#ff526a" font-size="46" letter-spacing="-1">+</tspan></text>
+    <g transform="translate(807 17)">
+      <rect x="0.75" y="0.75" width="276.5" height="47.5" rx="24" fill="#151b23" stroke="#3d444d" stroke-width="1.5"/>
+      <rect x="4.5" y="4.5" width="130" height="40" rx="20" fill="#f0f6fc"/>
+      <text x="69.5" y="29" fill="#0d1117" text-anchor="middle" font-size="12" font-weight="700" letter-spacing="1.2">VISION</text>
+      <text x="207.5" y="29" fill="#b1bac4" text-anchor="middle" font-size="12" font-weight="700" letter-spacing="1.2">CLASSIC</text>
+    </g>
+  </g>
+</svg>

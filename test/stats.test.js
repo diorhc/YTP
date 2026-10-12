@@ -1,28 +1,20 @@
 /**
  * @jest-environment jsdom
+ *
+ * Tests the real stats.js module surface through window.YouTubeStats / window.YouTubePlusStats.
+ * Exercises lifecycle initialization, teardown, and version verification on the real exported API.
  */
 
-describe('Stats Module', () => {
-  /** @param {() => void} fn @param {number} wait */
-  const createDebounce = (fn, wait) => {
-    /** @type {ReturnType<typeof setTimeout> | null} */
-    let timeout = null;
-    const debounced = () => {
-      if (timeout !== null) clearTimeout(timeout);
-      timeout = setTimeout(() => fn(), wait);
-    };
-    debounced.cancel = () => {
-      if (timeout !== null) clearTimeout(timeout);
-    };
-    return debounced;
-  };
-
-  beforeEach(() => {
-    // Reset DOM
+describe('Stats Module (real API)', () => {
+  const setupStatsDeps = () => {
     document.body.innerHTML = '';
     document.head.innerHTML = '';
 
-    // Use the global mockLocation helper from setup.js
+    delete window.__ytpVideoStatsModuleInit;
+    delete window.__ytpChannelStatsModuleInit;
+    delete window.YouTubeStats;
+    delete window.YouTubePlusStats;
+
     mockLocation({
       href: 'https://www.youtube.com/watch?v=dQw4w9WgXcQ',
       hostname: 'www.youtube.com',
@@ -30,303 +22,408 @@ describe('Stats Module', () => {
       search: '?v=dQw4w9WgXcQ',
     });
 
-    // Clear localStorage for clean state
     localStorage.clear();
 
-    // Mock YouTubeUtils
+    // Canonical video-ID helpers come from the real utils module.
+    require('../src/utils.js');
+    const canonUtils = window.YouTubeUtils;
+
     Object.defineProperty(window, 'YouTubeUtils', {
       configurable: true,
       writable: true,
       value: {
-        StyleManager: {
-          add: jest.fn(),
-          remove: jest.fn(),
-        },
+        StyleManager: { add: jest.fn(), remove: jest.fn() },
+        getVideoIdFromUrl: canonUtils.getVideoIdFromUrl,
+        getVideoIdFromLocation: canonUtils.getVideoIdFromLocation,
         logError: jest.fn(),
-        debounce: createDebounce,
+        debounce: fn => fn,
+        logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+        $: jest.fn((sel, ctx = document) => (ctx || document).querySelector(sel)),
+        $$: jest.fn((sel, ctx = document) => Array.from((ctx || document).querySelectorAll(sel))),
+        byId: jest.fn(id => document.getElementById(id)),
+        t: jest.fn(key => key || ''),
+        loadFeatureEnabled: jest.fn(() => true),
+        SETTINGS_KEY: 'youtube_plus_settings',
+        createWithErrorBoundary: jest.fn(() => fn => fn),
+        logSuppressed: jest.fn(),
+        registerListenerSafe: (target, event, handler, options) => {
+          const cm = window.YouTubeUtils?.cleanupManager;
+          if (cm && typeof cm.registerListener === 'function') {
+            return cm.registerListener(target, event, handler, options);
+          }
+          if (target && typeof target.addEventListener === 'function') {
+            target.addEventListener(event, handler, options);
+          }
+          return null;
+        },
+        onDomReady: cb => cb(),
+        getRoute: () => {
+          const p = window.location.pathname || '/';
+          if (p === '/watch') return 'watch';
+          if (p.startsWith('/shorts')) return 'shorts';
+          if (/^\/@|\/channel\/|\/c\/|\/user\//.test(p)) return 'channel';
+          return 'other';
+        },
+        whenRelevant: jest.fn(({ onEnter }) => onEnter()),
+        isSettingsModalOpen: jest.fn(() => false),
+        createRetryScheduler: jest.fn(() => ({ stop: jest.fn() })),
+        createVisibilityAwareInterval: jest.fn(() => ({
+          stop: jest.fn(),
+          pause: jest.fn(),
+          resume: jest.fn(),
+          active: true,
+        })),
+        cleanupManager: {
+          registerInterval: jest.fn(id => id),
+          registerTimeout: jest.fn(id => id),
+          registerObserver: jest.fn(obs => obs),
+          registerListener: jest.fn((target, event, handler) => {
+            target.addEventListener(event, handler);
+            return { dispose: () => target.removeEventListener(event, handler) };
+          }),
+          register: jest.fn(),
+          cleanup: jest.fn(),
+          registerAnimationFrame: jest.fn(id => id),
+        },
+        storage: {
+          get: (key, def = null) => {
+            const raw = localStorage.getItem(key);
+            return raw ? JSON.parse(raw) : def;
+          },
+          set: (key, val) => {
+            localStorage.setItem(key, JSON.stringify(val));
+            return true;
+          },
+          remove: key => localStorage.removeItem(key),
+          has: key => localStorage.getItem(key) !== null,
+          getItem: key => localStorage.getItem(key),
+          setItem: (key, val) => {
+            localStorage.setItem(key, val);
+            return true;
+          },
+          removeItem: key => localStorage.removeItem(key),
+        },
+        renderTemplateClone: jest.fn((el, html) => {
+          if (el) el.innerHTML = html;
+        }),
+        setSafeHTML: jest.fn((el, html) => {
+          if (el) el.innerHTML = html;
+        }),
       },
     });
-  });
 
-  describe('Video URL Detection', () => {
-    test('should detect regular video URL', () => {
-      // Test URL parsing directly instead of relying on window.location
-      const testUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
-      const videoId = testUrl.match(/[?&]v=([^&]+)/)?.[1];
-
-      expect(testUrl).toContain('watch');
-      expect(videoId).toBe('dQw4w9WgXcQ');
-    });
-
-    test('should detect shorts URL', () => {
-      // Test URL parsing directly
-      const testUrl = 'https://www.youtube.com/shorts/dQw4w9WgXcQ';
-
-      expect(testUrl).toContain('/shorts/');
-    });
-
-    test('should handle invalid video IDs', () => {
-      // Invalid video ID should not match the pattern
-      const invalidId = 'invalid!@#';
-      expect(/^[a-zA-Z0-9_-]{11}$/.test(invalidId)).toBe(false);
-    });
-
-    test('should validate video ID length', () => {
-      const validId = 'dQw4w9WgXcQ'; // 11 characters
-      const invalidId = 'short'; // too short
-
-      expect(/^[a-zA-Z0-9_-]{11}$/.test(validId)).toBe(true);
-      expect(/^[a-zA-Z0-9_-]{11}$/.test(invalidId)).toBe(false);
-    });
-  });
-
-  describe('Channel Identifier Detection', () => {
-    test('should detect channel ID format', () => {
-      // Test URL parsing directly
-      const testUrl = 'https://www.youtube.com/channel/UCuAXFkgsw1L7xaCfnd5JJOw';
-
-      expect(testUrl).toContain('/channel/');
-    });
-
-    test('should detect @handle format', () => {
-      // Test URL parsing directly
-      const testUrl = 'https://www.youtube.com/@YouTube';
-
-      expect(testUrl).toContain('/@');
-    });
-
-    test('should validate channel identifier', () => {
-      const validId = 'UCuAXFkgsw1L7xaCfnd5JJOw';
-      const invalidId = 'invalid!@#$%';
-
-      expect(/^[a-zA-Z0-9_-]+$/.test(validId)).toBe(true);
-      expect(/^[a-zA-Z0-9_-]+$/.test(invalidId)).toBe(false);
-    });
-  });
-
-  describe('Rate Limiter', () => {
-    test('should allow requests within limit', () => {
-      /** @type {{ requests: Map<string, number[]>, maxRequests: number, timeWindow: number, canRequest: (key: string) => boolean }} */
-      const rateLimiter = {
-        requests: new Map(),
-        maxRequests: 10,
-        timeWindow: 60000,
-        canRequest: function (key) {
-          const now = Date.now();
-          const requests = this.requests.get(key) || [];
-          const recentRequests = requests.filter(time => now - time < this.timeWindow);
-
-          if (recentRequests.length >= this.maxRequests) {
-            return false;
-          }
-
-          recentRequests.push(now);
-          this.requests.set(key, recentRequests);
+    const settingsStoreValues = {};
+    Object.defineProperty(window, 'YouTubePlusSettingsStore', {
+      configurable: true,
+      writable: true,
+      value: {
+        get: jest.fn(key => settingsStoreValues[key]),
+        set: jest.fn((key, value) => {
+          settingsStoreValues[key] = value;
           return true;
-        },
-      };
-
-      // First request should be allowed
-      expect(rateLimiter.canRequest('test')).toBe(true);
-
-      // Multiple requests under limit should be allowed
-      for (let i = 0; i < 5; i++) {
-        expect(rateLimiter.canRequest('test')).toBe(true);
-      }
+        }),
+        affectsModule: jest.fn(() => true),
+      },
     });
 
-    test('should block requests exceeding limit', () => {
-      /** @type {{ requests: Map<string, number[]>, maxRequests: number, timeWindow: number, canRequest: (key: string) => boolean }} */
-      const rateLimiter = {
-        requests: new Map(),
-        maxRequests: 3,
-        timeWindow: 60000,
-        canRequest: function (key) {
-          const now = Date.now();
-          const requests = this.requests.get(key) || [];
-          const recentRequests = requests.filter(time => now - time < this.timeWindow);
-
-          if (recentRequests.length >= this.maxRequests) {
-            return false;
-          }
-
-          recentRequests.push(now);
-          this.requests.set(key, recentRequests);
-          return true;
+    const featureRegistryMap = new Map();
+    Object.defineProperty(window, 'YouTubePlusFeatureRegistry', {
+      configurable: true,
+      writable: true,
+      value: {
+        register: jest.fn(desc => featureRegistryMap.set(desc.id, desc)),
+        get: jest.fn(id => featureRegistryMap.get(id)),
+        has: jest.fn(id => featureRegistryMap.has(id)),
+        _map: featureRegistryMap,
+        // Minimal route-aware host: start/stop per def.routes so the module
+        // wires its real init exactly as the production lifecycle does.
+        FeatureLifecycle: {
+          define: jest.fn(def => {
+            if (!def || typeof def.start !== 'function') return null;
+            const makeCtx = () => ({
+              style: jest.fn(),
+              listen: jest.fn(() => jest.fn()),
+              own: el => el,
+              onDispose: jest.fn(),
+              scope: () => makeCtx(),
+              dispose: jest.fn(),
+            });
+            const ctx = makeCtx();
+            let running = false;
+            const matches = () => {
+              const route = window.YouTubeUtils.getRoute();
+              return !def.routes?.length || def.routes.includes(route);
+            };
+            return {
+              sync() {
+                const should = matches();
+                if (should && !running) {
+                  running = true;
+                  def.start(ctx);
+                } else if (!should && running) {
+                  running = false;
+                  def.stop?.();
+                }
+              },
+              isRunning: () => running,
+              restart() {
+                def.stop?.();
+                running = false;
+                this.sync();
+              },
+            };
+          }),
+          _reset: jest.fn(),
         },
-      };
-
-      // Allow up to maxRequests
-      expect(rateLimiter.canRequest('test')).toBe(true);
-      expect(rateLimiter.canRequest('test')).toBe(true);
-      expect(rateLimiter.canRequest('test')).toBe(true);
-
-      // Should block after limit
-      expect(rateLimiter.canRequest('test')).toBe(false);
+      },
     });
 
-    test('should track requests per key', () => {
-      /** @type {{ requests: Map<string, number[]>, maxRequests: number, timeWindow: number, canRequest: (key: string) => boolean }} */
-      const rateLimiter = {
-        requests: new Map(),
-        maxRequests: 2,
-        timeWindow: 60000,
-        canRequest: function (key) {
-          const now = Date.now();
-          const requests = this.requests.get(key) || [];
-          const recentRequests = requests.filter(time => now - time < this.timeWindow);
-
-          if (recentRequests.length >= this.maxRequests) {
-            return false;
-          }
-
-          recentRequests.push(now);
-          this.requests.set(key, recentRequests);
-          return true;
-        },
-      };
-
-      // Different keys should have independent limits
-      expect(rateLimiter.canRequest('key1')).toBe(true);
-      expect(rateLimiter.canRequest('key1')).toBe(true);
-      expect(rateLimiter.canRequest('key1')).toBe(false);
-
-      expect(rateLimiter.canRequest('key2')).toBe(true);
-      expect(rateLimiter.canRequest('key2')).toBe(true);
-      expect(rateLimiter.canRequest('key2')).toBe(false);
+    Object.defineProperty(window, 'YouTubePlusMutationCoordinator', {
+      configurable: true,
+      writable: true,
+      value: {
+        subscribeRoot: jest.fn(() => 'sub-id'),
+        unsubscribe: jest.fn(),
+        watchTarget: jest.fn(() => 'watch-id'),
+        unwatch: jest.fn(),
+      },
     });
+  };
+
+  beforeEach(() => {
+    jest.resetModules();
+    setupStatsDeps();
+    require('../src/stats.js');
+    // The settings-modal listener is the off-route path that initializes the
+    // channel scope; dispatch it so its API is available on the watch route.
+    document.dispatchEvent(new Event('youtube-plus-settings-modal-opened'));
   });
 
-  describe('URL Validation', () => {
-    test('should validate YouTube domain', () => {
-      const validUrl = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
-      const invalidUrl = 'https://evil.com/watch?v=dQw4w9WgXcQ';
+  afterEach(() => {
+    jest.restoreAllMocks();
+  });
 
-      expect(validUrl.includes('youtube.com')).toBe(true);
-      expect(invalidUrl.includes('youtube.com')).toBe(false);
+  test('real stats module exposes window.YouTubeStats and window.YouTubePlusStats', () => {
+    expect(window.YouTubeStats).toBeDefined();
+    expect(window.YouTubePlusStats).toBe(window.YouTubeStats);
+    expect(typeof window.YouTubeStats.init).toBe('function');
+    expect(typeof window.YouTubeStats.cleanup).toBe('function');
+  });
+
+  test('cleanup runs safely without exceptions', () => {
+    expect(() => {
+      window.YouTubeStats.cleanup();
+    }).not.toThrow();
+  });
+
+  test('init initializes stats overlay without errors', () => {
+    expect(() => {
+      window.YouTubeStats.init();
+    }).not.toThrow();
+  });
+
+  // Load-matrix: the module resolves its escapeHtml binding at require time
+  // (`YouTubeSafeDOM?.escapeHTML || YouTubeUtils?.escapeHTML`). The default
+  // harness above covers the safe-dom-absent outcome; this covers the
+  // safe-dom-present (preferred) outcome.
+  test('loads when YouTubeSafeDOM provides the preferred escapeHTML', () => {
+    jest.resetModules();
+    setupStatsDeps();
+    Object.defineProperty(window, 'YouTubeSafeDOM', {
+      configurable: true,
+      writable: true,
+      value: { escapeHTML: s => `sd:${s}` },
+    });
+    expect(() => require('../src/stats.js')).not.toThrow();
+    document.dispatchEvent(new Event('youtube-plus-settings-modal-opened'));
+    expect(typeof window.YouTubeStats.init).toBe('function');
+  });
+
+  // Booting with the settings modal open is the path real users hit when the
+  // modal opens before the idle callback: both stats scopes initialize
+  // immediately. The checkbox belongs to the modal's general handler now.
+  test('modal open at boot initializes both scopes without owning the checkbox', () => {
+    jest.resetModules();
+    setupStatsDeps();
+    window.YouTubeUtils.isSettingsModalOpen = jest.fn(() => true);
+
+    const checkbox = document.createElement('input');
+    checkbox.id = 'yp-setting-enableStatsButton';
+    document.body.appendChild(checkbox);
+
+    require('../src/stats.js');
+    document.dispatchEvent(new Event('youtube-plus-settings-modal-opened'));
+
+    // Both scopes initialize: video stats through its watch-route start,
+    // channel stats through the settings-modal listener (its route is off).
+    expect(window.__ytpVideoStatsModuleInit).toBe(true);
+    expect(window.__ytpChannelStatsModuleInit).toBe(true);
+    const store = window.YouTubePlusSettingsStore;
+    expect(store.set).not.toHaveBeenCalled();
+
+    // The module attaches no handler of its own; the modal's general handler
+    // is the single writer.
+    checkbox.checked = false;
+    checkbox.dispatchEvent(new Event('change'));
+    expect(checkbox.dataset.handlerAttached).toBeUndefined();
+    expect(store.set).not.toHaveBeenCalledWith('enableStatsButton', false);
+  });
+
+  describe('Vision Dock Stats Integration', () => {
+    test('exports openStatsModal and initVideoStats to window.YouTubePlusStats', () => {
+      expect(typeof window.YouTubePlusStats.openStatsModal).toBe('function');
+      expect(typeof window.YouTubePlusStats.initVideoStats).toBe('function');
     });
 
-    test('should require HTTPS protocol', () => {
-      const httpsUrl = 'https://stats.afkarxyz.fun';
-      const httpUrl = 'http://stats.afkarxyz.fun';
+    test('registers stats in FeatureRegistry and mountDock creates button and triggers modal', () => {
+      const statsDesc = window.YouTubePlusFeatureRegistry.get('stats');
+      expect(statsDesc).toBeDefined();
+      expect(statsDesc.id).toBe('stats');
 
-      /** @param {string} url */
-      const isHttps = url => {
-        try {
-          return new URL(url).protocol === 'https:';
-        } catch {
-          return false;
+      const player = document.createElement('div');
+      const dock = document.createElement('div');
+      document.body.appendChild(player);
+      document.body.appendChild(dock);
+
+      statsDesc.mountDock(player, dock);
+
+      const btn = dock.querySelector('#yp-vision-stats-btn');
+      expect(btn).not.toBeNull();
+      expect(btn.classList.contains('vision-dock-btn')).toBe(true);
+      expect(btn.classList.contains('yp-vision-stats-btn')).toBe(true);
+
+      // Mock openStatsModal to verify click trigger
+      const openModalSpy = jest.fn();
+      window.YouTubePlusStats.openStatsModal = openModalSpy;
+
+      btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+
+      expect(openModalSpy).toHaveBeenCalledWith('video', 'dQw4w9WgXcQ');
+    });
+
+    test('exports canonical DESCRIPTOR on window.YouTubePlusStats with required contract', () => {
+      const desc = window.YouTubePlusStats.DESCRIPTOR;
+      expect(desc).toBeDefined();
+      expect(desc.id).toBe('stats');
+      expect(desc.titleKey).toBe('videoStats');
+      expect(typeof desc.iconSVG).toBe('string');
+      expect(typeof desc.command).toBe('function');
+      expect(typeof desc.mountDock).toBe('function');
+    });
+
+    test('mountDock is idempotent and does not create duplicate buttons', () => {
+      const statsDesc = window.YouTubePlusFeatureRegistry.get('stats');
+      const player = document.createElement('div');
+      const dock = document.createElement('div');
+
+      statsDesc.mountDock(player, dock);
+      statsDesc.mountDock(player, dock);
+
+      const buttons = dock.querySelectorAll('#yp-vision-stats-btn');
+      expect(buttons.length).toBe(1);
+    });
+
+    test('U05: stats click survives sweep + re-mount; dispose releases it', () => {
+      const statsDesc = window.YouTubePlusFeatureRegistry.get('stats');
+      const player = document.createElement('div');
+      const dock = document.createElement('div');
+      const cm = window.YouTubePlusCleanupManager;
+      const countEntries = () => {
+        let n = 0;
+        for (const e of cm.listeners.values()) {
+          if (e.target === dock.querySelector('#yp-vision-stats-btn')) n += 1;
         }
+        return n;
       };
 
-      expect(isHttps(httpsUrl)).toBe(true);
-      expect(isHttps(httpUrl)).toBe(false);
+      let dispose = statsDesc.mountDock(player, dock);
+      expect(typeof dispose).toBe('function');
+      expect(countEntries()).toBe(1);
+
+      // Direct re-mount: stable closure dedups, no stacking.
+      dispose = statsDesc.mountDock(player, dock);
+      expect(countEntries()).toBe(1);
+
+      cm.cleanup();
+      expect(countEntries()).toBe(0);
+      dispose = statsDesc.mountDock(player, dock);
+      expect(countEntries()).toBe(1);
+      dispose();
+      expect(countEntries()).toBe(0);
     });
 
-    test('should validate allowed domains', () => {
-      const allowedDomains = ['stats.afkarxyz.fun', 'livecounts.io', 'api.livecounts.io'];
+    test('mountDock cleans up button when the stats button flag is off', () => {
+      window.YouTubePlusSettingsStore.set('enableStatsButton', false);
+      const statsDesc = window.YouTubePlusFeatureRegistry.get('stats');
+      const player = document.createElement('div');
+      const dock = document.createElement('div');
+      const existingBtn = document.createElement('button');
+      existingBtn.id = 'yp-vision-stats-btn';
+      dock.appendChild(existingBtn);
 
-      /** @param {string} url */
-      const validateDomain = url => {
-        try {
-          const parsed = new URL(url);
-          return allowedDomains.includes(parsed.hostname);
-        } catch {
-          return false;
-        }
-      };
+      statsDesc.mountDock(player, dock);
 
-      expect(validateDomain('https://stats.afkarxyz.fun')).toBe(true);
-      expect(validateDomain('https://livecounts.io')).toBe(true);
-      expect(validateDomain('https://evil.com')).toBe(false);
-    });
-  });
-
-  describe('Settings Management', () => {
-    test('should load settings from localStorage', () => {
-      localStorage.setItem('youtube_stats_button_enabled', 'true');
-
-      const enabled = localStorage.getItem('youtube_stats_button_enabled') !== 'false';
-      expect(enabled).toBe(true);
+      expect(dock.querySelector('#yp-vision-stats-btn')).toBeNull();
     });
 
-    test('should handle missing settings', () => {
-      localStorage.removeItem('youtube_stats_button_enabled');
+    test('command executes and returns true on watch route', () => {
+      const statsDesc = window.YouTubePlusFeatureRegistry.get('stats');
+      const openModalSpy = jest.fn();
+      window.YouTubePlusStats.openStatsModal = openModalSpy;
 
-      const enabled = localStorage.getItem('youtube_stats_button_enabled') !== 'false';
-      expect(enabled).toBe(true); // Default to enabled
+      const result = statsDesc.command();
+      expect(result).toBe(true);
+      expect(openModalSpy).toHaveBeenCalledWith('video', 'dQw4w9WgXcQ');
     });
 
-    test('should handle disabled state', () => {
-      localStorage.setItem('youtube_stats_button_enabled', 'false');
+    test('ensureShortsStatsButton mounts .shortsStats in Shorts action bar instead of masthead', () => {
+      global.mockLocation({
+        hostname: 'www.youtube.com',
+        pathname: '/shorts/shortId456',
+        href: 'https://www.youtube.com/shorts/shortId456',
+      });
 
-      const enabled = localStorage.getItem('youtube_stats_button_enabled') !== 'false';
-      expect(enabled).toBe(false);
-    });
-  });
+      const reel = document.createElement('ytd-reel-video-renderer');
+      reel.setAttribute('is-active', '');
+      const actions = document.createElement('div');
+      actions.id = 'actions';
+      const dlBtn = document.createElement('button');
+      dlBtn.className = 'yp-shorts-download';
+      const likeVm = document.createElement('like-button-view-model');
+      actions.appendChild(dlBtn);
+      actions.appendChild(likeVm);
+      reel.appendChild(actions);
+      document.body.appendChild(reel);
 
-  describe('Error Handling', () => {
-    test('should handle invalid JSON parsing', () => {
-      const invalidJson = '{invalid json}';
+      window.YouTubePlusStats.ensureShortsStatsButton();
 
-      let result = null;
-      try {
-        result = JSON.parse(invalidJson);
-      } catch (error) {
-        expect(error).toBeInstanceOf(SyntaxError);
-      }
+      const statsBtn = actions.querySelector('#yp-stats-universal-icon');
+      expect(statsBtn).not.toBeNull();
+      expect(statsBtn.classList.contains('shortsStats')).toBe(true);
+      expect(dlBtn.nextElementSibling).toBe(statsBtn);
 
-      expect(result).toBeNull();
-    });
+      // Also works when download button is absent and only like-button-view-model is present
+      dlBtn.remove();
+      statsBtn.remove();
+      window.YouTubePlusStats.ensureShortsStatsButton();
+      const statsBtnFallback = actions.querySelector('#yp-stats-universal-icon');
+      expect(statsBtnFallback).not.toBeNull();
+      expect(statsBtnFallback.classList.contains('shortsStats')).toBe(true);
 
-    test('should handle fetch errors gracefully', async () => {
-      global.fetch = jest.fn(() => Promise.reject(new Error('Network error')));
-
-      try {
-        await fetch('https://www.youtube.com/test');
-      } catch (error) {
-        if (!(error instanceof Error)) throw new Error('Expected Error instance');
-        expect(error.message).toBe('Network error');
-      }
-    });
-
-    test('should handle timeout errors', async () => {
-      global.fetch = jest.fn(
-        () =>
-          new Promise((_resolve, reject) => {
-            setTimeout(() => reject(new Error('Timeout')), 100);
-          })
-      );
-
-      try {
-        await fetch('https://www.youtube.com/test');
-      } catch (error) {
-        if (!(error instanceof Error)) throw new Error('Expected Error instance');
-        expect(error.message).toBe('Timeout');
-      }
-    });
-  });
-
-  describe('Performance Optimizations', () => {
-    test('should use debouncing for URL changes', done => {
-      let callCount = 0;
-
-      const debounce = createDebounce;
-
-      const debouncedFn = debounce(() => {
-        callCount++;
-      }, 100);
-
-      // Call multiple times quickly
-      debouncedFn();
-      debouncedFn();
-      debouncedFn();
-
-      // Should only execute once after delay
-      setTimeout(() => {
-        expect(callCount).toBe(1);
-        done();
-      }, 150);
+      // Navigating to a non-video page (e.g. /feed/subscriptions) removes the icon and never mounts in masthead
+      const masthead = document.createElement('ytd-masthead');
+      const end = document.createElement('div');
+      end.id = 'end';
+      masthead.appendChild(end);
+      document.body.appendChild(masthead);
+      global.mockLocation({
+        hostname: 'www.youtube.com',
+        pathname: '/feed/subscriptions',
+        href: 'https://www.youtube.com/feed/subscriptions',
+      });
+      window.YouTubePlusStats.ensureShortsStatsButton();
+      expect(document.getElementById('yp-stats-universal-icon')).toBeNull();
+      expect(masthead.querySelector('#yp-stats-universal-icon')).toBeNull();
     });
   });
 });

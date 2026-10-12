@@ -1,198 +1,77 @@
-# Security Policy
+# Security and privacy
 
-## Supported Versions
+YouTube+ runs as a userscript on youtube.com and music.youtube.com. Some
+features contact external services; every contacted host is listed below with
+the data it receives and the setting that controls it.
 
-We actively maintain security updates for the following versions:
+## Reporting a vulnerability
 
-| Version | Supported          |
-| ------- | ------------------ |
-| Latest  | :white_check_mark: |
-| < 1.0   | :x:                |
+Report privately through a
+[GitHub security advisory](https://github.com/diorhc/YTP/security/advisories/new),
+or contact the maintainer before publishing details or an exploitable
+demonstration against the deployed backend. Never put service-role credentials
+in source, logs or screenshots.
 
-## Security Features
+## Runtime boundaries
 
-### 1. Content Security Policy (CSP)
+- Dynamic HTML is built with YouTubeSafeDOM or DOM node APIs. In the
+  userscript realm safe-dom owns the only Trusted Types policy,
+  `youtubeplus#sanitize`, which sanitizes at the sink. The Tabview core runs
+  in the page realm, where safe-dom is absent; it creates one private policy,
+  `ytplus-tabview`, used only for its own static tab markup. Neither policy
+  is a default policy or published on `window`.
+- Community data (feature suggestions, votes, attached images) lives in the
+  deployed Supabase project. The client embeds no Supabase key: requests go
+  through the author's proxy vote.diorhc.space, which attaches the public anon
+  key itself. Authorization and quotas belong on the deployed server.
+- The owner secret lives in the userscript manager's GM storage. A legacy
+  plaintext copy in origin localStorage is migrated (read, rewrite into GM
+  storage, verify, delete). Owner writes send the secret only as an RPC
+  argument through GM_xmlhttpRequest; writes and own-vote reads are refused
+  without that isolated transport.
+- The `@require`d runtime dependency browser-id3-writer is pinned by version
+  and SHA-256 in the userscript header.
+- Locale dictionaries come from GitHub raw or jsDelivr and are verified
+  against pinned SHA-256 digests when WebCrypto is available. Unverified
+  payloads serve the current session only and fall back to the English
+  dictionary embedded at build time.
 
-- TrustedTypes policy implementation for safe HTML handling
-- Strict validation of all user inputs and external data
-- Sanitization utilities for XSS prevention
+## Network use
 
-### 2. Input Validation
+Requests expose ordinary network metadata, including the request IP. Feature
+switches do not disable the userscript manager's own updates or `@require`
+downloads. Community requests go through vote.diorhc.space: the proxy does not
+store request IPs or User-Agents, and Supabase only sees the proxy's address.
 
-- YouTube video ID validation (11-character alphanumeric)
-- YouTube channel ID validation (UC prefix + 22 characters)
-- URL validation for YouTube domains only
-- Number range validation
+| Host | Sent | Returned | Off switch | On failure |
+| --- | --- | --- | --- | --- |
+| api.livecounts.io | GET; channel id in the path (`.../youtube-live-subscriber-counter/stats/<id>`) | JSON subscriber, view and video counters | `enableChannelStats` (overlay) or `enableStatsButton` (panel) | the overlay falls back to the on-page subscriber count; the panel renders an error card; nothing throws |
+| livecounts.io | Origin/Referer value attached to the api.livecounts.io request | not contacted directly | same as api.livecounts.io | same as api.livecounts.io |
+| returnyoutubedislikeapi.com | GET `?videoId=<id>` | JSON `{likes, dislikes, rating}` | the dislike/statistics display | the result is treated as unknown (fields stay null), never shown as zero |
+| cdn.jsdelivr.net | GET the pinned-release locale JSON; the `@require` browser-id3-writer download is fetched by the userscript manager | locale dictionary JSON | none — core i18n, fetched only when a dictionary is needed | falls back to raw.githubusercontent.com, then to the English dictionary embedded at build time |
+| fonts.googleapis.com | GET of the static Rubik CSS URL through a `<link>` element (browser subresource, not GM/fetch) | font CSS, then the font files | `enableChannelStats` | the overlay uses the system font |
+| translate.googleapis.com | GET `?tl=<language>&q=<comment text>` — the comment text is the payload | nested translation array | `enableCommentTranslate` | the button returns to its idle state and the comment text is unchanged; nothing throws |
+| cnv.cx | POST the video URL plus the requested format; GET a sanity key | a conversion key, then a download URL | `enableDownload` | the next converter is tried, then Cobalt, then an error notification |
+| mp3yt.is | Origin/Referer value impersonated for cnv.cx (no request is made to this host) | not contacted directly | `enableDownload` | — |
+| cobalt.directory | GET the working-instance list, only while `allowCobaltDiscovery` is on | JSON list of API hosts | `allowCobaltDiscovery` (off by default) | only the statically verified instances are used |
+| rue-cobalt.xenon.zone, cobaltapi.cjs.nz, api.cobalt.liubquanti.click | POST the video URL plus the requested format | a tunnel URL or an error text | `enableDownload` (Cobalt fallback) | the next instance is tried; when all fail a download error is reported |
+| vote.diorhc.space | community reads and writes: proposal/comment text, votes, owner proof, optional images | records and media paths | the community panel | the offline state is kept; the write is refused or queued and the UI stays usable |
+| raw.githubusercontent.com | GET the pinned-release locale JSON | locale dictionary JSON | none — core i18n | falls back to cdn.jsdelivr.net, then to the embedded English dictionary |
+| update.greasyfork.org, greasyfork.org | GET the userscript metadata and the changelog page | userscript metadata text, changelog HTML | the automatic update check | the check stays silent and is retried with a bounded backoff |
+| i.ytimg.com | HEAD/GET thumbnail images (the video id is in the path) | a JPEG/WebP image | `enableThumbnail` | the alternate thumbnail URL is tried, or the preview closes |
+| yt3.ggpht.com | only used as a DOM selector for avatars YouTube has already loaded | — | `enableThumbnail` | — |
+| ssyoutube.com (configurable) | the video URL is opened in a new tab | the third-party downloader page | the chosen download site | the tab simply does not open the file |
+| youtube.com, www.youtube.com, ytimg.com | the player, subtitle and media requests the download/stats features already make | player JSON, subtitles, media streams | the owning feature | the owning feature reports the failure |
 
-### 3. Rate Limiting
+The Rubik stylesheet is a browser `<link>` subresource from the YouTube page,
+which `@connect` does not govern; no `GM_xmlhttpRequest`/`fetch` call targets
+it. `mp3yt.is` and `livecounts.io` are Origin/Referer values, not request
+targets. Speed, loop, zoom, themes, screenshots and PiP work entirely against
+the open page; preferences and resume data are stored locally.
 
-- API request rate limiting (10 requests per minute per endpoint)
-- Prevents abuse and DoS attacks
-- Automatic cleanup of old request records
+## Verification
 
-### 4. Secure Data Handling
-
-- No sensitive data storage
-- Local storage only for user preferences
-- No external data transmission except to YouTube/approved APIs
-
-### 5. DOM Manipulation Security
-
-- Safe innerHTML usage with TrustedTypes
-- Attribute validation and sanitization
-- Prevention of prototype pollution
-
-### 6. Network Security
-
-- HTTPS-only external requests
-- Request timeouts (10 seconds default)
-- Response validation
-- CORS-aware fetch operations
-
-## Reporting a Vulnerability
-
-We take security vulnerabilities seriously. If you discover a security issue, please follow these steps:
-
-### 1. **DO NOT** publicly disclose the vulnerability
-
-### 2. Report via one of these channels:
-
-- **Preferred**: Create a [Security Advisory](https://github.com/diorhc/YTP/security/advisories/new) (private)
-- **Alternative**: Email the maintainer (check GitHub profile for contact)
-- **Public (non-sensitive)**: Open a [GitHub Issue](https://github.com/diorhc/YTP/issues)
-
-### 3. Include in your report:
-
-- Description of the vulnerability
-- Steps to reproduce
-- Potential impact
-- Suggested fix (if available)
-- Your contact information for follow-up
-
-### 4. Response timeline:
-
-- **Initial response**: Within 48 hours
-- **Status update**: Within 7 days
-- **Fix timeline**: Based on severity
-  - Critical: 24-72 hours
-  - High: 1-2 weeks
-  - Medium: 2-4 weeks
-  - Low: Next release cycle
-
-### 5. Disclosure policy:
-
-- We follow responsible disclosure practices
-- Coordinated disclosure with reporter
-- Public disclosure after fix is released
-- Credit to reporter (if desired)
-
-## Security Best Practices for Contributors
-
-### Code Review Checklist
-
-1. **Input Validation**
-   - [ ] All user inputs are validated
-   - [ ] Video IDs match regex pattern
-   - [ ] URLs are from YouTube domains only
-   - [ ] Numbers are within safe ranges
-
-2. **XSS Prevention**
-   - [ ] Use `textContent` for plain text
-   - [ ] Use `YouTubeSecurityUtils.setInnerHTMLSafe()` for HTML
-   - [ ] Never use `innerHTML` with unsanitized data
-   - [ ] Validate all attributes before `setAttribute`
-
-3. **API Security**
-   - [ ] Rate limiting implemented
-   - [ ] Request timeouts set
-   - [ ] Response validation performed
-   - [ ] HTTPS URLs only
-
-4. **Error Handling**
-   - [ ] No sensitive data in error messages
-   - [ ] Proper try-catch blocks
-   - [ ] User-friendly error messages
-   - [ ] Logging limited to console.warn/error
-
-5. **Code Quality**
-   - [ ] Biome passes with no security warnings
-   - [ ] CodeQL analysis passes
-   - [ ] No eval() or Function() constructor
-   - [ ] No document.write()
-
-## Security Testing
-
-### Automated Testing
-
-- **CodeQL**: Runs on every push and PR
-- **Biome**: Security rules enabled
-- **Dependency scanning**: GitHub Dependabot (if enabled)
-
-### Manual Testing
-
-- XSS testing with malicious payloads
-- Input validation testing
-- Rate limiting verification
-- Error handling validation
-
-## Known Security Limitations
-
-### Userscript Environment
-
-- Runs in user's browser context
-- Relies on Tampermonkey/Greasemonkey security
-- Cannot prevent all client-side attacks
-- User must trust the script source
-
-### Third-Party APIs
-
-- Return YouTube Dislike API (external)
-- YouTube InnerTube API (official but undocumented)
-- Dependency on external service availability
-
-### Browser Compatibility
-
-- TrustedTypes not available in all browsers
-- Falls back to less secure methods when unavailable
-
-## Security Audits
-
-- **Last full audit**: December 16, 2025
-- **Next scheduled audit**: Quarterly (Q1 2026: January 1, 2026)
-- **Automated scanning**: Continuous (GitHub Actions)
-- **Audit workflow**: `.github/workflows/security-audit.yml`
-
-## Dependencies
-
-We minimize dependencies to reduce attack surface:
-
-- No runtime dependencies
-- Build-time dependencies regularly updated
-- **Automated dependency updates**: Dependabot configured (`.github/dependabot.yml`)
-- **Weekly dependency updates**: Every Monday at 09:00 UTC
-- **Automated security updates**: Enabled for all vulnerability levels
-
-## Incident Response Plan
-
-1. **Detection**: Via report or automated scanning
-2. **Assessment**: Severity rating (Critical/High/Medium/Low)
-3. **Containment**: Disable affected features if needed
-4. **Fix**: Develop and test patch
-5. **Deployment**: Release patched version
-6. **Communication**: Notify users and reporter
-7. **Post-mortem**: Document lessons learned
-
-## Contact
-
-- **Security issues**: Use GitHub Security Advisories
-- **General questions**: Open a GitHub Discussion
-
-## Additional Security Documentation
-
-- ⚙️ `.github/dependabot.yml` - Automated dependency update configuration
-- 🤖 `.github/workflows/security-audit.yml` - Automated security audit workflow
-
----
-
-**Last updated**: December 16, 2025  
-**Version**: 2.0
+`npm run verify` checks sources, dangerous HTML and accidental secrets, locale
+metadata, tests, coverage floors and artifact integrity. `npm run security`
+checks npm advisories. These checks cannot establish deployed Supabase
+authorization or userscript-manager isolation.

@@ -1,422 +1,371 @@
 /**
  * @jest-environment jsdom
+ *
+ * Tests the real YouTubePerformance module surface exported by src/performance.js.
+ * Exercises actual timeFunction, timeAsyncFunction, recordMetric, getStats,
+ * clearMetrics, and ObserverRegistry against real module logic.
  */
 
-describe('YouTubePerformance', () => {
-  /**
-   * @typedef {Object} PerformanceHarness
-   * @property {(name: string) => void} mark
-   * @property {(name: string, startMark: string, endMark?: string) => number} measure
-   * @property {(name: string, value: number, metadata?: unknown) => void} recordMetric
-   * @property {(metricName?: string) => any} getStats
-   * @property {(name: string, fn: Function) => Function} timeFunction
-   * @property {(name: string, fn: Function) => Function} timeAsyncFunction
-   * @property {() => string} exportMetrics
-   * @property {() => void} clearMetrics
-   * @property {(element: HTMLElement, name: string) => MutationObserver | null} monitorMutations
-   * @property {(type: string) => PerformanceEntry[]} getPerformanceEntries
-   * @property {{enabled: boolean, sampleRate: number, storageKey: string, metricsRetention: number, enableConsoleOutput: boolean}} config
-   */
+describe('Performance Module (real API)', () => {
+  const setupPerfDeps = () => {
+    Object.defineProperty(window, 'YouTubeUtils', {
+      configurable: true,
+      writable: true,
+      value: {
+        logger: { debug: jest.fn(), warn: jest.fn(), error: jest.fn() },
+        cleanupManager: {
+          observers: new Set(),
+          intervals: new Set(),
+          timeouts: new Set(),
+          animationFrames: new Set(),
+          getListenerStats: () => ({ active: 0, registeredTotal: 0 }),
+        },
+      },
+    });
 
-  /** @type {PerformanceHarness} */
-  let performance;
-  /** @type {{ mockRestore: () => void } | null} */
-  let consoleLogSpy;
+    Object.defineProperty(window, 'YouTubePlusCleanupManager', {
+      configurable: true,
+      writable: true,
+      value: {
+        observers: new Set(),
+        intervals: new Set(),
+        timeouts: new Set(),
+        getListenerStats: () => ({ active: 0, registeredTotal: 0 }),
+      },
+    });
+  };
 
   beforeEach(() => {
-    // Mock implementation of performance monitoring for testing
-    const metrics = new Map();
-    const config = {
-      enabled: true,
-      sampleRate: 1,
-      storageKey: 'ytplus-perf',
-      metricsRetention: 3600000,
-      enableConsoleOutput: false,
-    };
+    jest.resetModules();
+    delete window.YouTubePerformance;
+    delete window.YouTubePlusPerformance;
 
-    performance = {
-      mark: jest.fn(name => {
-        if (window.performance && window.performance.mark) {
-          window.performance.mark(name);
-        }
-      }),
-
-      measure: jest.fn((name, startMark, endMark) => {
-        if (window.performance && window.performance.measure) {
-          try {
-            window.performance.measure(name, startMark, endMark);
-            const entry = window.performance.getEntriesByName(name, 'measure')[0];
-            return entry ? entry.duration : 0;
-          } catch (e) {
-            return 0;
-          }
-        }
-        return 0;
-      }),
-
-      recordMetric: jest.fn((name, value, metadata) => {
-        if (!metrics.has(name)) {
-          metrics.set(name, {
-            values: [],
-            count: 0,
-            total: 0,
-            avg: 0,
-            min: Infinity,
-            max: -Infinity,
-          });
-        }
-        const metric = metrics.get(name);
-        metric.values.push({ value, metadata, timestamp: Date.now() });
-        metric.count++;
-        metric.total += value;
-        metric.avg = metric.total / metric.count;
-        metric.min = Math.min(metric.min, value);
-        metric.max = Math.max(metric.max, value);
-      }),
-
-      getStats: jest.fn(metricName => {
-        if (!metricName) return null;
-        return metrics.get(metricName) || null;
-      }),
-
-      timeFunction: jest.fn((name, fn) => {
-        return /** @this {unknown} @param {...unknown} args */ function (...args) {
-          const start = Date.now();
-          try {
-            const result = fn.apply(this, args);
-            const duration = Date.now() - start;
-            performance.recordMetric(name, duration);
-            return result;
-          } catch (error) {
-            const duration = Date.now() - start;
-            performance.recordMetric(name, duration);
-            throw error;
-          }
-        };
-      }),
-
-      timeAsyncFunction: jest.fn((name, fn) => {
-        return /** @this {unknown} @param {...unknown} args */ async function (...args) {
-          const start = Date.now();
-          try {
-            const result = await fn.apply(this, args);
-            const duration = Date.now() - start;
-            performance.recordMetric(name, duration);
-            return result;
-          } catch (error) {
-            const duration = Date.now() - start;
-            performance.recordMetric(name, duration);
-            throw error;
-          }
-        };
-      }),
-
-      exportMetrics: jest.fn(() => {
-        /** @type {Record<string, {count: number, total: number, avg: number, min: number, max: number}>} */
-        const exported = {};
-        metrics.forEach((value, key) => {
-          exported[key] = {
-            count: value.count,
-            total: value.total,
-            avg: value.avg,
-            min: value.min === Infinity ? 0 : value.min,
-            max: value.max === -Infinity ? 0 : value.max,
-          };
-        });
-        return JSON.stringify(exported, null, 2);
-      }),
-
-      clearMetrics: jest.fn(() => {
-        metrics.clear();
-      }),
-
-      monitorMutations: jest.fn((element, name) => {
-        if (typeof MutationObserver === 'undefined') return null;
-        const observer = new MutationObserver(() => {
-          performance.recordMetric(name, 1);
-        });
-        observer.observe(element, { childList: true, subtree: true });
-        return observer;
-      }),
-
-      getPerformanceEntries: jest.fn(type => {
-        if (window.performance && window.performance.getEntriesByType) {
-          return window.performance.getEntriesByType(type);
-        }
-        return [];
-      }),
-
-      config,
-    };
-
-    // Spy on console
-    consoleLogSpy = jest.spyOn(console, 'log').mockImplementation();
+    setupPerfDeps();
+    require('../src/performance.js');
   });
 
   afterEach(() => {
-    if (consoleLogSpy) {
-      consoleLogSpy.mockRestore();
-    }
-    jest.clearAllTimers();
+    jest.restoreAllMocks();
   });
-  describe('Basic Performance Tracking', () => {
-    test('should create performance marks', () => {
-      performance.mark('test-mark');
 
-      // Marks should be created (no errors)
-      expect(performance).toBeDefined();
+  test('exposes the real API facade on window.YouTubePerformance and window.YouTubePlusPerformance', () => {
+    expect(window.YouTubePerformance).toBeDefined();
+    expect(window.YouTubePlusPerformance).toBe(window.YouTubePerformance);
+    expect(typeof window.YouTubePerformance.mark).toBe('function');
+    expect(typeof window.YouTubePerformance.measure).toBe('function');
+    expect(typeof window.YouTubePerformance.timeFunction).toBe('function');
+    expect(typeof window.YouTubePerformance.timeAsyncFunction).toBe('function');
+    expect(typeof window.YouTubePerformance.recordMetric).toBe('function');
+    expect(typeof window.YouTubePerformance.getStats).toBe('function');
+    expect(typeof window.YouTubePerformance.clearMetrics).toBe('function');
+    expect(window.YouTubePerformance.ObserverRegistry).toBeDefined();
+  });
+
+  describe('recordMetric and getStats', () => {
+    test('records custom metrics in customMetrics registry', () => {
+      const { recordMetric, getStats, clearMetrics } = window.YouTubePerformance;
+      clearMetrics();
+
+      recordMetric('custom-metric-1', 42, { tag: 'fast' });
+
+      const allStats = getStats();
+      expect(allStats).toBeDefined();
+      expect(allStats.customMetrics).toBeDefined();
+      expect(allStats.customMetrics['custom-metric-1']).toBeDefined();
+      expect(allStats.customMetrics['custom-metric-1'].value).toBe(42);
+      expect(allStats.customMetrics['custom-metric-1'].tag).toBe('fast');
     });
 
-    test('should measure between marks', () => {
-      performance.mark('start');
-      performance.mark('end');
+    test('returns null for unmeasured metric names', () => {
+      const stats = window.YouTubePerformance.getStats('non-existent-measure');
+      expect(stats).toBeNull();
+    });
+  });
 
-      const duration = performance.measure('test-measure', 'start', 'end');
+  describe('timeFunction wrapping', () => {
+    test('measures synchronous execution duration and returns result', () => {
+      const { timeFunction, getStats, clearMetrics } = window.YouTubePerformance;
+      clearMetrics();
 
-      expect(typeof duration).toBe('number');
-      expect(duration).toBeGreaterThanOrEqual(0);
+      const compute = (a, b) => a + b;
+      const timedCompute = timeFunction('compute-add', compute);
+
+      const result = timedCompute(5, 7);
+      expect(result).toBe(12);
+
+      const stats = getStats('compute-add');
+      expect(stats).toBeDefined();
+      expect(stats.count).toBe(1);
+      expect(stats.avg).toBeGreaterThanOrEqual(0);
     });
 
-    test('should record custom metrics', () => {
-      performance.recordMetric('custom-metric', 123, { unit: 'ms' });
+    test('propagates errors while still recording timing measure', () => {
+      const { timeFunction, getStats, clearMetrics } = window.YouTubePerformance;
+      clearMetrics();
 
-      const stats = performance.getStats('custom-metric');
+      const failingFn = () => {
+        throw new Error('boom');
+      };
+      const timedFailing = timeFunction('compute-fail', failingFn);
+
+      expect(() => timedFailing()).toThrow('boom');
+
+      const stats = getStats('compute-fail');
       expect(stats).toBeDefined();
       expect(stats.count).toBe(1);
     });
   });
 
-  describe('timeFunction', () => {
-    test('should wrap synchronous functions', () => {
-      const mockFn = jest.fn(() => 'result');
-      const timedFn = performance.timeFunction('sync-test', mockFn);
+  describe('timeAsyncFunction wrapping', () => {
+    test('measures asynchronous execution duration and resolves result', async () => {
+      const { timeAsyncFunction, getStats, clearMetrics } = window.YouTubePerformance;
+      clearMetrics();
 
-      const result = timedFn();
-
-      expect(result).toBe('result');
-      expect(mockFn).toHaveBeenCalled();
-
-      const stats = performance.getStats('sync-test');
-      expect(stats).toBeDefined();
-    });
-
-    test('should preserve function arguments', () => {
-      const mockFn = jest.fn((a, b) => a + b);
-      const timedFn = performance.timeFunction('args-test', mockFn);
-
-      const result = timedFn(10, 20);
-
-      expect(result).toBe(30);
-      expect(mockFn).toHaveBeenCalledWith(10, 20);
-    });
-
-    test('should track multiple calls', () => {
-      const mockFn = jest.fn(() => 'result');
-      const timedFn = performance.timeFunction('multi-test', mockFn);
-
-      timedFn();
-      timedFn();
-      timedFn();
-
-      const stats = performance.getStats('multi-test');
-      expect(stats.count).toBe(3);
-    });
-  });
-
-  describe('timeAsyncFunction', () => {
-    test('should wrap asynchronous functions', async () => {
-      const mockFn = jest.fn(async () => 'async-result');
-      const timedFn = performance.timeAsyncFunction('async-test', mockFn);
-
-      const result = await timedFn();
-
-      expect(result).toBe('async-result');
-      expect(mockFn).toHaveBeenCalled();
-
-      const stats = performance.getStats('async-test');
-      expect(stats).toBeDefined();
-    });
-
-    test('should preserve async function arguments', async () => {
-      const mockFn = jest.fn(async (a, b) => a * b);
-      const timedFn = performance.timeAsyncFunction('async-args-test', mockFn);
-
-      const result = await timedFn(5, 6);
-
-      expect(result).toBe(30);
-      expect(mockFn).toHaveBeenCalledWith(5, 6);
-    });
-
-    test('should handle async errors', async () => {
-      const mockFn = jest.fn(async () => {
-        throw new Error('Async error');
-      });
-      const timedFn = performance.timeAsyncFunction('async-error-test', mockFn);
-
-      await expect(timedFn()).rejects.toThrow('Async error');
-
-      // Should still record the attempt
-      const stats = performance.getStats('async-error-test');
-      expect(stats).toBeDefined();
-    });
-  });
-
-  describe('Statistics', () => {
-    test('should calculate average timing', () => {
-      performance.recordMetric('avg-test', 100);
-      performance.recordMetric('avg-test', 200);
-      performance.recordMetric('avg-test', 300);
-
-      const stats = performance.getStats('avg-test');
-
-      expect(stats.avg).toBe(200);
-    });
-
-    test('should track minimum timing', () => {
-      performance.recordMetric('min-test', 50);
-      performance.recordMetric('min-test', 25);
-      performance.recordMetric('min-test', 100);
-
-      const stats = performance.getStats('min-test');
-
-      expect(stats.min).toBe(25);
-    });
-
-    test('should track maximum timing', () => {
-      performance.recordMetric('max-test', 50);
-      performance.recordMetric('max-test', 150);
-      performance.recordMetric('max-test', 100);
-
-      const stats = performance.getStats('max-test');
-
-      expect(stats.max).toBe(150);
-    });
-
-    test('should track total timing', () => {
-      performance.recordMetric('total-test', 10);
-      performance.recordMetric('total-test', 20);
-      performance.recordMetric('total-test', 30);
-
-      const stats = performance.getStats('total-test');
-
-      expect(stats.total).toBe(60);
-      expect(stats.count).toBe(3);
-    });
-  });
-
-  describe('Metrics Export', () => {
-    test('should export metrics as JSON', () => {
-      performance.recordMetric('export-test', 123);
-
-      const exported = performance.exportMetrics();
-
-      expect(typeof exported).toBe('string');
-      expect(() => JSON.parse(exported)).not.toThrow();
-
-      const parsed = JSON.parse(exported);
-      expect(parsed).toHaveProperty('export-test');
-    });
-
-    test('should handle empty metrics', () => {
-      performance.clearMetrics();
-
-      const exported = performance.exportMetrics();
-      const parsed = JSON.parse(exported);
-
-      expect(typeof parsed).toBe('object');
-    });
-  });
-
-  describe('Clear Metrics', () => {
-    test('should clear all recorded metrics', () => {
-      performance.recordMetric('clear-test-1', 100);
-      performance.recordMetric('clear-test-2', 200);
-
-      performance.clearMetrics();
-
-      const stats1 = performance.getStats('clear-test-1');
-      const stats2 = performance.getStats('clear-test-2');
-
-      expect(stats1).toBeNull();
-      expect(stats2).toBeNull();
-    });
-  });
-
-  describe('Configuration', () => {
-    test('should have configuration object', () => {
-      expect(performance.config).toBeDefined();
-      expect(typeof performance.config).toBe('object');
-    });
-
-    test('should allow toggling performance tracking', () => {
-      const originalState = performance.config.enabled;
-
-      performance.config.enabled = false;
-      expect(performance.config.enabled).toBe(false);
-
-      performance.config.enabled = originalState;
-    });
-
-    test('should have configurable sample rate', () => {
-      expect(performance.config).toHaveProperty('sampleRate');
-      expect(typeof performance.config.sampleRate).toBe('number');
-    });
-  });
-
-  describe('Mutation Monitoring', () => {
-    test('should monitor DOM mutations', () => {
-      const div = document.createElement('div');
-      document.body.appendChild(div);
-
-      const observer = performance.monitorMutations(div, 'mutation-test');
-
-      expect(observer).toBeDefined();
-
-      // Cleanup
-      if (observer) {
-        observer.disconnect();
-      }
-      document.body.removeChild(div);
-    });
-  });
-
-  describe('Performance Entries', () => {
-    test('should retrieve performance entries', () => {
-      const entries = performance.getPerformanceEntries('measure');
-      expect(entries).toBeDefined();
-      expect(Array.isArray(entries)).toBe(true);
-    });
-  });
-
-  describe('Metadata', () => {
-    test('should store metadata with metrics', () => {
-      const metadata = {
-        module: 'test-module',
-        version: '1.0.0',
-        userAgent: navigator.userAgent,
+      const asyncTask = async x => {
+        return x * 2;
       };
+      const timedAsyncTask = timeAsyncFunction('async-double', asyncTask);
 
-      performance.recordMetric('metadata-test', 100, metadata);
+      const result = await timedAsyncTask(21);
+      expect(result).toBe(42);
 
-      const stats = performance.getStats('metadata-test');
+      const stats = getStats('async-double');
       expect(stats).toBeDefined();
+      expect(stats.count).toBe(1);
     });
   });
 
-  describe('Integration', () => {
-    test('should work with multiple metrics simultaneously', () => {
-      performance.recordMetric('metric-1', 10);
-      performance.recordMetric('metric-2', 20);
-      performance.recordMetric('metric-1', 30);
-      performance.recordMetric('metric-3', 40);
+  describe('ObserverRegistry diagnostics', () => {
+    test('tracks created and active observer counts accurately', () => {
+      const { ObserverRegistry } = window.YouTubePerformance;
+      ObserverRegistry.reset();
 
-      const stats1 = performance.getStats('metric-1');
-      const stats2 = performance.getStats('metric-2');
-      const stats3 = performance.getStats('metric-3');
+      ObserverRegistry.track();
+      ObserverRegistry.track();
+      expect(ObserverRegistry.getStats().active).toBe(2);
+      expect(ObserverRegistry.getStats().created).toBe(2);
+      expect(ObserverRegistry.getStats().peak).toBe(2);
 
-      expect(stats1.count).toBe(2);
-      expect(stats2.count).toBe(1);
-      expect(stats3.count).toBe(1);
+      ObserverRegistry.untrack();
+      expect(ObserverRegistry.getStats().active).toBe(1);
+      expect(ObserverRegistry.getStats().disconnected).toBe(1);
+
+      ObserverRegistry.reset();
+      expect(ObserverRegistry.getStats().active).toBe(0);
+    });
+
+    test('dump returns structured diagnostic object', () => {
+      const { ObserverRegistry } = window.YouTubePerformance;
+      const dump = ObserverRegistry.dump();
+      expect(dump).toBeDefined();
+      expect(dump.observers).toBeDefined();
+      expect(dump.cleanup).toBeDefined();
+    });
+  });
+
+  describe('INP diagnostic metric', () => {
+    test('INP keeps running max across event-timing batches', () => {
+      const perf = window.YouTubePerformance;
+      expect(perf).toBeDefined();
+
+      // Simulate the event-timing observer callbacks by driving the same
+      // entry-shape through a PerformanceObserver stub. jsdom lacks
+      // PerformanceObserver, so install a minimal capture stub BEFORE
+      // requiring the module is not possible here (require already ran);
+      // instead exercise the running-max semantics via the exported API:
+      // recordMetric is a different path, so drive the real observer setup
+      // through a PerformanceObserver polyfill on globalThis.
+      const observers = [];
+      class FakePerformanceObserver {
+        constructor(cb) {
+          this.cb = cb;
+          observers.push(this);
+        }
+        observe(opts) {
+          this.opts = opts;
+        }
+        disconnect() {
+          /* mock */
+        }
+      }
+      const origPO = globalThis.PerformanceObserver;
+      globalThis.PerformanceObserver = FakePerformanceObserver;
+
+      try {
+        // Fresh module so initPerformanceObserver uses the polyfill.
+        jest.resetModules();
+        delete window.YouTubePerformance;
+        delete window.YouTubePlusPerformance;
+        setupPerfDeps();
+        require('../src/performance.js');
+        const fresh = window.YouTubePerformance;
+
+        // The bug scenario: a slow batch is followed by a fast one.
+        const inpObserver = observers.find(o => o.opts?.type === 'event');
+        expect(inpObserver).toBeDefined();
+        inpObserver.cb({ getEntries: () => [{ duration: 120 }] });
+        inpObserver.cb({ getEntries: () => [{ duration: 24 }] });
+
+        // The fast batch must NOT overwrite the running max.
+        expect(fresh.getStats().webVitals.INP).toBe(120);
+        expect(fresh.getStats().webVitals.INP_approximation).toBe(120);
+        expect(fresh.getStats().webVitals.isApproximation?.INP).toBe(true);
+        expect(fresh.getStats().webVitals.isApproximation?.CLS).toBe(true);
+
+        // The other Web Vitals observers record through their real callbacks.
+        const lcpObserver = observers.find(o => o.opts?.type === 'largest-contentful-paint');
+        lcpObserver.cb({ getEntries: () => [{ startTime: 42 }] });
+        expect(fresh.getStats().webVitals.LCP).toBe(42);
+
+        const clsObserver = observers.find(o => o.opts?.type === 'layout-shift');
+        clsObserver.cb({ getEntries: () => [{ hadRecentInput: false, value: 0.1 }] });
+        clsObserver.cb({ getEntries: () => [{ hadRecentInput: true, value: 0.5 }] });
+        expect(fresh.getStats().webVitals.CLS).toBeCloseTo(0.1);
+
+        const fidObserver = observers.find(o => o.opts?.type === 'first-input');
+        fidObserver.cb({ getEntries: () => [{ processingStart: 30, startTime: 10 }] });
+        expect(fresh.getStats().webVitals.FID).toBe(20);
+
+        // The diagnostics surface reports live observer and cleanup counts.
+        const diag = window.__ytpDiagnostics(true);
+        expect(diag).toBeDefined();
+        expect(diag.observers).toBeDefined();
+        expect(diag.cleanupManager).toBeDefined();
+      } finally {
+        globalThis.PerformanceObserver = origPO;
+      }
+    });
+  });
+
+  describe('observer init and entries pins', () => {
+    const installFakePO = supportedEntryTypes => {
+      const observers = [];
+      class FakePerformanceObserver {
+        constructor(cb) {
+          this.cb = cb;
+          observers.push(this);
+        }
+        observe(opts) {
+          this.opts = opts;
+        }
+        disconnect() {
+          /* nothing to release in the stub */
+        }
+      }
+      if (supportedEntryTypes) {
+        FakePerformanceObserver.supportedEntryTypes = supportedEntryTypes;
+      }
+      globalThis.PerformanceObserver = FakePerformanceObserver;
+      return observers;
+    };
+
+    const freshModule = () => {
+      jest.resetModules();
+      delete window.YouTubePerformance;
+      delete window.YouTubePlusPerformance;
+      setupPerfDeps();
+      require('../src/performance.js');
+    };
+
+    afterEach(() => {
+      delete globalThis.PerformanceObserver;
+      jest.restoreAllMocks();
+    });
+
+    test('getPerformanceEntries passes entries through from the browser API', () => {
+      freshModule();
+      const spy = jest
+        .spyOn(window.performance, 'getEntriesByType')
+        .mockReturnValue([{ loadEventEnd: 8, fetchStart: 0 }]);
+      const entries = window.YouTubePerformance.getPerformanceEntries('navigation');
+      expect(spy).toHaveBeenCalledWith('navigation');
+      expect(entries[0].loadEventEnd).toBe(8);
+    });
+
+    test('getPerformanceEntries returns [] when the browser API is unavailable', () => {
+      freshModule();
+      Object.defineProperty(window.performance, 'getEntriesByType', {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+      expect(window.YouTubePerformance.getPerformanceEntries('navigation')).toEqual([]);
+    });
+
+    test('mark() records the marks map even without the browser mark API', () => {
+      freshModule();
+      Object.defineProperty(window.performance, 'mark', {
+        value: undefined,
+        configurable: true,
+        writable: true,
+      });
+      const { mark, getStats, clearMetrics } = window.YouTubePerformance;
+      clearMetrics();
+      mark('no-browser-mark');
+      expect(getStats().totalMarks).toBe(1);
+    });
+
+    test('a browser that rejects a mark name still records the mark', () => {
+      freshModule();
+      Object.defineProperty(window.performance, 'mark', {
+        value: () => {
+          throw new SyntaxError('navigationStart is a reserved timing name');
+        },
+        configurable: true,
+        writable: true,
+      });
+      const { mark, getStats, clearMetrics } = window.YouTubePerformance;
+      clearMetrics();
+      expect(() => mark('navigationStart')).not.toThrow();
+      expect(getStats().totalMarks).toBe(1);
+    });
+
+    test('getPerformanceEntries returns [] when the browser API throws', () => {
+      freshModule();
+      Object.defineProperty(window.performance, 'getEntriesByType', {
+        value: () => {
+          throw new Error('performance timeline unavailable');
+        },
+        configurable: true,
+        writable: true,
+      });
+      expect(window.YouTubePerformance.getPerformanceEntries('navigation')).toEqual([]);
+    });
+
+    test('a longtask observer that throws on observe does not stop the module', () => {
+      installFakePO(['longtask']);
+      const Fake = window.PerformanceObserver;
+      window.PerformanceObserver = class extends Fake {
+        observe(opts) {
+          if (opts?.type === 'longtask') throw new TypeError('longtask not observable');
+          return super.observe(opts);
+        }
+      };
+      window.PerformanceObserver.supportedEntryTypes = ['longtask'];
+      freshModule();
+      expect(window.YouTubePerformance).toBeDefined();
+    });
+
+    test('initLongTaskMonitor skips observer creation when longtask is unsupported', () => {
+      const observers = installFakePO(['largest-contentful-paint', 'layout-shift']);
+      freshModule();
+      expect(observers.some(o => o.opts?.type === 'longtask')).toBe(false);
+    });
+
+    test('longtask observer records task counts and blocking total', () => {
+      const observers = installFakePO(['longtask']);
+      freshModule();
+      const longTaskObserver = observers.find(o => o.opts?.type === 'longtask');
+      expect(longTaskObserver).toBeDefined();
+      longTaskObserver.cb({
+        getEntries: () => [
+          { duration: 60, startTime: 10, name: 'task-1' },
+          { duration: 60, startTime: 100, name: 'task-2' },
+        ],
+      });
+      const custom = window.YouTubePerformance.getStats().customMetrics;
+      expect(custom['long-tasks-count'].value).toBe(2);
+      expect(custom['total-blocking-time'].value).toBe(20);
     });
   });
 });

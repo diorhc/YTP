@@ -3,12 +3,22 @@ module.exports = {
   testEnvironmentOptions: {
     url: "https://www.youtube.com/",
   },
-  testMatch: ["**/test/**/*.test.js", "**/test/**/*.spec.js"],
-  testPathIgnorePatterns: ["/node_modules/", "/e2e/"],
-  // Track every runtime module. The legacy src/types.d.ts was removed
-  // when the global type definitions were consolidated into types/index.d.ts,
-  // but the explicit exclusion is kept here as a safety net in case the
-  // file ever reappears (e.g. during a partial re-merge).
+  roots: ["<rootDir>/test"],
+  testMatch: ["<rootDir>/test/**/*.test.js", "<rootDir>/test/**/*.spec.js"],
+  // The release integration suite executes the real release pipeline and is
+  // run only through `npm run test:release-integration`, which sets the gate
+  // variable before invoking Jest. Outside that run the file is not collected,
+  // so a plain `jest` run reports no skipped suites.
+  testPathIgnorePatterns: [
+    "/node_modules/",
+    "/e2e/",
+    "<rootDir>/docs/",
+    "<rootDir>/test-results/",
+    ...(process.env.RUN_RELEASE_INTEGRATION === "1"
+      ? []
+      : ["/test/release-integration\\.test\\.js$"]),
+  ],
+  // Track runtime modules. Global type definitions live in types/index.d.ts.
   collectCoverageFrom: ["src/**/*.js", "!src/types.d.ts"],
   coverageDirectory: "coverage",
   coverageReporters: ["text", "lcov", "html", "json-summary"],
@@ -18,28 +28,22 @@ module.exports = {
     "<rootDir>/coverage/",
     "youtube.user.js",
   ],
-  // Phase-2 thresholds. Tracking every module pulls in large DOM-heavy
-  // runtime files with shallow test coverage, so the global thresholds
-  // are set modestly to catch regressions while still accepting the
-  // current coverage distribution.
-  //
-  // The dominant uncovered files are main.js (6085 lines, @ts-nocheck,
-  // 5.6% covered — only the outer boot IIFE is testable in jsdom) and
-  // timecode.js (2201 lines, 0% — an IIFE that requires full YouTube
-  // page DOM). Excluding them from the threshold is not ideal because
-  // it hides regressions; instead, thresholds are set just below
-  // current aggregate values so CI stays green while preventing
-  // meaningful drops in the well-tested modules.
-  //
-  // Current CI coverage (v8): lines 28.88%, functions 42.78%, branches 51.48%.
-  // Thresholds set below CI baseline to prevent false negatives.
+  // Global coverage thresholds. Floors sit at the highest whole values the
+  // aggregate supports so any drop fails CI. Full coverage of DOM-bound player
+  // modules is verified through the browser test suite.
   coverageThreshold: {
     global: {
-      branches: 51,
-      functions: 42,
-      lines: 28,
-      statements: 28,
+      branches: 84,
+      functions: 95,
+      lines: 86,
+      statements: 86,
     },
+    // NOTE: do NOT add per-file path keys here — Jest excludes files matched
+    // by an explicit key from the `global` aggregate, silently redefining the
+    // global pool (measured: adding six high-coverage files dropped the global
+    // figure from 51.8% to 48.5%). Per-file ratchets live in
+    // coverage-ratchet.json, enforced by scripts/check-coverage-ratchet.js
+    // after every --coverage run (see `npm run test:ratchet`).
   },
   verbose: true,
   testTimeout: 10000,

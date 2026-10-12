@@ -1,0 +1,45 @@
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Publish a YouTube+ release announcement. Focus on user-visible changes and any action users need to take.
+  - type: input
+    id: version
+    attributes:
+      label: Release version
+      placeholder: 'Version published in this release'
+    validations:
+      required: true
+  - type: textarea
+    id: changes
+    attributes:
+      label: What's new
+      description: Keep the summary concise. Include only sections relevant to this release.
+      placeholder: |
+        ### Added
+        - ...
+
+        ### Fixed
+        - ...
+
+        ### Changed
+        - ...
+    validations:
+      required: true
+  - type: textarea
+    id: breaking
+    attributes:
+      label: Changes users should know about
+      description: Mention changed defaults, compatibility or migration steps. Leave empty if none.
+    validations:
+      required: false
+  - type: textarea
+    id: download
+    attributes:
+      label: Installation
+      value: |
+        [Install from Greasy Fork](https://greasyfork.org/scripts/537017-youtube)
+
+        [Install from GitHub Releases](https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js)
+    validations:
+      required: false

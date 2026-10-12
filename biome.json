@@ -35,6 +35,7 @@
       "queueMicrotask",
       "customElements",
       "unsafeWindow",
+      "GM_info",
       "fetch",
       "URL",
       "URLSearchParams",
@@ -86,19 +87,36 @@
       "YouTubePlusScreenshot",
       "YouTubePlusSpeedControl",
       "YouTubePlusDownloadButton",
+      "YouTubePlusDownload",
       "YouTubePlusI18n",
       "YouTubeSafeDOM",
       "YouTubePlusCleanupManager",
       "YouTubePlusDesignSystem",
-      "YouTubeSecurityUtils",
       "YouTubeDOMCache",
-      "YouTubePlusLazyLoader",
-      "YouTubePlusRegistry",
+      "YouTubePlusDOMCache",
       "YouTubePlusMutationCoordinator",
       "YouTubePlusEventDelegation",
       "YouTubePlusSettingsStore",
+      "YouTubePlusSettingsHelpers",
       "YouTubeErrorBoundary",
+      "YouTubePlusErrorBoundary",
       "YouTubePerformance",
+      "YouTubePlusPerformance",
+      "YouTubePlusPip",
+      "YouTubePlusThumbnail",
+      "YouTubePlusShorts",
+      "YouTubePlusPlayall",
+      "YouTubePlusPlaylistSearch",
+      "YouTubePlusAdBlocker",
+      "YouTubePlusComment",
+      "YouTubePlusUpdate",
+      "YouTubePlusEndscreen",
+      "YouTubePlusTimecode",
+      "YouTubePlusVoting",
+      "YouTubePlusMusic",
+      "YouTubePlusReport",
+      "YouTubePlusStats",
+      "YouTubePlusZoom",
       "closestFromAnchor",
       "_querySelector",
       "$$",
@@ -115,7 +133,7 @@
         "noGlobalEval": "error"
       },
       "correctness": {
-        "noUnusedVariables": "warn",
+        "noUnusedVariables": "error",
         "noConstAssign": "error",
         "noGlobalObjectCalls": "error",
         "noInvalidConstructorSuper": "error",
@@ -187,16 +205,12 @@
   },
   "overrides": [
     {
-      "includes": ["src/*.js"],
+      "includes": [
+        "src/*.js"
+      ],
       "linter": {
         "rules": {
           "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 40
-              }
-            },
             "noCommaOperator": "off",
             "noArguments": "off"
           },
@@ -215,195 +229,8 @@
     },
     {
       "includes": [
-        "src/main.js"
+        "build.js"
       ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 90
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/stats.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 85
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/download.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 87
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/basic.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 95
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/zoom.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 100
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/timecode.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 98
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/pip.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 75
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/music.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 58
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/enhanced.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 65
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/mutation-coordinator.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 51
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": [
-        "src/modal-handlers.js",
-        "src/playall.js",
-        "src/utils.js"
-      ],
-      "linter": {
-        "rules": {
-          "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 100
-              }
-            }
-          }
-        }
-      }
-    },
-    {
-      "includes": ["build.js"],
       "linter": {
         "rules": {
           "suspicious": {
@@ -414,34 +241,73 @@
             "useTemplate": "off"
           },
           "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 50
-              }
-            },
             "useSimplifiedLogicExpression": "off"
           }
         }
       }
     },
     {
-      "includes": ["src/cleanup-manager.js"],
+      "includes": [
+        "scripts/**/*.js"
+      ],
       "linter": {
         "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "useTemplate": "off"
+          },
           "complexity": {
-            "noExcessiveCognitiveComplexity": {
-              "level": "warn",
-              "options": {
-                "maxAllowedComplexity": 50
-              }
-            }
+            "noExcessiveCognitiveComplexity": "off",
+            "noCommaOperator": "off",
+            "noArguments": "off",
+            "useOptionalChain": "off",
+            "useRegexLiterals": "off",
+            "useLiteralKeys": "off",
+            "noForEach": "off",
+            "useFlatMap": "off",
+            "useSimplifiedLogicExpression": "off",
+            "noUselessSwitchCase": "off",
+            "noUselessTernary": "off"
           }
         }
       }
     },
     {
-      "includes": ["build.js", "scripts/**/*.js"],
+      "includes": [
+        "test/**/*.js",
+        "e2e/**/*.js"
+      ],
+      "linter": {
+        "rules": {
+          "suspicious": {
+            "noConsole": "off"
+          },
+          "style": {
+            "useTemplate": "off"
+          },
+          "complexity": {
+            "noExcessiveCognitiveComplexity": "off",
+            "noCommaOperator": "off",
+            "noArguments": "off",
+            "useOptionalChain": "off",
+            "useRegexLiterals": "off",
+            "useLiteralKeys": "off",
+            "noForEach": "off",
+            "useFlatMap": "off",
+            "useSimplifiedLogicExpression": "off",
+            "noUselessSwitchCase": "off",
+            "noUselessTernary": "off"
+          }
+        }
+      }
+    },
+    {
+      "includes": [
+        "build.js",
+        "scripts/**/*.js"
+      ],
       "javascript": {
         "globals": [
           "process",
@@ -453,10 +319,38 @@
           "Buffer"
         ]
       }
+    },
+    {
+      "includes": [
+        "test/**/*.js"
+      ],
+      "javascript": {
+        "globals": [
+          "afterAll",
+          "afterEach",
+          "beforeAll",
+          "beforeEach",
+          "describe",
+          "expect",
+          "global",
+          "it",
+          "jest",
+          "test",
+          "unsafeWindow",
+          "mockLocation",
+          "GM_xmlhttpRequest"
+        ]
+      }
     }
   ],
   "files": {
-    "includes": ["src/**/*.js", "build.js", "scripts/**/*.js"],
+    "includes": [
+      "src/**/*.js",
+      "build.js",
+      "scripts/**/*.js",
+      "test/**/*.js",
+      "e2e/**/*.js"
+    ],
     "ignoreUnknown": false,
     "maxSize": 2097152
   }

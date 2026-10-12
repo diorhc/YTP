@@ -4,7 +4,6 @@
 // @name:az             YouTube +
 // @name:be             YouTube +
 // @name:bg             YouTube +
-// @name:zh-CN          YouTube +
 // @name:de             YouTube +
 // @name:nl             YouTube +
 // @name:en             YouTube +
@@ -20,19 +19,19 @@
 // @name:pl             YouTube +
 // @name:pt             YouTube +
 // @name:tr             YouTube +
-// @name:zh-TW          YouTube +
 // @name:uk             YouTube +
 // @name:uz             YouTube +
 // @name:vi             YouTube +
+// @name:zh-CN          YouTube +
+// @name:zh-TW          YouTube +
 // @namespace           by
-// @version             2.5.2
+// @version             0.0.0
 // @author              diorhc
 // @description         Вкладки для информации, комментариев, видео, плейлиста и скачивание видео и другие функции ↴
 // @description:ar      Tabview YouTube and download and other features ↴
 // @description:az      Tabview YouTube və yükləmə və digər xüsusiyyətlər ↴
 // @description:be      Tabview YouTube і загрузка і іншыя функцыі ↴
 // @description:bg      Tabview YouTube и изтегляне и други функции ↴
-// @description:zh-CN   标签视图 YouTube、下载及其他功能 ↴
 // @description:de      Tabview YouTube und Download und andere Funktionen ↴
 // @description:nl      Tabview YouTube en Download en andere functies ↴
 // @description:en      Tabview YouTube and Download and others features ↴
@@ -48,10 +47,11 @@
 // @description:pl      Widok kart YouTube, pobieranie i inne funkcje ↴
 // @description:pt      Visualização em abas do YouTube, download e outros recursos ↴
 // @description:tr      Sekmeli Görünüm YouTube ve İndir ve diğer özellikler ↴
-// @description:zh-TW   標籤檢視 YouTube 及下載及其他功能 ↴
 // @description:uk      Перегляд вкладок YouTube, завантаження та інші функції ↴
 // @description:uz      YouTube uchun tabview va yuklab olish va boshqa xususiyatlar ↴
 // @description:vi      Chế độ tab cho YouTube, tải xuống và các tính năng khác ↴
+// @description:zh-CN   标签视图 YouTube、下载及其他功能 ↴
+// @description:zh-TW   標籤檢視 YouTube 及下載及其他功能 ↴
 // @match               *://*.youtube.com/*
 // @match               *://myactivity.google.com/*
 // @exclude             *://accounts.youtube.com/*
@@ -62,7 +62,6 @@
 // @icon                https://www.google.com/s2/favicons?sz=64&domain=youtube.com
 // @license             MIT
 // @require             https://cdn.jsdelivr.net/npm/browser-id3-writer@4.4.0/dist/browser-id3-writer.min.js#sha256=c8870af850bb4a06059f0eb8318f80fab2e78015c0723114a656bf92c613d2f5
-// @require             https://cdn.jsdelivr.net/npm/dayjs@1.11.19/dayjs.min.js#sha256=9cfdb93f38afcf2d076abecd66d32bfd3383cdf1967654ebc26a26605daf4173
 // @grant               GM_addStyle
 // @grant               GM_getValue
 // @grant               GM_setValue
@@ -76,19 +75,20 @@
 // @connect             mp3yt.is
 // @connect             returnyoutubedislikeapi.com
 // @connect             translate.googleapis.com
-// @connect             ldpccocxlrdsyejfhrvc.supabase.co
+// @connect             vote.diorhc.space
 // @connect             raw.githubusercontent.com
 // @connect             cdn.jsdelivr.net
 // @connect             greasyfork.org
 // @connect             update.greasyfork.org
 // @connect             youtube.com
 // @connect             www.youtube.com
-// @connect             m.youtube.com
 // @connect             i.ytimg.com
 // @connect             ytimg.com
 // @connect             yt3.ggpht.com
-// @connect             fonts.googleapis.com
-// @connect             self
+// @connect             cobalt.directory
+// @connect             rue-cobalt.xenon.zone
+// @connect             cobaltapi.cjs.nz
+// @connect             api.cobalt.liubquanti.click
 // @run-at              document-start
 // @noframes
 // @homepageURL         https://github.com/diorhc/YTP

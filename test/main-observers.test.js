@@ -1,349 +1,103 @@
 /**
  * @jest-environment jsdom
+ *
+ * Tests the real MutationCoordinator DOM observer optimizations,
+ * debounced dispatch, root subscription batching, and teardown.
  */
 
-describe('Main Module - DOM Observer Optimizations', () => {
+describe('DOM Observer Optimizations — Real MutationCoordinator', () => {
   beforeEach(() => {
-    document.body.innerHTML = '';
-    jest.spyOn(console, 'error').mockImplementation(() => {});
-    jest.spyOn(console, 'warn').mockImplementation(() => {});
-    jest.useFakeTimers();
+    jest.resetModules();
+    document.body.innerHTML = '<div id="test-root"><div class="target-child">Initial</div></div>';
+
+    // Load canonical modules
+    require('../src/cleanup-manager.js');
+    require('../src/utils.js');
+    require('../src/mutation-coordinator.js');
   });
 
   afterEach(() => {
-    jest.restoreAllMocks();
-    jest.useRealTimers();
+    window.YouTubePlusMutationCoordinator?.cleanup?.();
+    document.body.innerHTML = '';
   });
 
-  describe('Debouncing Logic', () => {
-    test('should debounce rapid function calls', () => {
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let debounceTimer = null;
-      const callback = jest.fn();
-      const debounceInterval = 50;
-
-      const debouncedFunction = () => {
-        if (debounceTimer) return;
-        debounceTimer = setTimeout(() => {
-          debounceTimer = null;
-          callback();
-        }, debounceInterval);
-      };
-
-      // Call function multiple times rapidly
-      for (let i = 0; i < 10; i++) {
-        debouncedFunction();
-      }
-
-      // Callback should not be called yet
-      expect(callback).not.toHaveBeenCalled();
-
-      // Advance timers
-      jest.advanceTimersByTime(debounceInterval);
-
-      // Callback should be called once
-      expect(callback).toHaveBeenCalledTimes(1);
-    });
-
-    test('should handle plugin detection logic', () => {
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let debounceTimer = null;
-      /** @type {Record<string, boolean>} */
-      const pluginsDetected = {};
-      const processPlugin = jest.fn();
-      const debounceInterval = 50;
-
-      /** @param {string} attributeName */
-      const handleMutation = attributeName => {
-        if (debounceTimer) return;
-        debounceTimer = setTimeout(() => {
-          debounceTimer = null;
-
-          if (attributeName === 'data-ytlstm-theater-mode') {
-            if (!pluginsDetected['external.ytlstm']) {
-              pluginsDetected['external.ytlstm'] = true;
-              processPlugin('external.ytlstm');
-            }
-          }
-        }, debounceInterval);
-      };
-
-      // Simulate multiple mutations
-      handleMutation('data-ytlstm-theater-mode');
-      handleMutation('data-ytlstm-theater-mode');
-
-      jest.advanceTimersByTime(debounceInterval);
-
-      expect(processPlugin).toHaveBeenCalledWith('external.ytlstm');
-      expect(pluginsDetected['external.ytlstm']).toBe(true);
-    });
-
-    test('should prevent duplicate plugin activation', () => {
-      /** @type {Record<string, boolean>} */
-      const pluginsDetected = {};
-      const activatePlugin = jest.fn();
-
-      /** @param {string} pluginName */
-      const processPlugin = pluginName => {
-        if (!pluginsDetected[pluginName]) {
-          pluginsDetected[pluginName] = true;
-          activatePlugin(pluginName);
-        }
-      };
-
-      // Try to activate same plugin multiple times
-      processPlugin('test-plugin');
-      processPlugin('test-plugin');
-      processPlugin('test-plugin');
-
-      // Plugin should only be activated once
-      expect(activatePlugin).toHaveBeenCalledTimes(1);
-    });
+  test('exposes canonical window.YouTubePlusMutationCoordinator facade', () => {
+    expect(window.YouTubePlusMutationCoordinator).toBeDefined();
+    expect(typeof window.YouTubePlusMutationCoordinator.subscribeRoot).toBe('function');
+    expect(typeof window.YouTubePlusMutationCoordinator.unsubscribe).toBe('function');
+    expect(typeof window.YouTubePlusMutationCoordinator.getStats).toBe('function');
   });
 
-  describe('Comment Observer Throttling', () => {
-    test('should throttle comment processing logic', () => {
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let throttleTimer = null;
-      /** @type {Array<Record<string, unknown>>} */
-      let pendingMutations = [];
-      const processCommentMutations = jest.fn();
+  test('batches DOM mutations across subscribers', done => {
+    const root = document.getElementById('test-root');
+    const subscriberA = jest.fn();
+    const subscriberB = jest.fn();
 
-      /** @param {Record<string, unknown>} mutation */
-      const handleMutation = mutation => {
-        pendingMutations.push(mutation);
-        if (throttleTimer) return;
-        throttleTimer = setTimeout(() => {
-          throttleTimer = null;
-          const allMutations = pendingMutations;
-          pendingMutations = [];
-          processCommentMutations(allMutations);
-        }, 50);
-      };
+    window.YouTubePlusMutationCoordinator.subscribeRoot('subA', subscriberA);
+    window.YouTubePlusMutationCoordinator.subscribeRoot('subB', subscriberB);
 
-      // Simulate rapid mutations
-      handleMutation({ type: 'attributes', attributeName: 'hidden' });
-      handleMutation({ type: 'attributes', attributeName: 'tyt-comments-video-id' });
-      handleMutation({ type: 'attributes', attributeName: 'tyt-comments-data-status' });
+    // Trigger DOM mutations on root
+    const child1 = document.createElement('div');
+    child1.className = 'new-child-1';
+    root.appendChild(child1);
 
-      expect(processCommentMutations).not.toHaveBeenCalled();
+    const child2 = document.createElement('div');
+    child2.className = 'new-child-2';
+    root.appendChild(child2);
 
-      jest.advanceTimersByTime(50);
+    // Allow mutation observer loop / rAF to flush
+    setTimeout(() => {
+      expect(subscriberA).toHaveBeenCalled();
+      expect(subscriberB).toHaveBeenCalled();
 
-      expect(processCommentMutations).toHaveBeenCalledTimes(1);
-      expect(processCommentMutations.mock.calls[0][0].length).toBe(3);
-    });
+      const stats = window.YouTubePlusMutationCoordinator.getStats();
+      expect(stats.rootSubscribers).toBeGreaterThanOrEqual(2);
 
-    test('should accumulate pending mutations', () => {
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let throttleTimer = null;
-      /** @type {Array<Record<string, unknown>>} */
-      let pendingMutations = [];
-      const processMutations = jest.fn();
-
-      /** @param {Record<string, unknown>} mutation */
-      const handleMutation = mutation => {
-        pendingMutations.push(mutation);
-        if (throttleTimer) return;
-        throttleTimer = setTimeout(() => {
-          throttleTimer = null;
-          const allMutations = pendingMutations;
-          pendingMutations = [];
-          processMutations(allMutations);
-        }, 50);
-      };
-
-      // Multiple mutations
-      handleMutation({ type: 'attributes', attr: 'attr1' });
-      expect(pendingMutations.length).toBe(1);
-
-      handleMutation({ type: 'attributes', attr: 'attr2' });
-      expect(pendingMutations.length).toBe(2);
-
-      handleMutation({ type: 'childList' });
-      expect(pendingMutations.length).toBe(3);
-
-      jest.advanceTimersByTime(50);
-
-      expect(processMutations).toHaveBeenCalledTimes(1);
-      expect(pendingMutations.length).toBe(0);
-    });
+      window.YouTubePlusMutationCoordinator.unsubscribe('subA');
+      window.YouTubePlusMutationCoordinator.unsubscribe('subB');
+      done();
+    }, 50);
   });
 
-  describe('EGM Panels Observer Debouncing', () => {
-    test('should debounce EGM panel updates at 60fps', () => {
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let egmPanelsDebounceTimer = null;
-      const updateEgmPanels = jest.fn();
-      const debounceInterval = 16; // ~60fps
+  test('unsubscribing stops receiving mutation callbacks', done => {
+    const root = document.getElementById('test-root');
+    const subscriber = jest.fn();
 
-      const handleUpdate = () => {
-        if (egmPanelsDebounceTimer) return;
-        egmPanelsDebounceTimer = setTimeout(() => {
-          egmPanelsDebounceTimer = null;
-          updateEgmPanels();
-        }, debounceInterval);
-      };
+    window.YouTubePlusMutationCoordinator.subscribeRoot('tempSub', subscriber);
+    window.YouTubePlusMutationCoordinator.unsubscribe('tempSub');
 
-      // Trigger rapid updates (animation frames)
-      for (let i = 0; i < 10; i++) {
-        handleUpdate();
-      }
+    const newChild = document.createElement('div');
+    root.appendChild(newChild);
 
-      expect(updateEgmPanels).not.toHaveBeenCalled();
-
-      jest.advanceTimersByTime(debounceInterval);
-
-      expect(updateEgmPanels).toHaveBeenCalledTimes(1);
-    });
-
-    test('should use 60fps debounce interval', () => {
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let debounceTimer = null;
-      const callback = jest.fn();
-      const debounceInterval = 16; // ~60fps
-
-      const debouncedUpdate = () => {
-        if (debounceTimer) return;
-        debounceTimer = setTimeout(() => {
-          debounceTimer = null;
-          callback();
-        }, debounceInterval);
-      };
-
-      debouncedUpdate();
-
-      // Before interval
-      jest.advanceTimersByTime(15);
-      expect(callback).not.toHaveBeenCalled();
-
-      // After interval
-      jest.advanceTimersByTime(1);
-      expect(callback).toHaveBeenCalledTimes(1);
-    });
+    setTimeout(() => {
+      expect(subscriber).not.toHaveBeenCalled();
+      done();
+    }, 50);
   });
 
-  describe('Observer Performance Optimization', () => {
-    test('should reduce callback frequency with debouncing', () => {
-      const callbackWithoutDebounce = jest.fn();
-      const callbackWithDebounce = jest.fn();
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let debounceTimer = null;
+  test('pause and resume correctly pause mutation dispatch', done => {
+    const root = document.getElementById('test-root');
+    const subscriber = jest.fn();
 
-      // Without debounce
-      const normalUpdate = () => {
-        callbackWithoutDebounce();
-      };
+    window.YouTubePlusMutationCoordinator.subscribeRoot('pausedSub', subscriber);
+    window.YouTubePlusMutationCoordinator.pause();
 
-      // With debounce
-      const debouncedUpdate = () => {
-        if (debounceTimer) return;
-        debounceTimer = setTimeout(() => {
-          debounceTimer = null;
-          callbackWithDebounce();
-        }, 50);
-      };
+    const newChild = document.createElement('div');
+    root.appendChild(newChild);
 
-      // Trigger 100 rapid updates
-      for (let i = 0; i < 100; i++) {
-        normalUpdate();
-        debouncedUpdate();
-      }
+    setTimeout(() => {
+      expect(subscriber).not.toHaveBeenCalled();
 
-      jest.advanceTimersByTime(50);
+      // Resume and trigger another mutation
+      window.YouTubePlusMutationCoordinator.resume();
+      const anotherChild = document.createElement('div');
+      root.appendChild(anotherChild);
 
-      // Without debounce: called many times
-      expect(callbackWithoutDebounce.mock.calls.length).toBe(100);
-
-      // With debounce: called once
-      expect(callbackWithDebounce).toHaveBeenCalledTimes(1);
-    });
-
-    test('should handle multiple debounce timings', () => {
-      const callback1 = jest.fn();
-      const callback2 = jest.fn();
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let timer1 = null;
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let timer2 = null;
-
-      const debounced1 = () => {
-        if (timer1) return;
-        timer1 = setTimeout(() => {
-          timer1 = null;
-          callback1();
-        }, 50);
-      };
-
-      const debounced2 = () => {
-        if (timer2) return;
-        timer2 = setTimeout(() => {
-          timer2 = null;
-          callback2();
-        }, 100);
-      };
-
-      debounced1();
-      debounced2();
-
-      jest.advanceTimersByTime(50);
-      expect(callback1).toHaveBeenCalledTimes(1);
-      expect(callback2).not.toHaveBeenCalled();
-
-      jest.advanceTimersByTime(50);
-      expect(callback2).toHaveBeenCalledTimes(1);
-    });
-  });
-
-  describe('Observer Memory Management', () => {
-    test('should clear pending timers on cleanup', () => {
-      /** @type {ReturnType<typeof setTimeout> | null} */
-      let debounceTimer = null;
-      const callback = jest.fn();
-
-      const scheduleUpdate = () => {
-        if (debounceTimer) return;
-        debounceTimer = setTimeout(() => {
-          debounceTimer = null;
-          callback();
-        }, 50);
-      };
-
-      scheduleUpdate();
-
-      // Cleanup before timer fires
-      if (debounceTimer) {
-        clearTimeout(debounceTimer);
-        debounceTimer = null;
-      }
-
-      jest.advanceTimersByTime(50);
-
-      expect(callback).not.toHaveBeenCalled();
-    });
-
-    test('should handle timer cancellation', () => {
-      /** @type {ReturnType<typeof setTimeout> | number | null} */
-      let timer = null;
-      const callback = jest.fn();
-
-      const startTimer = () => {
-        timer = setTimeout(callback, 100);
-      };
-
-      const cancelTimer = () => {
-        if (timer) {
-          clearTimeout(timer);
-          timer = null;
-        }
-      };
-
-      startTimer();
-      cancelTimer();
-
-      jest.advanceTimersByTime(100);
-
-      expect(callback).not.toHaveBeenCalled();
-    });
+      setTimeout(() => {
+        expect(subscriber).toHaveBeenCalled();
+        window.YouTubePlusMutationCoordinator.unsubscribe('pausedSub');
+        done();
+      }, 50);
+    }, 50);
   });
 });

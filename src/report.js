@@ -1,28 +1,47 @@
-// Report — canonical report submission module.
+// Report: report submission for the settings modal.
 //
 // Responsibility: populates the settings 'report' section and provides
 //   report submission helpers. Prepares debug info (version, UA, page URL,
 //   settings snapshot) and opens a prefilled GitHub issue or copies to
 //   clipboard.
-// Public surface: window.youtubePlusReport (settings section provider).
+// Public surface: window.YouTubePlusReport (settings section provider).
 (function () {
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    window.YouTubeUtils?.logSuppressed?.(_err, _label || 'Report');
   const setTimeout_ = setTimeout;
 
   // Minimal guards for shared utils
   const Y = window.YouTubeUtils || {};
 
+  /** Show a notification when the shared notification manager is available; returns true when shown. */
+  const showNotification_ = (
+    /** @type {string} */ message,
+    /** @type {{ duration?: number, type?: string } | undefined} */ opts
+  ) => {
+    const manager = Y?.NotificationManager;
+    if (manager && typeof manager.show === 'function') {
+      manager.show(message, opts);
+      return true;
+    }
+    return false;
+  };
+
+  /** Issue-kind for the payload URL routing. */
+  const issueKindFor = (/** @type {string} */ type) =>
+    type === 'feature' ? 'feature' : type === 'other' ? 'other' : 'bug';
+
   // Translation helper from centralized i18n
   const t = Y.t || (key => key || '');
 
   /**
-   * @typedef {{ version: string; userAgent: string; url: string; language: string; settings: any; error?: string }} DebugInfo
+   * @typedef {{ version: string; userAgent: string; url: string; language: string; settings: Record<string, unknown> | null; error?: string }} DebugInfo
    */
 
   /**
    * Create DOM element with properties and children
    * @param {string} tag - HTML tag name
-   * @param {Object} props - Element properties
-   * @param {Array<any>} children - Child elements or text
+   * @param {Record<string, unknown>} props - Element properties
+   * @param {Array<Node | string>} children - Child elements or text
    * @returns {HTMLElement} Created element
    */
   function mk(tag, props = {}, children = []) {
@@ -33,7 +52,13 @@
       } else if (k === 'html') {
         window.YouTubeUtils?.setSafeHTML?.(el, /** @type {string} */ (v), true);
       } else if (k.startsWith('on') && typeof v === 'function') {
-        el.addEventListener(k.substring(2).toLowerCase(), /** @type {EventListener} */ (v));
+        window.YouTubePlusCleanupManager?.registerListener?.(
+          el,
+          k.substring(2).toLowerCase(),
+          /** @type {EventListener} */ (v),
+          undefined,
+          false
+        );
       } else {
         el.setAttribute(k, String(v));
       }
@@ -47,9 +72,9 @@
   /**
    * Sanitize HTML to prevent XSS attacks.
    *
-   * Delegates to the canonical `YouTubeSafeDOM.sanitizeHTML`. There is
+   * Delegates to the sanitizer `YouTubeSafeDOM.sanitizeHTML`. There is
    * intentionally NO fallback to `textContent → innerHTML` because that
-   * would be an escape, not a sanitization — if the safe-DOM canonical
+   * would be an escape, not a sanitization: if the safe-DOM helper
    * is unavailable here, that's a load-order bug worth surfacing rather
    * than silently masking.
    * @param {string} html - HTML string to sanitize
@@ -63,7 +88,7 @@
       return Y.sanitizeHTML(html);
     }
     if (typeof html !== 'string') return '';
-    // No safe-DOM canonical is available — refuse rather than silently
+    // No safe-DOM helper is available: refuse rather than silently
     // fall through to a no-op escape that would change semantics.
     throw new Error('[report] sanitizeHTML called before YouTubeSafeDOM was ready');
   }
@@ -112,7 +137,7 @@
   function getDebugInfo() {
     try {
       const debug = {
-        version: /** @type {any} */ (window.YouTubePlusDebug)?.version || 'unknown',
+        version: window.YouTubePlusDebug?.version || 'unknown',
         userAgent: navigator?.userAgent || 'unknown',
         url: location?.href || 'unknown',
         language: document.documentElement?.lang || navigator?.language || 'unknown',
@@ -120,6 +145,7 @@
       };
       return debug;
     } catch (err) {
+      logS(err);
       if (Y && typeof Y.logError === 'function') {
         Y.logError('Report', 'Failed to collect debug info', err);
       }
@@ -160,20 +186,19 @@
       try {
         lines.push(JSON.stringify(debug, null, 2));
       } catch (err) {
-        if (Y && typeof Y.logError === 'function') {
-          Y.logError('Report', 'Failed to stringify debug info', err);
-        }
-        // Fallback to minimal debug info
-        const minimalDebug = {
-          version: debug.version || 'unknown',
-          userAgent: debug.userAgent || 'unknown',
-          url: debug.url || 'unknown',
-        };
-        try {
-          lines.push(JSON.stringify(minimalDebug, null, 2));
-        } catch (_e) {
-          lines.push('{ "error": "Failed to stringify debug info" }');
-        }
+        logS(err);
+        // Ship the scalar fields when the settings snapshot is unserializable.
+        lines.push(
+          JSON.stringify(
+            {
+              version: debug.version || 'unknown',
+              userAgent: debug.userAgent || 'unknown',
+              url: debug.url || 'unknown',
+            },
+            null,
+            2
+          )
+        );
       }
       lines.push('```');
       lines.push('\n_Please do not include sensitive personal data._');
@@ -191,25 +216,22 @@
    * @param {'bug'|'feature'|'other'} type - Report type
    */
   function openGitHubIssue(payload, type) {
-    try {
-      const repoOwner = 'diorhc';
-      const repo = 'YTP';
+    const repoOwner = 'diorhc';
+    const repo = 'YTP';
 
-      // Route feature suggestions to GitHub Discussions, others to Issues.
-      const url =
-        type === 'feature'
-          ? `https://github.com/${repoOwner}/${repo}/discussions/new?category=ideas&title=${encodeURIComponent(
-              payload.title
-            )}&body=${encodeURIComponent(payload.body)}`
-          : `https://github.com/${repoOwner}/${repo}/issues/new?title=${encodeURIComponent(
-              payload.title
-            )}&body=${encodeURIComponent(payload.body)}`;
+    // Route feature suggestions to GitHub Discussions, others to Issues.
+    const url =
+      type === 'feature'
+        ? `https://github.com/${repoOwner}/${repo}/discussions/new?category=ideas&title=${encodeURIComponent(
+            payload.title
+          )}&body=${encodeURIComponent(payload.body)}`
+        : `https://github.com/${repoOwner}/${repo}/issues/new?title=${encodeURIComponent(
+            payload.title
+          )}&body=${encodeURIComponent(payload.body)}`;
+    if (Y?.openSafe) {
+      Y.openSafe(url, '_blank');
+    } else {
       window.open(url, '_blank');
-    } catch (err) {
-      if (Y && typeof Y.logError === 'function') {
-        Y.logError('Report', 'Failed to open GitHub issue', err);
-      }
-      throw err;
     }
   }
 
@@ -242,6 +264,7 @@
           reject(new Error('execCommand failed'));
         }
       } catch (err) {
+        logS(err);
         document.body.removeChild(ta);
         reject(err);
       }
@@ -255,7 +278,7 @@
   function renderReportSection(modal) {
     if (!modal?.querySelector) return;
 
-    const section = modal.querySelector('.ytp-plus-settings-section[data-section="report"]');
+    const section = modal.querySelector('.yp-settings-section[data-section="report"]');
     if (!section) return;
 
     // Clear existing content and build a small form
@@ -282,15 +305,18 @@
     const typeDropdown = mk('div', {
       class: 'glass-dropdown',
       id: 'report-type-dropdown',
-      tabindex: '0',
-      role: 'listbox',
-      'aria-expanded': 'false',
     });
 
     const defaultLabel = typeOptions[0].l;
     const toggleBtn = mk(
       'button',
-      { class: 'glass-dropdown__toggle', type: 'button', 'aria-haspopup': 'listbox' },
+      {
+        class: 'glass-dropdown__toggle',
+        id: 'report-type-toggle',
+        type: 'button',
+        'aria-haspopup': 'listbox',
+        'aria-expanded': 'false',
+      },
       [mk('span', { class: 'glass-dropdown__label' }, [defaultLabel])]
     );
 
@@ -311,7 +337,11 @@
       )
     );
 
-    const listEl = mk('ul', { class: 'glass-dropdown__list', role: 'presentation' }, []);
+    const listEl = mk(
+      'ul',
+      { class: 'glass-dropdown__list', role: 'listbox', 'aria-labelledby': 'report-type-toggle' },
+      []
+    );
     typeOptions.forEach((opt, i) => {
       const li = mk('li', { class: 'glass-dropdown__item', 'data-value': opt.v, role: 'option' }, [
         opt.l,
@@ -324,7 +354,7 @@
     typeDropdown.appendChild(listEl);
 
     const inputStyle =
-      'padding:var(--yt-space-sm);border-radius:var(--yt-radius-sm);background:var(--yt-input-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);font-size:14px;transition:var(--yt-transition);box-sizing:border-box;';
+      'padding:var(--yt-space-sm);border-radius:var(--yt-radius-sm);background:var(--yt-input-bg);color:var(--yt-text-primary);border:1px solid var(--yt-glass-border);backdrop-filter:var(--yt-glass-blur-light);-webkit-backdrop-filter:var(--yt-glass-blur-light);font-size:14px;transition:border-color .2s ease,box-shadow .2s ease;box-sizing:border-box;';
 
     const titleInput = mk('input', {
       placeholder: t('shortTitle'),
@@ -344,7 +374,7 @@
     // checkbox input is created separately so we can listen to changes and show a preview
     const debugCheckboxInput = mk('input', {
       type: 'checkbox',
-      class: 'ytp-plus-settings-checkbox',
+      class: 'yp-settings-checkbox',
     });
     const includeDebug = mk(
       'label',
@@ -359,9 +389,15 @@
       style:
         'display:flex;gap:var(--yt-space-sm);margin-top:var(--yt-space-sm);flex-wrap:wrap;justify-content:center;',
     });
-    const submitBtn = mk('button', { class: 'glass-button' }, [t('openGitHub')]);
-    const copyBtn = mk('button', { class: 'glass-button' }, [t('copyReport')]);
-    const emailBtn = mk('button', { class: 'glass-button' }, [t('prepareEmail')]);
+    const submitBtn = /** @type {HTMLButtonElement} */ (
+      mk('button', { class: 'glass-button' }, [t('openGitHub')])
+    );
+    const copyBtn = /** @type {HTMLButtonElement} */ (
+      mk('button', { class: 'glass-button' }, [t('copyReport')])
+    );
+    const emailBtn = /** @type {HTMLButtonElement} */ (
+      mk('button', { class: 'glass-button' }, [t('prepareEmail')])
+    );
 
     actions.appendChild(submitBtn);
     actions.appendChild(copyBtn);
@@ -392,7 +428,7 @@
     const privacy = mk(
       'div',
       {
-        class: 'ytp-plus-settings-item-description',
+        class: 'yp-settings-item-description',
         style: 'margin-top:var(--yt-space-sm);font-size:12px;color:var(--yt-text-secondary);',
       },
       [t('privacy')]
@@ -401,111 +437,111 @@
     section.appendChild(form);
     section.appendChild(privacy);
 
-    try {
-      window.YouTubePlusDesignSystem?.initGlassDropdown?.({
-        dropdown: typeDropdown,
-        hiddenSelect: typeSelect,
-      });
-    } catch (err) {
-      if (Y && typeof Y.logError === 'function') {
-        Y.logError('Report', 'initReportTypeDropdown', err);
-      }
-    }
+    window.YouTubePlusDesignSystem?.initGlassDropdown?.({
+      dropdown: typeDropdown,
+      hiddenSelect: typeSelect,
+    });
 
     // (debugPreview is appended inside the form, directly under the checkbox)
+
+    /**
+     * Fill the debug preview card: header fields, settings detail and full JSON.
+     * @param {HTMLElement} previewEl
+     * @param {DebugInfo} d
+     */
+    function buildDebugPreviewContent_(previewEl, d) {
+      previewEl.replaceChildren();
+
+      // Header with important fields
+      const header = mk(
+        'div',
+        {
+          style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:6px;',
+        },
+        []
+      );
+      header.appendChild(
+        mk('div', {}, ['Version: ', mk('strong', {}, [String(d.version || 'unknown')])])
+      );
+      header.appendChild(
+        mk('div', {}, [
+          'User agent: ',
+          mk('code', { style: 'font-size:11px;color:var(--yt-text-secondary);' }, [
+            String(d.userAgent || ''),
+          ]),
+        ])
+      );
+
+      const urlStr = String(d.url || 'unknown');
+      let urlEl = mk('span', {}, [urlStr]);
+      if (/^https?:\/\//i.test(urlStr)) {
+        urlEl = mk(
+          'a',
+          {
+            href: urlStr,
+            target: '_blank',
+            rel: 'noopener noreferrer',
+            style: 'color:var(--yt-accent);word-break:break-all;',
+          },
+          [urlStr]
+        );
+      }
+      header.appendChild(mk('div', {}, ['URL: ', urlEl]));
+      header.appendChild(mk('div', {}, ['Language: ', mk('code', {}, [String(d.language || '')])]));
+
+      previewEl.appendChild(header);
+
+      // Settings (if available) – collapsible
+      if (d.settings) {
+        const settingsDetails = mk('details', {}, [mk('summary', {}, ['Settings'])]);
+        settingsDetails.appendChild(
+          mk(
+            'pre',
+            {
+              style: 'white-space:pre-wrap;margin:6px 0 0 0;font-size:11px;',
+            },
+            [JSON.stringify(d.settings, null, 2)]
+          )
+        );
+        previewEl.appendChild(settingsDetails);
+      }
+
+      // Full debug JSON (collapsible)
+      const fullDetails = mk('details', {}, [mk('summary', {}, ['Full debug JSON'])]);
+      fullDetails.appendChild(
+        mk(
+          'pre',
+          {
+            style: 'white-space:pre-wrap;margin:6px 0 0 0;font-size:11px;',
+          },
+          [JSON.stringify(d, null, 2)]
+        )
+      );
+      previewEl.appendChild(fullDetails);
+
+      previewEl.style.display = 'block';
+    }
 
     /**
      * Update debug preview based on checkbox state
      */
     function updateDebugPreview() {
-      try {
-        if (debugCheckboxInput.checked) {
-          const d = getDebugInfo();
-
-          // Clear previous content
-          debugPreview.replaceChildren();
-
-          // Header with important fields
-          const header = mk(
-            'div',
-            { style: 'display:flex;flex-direction:column;gap:6px;margin-bottom:6px;' },
-            []
-          );
-          header.appendChild(
-            mk('div', {}, ['Version: ', mk('strong', {}, [String(d.version || 'unknown')])])
-          );
-          header.appendChild(
-            mk('div', {}, [
-              'User agent: ',
-              mk('code', { style: 'font-size:11px;color:var(--yt-text-secondary);' }, [
-                String(d.userAgent || ''),
-              ]),
-            ])
-          );
-
-          const urlStr = String(d.url || 'unknown');
-          let urlEl = mk('span', {}, [urlStr]);
-          try {
-            if (/^https?:\/\//i.test(urlStr)) {
-              urlEl = mk(
-                'a',
-                {
-                  href: urlStr,
-                  target: '_blank',
-                  rel: 'noopener noreferrer',
-                  style: 'color:var(--yt-accent);word-break:break-all;',
-                },
-                [urlStr]
-              );
-            }
-          } catch (e) {
-            // leave as plain text if anything odd and log
-            if (Y && typeof Y.logError === 'function') {
-              Y.logError('Report', 'URL link creation failed', e);
-            }
-            urlEl = mk('span', {}, [String(urlStr)]);
-          }
-          header.appendChild(mk('div', {}, ['URL: ', urlEl]));
-          header.appendChild(
-            mk('div', {}, ['Language: ', mk('code', {}, [String(d.language || '')])])
-          );
-
-          debugPreview.appendChild(header);
-
-          // Settings (if available) – collapsible
-          if (d.settings) {
-            const settingsDetails = mk('details', {}, [mk('summary', {}, ['Settings'])]);
-            settingsDetails.appendChild(
-              mk('pre', { style: 'white-space:pre-wrap;margin:6px 0 0 0;font-size:11px;' }, [
-                JSON.stringify(d.settings, null, 2),
-              ])
-            );
-            debugPreview.appendChild(settingsDetails);
-          }
-
-          // Full debug JSON (collapsible)
-          const fullDetails = mk('details', {}, [mk('summary', {}, ['Full debug JSON'])]);
-          fullDetails.appendChild(
-            mk('pre', { style: 'white-space:pre-wrap;margin:6px 0 0 0;font-size:11px;' }, [
-              JSON.stringify(d, null, 2),
-            ])
-          );
-          debugPreview.appendChild(fullDetails);
-
-          debugPreview.style.display = 'block';
-        } else {
-          debugPreview.replaceChildren();
-          debugPreview.style.display = 'none';
-        }
-      } catch (err) {
-        if (Y && typeof Y.logError === 'function') {
-          Y.logError('Report', 'updateDebugPreview failed', err);
-        }
+      if (/** @type {HTMLInputElement} */ (debugCheckboxInput).checked) {
+        buildDebugPreviewContent_(debugPreview, getDebugInfo());
+      } else {
+        debugPreview.replaceChildren();
+        debugPreview.style.display = 'none';
       }
     }
 
     // wire up checkbox to preview
-    debugCheckboxInput.addEventListener('change', updateDebugPreview);
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      debugCheckboxInput,
+      'change',
+      updateDebugPreview,
+      undefined,
+      false
+    );
 
     /**
      * Gather and validate form data
@@ -551,175 +587,191 @@
       };
     }
 
-    submitBtn.addEventListener('click', e => {
-      e.preventDefault();
-      if (submitBtn.disabled) return; // Prevent double-click
-
-      try {
-        const data = gather();
-
-        // Check for validation errors
-        if (data.errors && data.errors.length > 0) {
-          const errorMsg = t('fixErrorsPrefix') + data.errors.join('\n• ');
-          if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
-            Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
-          } else {
-            window.YouTubeUtils?.logger?.warn?.('Report', 'Validation errors', data.errors);
-          }
-          return;
+    /**
+     * Handle validation errors uniformly across all buttons
+     * @param {{ errors?: string[] }} data - gather() result containing errors array
+     * @returns {boolean} true if errors exist (and were shown), false otherwise
+     */
+    function handleValidationErrors(data) {
+      if (data.errors && data.errors.length > 0) {
+        const errorMsg = t('fixErrorsPrefix') + data.errors.join('\n• ');
+        if (
+          !showNotification_(errorMsg, {
+            duration: 4000,
+            type: 'error',
+          })
+        ) {
+          window.YouTubeUtils?.logger?.warn?.('Report', 'Validation errors', data.errors);
         }
+        return true;
+      }
+      return false;
+    }
 
-        // Add loading state
-        const originalText = submitBtn.textContent;
-        submitBtn.disabled = true;
-        submitBtn.textContent = t('opening');
-        submitBtn.style.opacity = '0.6';
+    /**
+     * Set button to loading state (disabled, dimmed, with loading text)
+     * @param {HTMLButtonElement} btn - Button element
+     * @param {string} loadingLabel - Loading text to display (e.g., t('opening'))
+     * @returns {string} Original text content
+     */
+    function setButtonLoading(btn, loadingLabel) {
+      const originalText = btn.textContent;
+      btn.disabled = true;
+      btn.textContent = loadingLabel;
+      btn.style.opacity = '0.6';
+      return originalText;
+    }
 
-        const payload = buildIssuePayload(data);
-        openGitHubIssue(
-          payload,
-          data.type === 'feature' ? 'feature' : data.type === 'other' ? 'other' : 'bug'
-        );
+    /**
+     * Reset button after action (restore text, re-enable, fade back in after 2 seconds)
+     * @param {HTMLButtonElement} btn - Button element
+     * @param {string} originalText - Original text to restore
+     */
+    function resetButton(btn, originalText) {
+      setTimeout_(() => {
+        btn.disabled = false;
+        btn.textContent = originalText;
+        btn.style.opacity = '1';
+      }, 2000);
+    }
 
-        if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
-          Y.NotificationManager.show(t('openingGithubNotification'), { duration: 2500 });
-        }
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      submitBtn,
+      'click',
+      e => {
+        e.preventDefault();
+        if (submitBtn.disabled) return; // Prevent double-click
 
-        // Reset button after a delay
-        setTimeout_(() => {
-          submitBtn.disabled = false;
-          submitBtn.textContent = originalText;
-          submitBtn.style.opacity = '1';
-        }, 2000);
-      } catch (err) {
-        if (Y.logError) Y.logError('Report', 'Failed to open GitHub issue', err);
-        if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
-          Y.NotificationManager.show(t('failedOpenGithub'), {
+        try {
+          const data = gather();
+          if (handleValidationErrors(data)) return;
+
+          const originalText = setButtonLoading(submitBtn, t('opening'));
+
+          const payload = buildIssuePayload(data);
+          openGitHubIssue(payload, issueKindFor(data.type));
+
+          showNotification_(t('openingGithubNotification'), {
+            duration: 2500,
+          });
+
+          resetButton(submitBtn, originalText);
+        } catch (err) {
+          logS(err);
+          if (Y.logError) Y.logError('Report', 'Failed to open GitHub issue', err);
+          showNotification_(t('failedOpenGithub'), {
             duration: 3000,
             type: 'error',
           });
+          submitBtn.disabled = false;
+          submitBtn.textContent = t('openGitHub');
+          submitBtn.style.opacity = '1';
         }
-        submitBtn.disabled = false;
-        submitBtn.textContent = t('openGitHub');
-        submitBtn.style.opacity = '1';
-      }
-    });
+      },
+      undefined,
+      false
+    );
 
-    copyBtn.addEventListener('click', e => {
-      e.preventDefault();
-      if (copyBtn.disabled) return; // Prevent double-click
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      copyBtn,
+      'click',
+      e => {
+        e.preventDefault();
+        if (copyBtn.disabled) return; // Prevent double-click
 
-      try {
-        const data = gather();
+        try {
+          const data = gather();
+          if (handleValidationErrors(data)) return;
 
-        // Check for validation errors
-        if (data.errors && data.errors.length > 0) {
-          const errorMsg = t('fixErrorsPrefix') + data.errors.join('\n• ');
-          if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
-            Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
-          } else {
-            window.YouTubeUtils?.logger?.warn?.('Report', 'Validation errors', data.errors);
-          }
-          return;
-        }
+          const originalText = setButtonLoading(copyBtn, t('copying'));
 
-        // Add loading state
-        const originalText = copyBtn.textContent;
-        copyBtn.disabled = true;
-        copyBtn.textContent = t('copying');
-        copyBtn.style.opacity = '0.6';
+          const payload = buildIssuePayload(data);
+          const full = `Title: ${payload.title}\n\n${payload.body}`;
 
-        const payload = buildIssuePayload(data);
-        const full = `Title: ${payload.title}\n\n${payload.body}`;
-
-        copyToClipboard(full)
-          .then(() => {
-            if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
-              Y.NotificationManager.show(t('reportCopied'), { duration: 2000 });
-            }
-            copyBtn.textContent = t('copied');
-            copyBtn.style.opacity = '1';
-            setTimeout_(() => {
+          copyToClipboard(full)
+            .then(() => {
+              showNotification_(t('reportCopied'), {
+                duration: 2000,
+              });
+              copyBtn.textContent = t('copied');
+              copyBtn.style.opacity = '1';
+              resetButton(copyBtn, originalText);
+            })
+            .catch(err => {
+              if (Y && typeof Y.logError === 'function') Y.logError('Report', 'copy failed', err);
+              if (
+                !showNotification_(t('copyFailed'), {
+                  duration: 3000,
+                  type: 'error',
+                })
+              ) {
+                window.YouTubeUtils?.logger?.warn?.(
+                  'Report',
+                  'Copy failed; please copy manually',
+                  err
+                );
+              }
               copyBtn.disabled = false;
               copyBtn.textContent = originalText;
-            }, 2000);
-          })
-          .catch(err => {
-            if (Y && typeof Y.logError === 'function') Y.logError('Report', 'copy failed', err);
-            if (Y?.NotificationManager && typeof Y.NotificationManager.show === 'function') {
-              Y.NotificationManager.show(t('copyFailed'), {
-                duration: 3000,
-                type: 'error',
-              });
-            } else {
-              window.YouTubeUtils?.logger?.warn?.(
-                'Report',
-                'Copy failed; please copy manually',
-                err
-              );
-            }
-            copyBtn.disabled = false;
-            copyBtn.textContent = originalText;
-            copyBtn.style.opacity = '1';
-          });
-      } catch (err) {
-        if (Y.logError) Y.logError('Report', 'Failed to copy report', err);
-        copyBtn.disabled = false;
-        copyBtn.textContent = t('copyReport');
-        copyBtn.style.opacity = '1';
-      }
-    });
-
-    emailBtn.addEventListener('click', e => {
-      e.preventDefault();
-      if (emailBtn.disabled) return; // Prevent double-click
-
-      try {
-        const data = gather();
-
-        // Check for validation errors
-        if (data.errors && data.errors.length > 0) {
-          const errorMsg = t('fixErrorsPrefix') + data.errors.join('\n• ');
-          if (Y.NotificationManager && typeof Y.NotificationManager.show === 'function') {
-            Y.NotificationManager.show(errorMsg, { duration: 4000, type: 'error' });
-          } else {
-            window.YouTubeUtils?.logger?.warn?.('Report', 'Validation errors', data.errors);
-          }
-          return;
+              copyBtn.style.opacity = '1';
+            });
+        } catch (err) {
+          logS(err);
+          if (Y.logError) Y.logError('Report', 'Failed to copy report', err);
+          copyBtn.disabled = false;
+          copyBtn.textContent = t('copyReport');
+          copyBtn.style.opacity = '1';
         }
+      },
+      undefined,
+      false
+    );
 
-        const originalText = emailBtn.textContent;
-        emailBtn.disabled = true;
-        emailBtn.textContent = t('opening');
-        emailBtn.style.opacity = '0.6';
+    window.YouTubePlusCleanupManager?.registerListener?.(
+      emailBtn,
+      'click',
+      e => {
+        e.preventDefault();
+        if (emailBtn.disabled) return; // Prevent double-click
 
-        const payload = buildIssuePayload(data);
-        const subject = payload.title;
-        // No dedicated mail address in userscript; open mail client with prefilled body
-        const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
-          payload.body
-        )}`;
-        window.location.href = mailto;
+        try {
+          const data = gather();
+          if (handleValidationErrors(data)) return;
 
-        setTimeout_(() => {
+          const originalText = setButtonLoading(emailBtn, t('opening'));
+
+          const payload = buildIssuePayload(data);
+          const subject = payload.title;
+          // No dedicated mail address in userscript; open mail client with prefilled body
+          const mailto = `mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(
+            payload.body
+          )}`;
+          openMailClient(mailto);
+
+          resetButton(emailBtn, originalText);
+        } catch (err) {
+          logS(err);
+          if (Y.logError) Y.logError('Report', 'Failed to prepare email', err);
           emailBtn.disabled = false;
-          emailBtn.textContent = originalText;
+          emailBtn.textContent = t('prepareEmail');
           emailBtn.style.opacity = '1';
-        }, 2000);
-      } catch (err) {
-        if (Y.logError) Y.logError('Report', 'Failed to prepare email', err);
-        emailBtn.disabled = false;
-        emailBtn.textContent = t('prepareEmail');
-        emailBtn.style.opacity = '1';
-      }
-    });
+        }
+      },
+      undefined,
+      false
+    );
   }
 
-  // Expose render function
-  try {
-    window.youtubePlusReport = window.youtubePlusReport || {};
-    window.youtubePlusReport.render = renderReportSection;
-  } catch (e) {
-    if (Y.logError) Y.logError('Report', 'Failed to attach report module to window', e);
+  /** @param {string} url */
+  function openMailClient(url) {
+    const link = document.createElement('a');
+    link.href = url;
+    link.rel = 'noopener noreferrer';
+    link.click();
   }
+
+  // Public facade export.
+  window.YouTubePlusReport = window.YouTubePlusReport || {
+    render: renderReportSection,
+  };
 })();

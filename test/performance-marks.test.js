@@ -12,8 +12,6 @@
 describe('YouTubePlusPerformance mark map bounds', () => {
   /** @type {any} */
   let perf;
-  /** @type {any} */
-  let logger;
 
   beforeEach(() => {
     jest.resetModules();
@@ -21,14 +19,11 @@ describe('YouTubePlusPerformance mark map bounds', () => {
     delete window.YouTubePlusLogger;
     delete window.YouTubeUtils;
     delete window.YouTubePlusConfig;
+    delete window.YouTubePlusCleanupManager;
 
-    logger = {
-      debug: jest.fn(),
-      info: jest.fn(),
-      warn: jest.fn(),
-      error: jest.fn(),
-    };
-    window.YouTubeUtils = { logger };
+    require('../src/cleanup-manager.js');
+    require('../src/logger.js');
+    require('../src/utils.js');
     require('../src/performance.js');
     perf = window.YouTubePerformance;
   });
@@ -58,7 +53,7 @@ describe('YouTubePlusPerformance mark map bounds', () => {
   test('timeFunction mark key does not include Date.now()', () => {
     const timed = perf.timeFunction('stable-name', () => 1);
     timed();
-    const marks = [...perf.getStats().customMetrics ? Object.keys(perf.getStats()) : []];
+    const marks = [...(perf.getStats().customMetrics ? Object.keys(perf.getStats()) : [])];
     const before = perf.getStats().totalMarks;
     timed();
     const after = perf.getStats().totalMarks;

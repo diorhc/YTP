@@ -1,0 +1,122 @@
+{
+  "src/basic.js": {
+    "transitionAll": 0,
+    "willChange": 0,
+    "rawBlur": 0,
+    "rawEasing": 0,
+    "rawDuration": 3,
+    "rawColor": 0,
+    "rawRadius": 0,
+    "important": 0,
+    "hasBroad": 0,
+    "universal": 0
+  },
+  "src/design-system.js": {
+    "transitionAll": 9,
+    "willChange": 1,
+    "rawBlur": 0,
+    "rawEasing": 39,
+    "rawDuration": 151,
+    "rawColor": 103,
+    "rawRadius": 130,
+    "important": 799,
+    "hasBroad": 6,
+    "universal": 3
+  },
+  "src/endscreen.js": {
+    "transitionAll": 0,
+    "willChange": 0,
+    "rawBlur": 0,
+    "rawEasing": 0,
+    "rawDuration": 0,
+    "rawColor": 0,
+    "rawRadius": 0,
+    "important": 5,
+    "hasBroad": 0,
+    "universal": 0
+  },
+  "src/enhanced.js": {
+    "transitionAll": 0,
+    "willChange": 2,
+    "rawBlur": 0,
+    "rawEasing": 0,
+    "rawDuration": 0,
+    "rawColor": 0,
+    "rawRadius": 0,
+    "important": 0,
+    "hasBroad": 0,
+    "universal": 0
+  },
+  "src/report.js": {
+    "transitionAll": 0,
+    "willChange": 0,
+    "rawBlur": 0,
+    "rawEasing": 0,
+    "rawDuration": 1,
+    "rawColor": 0,
+    "rawRadius": 0,
+    "important": 0,
+    "hasBroad": 0,
+    "universal": 0
+  },
+  "src/shorts.js": {
+    "transitionAll": 1,
+    "willChange": 0,
+    "rawBlur": 0,
+    "rawEasing": 1,
+    "rawDuration": 1,
+    "rawColor": 0,
+    "rawRadius": 0,
+    "important": 0,
+    "hasBroad": 0,
+    "universal": 0
+  },
+  "src/thumbnail.js": {
+    "transitionAll": 0,
+    "willChange": 0,
+    "rawBlur": 0,
+    "rawEasing": 0,
+    "rawDuration": 4,
+    "rawColor": 0,
+    "rawRadius": 0,
+    "important": 0,
+    "hasBroad": 0,
+    "universal": 0
+  },
+  "src/update.js": {
+    "transitionAll": 0,
+    "willChange": 0,
+    "rawBlur": 0,
+    "rawEasing": 0,
+    "rawDuration": 2,
+    "rawColor": 0,
+    "rawRadius": 0,
+    "important": 0,
+    "hasBroad": 0,
+    "universal": 0
+  },
+  "src/utils.js": {
+    "transitionAll": 0,
+    "willChange": 0,
+    "rawBlur": 0,
+    "rawEasing": 0,
+    "rawDuration": 0,
+    "rawColor": 9,
+    "rawRadius": 2,
+    "important": 0,
+    "hasBroad": 0,
+    "universal": 0
+  },
+  "src/zoom.js": {
+    "transitionAll": 0,
+    "willChange": 2,
+    "rawBlur": 0,
+    "rawEasing": 0,
+    "rawDuration": 0,
+    "rawColor": 0,
+    "rawRadius": 0,
+    "important": 0,
+    "hasBroad": 0,
+    "universal": 0
+  }
+}

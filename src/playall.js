@@ -1,22 +1,58 @@
-// Play All — LazyLoader registered as 'playall'.
+// Play All: LazyLoader registered as 'playall'.
 //
 // Responsibility: "Play All" button injection on playlist pages,
 //   sequential video playback orchestration, and random-shuffle mode
 //   via the `ytp-random` URL parameter.
-// Public surface: none (self-contained IIFE, registered via LazyLoader).
-(async function () {
+// Public surface: window.YouTubePlusPlayall.
+(function () {
   const setTimeout_ = setTimeout.bind(window);
-  const _createHTML = window.YouTubeUtils.createHTML;
+  const U = window.YouTubeUtils;
+  const logS = (/** @type {unknown} */ _err, /** @type {string|undefined} */ _label = undefined) =>
+    U?.logSuppressed?.(_err, _label || 'PlayAll');
+
+  const _createHTML = U.createHTML;
   const RANDOM_PARAM = 'ytp-random';
 
-  let featureEnabled = true;
   /** @type {(() => void)|null} */
   let stopRandomPlayTimers = null;
   /** @type {(() => void)|null} */
   let scheduleApplyRandomPlay = null;
-  /** @type {any|null} */
+  /** @type {number | { stop?: () => void, cancel?: () => void } | null} */
   let addButtonRetryTimer = null;
-  const clearRetryHandle = (/** @type {any} */ handle) => {
+
+  // Runtime resources follow the FeatureLifecycle contract
+  // (feature-registry.js): `playAllCtx` exists only while the
+  // `enablePlayAll` setting is on. Dynamic groups get their own scope:
+  // `btnScope` owns each button instance, `randomScope` owns the
+  // random-play UI per playlist panel. YouTube DOM touched by the module
+  // (chip-bar parent class, chip-bar shadow-root style, playlist header
+  // href, applied panel attributes) is tracked and restored on stop.
+  /** @type {FeatureContext | null} */
+  let playAllCtx = null;
+  /** @type {FeatureScope | null} */
+  let btnScope = null;
+  /** @type {FeatureScope | null} */
+  let randomScope = null;
+  /** @type {Element | null} */
+  let randomPrevPanel = null;
+  /** @type {(() => void) | null} */
+  let keydownRelease = null;
+  /** @type {(() => void) | null} */
+  let timeupdateRelease = null;
+  /** @type {string | null} */
+  let badgeAnchorPrevHref = null;
+  /** @type {Element | null} */
+  let shadowStyleEl = null;
+  /** @type {Element | null} */
+  let parentClassEl = null;
+
+  const isMobileHost = () => window.location.host === 'm.youtube.com';
+
+  const navigate = (/** @type {string} */ targetUrl) => U.navigateTo(targetUrl);
+
+  const clearRetryHandle = (
+    /** @type {number | { stop?: () => void, cancel?: () => void } | null | undefined} */ handle
+  ) => {
     if (!handle) return;
     if (typeof handle === 'number') {
       clearTimeout(handle);
@@ -30,43 +66,6 @@
       handle.cancel();
     }
   };
-  const setFeatureEnabled = (/** @type {boolean|undefined} */ nextEnabled) => {
-    featureEnabled = nextEnabled !== false;
-    if (!featureEnabled) {
-      try {
-        removeButton();
-      } catch (_e) {
-        /* feature disable cleanup */
-      }
-      try {
-        if (addButtonRetryTimer) {
-          clearRetryHandle(addButtonRetryTimer);
-        }
-        addButtonRetryTimer = null;
-      } catch (_e) {
-        /* timer cleanup safe to ignore */
-      }
-      try {
-        if (typeof stopRandomPlayTimers === 'function') stopRandomPlayTimers();
-      } catch (_e) {
-        /* timer cleanup safe to ignore */
-      }
-    } else {
-      try {
-        queueDesktopAddButton();
-      } catch (_e) {
-        /* feature enable may fail */
-      }
-      try {
-        if (typeof scheduleApplyRandomPlay === 'function') scheduleApplyRandomPlay();
-      } catch (_e) {
-        /* feature enable may fail */
-      }
-    }
-  };
-
-  featureEnabled = window.YouTubeUtils?.loadFeatureEnabled?.('enablePlayAll') ?? true;
-
   // Shared DOM helpers from YouTubeUtils
   const $ = window.YouTubeUtils.$;
   const $$ = window.YouTubeUtils.$$;
@@ -82,11 +81,19 @@
         try {
           if (cb) cb();
         } catch (e) {
+          logS(e);
           playAllLogger?.warn?.('Play All', 'DOMReady callback error', e);
         }
       }
     };
-    if (!ready) document.addEventListener('DOMContentLoaded', run, { once: true });
+    if (!ready)
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        document,
+        'DOMContentLoaded',
+        run,
+        { once: true },
+        true
+      );
     return (/** @type {() => void} */ cb) => {
       if (ready) cb();
       else queue.push(cb);
@@ -95,14 +102,8 @@
 
   const t = window.YouTubeUtils?.t || ((/** @type {string} */ key) => key || '');
 
-  const hasTranslation = (/** @type {string} */ key) => {
-    try {
-      if (window.YouTubePlusI18n?.hasTranslation) return window.YouTubePlusI18n.hasTranslation(key);
-    } catch (_e) {
-      /* i18n check optional */
-    }
-    return false;
-  };
+  const hasTranslation = (/** @type {string} */ key) =>
+    Boolean(window.YouTubePlusI18n?.hasTranslation?.(key));
 
   const getPlayAllLabel = () => {
     if (hasTranslation('playAllButton')) {
@@ -117,51 +118,59 @@
     return localized && localized !== 'enablePlayAllLabel' ? localized : getPlayAllLabel();
   };
 
-  const resolveChannelIdFromDom = () => {
-    try {
-      const metaChannel = $('meta[itemprop="channelId"]');
-      const metaValue = metaChannel?.getAttribute('content');
-      if (metaValue && /^UC[a-zA-Z0-9_-]{22}$/.test(metaValue)) return metaValue;
+  const UC_CHANNEL_RE = /^UC[a-zA-Z0-9_-]{22}$/;
 
-      const canonical = $('link[rel="canonical"]');
-      const canonicalHref = canonical?.getAttribute('href') || '';
-      const canonicalMatch = canonicalHref.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
-      if (canonicalMatch?.[1]) return canonicalMatch[1];
+  const resolveMetaChannelId_ = () => {
+    const metaChannel = $('meta[itemprop="channelId"]');
+    const metaValue = metaChannel?.getAttribute('content');
+    if (metaValue && UC_CHANNEL_RE.test(metaValue)) return metaValue;
 
-      const browseNode = $('ytd-browse[page-subtype="channels"]');
-      const attrId =
-        browseNode?.getAttribute?.('channel-id') || browseNode?.getAttribute?.('external-id');
-      if (attrId && /^UC[a-zA-Z0-9_-]{22}$/.test(attrId)) return attrId;
+    const canonical = $('link[rel="canonical"]');
+    const canonicalHref = canonical?.getAttribute('href') || '';
+    const canonicalMatch = canonicalHref.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+    return canonicalMatch?.[1] ?? null;
+  };
 
-      const channelHrefNode = $(
-        'ytd-channel-name a[href*="/channel/UC"], #channel-name a[href*="/channel/UC"], a[href^="/channel/UC"]'
+  const resolveDomNodeChannelId_ = () => {
+    const browseNode = $('ytd-browse[page-subtype="channels"]');
+    const attrId =
+      browseNode?.getAttribute?.('channel-id') || browseNode?.getAttribute?.('external-id');
+    if (attrId && UC_CHANNEL_RE.test(attrId)) return attrId;
+
+    const channelHrefNode = $(
+      'ytd-channel-name a[href*="/channel/UC"], #channel-name a[href*="/channel/UC"], a[href^="/channel/UC"]'
+    );
+    const channelHref = channelHrefNode?.getAttribute?.('href') || '';
+    const channelHrefMatch = channelHref.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+    if (channelHrefMatch?.[1]) return channelHrefMatch[1];
+
+    const fromUrl = location.href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
+    return fromUrl?.[1] ?? null;
+  };
+
+  const resolveInitialDataChannelId_ = () => {
+    const initialData =
+      /** @type {{ metadata?: { channelMetadataRenderer?: { externalId?: string } }, header?: { c4TabbedHeaderRenderer?: { channelId?: string }, pageHeaderRenderer?: { content?: { pageHeaderViewModel?: { metadata?: { contentMetadataViewModel?: { metadataRows?: Array<{ metadataParts?: Array<{ text?: { content?: string } }> }> } } } } } } } } | undefined} */ (
+        window.ytInitialData
       );
-      const channelHref = channelHrefNode?.getAttribute?.('href') || '';
-      const channelHrefMatch = channelHref.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
-      if (channelHrefMatch?.[1]) return channelHrefMatch[1];
+    const headerId =
+      initialData?.metadata?.channelMetadataRenderer?.externalId ||
+      initialData?.header?.c4TabbedHeaderRenderer?.channelId ||
+      initialData?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.find?.(
+        (/** @type {{ text?: { content?: string } }} */ p) =>
+          UC_CHANNEL_RE.test(p?.text?.content || '')
+      )?.text?.content;
+    if (headerId && UC_CHANNEL_RE.test(headerId)) return headerId;
 
-      const href = location.href;
-      const fromUrl = href.match(/\/channel\/(UC[a-zA-Z0-9_-]{22})/);
-      if (fromUrl?.[1]) return fromUrl[1];
-
-      const initialData = window.ytInitialData;
-      const headerId =
-        initialData?.metadata?.channelMetadataRenderer?.externalId ||
-        initialData?.header?.c4TabbedHeaderRenderer?.channelId ||
-        initialData?.header?.pageHeaderRenderer?.content?.pageHeaderViewModel?.metadata?.contentMetadataViewModel?.metadataRows?.[0]?.metadataParts?.find?.(
-          (/** @type {any} */ p) => /^UC[a-zA-Z0-9_-]{22}$/.test(p?.text?.content || '')
-        )?.text?.content;
-      if (headerId && /^UC[a-zA-Z0-9_-]{22}$/.test(headerId)) return headerId;
-
-      if (window.ytcfg?.get) {
-        const cfgId = window.ytcfg.get('CHANNEL_ID');
-        if (cfgId && /^UC[a-zA-Z0-9_-]{22}$/.test(cfgId)) return cfgId;
-      }
-    } catch (e) {
-      playAllLogger?.warn?.('Play All', 'Failed to resolve channel ID from DOM', e);
+    if (window.ytcfg?.get) {
+      const cfgId = window.ytcfg.get('CHANNEL_ID');
+      if (cfgId && UC_CHANNEL_RE.test(cfgId)) return cfgId;
     }
     return null;
   };
+
+  const resolveChannelIdFromDom = () =>
+    resolveMetaChannelId_() || resolveDomNodeChannelId_() || resolveInitialDataChannelId_();
 
   /**
    * Retry resolving the channel ID from DOM sources up to `maxAttempts` times.
@@ -184,57 +193,25 @@
       check();
     });
 
-  const scheduleNonCritical = (/** @type {() => void} */ fn) => {
-    if (typeof requestIdleCallback === 'function') {
-      requestIdleCallback(fn, { timeout: 2000 });
-    } else {
-      setTimeout(fn, 200);
-    }
-  };
-
   /** @type {{ script?: { version?: string } } | null} */
   const gmInfo =
-    /** @type {{ script?: { version?: string } } | null} */ (
-      /** @type {any} */ (globalThis)?.GM_info ?? null
-    ) ||
-    /** @type {{ script?: { version?: string } } | null} */ (
-      /** @type {any} */ (window)?.GM_info ?? null
-    );
+    (typeof globalThis !== 'undefined' &&
+      /** @type {{ GM_info?: { script?: { version?: string } } }} */ (globalThis).GM_info) ||
+    (typeof window !== 'undefined' &&
+      /** @type {{ GM_info?: { script?: { version?: string } } }} */ (window).GM_info) ||
+    null;
 
   const scriptVersion = gmInfo?.script?.version ?? null;
   if (scriptVersion && /-(alpha|beta|dev|test)$/.test(scriptVersion)) {
-    try {
-      window.YouTubeUtils?.logger?.info?.(
-        '%cytp - YouTube Play All\n',
-        'color: var(--yt-playall-accent-purple); font-size: 32px; font-weight: bold',
-        'You are currently running a test version:',
-        scriptVersion
-      );
-    } catch (_e) {
-      /* logging non-critical */
-    }
+    window.YouTubeUtils?.logger?.info?.(
+      '%cytp - YouTube Play All\n',
+      'color: var(--yt-playall-accent-purple); font-size: 32px; font-weight: bold',
+      'You are currently running a test version:',
+      scriptVersion
+    );
   }
 
-  // TrustedTypes default policy is registered in main.js — no duplicate needed here
-
-  scheduleNonCritical(() => {
-    // Play All styles are owned by the canonical design-system style
-    // registry (`ytp-play-all-styles` bundle in design-system.js) and
-    // mounted via StyleManager so they share the single style host with
-    // the rest of the design system. StyleManager.add is idempotent
-    // (no-op when the css is unchanged), so this is safe to call from
-    // any boot path. The defensive guard keeps an unexpected absence of
-    // StyleManager a clean no-op rather than a throw.
-    try {
-      const SM = window.YouTubeUtils?.StyleManager;
-      if (SM && typeof SM.add === 'function') {
-        const css = window.YouTubePlusDesignSystem?.getStyle?.('ytp-play-all-styles') || '';
-        SM.add('ytp-play-all-styles', css);
-      }
-    } catch (e) {
-      playAllLogger?.warn?.('Play All', 'Failed to inject Play All styles via StyleManager', e);
-    }
-  });
+  // TrustedTypes default policy lives in main.js, so none is registered here.
 
   const getVideoId = (/** @type {string} */ url) => {
     return window.YouTubeUtils?.getVideoIdFromUrl?.(url) ?? null;
@@ -255,7 +232,7 @@
    */
 
   /**
-   * @return {{ getProgressState: () => { current: number, duration: number, number: number }, pauseVideo: () => void, seekTo: (arg0: number) => void, isLifaAdPlaying: () => boolean }|null} player
+   * @return {PlayerElement | null}
    */
   const getPlayer = () => /** @type {PlayerElement | null} */ ($('#movie_player'));
 
@@ -270,11 +247,25 @@
 
   const isAdPlaying = () => !!$('.ad-interrupting');
 
-  const redirect = (/** @type {string} */ v, /** @type {string} */ list, ytpRandom = null) => {
-    if (location.host === 'm.youtube.com') {
+  /**
+   * Build a /watch URL with optional list and ytp-random query params.
+   * @param {string} v
+   * @param {string} list
+   * @param {string|number|null} [ytpRandom]
+   * @returns {string}
+   */
+  const buildWatchUrl = (v, list, ytpRandom) =>
+    `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
+
+  const redirect = (
+    /** @type {string} */ v,
+    /** @type {string} */ list,
+    /** @type {string | number | null} */ ytpRandom = null
+  ) => {
+    const url = buildWatchUrl(v, list, ytpRandom);
+    if (isMobileHost()) {
       // Mobile: use direct navigation
-      const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
-      window.location.href = url;
+      navigate(url);
     } else {
       // Desktop: try YouTube's client-side routing first, with fallback
       try {
@@ -283,10 +274,10 @@
           const redirector = document.createElement('a');
           redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
           redirector.setAttribute('hidden', '');
-          redirector.data = {
+          /** @type {HTMLAnchorElement & { data?: unknown }} */ (redirector).data = {
             commandMetadata: {
               webCommandMetadata: {
-                url: `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`,
+                url,
                 webPageType: 'WEB_PAGE_TYPE_WATCH',
                 rootVe: 3832, // ??? required though
               },
@@ -300,13 +291,12 @@
           redirector.click();
         } else {
           // Fallback: use direct navigation if playlist panel not found
-          const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
-          window.location.href = url;
+          navigate(url);
         }
       } catch (_e) {
+        logS(_e);
         // Fallback: use direct navigation on error
-        const url = `/watch?v=${v}&list=${list}${ytpRandom !== null ? `&ytp-random=${ytpRandom}` : ''}`;
-        window.location.href = url;
+        navigate(url);
       }
     }
   };
@@ -314,16 +304,18 @@
   let id = '';
   /** @type {string | null} */
   let observerSubId = null;
-  // Coordinator's setManagedTimeout is intentionally private (see
-  // mutation-coordinator.js header), so route the timeout through the
-  // standard YouTubeUtils-aware wrapper directly. The coordinator is
-  // still the single source of truth for the observer (subscribeRoot /
-  // watchTarget) below.
+  // The lifecycle context routes one-shot timers while the feature runs so
+  // a stop clears pending retries; outside the feature (manual facade
+  // callers) the plain bound setTimeout applies.
   /**
    * @param {() => void} callback
    * @param {number} delay
    */
   const scheduleManagedTimeout = (callback, delay) => {
+    if (playAllCtx) {
+      playAllCtx.timeout(callback, delay);
+      return;
+    }
     setTimeout_(callback, delay);
   };
   const scheduleApplyRetry = (
@@ -332,7 +324,11 @@
     /** @type {number} */ timeoutMs
   ) => {
     if (retryCount >= 12) return;
-    const waitFor = window.YouTubeUtils?.waitFor || window.YouTubeUtils?.waitForElement;
+    if (!playAllCtx) return;
+    const waitFor =
+      /** @type {((selector: string, timeoutMs?: number) => Promise<unknown>) | undefined} */ (
+        window.YouTubeUtils?.waitFor || window.YouTubeUtils?.waitForElement
+      );
     if (typeof waitFor === 'function') {
       waitFor(selector, timeoutMs)
         .then(() => apply(retryCount + 1))
@@ -342,195 +338,260 @@
     scheduleManagedTimeout(() => apply(retryCount + 1), 80);
   };
 
-  const apply = (retryCount = 0) => {
-    playAllLogger?.warn?.('Play All', 'apply() start', {
-      id,
-      retryCount,
-      path: location.pathname,
-    });
-    if (id === '') {
-      // DOM may still be transitioning; queue another resolution attempt
-      // instead of giving up permanently.
-      playAllLogger?.warn?.('Play All', 'apply() id empty, scheduling addButton retry');
-      scheduleManagedTimeout(() => {
-        if (id === '') addButton();
-      }, 200);
-      return;
+  // Placement for a chip-bar-view-model host: insert directly into its
+  // shadow root when available, else as a sibling before the host inside
+  // its parent, else inside the host itself (no upgraded parent).
+  /**
+   * @param {HTMLElement} hostEl
+   * @returns {{ parent: HTMLElement | ShadowRoot | null, chipBarInsertBefore: HTMLElement | null }}
+   */
+  const resolveChipBarPlacement = hostEl => {
+    const hostSr = hostEl.shadowRoot;
+    if (hostSr instanceof ShadowRoot) {
+      return { parent: hostSr, chipBarInsertBefore: null };
+    }
+    const hostParent = hostEl.parentElement;
+    if (hostParent instanceof HTMLElement) {
+      return { parent: hostParent, chipBarInsertBefore: hostEl };
+    }
+    return { parent: hostEl, chipBarInsertBefore: null };
+  };
+
+  // Desktop parent resolution: prefer chip-bar hosts that live inside the
+  // channel grid; the bare selector can match engagement-panel / miniplayer
+  // chip bars which are not the ones we want to augment. The tab container
+  // renders earlier, but we want the button in the chip row
+  // (Новые/Популярные/Старые), so we look for chip bars first and only fall
+  // back to tabs after a few retries (handled by apply()).
+  /**
+   * @returns {{ parent: HTMLElement | ShadowRoot | null, chipBarHost: HTMLElement | null, chipBarInsertBefore: HTMLElement | null }}
+   */
+  const resolveDesktopParent = () => {
+    // Use document.querySelector directly to bypass the DOM cache, which can
+    // return a stale null when the chip bar renders after the first apply() call.
+    const desktopChipBarSelectors = [
+      'ytd-rich-grid-renderer chip-bar-view-model.ytChipBarViewModelHost',
+      'ytd-rich-grid-renderer chip-bar-view-model',
+      'ytm-rich-grid-renderer chip-bar-view-model.ytChipBarViewModelHost',
+      'ytm-rich-grid-renderer chip-bar-view-model',
+      'ytd-two-column-browse-results-renderer chip-bar-view-model',
+      'ytd-browse chip-bar-view-model',
+      'chip-bar-view-model.ytChipBarViewModelHost',
+      'chip-bar-view-model',
+      'ytd-feed-filter-chip-bar-renderer iron-selector#chips',
+      'ytd-feed-filter-chip-bar-renderer #chips-wrapper',
+      'ytd-feed-filter-chip-bar-renderer',
+      'yt-chip-cloud-renderer #chips',
+      'yt-chip-cloud-renderer .yt-chip-cloud-renderer',
+      'ytd-tabbed-page-header chip-bar-view-model',
+    ];
+
+    for (const selector of desktopChipBarSelectors) {
+      const candidate = $(selector);
+      if (!(candidate instanceof HTMLElement)) continue;
+      // Ignore chip-bar hosts inside engagement panels / miniplayer / live chat.
+      if (
+        candidate.tagName === 'CHIP-BAR-VIEW-MODEL' &&
+        candidate.closest(
+          'ytd-engagement-panel-section-list-renderer, ytd-engagement-panel-title-header-renderer, ytd-miniplayer, ytd-live-chat-frame'
+        )
+      ) {
+        continue;
+      }
+      if (candidate.tagName !== 'CHIP-BAR-VIEW-MODEL') {
+        playAllLogger?.warn?.('Play All', 'Found parent via selector', selector);
+        return {
+          parent: candidate,
+          chipBarHost: null,
+          chipBarInsertBefore: null,
+        };
+      }
+      const placement = resolveChipBarPlacement(candidate);
+      if (placement.parent instanceof ShadowRoot) {
+        // Insert directly into the chip bar's shadow root so the button
+        // renders as a flex item in the same row as the chips.
+        playAllLogger?.warn?.('Play All', 'Using chip-bar shadow root', {
+          selector,
+        });
+      } else if (placement.chipBarInsertBefore) {
+        // The host has not upgraded yet (or has a closed shadow root).
+        // Place the button as a sibling immediately before the chip bar
+        // so it stays visible even after the component upgrades.
+        playAllLogger?.warn?.('Play All', 'Using chip-bar host parent', {
+          selector,
+          parentTag: placement.parent?.tagName,
+        });
+      } else {
+        playAllLogger?.warn?.('Play All', 'Using chip-bar host directly', {
+          selector,
+          noParent: true,
+        });
+      }
+      return {
+        parent: placement.parent,
+        chipBarHost: candidate,
+        chipBarInsertBefore: placement.chipBarInsertBefore,
+      };
+    }
+    return { parent: null, chipBarHost: null, chipBarInsertBefore: null };
+  };
+
+  // Grid fallback when no chip bar was found on the page: search inside the
+  // grid for the chip bar, retry while it is not rendered yet, and finally
+  // create a wrapper container at the top of the grid as a last resort.
+  /**
+   * @param {number} retryCount
+   * @returns {{ retry?: boolean, parent: HTMLElement | ShadowRoot | null, chipBarHost: HTMLElement | null, chipBarInsertBefore: HTMLElement | null }}
+   */
+  const resolveGridParent = retryCount => {
+    const grid = queryHTMLElement(
+      'ytd-rich-grid-renderer, ytm-rich-grid-renderer, div.ytChipBarViewModelChipWrapper'
+    );
+    if (!grid) {
+      playAllLogger?.warn?.('Play All', 'Grid not found, scheduling retry', {
+        retryCount,
+      });
+      scheduleApplyRetry(
+        retryCount,
+        'ytd-rich-grid-renderer, ytm-rich-grid-renderer, div.ytChipBarViewModelChipWrapper',
+        1500
+      );
+      return {
+        retry: true,
+        parent: null,
+        chipBarHost: null,
+        chipBarInsertBefore: null,
+      };
     }
 
+    const chipBarInGrid = grid.querySelector(
+      'chip-bar-view-model.ytChipBarViewModelHost, chip-bar-view-model, ytd-feed-filter-chip-bar-renderer iron-selector#chips, ytd-feed-filter-chip-bar-renderer #chips-wrapper, yt-chip-cloud-renderer #chips'
+    );
+    if (chipBarInGrid instanceof HTMLElement) {
+      if (chipBarInGrid.tagName === 'CHIP-BAR-VIEW-MODEL') {
+        const placement = resolveChipBarPlacement(chipBarInGrid);
+        playAllLogger?.warn?.(
+          'Play All',
+          placement.parent instanceof ShadowRoot
+            ? 'Found chip-bar-view-model inside grid, using shadow root'
+            : placement.chipBarInsertBefore
+              ? 'Found chip-bar-view-model inside grid, using host parent'
+              : 'Found chip-bar-view-model inside grid, using host directly'
+        );
+        return {
+          parent: placement.parent,
+          chipBarHost: chipBarInGrid,
+          chipBarInsertBefore: placement.chipBarInsertBefore,
+        };
+      }
+      playAllLogger?.warn?.('Play All', 'Found chip bar inside grid', {
+        inShadowRoot: Boolean(chipBarInGrid.shadowRoot),
+      });
+      return {
+        parent: chipBarInGrid.shadowRoot || chipBarInGrid,
+        chipBarHost: chipBarInGrid,
+        chipBarInsertBefore: null,
+      };
+    }
+    if (retryCount < 8) {
+      playAllLogger?.warn?.('Play All', 'Chip bar not in grid, scheduling retry', {
+        retryCount,
+      });
+      scheduleApplyRetry(
+        retryCount,
+        'chip-bar-view-model.ytChipBarViewModelHost, ytd-feed-filter-chip-bar-renderer iron-selector#chips, ytd-feed-filter-chip-bar-renderer #chips-wrapper, yt-chip-cloud-renderer #chips',
+        1200
+      );
+      return {
+        retry: true,
+        parent: null,
+        chipBarHost: null,
+        chipBarInsertBefore: null,
+      };
+    }
+    // Last resort: insert a wrapper at the top of the grid
+    playAllLogger?.warn?.('Play All', 'Using grid fallback container');
+    let existingContainer = grid.querySelector('.yp-button-container');
+    if (!existingContainer) {
+      // static literal HTML wrapped by Trusted Types policy (_createHTML)
+      grid.insertAdjacentHTML('afterbegin', _createHTML('<div class="yp-button-container"></div>'));
+      existingContainer = grid.querySelector('.yp-button-container');
+    }
+    return {
+      parent: existingContainer instanceof HTMLElement ? existingContainer : null,
+      chipBarHost: null,
+      chipBarInsertBefore: null,
+    };
+  };
+
+  // Insert the Play All button accounting for shadow roots and the
+  // chip-bar sibling placement chosen during parent resolution.
+  /**
+   * @param {HTMLElement | ShadowRoot} parent
+   * @param {HTMLElement | null} chipBarInsertBefore
+   * @param {HTMLAnchorElement} btn
+   * @returns {void}
+   */
+  const insertPlayAllButton = (parent, chipBarInsertBefore, btn) => {
+    if (parent instanceof ShadowRoot) {
+      // Inject the Play All styles into the shadow root so the button renders
+      // correctly when inserted there. Prepend the button so it appears as the
+      // first flex item in the chip bar row.
+      const playAllCss = window.YouTubePlusDesignSystem?.getStyle?.('yp-play-all-styles');
+      if (playAllCss && !parent.querySelector('style[data-yp-play-all-styles]')) {
+        const style = document.createElement('style');
+        style.setAttribute('data-yp-play-all-styles', '');
+        style.textContent = playAllCss;
+        parent.appendChild(style);
+        shadowStyleEl = style;
+      }
+      parent.insertBefore(btn, parent.firstChild);
+      playAllLogger?.warn?.('Play All', 'Button inserted into chip-bar shadow root');
+    } else if (chipBarInsertBefore && chipBarInsertBefore.parentElement === parent) {
+      parent.insertBefore(btn, chipBarInsertBefore);
+      parent.classList.add('yp-play-all-parent');
+      parentClassEl = /** @type {Element} */ (parent);
+      playAllLogger?.warn?.('Play All', 'Button inserted before chip bar', {
+        parentSelector: parent.tagName + (parent.className ? `.${parent.className}` : ''),
+      });
+    } else {
+      parent.appendChild(btn);
+      playAllLogger?.warn?.('Play All', 'Button appended', {
+        parentSelector: parent.tagName + (parent.className ? `.${parent.className}` : ''),
+      });
+    }
+  };
+
+  /**
+   * @param {number} retryCount
+   * @returns {{ parent: HTMLElement | ShadowRoot, chipBarHost: HTMLElement | null, chipBarInsertBefore: HTMLElement | null } | null}
+   */
+  const resolveMountTarget_ = retryCount => {
+    /** @type {HTMLElement | ShadowRoot | null} */
     let parent = null;
     /** @type {HTMLElement | null} */
     let chipBarHost = null;
     /** @type {HTMLElement | null} */
     let chipBarInsertBefore = null;
-    if (location.host === 'm.youtube.com') {
+
+    if (isMobileHost()) {
       parent = queryHTMLElement(
         'ytm-feed-filter-chip-bar-renderer .chip-bar-contents, ytm-feed-filter-chip-bar-renderer > div'
       );
     } else {
-      // Use document.querySelector directly to bypass the DOM cache, which can
-      // return a stale null when the chip bar renders after the first apply() call.
-      // Prefer chip-bar hosts that live inside the channel grid; the bare selector
-      // can match engagement-panel / miniplayer chip bars which are not the ones
-      // we want to augment. The tab container renders earlier, but we want the
-      // button in the chip row (Новые/Популярные/Старые), so we look for chip
-      // bars first and only fall back to tabs after a few retries.
-      const desktopChipBarSelectors = [
-        'ytd-rich-grid-renderer chip-bar-view-model.ytChipBarViewModelHost',
-        'ytd-rich-grid-renderer chip-bar-view-model',
-        'ytm-rich-grid-renderer chip-bar-view-model.ytChipBarViewModelHost',
-        'ytm-rich-grid-renderer chip-bar-view-model',
-        'ytd-two-column-browse-results-renderer chip-bar-view-model',
-        'ytd-browse chip-bar-view-model',
-        'chip-bar-view-model.ytChipBarViewModelHost',
-        'chip-bar-view-model',
-        'ytd-feed-filter-chip-bar-renderer iron-selector#chips',
-        'ytd-feed-filter-chip-bar-renderer #chips-wrapper',
-        'ytd-feed-filter-chip-bar-renderer',
-        'yt-chip-cloud-renderer #chips',
-        'yt-chip-cloud-renderer .yt-chip-cloud-renderer',
-        'ytd-tabbed-page-header chip-bar-view-model',
-      ];
-
-      for (const selector of desktopChipBarSelectors) {
-        const candidate = $(selector);
-        if (candidate instanceof HTMLElement) {
-          // Ignore chip-bar hosts inside engagement panels / miniplayer / live chat.
-          if (
-            candidate.tagName === 'CHIP-BAR-VIEW-MODEL' &&
-            candidate.closest(
-              'ytd-engagement-panel-section-list-renderer, ytd-engagement-panel-title-header-renderer, ytd-miniplayer, ytd-live-chat-frame'
-            )
-          ) {
-            continue;
-          }
-          if (candidate.tagName === 'CHIP-BAR-VIEW-MODEL') {
-            chipBarHost = candidate;
-            const hostSr = /** @type {any} */ (chipBarHost).shadowRoot;
-            if (hostSr instanceof ShadowRoot) {
-              // Insert directly into the chip bar's shadow root so the button
-              // renders as a flex item in the same row as the chips.
-              parent = hostSr;
-              playAllLogger?.warn?.('Play All', 'Using chip-bar shadow root', {
-                selector,
-              });
-            } else {
-              // The host has not upgraded yet (or has a closed shadow root).
-              // Place the button as a sibling immediately before the chip bar
-              // so it stays visible even after the component upgrades.
-              const hostParent = chipBarHost.parentElement;
-              if (hostParent instanceof HTMLElement) {
-                parent = hostParent;
-                chipBarInsertBefore = chipBarHost;
-                playAllLogger?.warn?.('Play All', 'Using chip-bar host parent', {
-                  selector,
-                  parentTag: hostParent.tagName,
-                });
-              } else {
-                parent = chipBarHost;
-                playAllLogger?.warn?.('Play All', 'Using chip-bar host directly', {
-                  selector,
-                  noParent: true,
-                });
-              }
-            }
-          } else {
-            parent = candidate;
-            playAllLogger?.warn?.('Play All', 'Found parent via selector', selector);
-          }
-          break;
-        }
-      }
+      ({ parent, chipBarHost, chipBarInsertBefore } = resolveDesktopParent());
     }
 
-    // #5: add a custom container for buttons if chip bar not found
     if (parent === null) {
       playAllLogger?.warn?.('Play All', 'No chip bar parent, looking for grid');
-      const grid = queryHTMLElement(
-        'ytd-rich-grid-renderer, ytm-rich-grid-renderer, div.ytChipBarViewModelChipWrapper'
-      );
-      if (!grid) {
-        // Grid not yet rendered — retry via shared wait helper
-        playAllLogger?.warn?.('Play All', 'Grid not found, scheduling retry', { retryCount });
-        scheduleApplyRetry(
-          retryCount,
-          'ytd-rich-grid-renderer, ytm-rich-grid-renderer, div.ytChipBarViewModelChipWrapper',
-          1500
-        );
-        return;
-      }
-
-      // Also search inside the grid for chip bar in case it is a child
-      const chipBarInGrid = grid.querySelector(
-        'chip-bar-view-model.ytChipBarViewModelHost, chip-bar-view-model, ytd-feed-filter-chip-bar-renderer iron-selector#chips, ytd-feed-filter-chip-bar-renderer #chips-wrapper, yt-chip-cloud-renderer #chips'
-      );
-      if (chipBarInGrid instanceof HTMLElement) {
-        if (chipBarInGrid.tagName === 'CHIP-BAR-VIEW-MODEL') {
-          chipBarHost = chipBarInGrid;
-          const hostSr = /** @type {any} */ (chipBarHost).shadowRoot;
-          if (hostSr instanceof ShadowRoot) {
-            parent = hostSr;
-            playAllLogger?.warn?.(
-              'Play All',
-              'Found chip-bar-view-model inside grid, using shadow root'
-            );
-          } else {
-            const hostParent = chipBarHost.parentElement;
-            if (hostParent instanceof HTMLElement) {
-              parent = hostParent;
-              chipBarInsertBefore = chipBarHost;
-              playAllLogger?.warn?.(
-                'Play All',
-                'Found chip-bar-view-model inside grid, using host parent',
-                {
-                  parentTag: hostParent.tagName,
-                }
-              );
-            } else {
-              parent = chipBarHost;
-              playAllLogger?.warn?.(
-                'Play All',
-                'Found chip-bar-view-model inside grid, using host directly'
-              );
-            }
-          }
-        } else {
-          chipBarHost = chipBarInGrid;
-          parent = /** @type {any} */ (chipBarHost).shadowRoot || chipBarHost;
-          playAllLogger?.warn?.('Play All', 'Found chip bar inside grid', {
-            inShadowRoot: !!(/** @type {any} */ (chipBarHost).shadowRoot),
-          });
-        }
-      } else if (retryCount < 8) {
-        // Chip bar not rendered yet — retry via shared wait helper
-        playAllLogger?.warn?.('Play All', 'Chip bar not in grid, scheduling retry', {
-          retryCount,
-        });
-        scheduleApplyRetry(
-          retryCount,
-          'chip-bar-view-model.ytChipBarViewModelHost, ytd-feed-filter-chip-bar-renderer iron-selector#chips, ytd-feed-filter-chip-bar-renderer #chips-wrapper, yt-chip-cloud-renderer #chips',
-          1200
-        );
-        return;
-      } else {
-        // Last resort: insert a wrapper at the top of the grid
-        playAllLogger?.warn?.('Play All', 'Using grid fallback container');
-        let existingContainer = grid.querySelector('.ytp-button-container');
-        if (!existingContainer) {
-          // static literal HTML wrapped by Trusted Types policy (_createHTML)
-          grid.insertAdjacentHTML(
-            'afterbegin',
-            _createHTML('<div class="ytp-button-container"></div>')
-          );
-          existingContainer = grid.querySelector('.ytp-button-container');
-        }
-        parent = existingContainer instanceof HTMLElement ? existingContainer : null;
-      }
+      const gridResult = resolveGridParent(retryCount);
+      if (gridResult.retry) return null;
+      parent = gridResult.parent;
+      chipBarHost = gridResult.chipBarHost;
+      chipBarInsertBefore = gridResult.chipBarInsertBefore;
     }
 
-    // #6: fall back to the tab container only when no chip bar / grid exists.
-    // This keeps the button out of the tab row on pages that do have a chip bar.
-    if (parent === null && location.host !== 'm.youtube.com') {
+    if (parent === null && !isMobileHost()) {
       const tabContainer = $(
         '[role="tablist"], ytd-tabbed-page-header #tabsContainer, ytd-tabbed-page-header'
       );
@@ -542,85 +603,113 @@
 
     if (!parent) {
       playAllLogger?.warn?.('Play All', 'Could not find parent container');
-      return;
+      return null;
     }
 
-    // Prevent duplicate buttons. Search both the chosen parent and the chip bar
-    // host itself so re-applies after chip-bar mutations do not stack duplicates.
-    const existingButton =
-      chipBarHost?.querySelector('.ytp-play-all-btn') || parent.querySelector('.ytp-play-all-btn');
-    if (existingButton) {
-      try {
-        playAllLogger?.warn?.('Play All', 'Button already exists, skipping');
-      } catch (_e) {
-        /* logging non-critical */
-      }
-      return;
-    }
+    return { parent, chipBarHost, chipBarInsertBefore };
+  };
 
-    // See: available-lists.md
-    const path = window.location.pathname || '';
-    const [allPlaylist] = path.endsWith('/shorts')
-      ? ['UUSH']
-      : path.endsWith('/streams')
-        ? ['UULV']
-        : // Default for /@channel, /channel/* and /videos is regular videos.
-          // list=UU<ID> may include shorts, list=UULF<ID> is videos-only.
-          ['UULF'];
+  /**
+   * @param {string} path
+   * @returns {string}
+   */
+  const getPlaylistPrefix_ = path => {
+    if (path.endsWith('/shorts')) return 'UUSH';
+    if (path.endsWith('/streams')) return 'UULV';
+    return 'UULF';
+  };
 
+  /**
+   * Href the button must carry for the current path and channel id. The
+   * observer rebuilds only when a live button's href differs from this.
+   * @returns {string}
+   */
+  const expectedPlayAllHref_ = () => {
+    const allPlaylist = getPlaylistPrefix_(window.location.pathname || '');
     const playlistSuffix = id.startsWith('UC') ? id.substring(2) : id;
+    return `/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=random&ytp-random-initial=1`;
+  };
 
-    // Create the button element in JS so the click handler is attached
-    // before it enters the DOM.
-    const playAllHref = `/playlist?list=${allPlaylist}${playlistSuffix}&playnext=1&ytp-random=random&ytp-random-initial=1`;
+  /**
+   * @param {HTMLAnchorElement} btn
+   * @param {string} playAllHref
+   */
+  const wirePlayAllButtonClick_ = (btn, playAllHref) => {
+    btnScope?.dispose();
+    btnScope = playAllCtx?.scope?.() ?? null;
+    if (btnScope?.listen) {
+      btnScope.listen(
+        btn,
+        'click',
+        /** @type {EventListener} */ (
+          event => {
+            event.preventDefault();
+            event.stopPropagation();
+            navigate(playAllHref);
+          }
+        )
+      );
+      btnScope.own(btn);
+    } else {
+      window.YouTubePlusCleanupManager?.registerListener?.(
+        btn,
+        'click',
+        event => {
+          event.preventDefault();
+          event.stopPropagation();
+          navigate(playAllHref);
+        },
+        undefined,
+        false
+      );
+    }
+  };
+
+  const apply = (retryCount = 0) => {
+    playAllLogger?.warn?.('Play All', 'apply() start', {
+      id,
+      retryCount,
+      path: location.pathname,
+    });
+    if (!playAllCtx) {
+      playAllLogger?.warn?.('Play All', 'apply() before runtime start, skipping');
+      return;
+    }
+    if (id === '') {
+      playAllLogger?.warn?.('Play All', 'apply() id empty, scheduling addButton retry');
+      scheduleManagedTimeout(() => {
+        if (id === '') addButton();
+      }, 200);
+      return;
+    }
+
+    const mount = resolveMountTarget_(retryCount);
+    if (!mount) return;
+    const { parent, chipBarHost, chipBarInsertBefore } = mount;
+
+    const existingButton =
+      chipBarHost?.querySelector('.yp-play-all-btn') || parent.querySelector('.yp-play-all-btn');
+    if (existingButton) {
+      playAllLogger?.warn?.('Play All', 'Button already exists, skipping');
+      return;
+    }
+
+    const playAllHref = expectedPlayAllHref_();
     playAllLogger?.warn?.('Play All', 'Creating button', {
-      playlist: allPlaylist,
       id,
       href: playAllHref,
     });
     const btn = document.createElement('a');
-    btn.className = 'ytp-btn ytp-play-all-btn';
+    btn.className = 'yp-btn yp-play-all-btn';
     btn.href = playAllHref;
     btn.title = getPlayAllAriaLabel();
     btn.setAttribute('aria-label', getPlayAllAriaLabel());
     btn.textContent = getPlayAllLabel();
-    btn.addEventListener('click', event => {
-      event.preventDefault();
-      event.stopPropagation();
-      window.location.href = playAllHref;
-    });
-    // Guard: detach the observer while we insert the button.
-    // Without this, appending the button triggers the mutation observer,
-    // which calls removeButton()+apply() in an infinite loop (the button
-    // is removed and recreated every frame, so clicks land on a detached element).
+
+    wirePlayAllButtonClick_(btn, playAllHref);
+
     detachObserver();
-    if (parent instanceof ShadowRoot) {
-      // Inject the Play All styles into the shadow root so the button renders
-      // correctly when inserted there. Prepend the button so it appears as the
-      // first flex item in the chip bar row.
-      const playAllCss = window.YouTubePlusDesignSystem?.getStyle?.('ytp-play-all-styles');
-      if (playAllCss && !parent.querySelector('style[data-ytp-play-all-styles]')) {
-        const style = document.createElement('style');
-        style.setAttribute('data-ytp-play-all-styles', '');
-        style.textContent = playAllCss;
-        parent.appendChild(style);
-      }
-      parent.insertBefore(btn, parent.firstChild);
-      playAllLogger?.warn?.('Play All', 'Button inserted into chip-bar shadow root');
-    } else if (chipBarInsertBefore && chipBarInsertBefore.parentElement === parent) {
-      parent.insertBefore(btn, chipBarInsertBefore);
-      parent.classList.add('ytp-play-all-parent');
-      playAllLogger?.warn?.('Play All', 'Button inserted before chip bar', {
-        parentSelector: parent.tagName + (parent.className ? `.${parent.className}` : ''),
-      });
-    } else {
-      parent.appendChild(btn);
-      playAllLogger?.warn?.('Play All', 'Button appended', {
-        parentSelector: parent.tagName + (parent.className ? `.${parent.className}` : ''),
-      });
-    }
-    // Re-attach observer after a microtask so it doesn't pick up our own insertion.
-    // observeTarget is re-queried here since it's local to addButton().
+    insertPlayAllButton(parent, chipBarInsertBefore, btn);
     scheduleManagedTimeout(
       () =>
         attachObserver(
@@ -635,27 +724,34 @@
   };
 
   let observerFrame = 0;
+  /** @type {(() => void) | null} */
+  let observerFrameRelease = null;
   const runObserverWork = () => {
     observerFrame = 0;
-    if (!featureEnabled) return;
-    // Detach the observer before removing the button — removeButton() removes
-    // children of the observed target, which triggers childList mutations that
-    // would re-queue scheduleObserverWork → runObserverWork in an infinite loop.
+    observerFrameRelease = null;
+    if (!playAllCtx) return;
+    // Mutations on routes that host no Play All button cannot rebuild
+    // anything: the runtime stays started over the random-/watch pages the
+    // button opens, but those pages have no supported tab path and their
+    // grid batches must not drive the rebuild/retry chain.
+    if (!isSupportedTabPath()) return;
+    // A live button carrying the href the current path and id expect needs no
+    // work; the mutation only re-rendered grid content around it.
+    const existing = $('.yp-play-all-btn');
+    if (existing && existing.getAttribute('href') === expectedPlayAllHref_()) return;
+    // Detach before removeButton(): removing children of the observed target
+    // triggers childList mutations that would re-queue runObserverWork forever.
     detachObserver();
     removeButton();
     apply();
   };
 
   const scheduleObserverWork = () => {
-    if (!featureEnabled) return;
+    if (!playAllCtx) return;
     if (observerFrame) return;
-    if (typeof requestAnimationFrame === 'function') {
-      observerFrame = requestAnimationFrame(runObserverWork);
-      return;
-    }
-    observerFrame = /** @type {number} */ (
-      /** @type {unknown} */ (setTimeout(runObserverWork, 16))
-    );
+    // One animated frame, owned by the feature context.
+    observerFrameRelease = playAllCtx.frame(runObserverWork) || null;
+    observerFrame = 1;
   };
 
   const detachObserver = () => {
@@ -667,7 +763,7 @@
 
   const attachObserver = (/** @type {Element | null | undefined} */ observeTarget) => {
     detachObserver();
-    if (!(featureEnabled && observeTarget)) return;
+    if (!(playAllCtx && observeTarget)) return;
 
     // The mutation coordinator is always loaded before this module
     // (see build.order.json), so the legacy setInterval polling
@@ -677,57 +773,17 @@
     if (coordinator?.watchTarget) {
       observerSubId = 'playall::observer';
       coordinator.watchTarget(observerSubId, observeTarget, () => scheduleObserverWork(), {
-        attributes: true,
+        attributes: false,
         childList: true,
         subtree: true,
       });
     }
   };
 
-  const addButton = async () => {
-    detachObserver();
-
-    playAllLogger?.warn?.('Play All', 'addButton() start', {
-      featureEnabled,
-      path: location.pathname,
-      supported: isSupportedTabPath(),
-    });
-
-    if (!featureEnabled) {
-      playAllLogger?.warn?.('Play All', 'addButton() feature disabled');
-      return;
-    }
-
-    if (!isSupportedTabPath()) {
-      playAllLogger?.warn?.('Play All', 'addButton() path not supported');
-      return;
-    }
-
-    // Regenerate button if switched between Latest and Popular.
-    // Observe the grid (attribute changes when chip selection changes) and
-    // also observe chip-bar-view-model directly for the new 2026 UI.
-    const observeTarget =
-      $('ytd-rich-grid-renderer') ||
-      $('chip-bar-view-model.ytChipBarViewModelHost') ||
-      $(
-        'ytm-feed-filter-chip-bar-renderer .iron-selected, ytm-feed-filter-chip-bar-renderer .chip-bar-contents .selected'
-      );
-    attachObserver(observeTarget);
-
-    // This check is necessary for the mobile Interval
-    if ($('.ytp-play-all-btn')) {
-      return;
-    }
-
-    const resolvedFromDom = await resolveChannelIdWithRetry(12, 100);
-    playAllLogger?.warn?.('Play All', 'resolveChannelIdWithRetry result', { resolvedFromDom });
-    if (resolvedFromDom) {
-      id = resolvedFromDom;
-      apply();
-      return;
-    }
-
-    // Fallback: fetch HTML and parse
+  /**
+   * @returns {Promise<string | null>}
+   */
+  const fetchChannelId_ = async () => {
     try {
       const currentUrl = location.href;
       // Only fetch YouTube pages to prevent SSRF
@@ -738,7 +794,7 @@
         parsedUrl.hostname !== 'm.youtube.com'
       ) {
         playAllLogger?.warn?.('Play All', 'Skipping fetch for non-YouTube URL');
-        return;
+        return null;
       }
       const _fetchCtrl = new AbortController();
       const _fetchTimer = setTimeout_(function () {
@@ -756,23 +812,68 @@
       );
 
       if (canonicalMatch?.[1]) {
-        id = canonicalMatch[1];
-      } else {
-        // Try alternative extraction methods
-        const channelIdMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
-        if (channelIdMatch?.[1]) {
-          id = channelIdMatch[1];
-        }
+        return canonicalMatch[1];
       }
-
-      if (id) {
-        apply();
-        playAllLogger?.warn?.('Play All', 'Channel ID resolved via fetch, button applied');
-      } else {
-        playAllLogger?.warn?.('Play All', 'Could not extract channel ID');
-      }
+      const channelIdMatch = html.match(/"channelId":"(UC[a-zA-Z0-9_-]{22})"/);
+      return channelIdMatch?.[1] ?? null;
     } catch (e) {
+      logS(e);
       playAllLogger?.error?.('Play All', 'Error fetching channel data', e);
+      return null;
+    }
+  };
+
+  const addButton = async () => {
+    detachObserver();
+
+    playAllLogger?.warn?.('Play All', 'addButton() start', {
+      path: location.pathname,
+      supported: isSupportedTabPath(),
+    });
+
+    if (!playAllCtx) {
+      playAllLogger?.warn?.('Play All', 'addButton() runtime not started');
+      return;
+    }
+
+    if (!isSupportedTabPath()) {
+      playAllLogger?.warn?.('Play All', 'addButton() path not supported');
+      return;
+    }
+
+    // The chip-bar re-render drops the button; watch the grid and, for the new
+    // 2026 UI, the chip bar directly.
+    const observeTarget =
+      $('ytd-rich-grid-renderer') ||
+      $('chip-bar-view-model.ytChipBarViewModelHost') ||
+      $(
+        'ytm-feed-filter-chip-bar-renderer .iron-selected, ytm-feed-filter-chip-bar-renderer .chip-bar-contents .selected'
+      );
+    attachObserver(observeTarget);
+
+    // This check is necessary for the mobile Interval
+    if ($('.yp-play-all-btn')) {
+      return;
+    }
+
+    const resolvedFromDom = await resolveChannelIdWithRetry(12, 100);
+    playAllLogger?.warn?.('Play All', 'resolveChannelIdWithRetry result', {
+      resolvedFromDom,
+    });
+    if (resolvedFromDom) {
+      id = resolvedFromDom;
+      apply();
+      return;
+    }
+
+    // Fallback: fetch HTML and parse
+    const fetchedId = await fetchChannelId_();
+    if (fetchedId) {
+      id = fetchedId;
+      apply();
+      playAllLogger?.warn?.('Play All', 'Channel ID resolved via fetch, button applied');
+    } else {
+      playAllLogger?.warn?.('Play All', 'Could not extract channel ID');
     }
   };
 
@@ -784,7 +885,7 @@
   };
 
   const queueDesktopAddButton = (reset = true) => {
-    if (location.host === 'm.youtube.com') {
+    if (isMobileHost()) {
       addButton();
       return;
     }
@@ -798,9 +899,9 @@
       interval: 120,
       maxAttempts: 80,
       check: () => {
-        if (!(featureEnabled && isSupportedTabPath())) return true;
+        if (!(playAllCtx && isSupportedTabPath())) return true;
         addButton();
-        return !!$('.ytp-play-all-btn');
+        return !!$('.yp-play-all-btn');
       },
     });
 
@@ -815,34 +916,91 @@
   // Removing the button prevents it from still existing when switching between "Videos", "Shorts", and "Live"
   // This is necessary due to the mobile Interval requiring a check for an already existing button
   const removeButton = () => {
-    $$('.ytp-play-all-btn, .ytp-random-badge, .ytp-random-notice').forEach(element =>
+    $$('.yp-play-all-btn, .yp-random-badge, .yp-random-notice').forEach(element =>
       element.remove()
     );
   };
 
   let playAllRuntimeStarted = false;
+  /** Release every resource the runtime owns and restore YouTube DOM. */
   const resetPlayAllRuntime = () => {
-    try {
-      stopAddButtonRetries();
-      removeButton();
-      id = '';
-      if (typeof stopRandomPlayTimers === 'function') stopRandomPlayTimers();
-    } catch (_e) {
-      /* non-critical reset */
+    stopAddButtonRetries();
+    detachObserver();
+    observerFrameRelease?.();
+    observerFrameRelease = null;
+    // Cancelling the frame must free the gate too, or a later mutation can
+    // never schedule observer work again.
+    observerFrame = 0;
+    removeButton();
+    id = '';
+    if (typeof stopRandomPlayTimers === 'function') stopRandomPlayTimers();
+    keydownRelease?.();
+    keydownRelease = null;
+    timeupdateRelease?.();
+    timeupdateRelease = null;
+    if (randomScope) {
+      randomScope.dispose();
+      randomScope = null;
+    }
+    if (randomPrevPanel) {
+      randomPrevPanel.removeAttribute('ytp-random');
+      randomPrevPanel.removeAttribute('data-yp-random-delegated');
+      randomPrevPanel = null;
+    }
+    if (btnScope) {
+      btnScope.dispose();
+      btnScope = null;
+    }
+    if (parentClassEl) {
+      parentClassEl.classList?.remove('yp-play-all-parent');
+      parentClassEl = null;
+    }
+    if (shadowStyleEl) {
+      shadowStyleEl.remove();
+      shadowStyleEl = null;
+    }
+    if (badgeAnchorPrevHref !== null) {
+      const badgeAnchor = $('#secondary ytd-playlist-panel-renderer #header h3 a');
+      if (badgeAnchor instanceof HTMLAnchorElement) {
+        badgeAnchor.setAttribute('href', badgeAnchorPrevHref);
+      }
+      badgeAnchorPrevHref = null;
     }
   };
-  const startPlayAllRuntime = () => {
-    playAllLogger?.warn?.('Play All', 'startPlayAllRuntime()', {
-      runtimeStarted: playAllRuntimeStarted,
-      path: location.pathname,
-    });
-    if (playAllRuntimeStarted) {
-      // Re-entry after onLeave/onEnter cycle: just re-queue an immediate attempt.
-      resetPlayAllRuntime();
-    }
-    playAllRuntimeStarted = true;
+  /** Mount the feature styles on the lifecycle context. @param {FeatureContext} ctx */
+  const mountStyles = ctx => {
+    const css = window.YouTubePlusDesignSystem?.getStyle?.('yp-play-all-styles') || '';
+    ctx.style('yp-play-all-styles', css);
+  };
 
-    if (location.host === 'm.youtube.com') {
+  /**
+   * @param {FeatureContext | null} [ctx]
+   */
+  const createEventRegistrar_ = ctx => {
+    /**
+     * @param {EventTarget} target
+     * @param {string} type
+     * @param {EventListener} fn
+     * @param {AddEventListenerOptions | boolean} [opts]
+     */
+    return (target, type, fn, opts) => {
+      if (ctx?.listen) {
+        return ctx.listen(target, type, fn, typeof opts === 'boolean' ? { capture: opts } : opts);
+      }
+      if (_cm?.registerListener) return _cm.registerListener(target, type, fn, opts);
+      return window.YouTubePlusCleanupManager?.registerListener?.(target, type, fn, opts, true);
+    };
+  };
+
+  /**
+   * Wire the SPA/visibility reactions for one runtime session. The lifecycle
+   * path owns them with the context; manual facade callers keep the
+   * CleanupManager registrations.
+   * @param {FeatureContext | null} [ctx]
+   */
+  const wireNavigation = ctx => {
+    const register = createEventRegistrar_(ctx);
+    if (isMobileHost()) {
       // The "yt-navigate-finish" event does not fire on mobile
       // Detect URL changes via pushState/replaceState override + popstate (lightweight)
       let lastUrl = location.href;
@@ -852,100 +1010,82 @@
           addButton();
         }
       };
-      // Use centralized pushState/replaceState event from utils.js
       const _ytpNavHandler = () => scheduleManagedTimeout(checkUrlChange, 50);
-      if (_cm?.registerListener) {
-        _cm.registerListener(window, 'ytp-history-navigate', _ytpNavHandler, {
-          passive: true,
-        });
-        _cm.registerListener(window, 'popstate', checkUrlChange, {
-          passive: true,
-        });
-      } else {
-        window.addEventListener('ytp-history-navigate', _ytpNavHandler, {
-          passive: true,
-        });
-        window.addEventListener('popstate', checkUrlChange, { passive: true });
-      }
+      register(window, 'yp-history-navigate', _ytpNavHandler, { passive: true });
+      register(window, 'popstate', checkUrlChange, { passive: true });
       // Initial call
       addButton();
-    } else {
-      const _navStartHandler = () => {
-        stopAddButtonRetries();
-        removeButton();
-        id = '';
-      };
-      const _navFinishHandler = () => {
-        queueDesktopAddButton();
-      };
-      const _pageshowHandler = () => scheduleManagedTimeout(() => queueDesktopAddButton(), 120);
-      const _visChangeHandler = () => {
-        if (document.visibilityState === 'visible') {
-          queueDesktopAddButton();
-        }
-      };
-      if (_cm?.registerListener) {
-        _cm.registerListener(document, 'yt-navigate-start', _navStartHandler);
-        _cm.registerListener(document, 'yt-navigate-finish', _navFinishHandler);
-        _cm.registerListener(document, 'yt-page-data-updated', _navFinishHandler);
-        _cm.registerListener(document, 'yt-page-data-fetched', _navFinishHandler);
-        _cm.registerListener(window, 'pageshow', _pageshowHandler);
-        _cm.registerListener(document, 'visibilitychange', _visChangeHandler);
-      } else {
-        document.addEventListener('yt-navigate-start', _navStartHandler);
-        document.addEventListener('yt-navigate-finish', _navFinishHandler);
-        document.addEventListener('yt-page-data-updated', _navFinishHandler);
-        document.addEventListener('yt-page-data-fetched', _navFinishHandler);
-        window.addEventListener('pageshow', _pageshowHandler);
-        document.addEventListener('visibilitychange', _visChangeHandler);
-      }
-      // Also attempt to add buttons on initial script run in case the SPA navigation event
-      // already happened before this script was loaded (some browsers/firefox timing).
-      try {
-        onDomReady(() => queueDesktopAddButton(false));
-        scheduleManagedTimeout(() => queueDesktopAddButton(false), 120);
-      } catch (_e) {
-        /* setTimeout unlikely to fail */
-      }
-
-      // Safety net: LazyLoader dispatches ytp:nav-refresh after every SPA nav.
-      // Re-queue the desktop Add button so it appears reliably after in-page
-      // navigation between channel tabs / playlists.
-      try {
-        window.addEventListener('ytp:nav-refresh', function () {
-          try {
-            queueDesktopAddButton(false);
-          } catch {}
-        });
-      } catch {}
+      return;
     }
 
-    const _settingsUpdHandler = (/** @type {Event} */ e) => {
-      try {
-        const custom = e instanceof CustomEvent ? e : null;
-        const nextEnabled = custom?.detail?.enablePlayAll !== false;
-        if (nextEnabled === featureEnabled) return;
-        setFeatureEnabled(nextEnabled);
-      } catch (_e) {
-        setFeatureEnabled(window.YouTubeUtils?.loadFeatureEnabled?.('enablePlayAll') ?? true);
+    const _navStartHandler = () => {
+      stopAddButtonRetries();
+      removeButton();
+      id = '';
+    };
+    const _navFinishHandler = () => {
+      queueDesktopAddButton();
+    };
+    const _pageshowHandler = () => scheduleManagedTimeout(() => queueDesktopAddButton(), 120);
+    const _visChangeHandler = () => {
+      if (document.visibilityState === 'visible') {
+        queueDesktopAddButton();
       }
     };
-    if (_cm?.registerListener) {
-      _cm.registerListener(window, 'youtube-plus-settings-updated', _settingsUpdHandler);
-    } else {
-      window.addEventListener('youtube-plus-settings-updated', _settingsUpdHandler);
+
+    register(document, 'yt-navigate-start', _navStartHandler);
+    register(document, 'yt-navigate-finish', _navFinishHandler);
+    register(document, 'yt-page-data-updated', _navFinishHandler);
+    register(document, 'yt-page-data-fetched', _navFinishHandler);
+    register(window, 'pageshow', _pageshowHandler);
+    register(document, 'visibilitychange', _visChangeHandler);
+    register(window, 'yp:nav-refresh', () => queueDesktopAddButton(false));
+
+    // Also attempt to add buttons on initial script run in case the SPA navigation event
+    // already happened before this script was loaded (some browsers/firefox timing).
+    onDomReady(() => queueDesktopAddButton(false));
+    scheduleManagedTimeout(() => queueDesktopAddButton(false), 120);
+  };
+
+  /**
+   * Runtime entry point. The lifecycle host calls it with its context;
+   * the manual facade path (testHooks.init()) calls it without one.
+   * @param {FeatureContext} ctx
+   */
+  const startPlayAllRuntime = ctx => {
+    playAllLogger?.warn?.('Play All', 'startPlayAllRuntime()', {
+      runtimeStarted: playAllRuntimeStarted,
+      path: location.pathname,
+    });
+    if (playAllRuntimeStarted) {
+      // Re-entry: re-queue an immediate attempt on the existing wiring.
+      resetPlayAllRuntime();
+      return;
     }
+    playAllRuntimeStarted = true;
+    playAllCtx = ctx;
+    mountStyles(ctx);
+    wireNavigation(ctx);
 
     // Random play feature
     (() => {
       // Random play is not supported for mobile devices
-      if (location.host === 'm.youtube.com') {
+      if (isMobileHost()) {
         return;
       }
 
+      /**
+       * @typedef {{
+       *   params: URLSearchParams,
+       *   mode: string,
+       *   list: string,
+       *   storageKey: string
+       * }} RandomPlayConfig
+       */
+
       const getParams = () => new URLSearchParams(window.location.search);
 
-      /** @returns {{ params: URLSearchParams, mode: 'random', list: string, storageKey: string } | null} */
+      /** @returns {RandomPlayConfig | null} */
       const getRandomConfig = () => {
         const params = getParams();
         const modeParam = params.get(RANDOM_PARAM);
@@ -963,8 +1103,9 @@
 
       const getStorage = (/** @type {string} */ storageKey) => {
         try {
-          return JSON.parse(localStorage.getItem(storageKey) || '{}');
+          return JSON.parse(U.storage?.getItem(storageKey) || '{}');
         } catch (_e) {
+          logS(_e);
           return {};
         }
       };
@@ -972,90 +1113,115 @@
       const isWatched = (/** @type {string} */ storageKey, /** @type {string} */ videoId) =>
         getStorage(storageKey)[videoId];
       const markWatched = (/** @type {string} */ storageKey, /** @type {string} */ videoId) => {
-        localStorage.setItem(
+        U.storage?.setItem(
           storageKey,
           JSON.stringify({ ...getStorage(storageKey), [videoId]: true })
         );
         document
-          .querySelectorAll('#wc-endpoint[href*=zsA3X40nz9w]')
+          .querySelectorAll(`#wc-endpoint[href*="${videoId}"]`)
           .forEach(element => element.parentElement?.setAttribute('hidden', ''));
       };
 
-      const playNextRandom = (/** @type {Record<string,any>} */ cfg, reload = false) => {
+      /**
+       * @param {string} storageKey
+       * @returns {string | null}
+       */
+      const selectNextRandomVideo_ = storageKey => {
+        const videos = Object.entries(getStorage(storageKey)).filter(([_, watched]) => !watched);
+        if (videos.length === 0) return null;
+        let videoIndex = Math.floor(Math.random() * videos.length);
+        if (videoIndex < 0) videoIndex = 0;
+        if (videoIndex >= videos.length) videoIndex = videos.length - 1;
+        return videos[videoIndex][0];
+      };
+
+      /**
+       * @param {string} videoId
+       * @param {string} listId
+       * @param {string} mode
+       */
+      const fallbackManualRedirect_ = (videoId, listId, mode) => {
+        const redirector = document.createElement('a');
+        redirector.className = 'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
+        redirector.setAttribute('hidden', '');
+        /** @type {HTMLAnchorElement & { data?: unknown }} */ (redirector).data = {
+          commandMetadata: {
+            webCommandMetadata: {
+              url: `/watch?v=${videoId}&list=${listId}&ytp-random=${mode}`,
+              webPageType: 'WEB_PAGE_TYPE_WATCH',
+              rootVe: 3832,
+            },
+          },
+          watchEndpoint: {
+            videoId,
+            playlistId: listId,
+          },
+        };
+        const listContainer = $('ytd-playlist-panel-renderer #items');
+        if (listContainer instanceof HTMLElement) {
+          listContainer.append(redirector);
+        } else {
+          const safeAppendRoot = document.body || document.documentElement;
+          if (safeAppendRoot) {
+            safeAppendRoot.appendChild(redirector);
+          }
+        }
+        redirector.click();
+      };
+
+      /**
+       * @param {string} videoId
+       * @param {RandomPlayConfig} cfg
+       * @param {boolean} reload
+       */
+      const navigateNextRandom_ = (videoId, cfg, reload) => {
+        const params = new URLSearchParams(window.location.search);
+        if (reload) {
+          params.set('v', videoId);
+          params.set('ytp-random', cfg.mode);
+          params.delete('t');
+          params.delete('index');
+          params.delete('ytp-random-initial');
+          navigate(`${window.location.pathname}?${params.toString()}`);
+          return;
+        }
+
+        try {
+          const listId = params.get('list') || '';
+          redirect(videoId, listId, cfg.mode);
+        } catch (error) {
+          logS(error);
+          playAllLogger?.error?.(
+            'Play All',
+            'Error using redirect(), falling back to manual redirect',
+            error
+          );
+          fallbackManualRedirect_(videoId, params.get('list') || '', cfg.mode);
+        }
+      };
+
+      const playNextRandom = (/** @type {RandomPlayConfig} */ cfg, reload = false) => {
         const playerInstance = getPlayer();
         if (playerInstance && typeof playerInstance.pauseVideo === 'function') {
           playerInstance.pauseVideo();
         }
 
-        const videos = Object.entries(getStorage(cfg.storageKey)).filter(
-          ([_, watched]) => !watched
-        );
-        const params = new URLSearchParams(window.location.search);
+        const nextVideoId = selectNextRandomVideo_(cfg.storageKey);
+        if (!nextVideoId) return;
 
-        if (videos.length === 0) {
-          return;
-        }
-
-        let videoIndex = Math.floor(Math.random() * videos.length);
-
-        // Safety clamp in case of unexpected edge cases
-        if (videoIndex < 0) videoIndex = 0;
-        if (videoIndex >= videos.length) videoIndex = videos.length - 1;
-
-        if (reload) {
-          params.set('v', videos[videoIndex][0]);
-          params.set('ytp-random', cfg.mode);
-          params.delete('t');
-          params.delete('index');
-          params.delete('ytp-random-initial');
-          window.location.href = `${window.location.pathname}?${params.toString()}`;
-        } else {
-          // Use the redirect() function for consistent navigation
-          try {
-            const listId = params.get('list') || '';
-            redirect(videos[videoIndex][0], listId, cfg.mode);
-          } catch (error) {
-            playAllLogger?.error?.(
-              'Play All',
-              'Error using redirect(), falling back to manual redirect',
-              error
-            );
-            // Fallback to manual redirect if the redirect() function fails
-            const redirector = document.createElement('a');
-            redirector.className =
-              'yt-simple-endpoint style-scope ytd-playlist-panel-video-renderer';
-            redirector.setAttribute('hidden', '');
-            redirector.data = {
-              commandMetadata: {
-                webCommandMetadata: {
-                  url: `/watch?v=${videos[videoIndex][0]}&list=${params.get('list')}&ytp-random=${cfg.mode}`,
-                  webPageType: 'WEB_PAGE_TYPE_WATCH',
-                  rootVe: 3832,
-                },
-              },
-              watchEndpoint: {
-                videoId: videos[videoIndex][0],
-                playlistId: params.get('list'),
-              },
-            };
-            const listContainer = $('ytd-playlist-panel-renderer #items');
-            if (listContainer instanceof HTMLElement) {
-              listContainer.append(redirector);
-            } else {
-              const safeAppendRoot = document.body || document.documentElement;
-              if (safeAppendRoot) {
-                safeAppendRoot.appendChild(redirector);
-              }
-            }
-            redirector.click();
-          }
-        }
+        navigateNextRandom_(nextVideoId, cfg, reload);
       };
 
       /** @type {number | { stop: () => void } | null} */
       let applyRetryTimeoutId = null;
       /** @type {boolean} */
       let _progressTrackingInitialized = false;
+      /** @type {((e: Event) => void) | null} */
+      let _activeKeydownHandler = null;
+      /** @type {(() => void) | null} */
+      let _activeTimeupdateHandler = null;
+      /** @type {HTMLVideoElement | null} */
+      let _activeVideoEl = null;
 
       stopRandomPlayTimers = () => {
         if (applyRetryTimeoutId) {
@@ -1067,33 +1233,39 @@
         }
         applyRetryTimeoutId = null;
         _progressTrackingInitialized = false;
+        keydownRelease?.();
+        keydownRelease = null;
+        timeupdateRelease?.();
+        timeupdateRelease = null;
+        // Remove delegated keydown/timeupdate so re-entry doesn't stack handlers
+        if (_activeKeydownHandler) {
+          document.removeEventListener('keydown', _activeKeydownHandler, true);
+          _activeKeydownHandler = null;
+        }
+        if (_activeTimeupdateHandler && _activeVideoEl) {
+          _activeVideoEl.removeEventListener('timeupdate', _activeTimeupdateHandler);
+          _activeTimeupdateHandler = null;
+          _activeVideoEl = null;
+        }
       };
 
-      const applyRandomPlay = (/** @type {Record<string,any>} */ cfg) => {
-        if (!featureEnabled) return;
-        if (!window.location.pathname.endsWith('/watch')) return;
-
-        const playlistContainer = $('#secondary ytd-playlist-panel-renderer');
-        if (playlistContainer === null) {
-          return;
+      /**
+       * @param {Element | null} headerContainer
+       */
+      const appendRandomNotice_ = headerContainer => {
+        if (headerContainer && !headerContainer.querySelector('.yp-random-notice')) {
+          const noticeSpan = document.createElement('span');
+          noticeSpan.className = 'yp-random-notice';
+          noticeSpan.textContent = t('playAllMode');
+          headerContainer.appendChild(noticeSpan);
         }
-        if (playlistContainer.hasAttribute('ytp-random')) {
-          return;
-        }
+      };
 
-        playlistContainer.setAttribute('ytp-random', 'applied');
-        const headerContainer = playlistContainer.querySelector('#header');
-        if (headerContainer && !headerContainer.querySelector('.ytp-random-notice')) {
-          // static template wrapped by Trusted Types policy (_createHTML)
-          headerContainer.insertAdjacentHTML(
-            'beforeend',
-            _createHTML(`<span class="ytp-random-notice">${t('playAllMode')}</span>`)
-          );
-        }
-
-        const storage = getStorage(cfg.storageKey);
-
-        // Robustly collect playlist anchors - different YT layouts use different selectors
+      /**
+       * @param {Element} playlistContainer
+       * @returns {HTMLAnchorElement[]}
+       */
+      const collectPlaylistAnchors_ = playlistContainer => {
         const anchorSelectors = [
           '#wc-endpoint',
           'ytd-playlist-panel-video-renderer a#wc-endpoint',
@@ -1101,76 +1273,324 @@
           'a#video-title',
           '#secondary ytd-playlist-panel-renderer a[href*="/watch?"]',
         ];
-
         /** @type {HTMLAnchorElement[]} */
         const anchors = [];
         anchorSelectors.forEach(sel => {
           playlistContainer.querySelectorAll(sel).forEach(a => {
-            if (a instanceof Element && a.tagName === 'A') anchors.push(/** @type {any} */ (a));
+            if (a instanceof Element && a.tagName === 'A')
+              anchors.push(/** @type {HTMLAnchorElement} */ (a));
           });
         });
 
-        // Deduplicate by href
         /** @type {HTMLAnchorElement[]} */
         const uniq = [];
         const seen = new Set();
         anchors.forEach(a => {
-          const href = /** @type {HTMLAnchorElement} */ (a).href || a.getAttribute('href') || '';
+          const href = a.href || a.getAttribute('href') || '';
           if (!seen.has(href)) {
             seen.add(href);
             uniq.push(a);
           }
         });
+        return uniq;
+      };
 
-        const navigate = (/** @type {string} */ href) => (window.location.href = href);
+      /**
+       * @param {HTMLAnchorElement} element
+       * @param {RandomPlayConfig} cfg
+       * @param {Record<string, boolean>} storage
+       */
+      const processPlaylistAnchor_ = (element, cfg, storage) => {
+        let videoId = null;
+        try {
+          videoId = new URL(element.href, window.location.origin).searchParams.get('v');
+        } catch (_e) {
+          logS(_e);
+          videoId = new URLSearchParams(element.search || '').get('v');
+        }
+        if (!videoId) return;
 
-        // Mark videos and prepare links
-        uniq.forEach(element => {
-          let videoId = null;
-          try {
-            videoId = new URL(element.href, window.location.origin).searchParams.get('v');
-          } catch (_e) {
-            videoId = new URLSearchParams(element.search || '').get('v');
-          }
+        if (!isWatched(cfg.storageKey, videoId)) {
+          storage[videoId] = false;
+        }
 
-          if (!videoId) return;
+        try {
+          const u = new URL(element.href, window.location.origin);
+          u.searchParams.set(RANDOM_PARAM, cfg.mode);
+          element.href = u.toString();
+        } catch (_e) {
+          logS(_e);
+        }
 
-          if (!isWatched(cfg.storageKey, videoId)) {
-            storage[videoId] = false;
-          }
+        element.setAttribute('data-yp-random-link', 'true');
+        const entryKey = getVideoId(element.href);
+        if (entryKey && isWatched(cfg.storageKey, entryKey)) {
+          element.parentElement?.setAttribute('hidden', '');
+        }
+      };
 
-          // Ensure ytp-random param present
-          try {
-            const u = new URL(element.href, window.location.origin);
-            u.searchParams.set(RANDOM_PARAM, cfg.mode);
-            element.href = u.toString();
-          } catch (_e) {
-            /* malformed URL ignored */
-          }
-
-          element.setAttribute('data-ytp-random-link', 'true');
-
-          const entryKey = getVideoId(element.href);
-          if (entryKey && isWatched(cfg.storageKey, entryKey)) {
-            element.parentElement?.setAttribute('hidden', '');
-          }
-        });
-
-        // Use event delegation for video links
-        if (playlistContainer && !playlistContainer.hasAttribute('data-ytp-random-delegated')) {
-          playlistContainer.setAttribute('data-ytp-random-delegated', 'true');
-          playlistContainer.addEventListener('click', event => {
+      /**
+       * @param {Element} playlistContainer
+       */
+      const delegatePlaylistClicks_ = playlistContainer => {
+        if (!playlistContainer || playlistContainer.hasAttribute('data-yp-random-delegated'))
+          return;
+        playlistContainer.setAttribute('data-yp-random-delegated', 'true');
+        const delegationHandler = /** @type {EventListener} */ (
+          event => {
             const tgt = event.target instanceof Element ? event.target : null;
-            const link = /** @type {HTMLAnchorElement|null} */ (
-              tgt?.closest?.('a[data-ytp-random-link]') ?? null
+            const link = /** @type {HTMLAnchorElement | null} */ (
+              tgt?.closest?.('a[data-yp-random-link]') ?? null
             );
             if (link?.href) {
               event.preventDefault();
               navigate(link.href);
             }
-          });
+          }
+        );
+        if (randomScope?.listen) {
+          randomScope.listen(playlistContainer, 'click', delegationHandler);
+        } else {
+          window.YouTubePlusCleanupManager?.registerListener?.(
+            playlistContainer,
+            'click',
+            delegationHandler,
+            undefined,
+            false
+          );
         }
-        localStorage.setItem(cfg.storageKey, JSON.stringify(storage));
+      };
+
+      /**
+       * @param {Element} playlistContainer
+       * @param {RandomPlayConfig} cfg
+       */
+      const setupRandomBadge_ = (playlistContainer, cfg) => {
+        const header = playlistContainer.querySelector('h3 a');
+        if (header?.tagName !== 'A') return;
+        const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
+        anchorHeader.insertAdjacentHTML(
+          'beforeend',
+          _createHTML(
+            ` <span class="yp-badge yp-random-badge">Play All <span class="yp-random-badge-close">&times;</span></span>`
+          )
+        );
+        if (badgeAnchorPrevHref === null) {
+          badgeAnchorPrevHref = anchorHeader.getAttribute('href');
+        }
+        anchorHeader.href = '#';
+        const badge = anchorHeader.querySelector('.yp-random-badge');
+        if (badge) {
+          const badgeClick = /** @type {EventListener} */ (
+            event => {
+              event.preventDefault();
+              U.storage?.removeItem(cfg.storageKey);
+              const params = new URLSearchParams(location.search);
+              params.delete('ytp-random');
+              navigate(`${window.location.pathname}?${params.toString()}`);
+            }
+          );
+          if (randomScope?.listen) {
+            randomScope.listen(badge, 'click', badgeClick);
+          } else {
+            window.YouTubePlusCleanupManager?.registerListener?.(
+              badge,
+              'click',
+              badgeClick,
+              undefined,
+              false
+            );
+          }
+        }
+      };
+
+      /**
+       * @param {RandomPlayConfig} cfg
+       */
+      const setupKeydownHandler_ = cfg => {
+        const _keydownHandler = (/** @type {Event} */ event) => {
+          if (!(event instanceof KeyboardEvent)) return;
+          if (event.shiftKey && event.key.toLowerCase() === 'n') {
+            event.stopImmediatePropagation();
+            event.preventDefault();
+            const videoId = getVideoId(location.href);
+            if (videoId) markWatched(cfg.storageKey, videoId);
+            playNextRandom(cfg, true);
+          }
+        };
+        if (_activeKeydownHandler) {
+          document.removeEventListener('keydown', _activeKeydownHandler, true);
+          _activeKeydownHandler = null;
+        }
+        _activeKeydownHandler = _keydownHandler;
+        if (randomScope?.listen) {
+          keydownRelease = randomScope.listen(document, 'keydown', _keydownHandler, {
+            capture: true,
+          });
+        } else if (_cm?.registerListener) {
+          keydownRelease = null;
+          _cm.registerListener(document, 'keydown', _keydownHandler, true);
+        } else {
+          keydownRelease = null;
+          window.YouTubePlusCleanupManager?.registerListener?.(
+            document,
+            'keydown',
+            _keydownHandler,
+            true,
+            true
+          );
+        }
+      };
+
+      /**
+       * @param {string} mode
+       */
+      const syncRandomUrlParam_ = mode => {
+        const params = new URLSearchParams(location.search);
+        params.set('ytp-random', mode);
+        window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
+      };
+
+      /**
+       * @param {PlayerElement | null} player
+       * @returns {{ current: number, duration: number } | null}
+       */
+      const getValidProgressState_ = player => {
+        if (!player || typeof player.getProgressState !== 'function') return null;
+        const state = player.getProgressState();
+        if (!state) return null;
+        if (typeof state.current !== 'number' || typeof state.duration !== 'number') return null;
+        return state;
+      };
+
+      /**
+       * @param {PlayerElement | null} player
+       * @param {RandomPlayConfig} cfg
+       */
+      const triggerAutoplayNext_ = (player, cfg) => {
+        if (player && typeof player.pauseVideo === 'function') player.pauseVideo();
+        if (player && typeof player.seekTo === 'function') player.seekTo(0);
+        playNextRandom(cfg);
+      };
+
+      /**
+       * @param {PlayerElement | null} player
+       * @param {string | null} videoId
+       * @param {RandomPlayConfig} cfg
+       */
+      const checkAutoplayProgress_ = (player, videoId, cfg) => {
+        const state = getValidProgressState_(player);
+        if (!state || isAdPlaying()) return;
+
+        if (state.current / state.duration >= 0.9 && videoId) {
+          markWatched(cfg.storageKey, videoId);
+        }
+
+        if (state.current >= state.duration - 2) {
+          triggerAutoplayNext_(player, cfg);
+        }
+      };
+
+      /**
+       * @param {string | null} videoId
+       * @param {RandomPlayConfig} cfg
+       */
+      const hijackNextButton_ = (videoId, cfg) => {
+        const nextButton = $('#ytd-player .ytp-next-button.ytp-button:not([ytp-random="applied"])');
+        if (!(nextButton instanceof HTMLElement)) return;
+
+        const newButton = document.createElement('span');
+        newButton.className = nextButton.className;
+        window.YouTubeUtils.renderTemplateClone(newButton, nextButton.innerHTML);
+        nextButton.replaceWith(newButton);
+
+        newButton.setAttribute('ytp-random', 'applied');
+        const nextClick = () => {
+          if (videoId) markWatched(cfg.storageKey, videoId);
+          playNextRandom(cfg);
+        };
+        if (randomScope?.listen) {
+          randomScope.listen(newButton, 'click', nextClick);
+        } else {
+          window.YouTubePlusCleanupManager?.registerListener?.(
+            newButton,
+            'click',
+            nextClick,
+            undefined,
+            false
+          );
+        }
+      };
+
+      /**
+       * @param {RandomPlayConfig} cfg
+       */
+      const setupProgressTracking_ = cfg => {
+        if (_progressTrackingInitialized) return;
+        const videoEl = $('video');
+        if (!videoEl) return;
+
+        if (_activeTimeupdateHandler && _activeVideoEl) {
+          _activeVideoEl.removeEventListener('timeupdate', _activeTimeupdateHandler);
+        }
+
+        const handleProgress = () => {
+          const videoId = getVideoId(location.href);
+          syncRandomUrlParam_(cfg.mode);
+          const player = getPlayer();
+          // The next button is taken over only once the player reports progress.
+          if (!getValidProgressState_(player)) return;
+          checkAutoplayProgress_(player, videoId, cfg);
+          hijackNextButton_(videoId, cfg);
+        };
+
+        _activeTimeupdateHandler = handleProgress;
+        _activeVideoEl = /** @type {HTMLVideoElement} */ (videoEl);
+        if (randomScope?.listen) {
+          timeupdateRelease = randomScope.listen(videoEl, 'timeupdate', handleProgress, {
+            passive: true,
+          });
+        } else {
+          timeupdateRelease = null;
+          window.YouTubePlusCleanupManager?.registerListener?.(
+            videoEl,
+            'timeupdate',
+            handleProgress,
+            { passive: true },
+            false
+          );
+        }
+        _progressTrackingInitialized = true;
+      };
+
+      const applyRandomPlay = (/** @type {RandomPlayConfig} */ cfg) => {
+        if (!playAllCtx) return;
+        if (!window.location.pathname.endsWith('/watch')) return;
+
+        const playlistContainer = $('#secondary ytd-playlist-panel-renderer');
+        if (playlistContainer === null || playlistContainer.hasAttribute('ytp-random')) {
+          return;
+        }
+
+        playlistContainer.setAttribute('ytp-random', 'applied');
+
+        if (randomPrevPanel !== playlistContainer) {
+          randomScope?.dispose();
+          randomScope = playAllCtx?.scope?.() ?? null;
+          randomPrevPanel = playlistContainer;
+          keydownRelease = null;
+          timeupdateRelease = null;
+        }
+
+        appendRandomNotice_(playlistContainer.querySelector('#header'));
+
+        /** @type {Record<string, boolean>} */
+        const storage = getStorage(cfg.storageKey);
+        const uniq = collectPlaylistAnchors_(playlistContainer);
+        uniq.forEach(element => processPlaylistAnchor_(element, cfg, storage));
+
+        delegatePlaylistClicks_(playlistContainer);
+        U.storage?.setItem(cfg.storageKey, JSON.stringify(storage));
 
         const currentVideoId = getVideoId(location.href);
         if (
@@ -1178,122 +1598,16 @@
           (currentVideoId && isWatched(cfg.storageKey, currentVideoId))
         ) {
           playNextRandom(cfg);
-
           return;
         }
 
-        const header = playlistContainer.querySelector('h3 a');
-        if (header && header.tagName === 'A') {
-          const anchorHeader = /** @type {HTMLAnchorElement} */ (/** @type {unknown} */ (header));
-          // static template wrapped by Trusted Types policy (_createHTML)
-          anchorHeader.insertAdjacentHTML(
-            'beforeend',
-            _createHTML(
-              ` <span class="ytp-badge ytp-random-badge">Play All <span class="ytp-random-badge-close">&times;</span></span>`
-            )
-          );
-          anchorHeader.href = '#';
-          const badge = anchorHeader.querySelector('.ytp-random-badge');
-          if (badge) {
-            badge.addEventListener('click', event => {
-              event.preventDefault();
-
-              localStorage.removeItem(cfg.storageKey);
-
-              const params = new URLSearchParams(location.search);
-              params.delete('ytp-random');
-              window.location.href = `${window.location.pathname}?${params.toString()}`;
-            });
-          }
-        }
-
-        const _keydownHandler = (/** @type {Event} */ event) => {
-          if (!(event instanceof KeyboardEvent)) return;
-          // SHIFT + N
-          if (event.shiftKey && event.key.toLowerCase() === 'n') {
-            event.stopImmediatePropagation();
-            event.preventDefault();
-
-            const videoId = getVideoId(location.href);
-            if (videoId) markWatched(cfg.storageKey, videoId);
-            // Unfortunately there is no workaround to YouTube redirecting to the next in line without a reload
-            playNextRandom(cfg, true);
-          }
-        };
-        if (_cm?.registerListener) {
-          _cm.registerListener(document, 'keydown', _keydownHandler, true);
-        } else {
-          document.addEventListener('keydown', _keydownHandler, true);
-        }
-
-        if (_progressTrackingInitialized) return;
-
-        // Use video timeupdate event instead of setInterval for better performance
-        const videoEl = $('video');
-        if (!videoEl) return;
-
-        const handleProgress = () => {
-          const videoId = getVideoId(location.href);
-
-          const params = new URLSearchParams(location.search);
-          params.set('ytp-random', cfg.mode);
-          window.history.replaceState({}, '', `${window.location.pathname}?${params.toString()}`);
-
-          const player = getPlayer();
-          if (!player || typeof player.getProgressState !== 'function') {
-            return;
-          }
-
-          const progressState = player.getProgressState();
-          if (
-            !progressState ||
-            typeof progressState.current !== 'number' ||
-            typeof progressState.duration !== 'number'
-          ) {
-            return;
-          }
-
-          // Do not listen for watch progress when watching advertisements
-          if (!isAdPlaying()) {
-            if (progressState.current / progressState.duration >= 0.9) {
-              if (videoId) markWatched(cfg.storageKey, videoId);
-            }
-
-            // Autoplay random video
-            if (progressState.current >= progressState.duration - 2) {
-              // make sure vanilla autoplay doesnt take over
-              if (typeof player.pauseVideo === 'function') player.pauseVideo();
-              if (typeof player.seekTo === 'function') player.seekTo(0);
-              playNextRandom(cfg);
-            }
-          }
-
-          const nextButton = $(
-            '#ytd-player .ytp-next-button.ytp-button:not([ytp-random="applied"])'
-          );
-          if (nextButton instanceof HTMLElement) {
-            // Replace with span to prevent anchor click events
-            const newButton = document.createElement('span');
-            newButton.className = nextButton.className;
-            window.YouTubeUtils.renderTemplateClone(newButton, nextButton.innerHTML);
-            nextButton.replaceWith(newButton);
-
-            newButton.setAttribute('ytp-random', 'applied');
-            newButton.addEventListener('click', () => {
-              if (videoId) markWatched(cfg.storageKey, videoId);
-              playNextRandom(cfg);
-            });
-          }
-        };
-
-        videoEl.addEventListener('timeupdate', handleProgress, {
-          passive: true,
-        });
-        _progressTrackingInitialized = true;
+        setupRandomBadge_(playlistContainer, cfg);
+        setupKeydownHandler_(cfg);
+        setupProgressTracking_(cfg);
       };
 
       scheduleApplyRandomPlay = () => {
-        if (!featureEnabled) return;
+        if (!playAllCtx) return;
         stopRandomPlayTimers?.();
 
         if (!window.location.pathname.endsWith('/watch')) return;
@@ -1304,12 +1618,13 @@
 
           // Storage needs to now be { [videoId]: bool }
           try {
-            const current = localStorage.getItem(cfg.storageKey);
+            const current = U.storage?.getItem(cfg.storageKey);
             if (current && Array.isArray(JSON.parse(current))) {
-              localStorage.removeItem(cfg.storageKey);
+              U.storage?.removeItem(cfg.storageKey);
             }
           } catch (_e) {
-            localStorage.removeItem(cfg.storageKey);
+            logS(_e);
+            U.storage?.removeItem(cfg.storageKey);
           }
 
           applyRandomPlay(cfg);
@@ -1327,7 +1642,7 @@
       };
 
       const onNavigate = () => {
-        if (!featureEnabled) {
+        if (!playAllCtx) {
           stopRandomPlayTimers?.();
           return;
         }
@@ -1336,36 +1651,93 @@
       };
 
       onNavigate();
-      const _navFinishRandom = () => setTimeout(onNavigate, 200);
-      if (_cm?.registerListener) {
+      const _navFinishRandom = () => scheduleManagedTimeout(onNavigate, 200);
+      if (ctx?.listen) {
+        ctx.listen(document, 'yt-navigate-finish', _navFinishRandom, { passive: true });
+      } else if (_cm?.registerListener) {
         _cm.registerListener(document, 'yt-navigate-finish', _navFinishRandom);
       } else {
-        document.addEventListener('yt-navigate-finish', _navFinishRandom);
+        window.YouTubePlusCleanupManager?.registerListener?.(
+          document,
+          'yt-navigate-finish',
+          _navFinishRandom,
+          undefined,
+          true
+        );
       }
     })();
   };
 
-  if (window.YouTubeUtils?.whenRelevant) {
-    window.YouTubeUtils.whenRelevant({
-      name: 'playall',
-      // Channel pages only — /@handle/videos, /@handle/shorts,
-      // /channel/..., /c/..., /user/... and their /videos, /shorts,
-      // /streams sub-tabs. Playlist pages are explicitly excluded
-      // (the URL has no list, and the UI is wrong there).
-      isRelevant: () => {
-        try {
-          if (window.location.search.includes('list=')) return false;
-          return isSupportedTabPath();
-        } catch (_e) {
-          return false;
-        }
-      },
-      onEnter: startPlayAllRuntime,
-      onLeave: resetPlayAllRuntime,
-    });
-  } else {
-    startPlayAllRuntime();
+  const playAllFeature = window.YouTubePlusFeatureRegistry?.FeatureLifecycle?.define?.({
+    id: 'playall',
+    settingsKey: 'enablePlayAll',
+    // The button lives on channel tabs; random play runs on the playlist and
+    // watch URLs the button opens, which carry the ytp-random query.
+    routes: ['channel', 'watch', 'playlist'],
+    when: () =>
+      isSupportedTabPath() || new URLSearchParams(window.location.search).has(RANDOM_PARAM),
+    start: startPlayAllRuntime,
+    stop: () => {
+      resetPlayAllRuntime();
+      playAllRuntimeStarted = false;
+      playAllCtx = null;
+    },
+  });
+
+  // Starts the feature when its setting is on, then follows the setting.
+  onDomReady(() => playAllFeature?.sync());
+
+  // Feature facade
+  const YouTubePlusPlayall = {};
+  // Test-only surface: internal entry points and state accessors live here,
+  // not on the facade root.
+  U?.exposeTestHooks?.(YouTubePlusPlayall, {
+    init: startPlayAllRuntime,
+    cleanup: () => {
+      resetPlayAllRuntime();
+      playAllRuntimeStarted = false;
+      playAllCtx = null;
+    },
+    isSupportedTabPath,
+    clearRetryHandle,
+    getPlayAllLabel,
+    getPlayAllAriaLabel,
+    hasTranslation,
+    resolveMetaChannelId_,
+    resolveDomNodeChannelId_,
+    resolveInitialDataChannelId_,
+    resolveChannelIdFromDom,
+    resolveChannelIdWithRetry,
+    buildWatchUrl,
+    redirect,
+    scheduleManagedTimeout,
+    scheduleApplyRetry,
+    resolveChipBarPlacement,
+    resolveDesktopParent,
+    resolveGridParent,
+    resolveMountTarget_,
+    getPlaylistPrefix_,
+    insertPlayAllButton,
+    wirePlayAllButtonClick_,
+    apply,
+    addButton,
+    removeButton,
+    fetchChannelId_,
+    mountStyles,
+    createEventRegistrar_,
+    wireNavigation,
+    getId: () => id,
+    setId: (/** @type {string} */ val) => {
+      id = val;
+    },
+    isAdPlaying,
+    getPlayer,
+    scheduleApplyRandomPlay: () => scheduleApplyRandomPlay?.(),
+    stopRandomPlayTimers: () => stopRandomPlayTimers?.(),
+    navigate,
+  });
+
+  if (typeof window !== 'undefined') {
+    window.YouTubePlusPlayall = YouTubePlusPlayall;
   }
-})().catch(error =>
-  (window.YouTubeUtils?.logger || null)?.error?.('Play All', 'Module bootstrap failure', error)
-);
+})();

@@ -1,90 +1,85 @@
 ![Extension Cover](https://i.imgur.com/Dt5jG3M.png)
-![Youtube Music](https://i.imgur.com/LOC8X6P.png)
+![YouTube Music](https://i.imgur.com/LOC8X6P.png)
 
 <!-- GREASYFORK_INSTALLS:START -->
 
-
 <p align="center">
-  <a href="https://greasyfork.org/ru/scripts/537017-youtube">
+  <a href="https://greasyfork.org/scripts/537017-youtube">
     <img alt="downloads" src="https://img.shields.io/badge/downloads-5986-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
-  <a href="https://greasyfork.org/ru/scripts/537017-youtube">
-    <img alt="version" src="https://img.shields.io/badge/version-2.5.2-blue?style=flat-square" height="25" />
+  <a href="https://greasyfork.org/scripts/537017-youtube">
+    <img alt="version" src="https://img.shields.io/badge/version-3.0.0-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js">
     <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
   </a>
 </p>
-
-
 <!-- GREASYFORK_INSTALLS:END -->
 
-## YouTube + — Convenient Set of YouTube Enhancements
-
-Brief: The extension adds Picture-in-Picture hotkey, screenshot capture, timecode management, comment manager, and other useful features for comfortable viewing and content management.
+YouTube + is a userscript for YouTube and YouTube Music. It adds player buttons
+and hotkeys for downloads, speed control, screenshots and statistics, and
+player tools such as zoom, A-B loop, resume playback and timecodes. Every
+feature can be toggled separately in one settings modal.
 
 ## Features
 
-- Enable Picture-in-Picture (PIP) — via hotkey.
-- Add/copy timecodes to videos (convenient for notes and editing) — via hotkey.
-- Download videos through external services (external downloader — can be changed and configured to your own preferences) and integration with my project [by YTDL](https://github.com/diorhc/YTDL), now with direct download from YouTube.
-- Download audio and subtitles.
-- Block ads (optional, can be downloaded from [Firefox](https://addons.mozilla.org/addon/ublock-origin/), [Edge](https://microsoftedge.microsoft.com/addons/detail/ublock-origin/odfafepnkmbhccpbejgmiehpchacaeak), [Opera](https://addons.opera.com/extensions/details/ublock/), [Chrome](https://chrome.google.com/webstore/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm))
-- Take a screenshot of the current frame and save it locally.
-- Support for zoom in the player.
-- Repeat video from user-defined segments (A → B) — via hotkey.
-- Speed control for videos (hotkeys).
-- Comment translation button (YouTube removed this feature).
-- "Statistics" button on video page — quick access to views/subscribers/engagement.
-- Channel statistics: quick overview of key metrics in one click.
-- Hotkeys in Shorts (e.g., Shift+/ for hotkey reference).
-- Search and quickly remove videos from "Liked" and "Watch Later".
-- Hide end screens and cards for clean viewing.
-- Comment manager: bulk operations, filters, and search.
-- Download thumbnails: shorts, regular videos, and channel banners.
-- Remembers viewing time — continue from where you left off or start over.
-- Report bugs and suggest new features.
-- YouTube Music: enhanced player (optional).
-- Full immersion (immersive animations).
-- Support for all languages (partial).
-- Now you can suggest your own features and ideas and vote for other users' suggestions!
-- Theme support
+- Picture-in-Picture toggle and hotkey (Shift+P).
+- Download videos, audio and subtitles through a configurable external
+  downloader, [YTDL](https://github.com/diorhc/YTDL) integration, or direct
+  YouTube streams.
+- Speed control with a player button and hotkeys (G, H, B).
+- Screenshot of the current frame, saved locally (S).
+- Statistics buttons for videos and channels: views, subscribers, engagement,
+  and dislikes from the Return YouTube Dislike API.
+- A-B loop for repeating a segment (R toggles, K/L set points, O resets).
+- Player zoom with Shift and the mouse wheel; pinch and keyboard also work.
+- Resume playback: an overlay offers to continue a video from the saved time.
+- Timecode panel (Shift+T): clickable timestamps in descriptions, add/copy
+  timecodes, chapter markers on the progress bar.
+- Hiding of end screens and cards.
+- Ad blocker that hides promoted and ad elements in the player and the
+  recommendation sidebar; optionally add
+  [uBlock Origin](https://github.com/gorhill/uBlock) for
+  [Firefox](https://addons.mozilla.org/addon/ublock-origin/),
+  [Edge](https://microsoftedge.microsoft.com/addons/detail/ublock-origin/odfafepnkmbhccpbejgmiehpchacaeak),
+  [Opera](https://addons.opera.com/extensions/details/ublock/) or
+  [Chrome](https://chrome.google.com/webstore/detail/ublock-origin/cjpalhdlnbpafiamejdnhcphjbkeiagm).
+- Search bar and bulk-removal mode for playlists such as Liked and Watch Later.
+- Comment tools: bulk selection and deletion of your comments, and a
+  per-comment translate button.
+- Thumbnail viewer and downloads for videos, Shorts, avatars and banners.
+- Shorts keyboard controls with an on-screen reference (?), Shorts download
+  and statistics buttons.
+- YouTube Music: centered player, hover styles and immersive search
+  (optional, turned off separately).
+- Immersive animations for YouTube's interface (optional; off under reduced
+  motion).
+- Themes: Vision/Classic variants, Glass/Solid styles, Device/Dark/Light
+  preference, and layout styles.
+- Feature suggestion board with voting, and a report form that opens a
+  prefilled GitHub issue, both in the settings modal.
+- Interface translations in several languages, and an update checker for new
+  releases.
+
+Hotkeys are reassignable in the settings modal.
 
 ## Installation
 
-1. Install the [Violentmonkey](https://violentmonkey.github.io/) or [Tampermonkey](https://www.tampermonkey.net/) extension.
-2. Install the script from [GreasyFork](https://greasyfork.org/ru/scripts/537017-youtube).
+1. Install [Violentmonkey](https://violentmonkey.github.io/) (Recommended) or
+   [Tampermonkey](https://www.tampermonkey.net/).
+2. Install the script from
+   [GreasyFork](https://greasyfork.org/scripts/537017-youtube) or
+   [GitHub Releases](https://github.com/diorhc/YTP/releases/latest/download/youtube.user.js).
 
-## Hotkeys (default)
+## Credits
 
-```text
-            Action                                                      Key
-            -----------------------------------------------             -------
-            Enable/disable PIP                                          ... + P
-            Add current timecode to description/comment                 ... + T
-            Take screenshot of frame                                    S
-            Open comment manager                                        C
-            Enable/disable video repeat                                 R
-            Set A/B points for repeat and reset                         K / L / O
-            Speed up/slow down/reset video speed                        G / H / B
-            Show hotkey reference                                       Shift + /
-            Zoom in/out video in player                                 Shift + Mouse Wheel
-```
+- CY Fung - Tabview: | [Github](https://github.com/cyfung1031) | [Greasyfork](https://greasyfork.org/users/371179) |
+- exyezed - Experimental: | [Github](https://github.com/exyezed) | [Greasyfork](https://greasyfork.org/users/1382928) |
 
-> All keys can be reassigned in script settings.
-
-## Contacts and Credits
-
-- Tabview: [𝖢𝖸 𝖥𝗎𝗇𝗀](https://github.com/cyfung1031)
-- Experimental: [exyezed](https://github.com/exyezed)
-
-## Based on and modified/improved
-
-<div align="center">
-
-  Please add your ideas in [discussions](https://github.com/diorhc/YTP/discussions) (for feature proposals)</a> or [issues](https://github.com/diorhc/YTP/issues) (for bugs), or report them via the script settings - I would appreciate your feedback!
-
-</div>
+Feature suggestions go to
+[discussions](https://github.com/diorhc/YTP/discussions), bugs to
+[issues](https://github.com/diorhc/YTP/issues), or use the Report section in
+the settings modal.
 
 ![Animation demo](https://i.imgur.com/k7ZDZSr.gif)
 

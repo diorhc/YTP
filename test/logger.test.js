@@ -133,4 +133,96 @@ describe('YouTubePlusLogger', () => {
     expect(errors).toHaveLength(1);
     expect(errors[0].level).toBe('error');
   });
+
+  test('createLogger and createChild scope module names', () => {
+    if (!logger) throw new Error('logger not initialized');
+    const scoped = logger.createLogger('Download');
+    scoped.warn('speed issue');
+    const child = logger.createChild('Download');
+    child.warn('Thumbnails', 'thumb failed');
+    const recent = logger.getRecent(5);
+    const childEntry = recent.find(e => e.message === 'thumb failed');
+    expect(childEntry.module).toBe('Download:Thumbnails');
+    const scopedEntry = recent.find(e => e.message === 'speed issue');
+    expect(scopedEntry.module).toBe('Download');
+  });
+
+  test('returns noop boundary stats without a boundary', () => {
+    if (!logger) throw new Error('logger not initialized');
+    expect(logger.getErrorStats()).toEqual({
+      totalErrors: 0,
+      recentErrors: 0,
+      lastErrorTime: 0,
+      isRecovering: false,
+      errorsByType: {},
+    });
+  });
+
+  test('delegates boundary-aware helpers to YouTubePlusErrorBoundary', () => {
+    if (!logger) throw new Error('logger not initialized');
+    const boundary = {
+      logError: jest.fn(),
+      getErrorStats: jest.fn(() => ({ totalErrors: 3 })),
+      clearErrors: jest.fn(),
+      getErrorRate: jest.fn(() => 42),
+      withAsyncErrorBoundary: jest.fn(fn => fn),
+      withErrorBoundary: jest.fn(fn => fn),
+      config: { maxErrors: 7 },
+    };
+    window.YouTubePlusErrorBoundary = boundary;
+
+    const error = new Error('boundary routed');
+    logger.logError(error, { route: 'watch' });
+    expect(boundary.logError).toHaveBeenCalledWith(error, { route: 'watch' });
+
+    expect(logger.getErrorStats().totalErrors).toBe(3);
+    expect(boundary.getErrorStats).toHaveBeenCalled();
+
+    logger.clearErrors();
+    expect(boundary.clearErrors).toHaveBeenCalled();
+
+    expect(logger.getErrorRate()).toBe(42);
+    expect(boundary.getErrorRate).toHaveBeenCalled();
+
+    const fn = () => 'ok';
+    expect(logger.withAsyncErrorBoundary(fn, 'mod')).toBe(fn);
+    expect(boundary.withAsyncErrorBoundary).toHaveBeenCalledWith(fn, 'mod');
+
+    expect(logger.withErrorBoundary(fn, 'mod')).toBe(fn);
+    expect(boundary.withErrorBoundary).toHaveBeenCalledWith(fn, 'mod');
+
+    expect(logger.config).toBe(boundary.config);
+  });
+
+  test('boundary-aware helpers degrade safely without a boundary', () => {
+    if (!logger) throw new Error('logger not initialized');
+    delete window.YouTubePlusErrorBoundary;
+
+    expect(() => logger.logError(new Error('unrouted'), {})).not.toThrow();
+    expect(logger.getErrorRate()).toBe(0);
+    expect(logger.getErrorStats()).toEqual({
+      totalErrors: 0,
+      recentErrors: 0,
+      lastErrorTime: 0,
+      isRecovering: false,
+      errorsByType: {},
+    });
+    const fn = () => 'direct';
+    expect(logger.withAsyncErrorBoundary(fn)).toBe(fn);
+    expect(logger.withErrorBoundary(fn)).toBe(fn);
+    expect(logger.config.enableLogging).toBe(true);
+    expect(() => logger.clearErrors()).not.toThrow();
+  });
+
+  test('serializes log data safely: primitives stay, circular objects become strings', () => {
+    if (!logger) throw new Error('logger not initialized');
+    logger.setLevel('debug');
+    logger.info('mod', 'primitive', 42);
+    const circular = { name: 'x' };
+    circular.self = circular;
+    logger.info('mod', 'circular', circular);
+    const recent = logger.getRecent(5);
+    expect(recent.find(e => e.message === 'primitive').data).toBe(42);
+    expect(typeof recent.find(e => e.message === 'circular').data).toBe('string');
+  });
 });
