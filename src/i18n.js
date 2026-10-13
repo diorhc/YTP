@@ -53,35 +53,35 @@
   // biome-ignore format: generated data block
   /** @type {{ version: string; keysCount: number; candidateDigest: string; localeDigests: Readonly<Record<string, string>> }} */
   const LOCALE_DELIVERY_MANIFEST = Object.freeze({
-    version: "3.0.0",
-    keysCount: 418,
-    candidateDigest: "957d8b6f317a3ead51b80eb11717c4cac58faf208243b7840fa1a4c821766a0a",
+    version: "3.0.1",
+    keysCount: 425,
+    candidateDigest: "57a279429b0f251d675c28b234a8bcd24884c1b6adcbb04f8fc9702da9b0fb4c",
     localeDigests: Object.freeze({
-      "ar": "1917f7538fb1d1f6feb86c2e7449cd93243562bf123c17f19b4f1a3a38db80a3",
-      "az": "6596f7eb962b0231c6528eab7edeb356ede6c49237430e93da462b69c44e02cd",
-      "be": "ac2dce0078c4b3196a494c2350e95ec5936f9fea7333173751ded9e95dda01aa",
-      "bg": "e5fc9537b3a50a9ca7b42e08feaa2c256b69b3204a2973541838161d8a1d6057",
-      "de": "342cfbd200e0cea363e4f09ca46faabe0277601bdea53314b5069776b967e184",
-      "en": "87b25e83fad432c02bfbd1952d541897b00a2a1a7ecbe655ed69493ec9819833",
-      "es": "e86598cd669e522706e8adc7093cb0b5aa687c8e434f081a4854b52c4b916239",
-      "fr": "41019895b6a2297aad3d53e9133a759db475648a66fa6a11cd0fcfe0be7a2180",
-      "hi": "2f0936178e6b761254617c63b37c29210cd26c6d4cf4068bd2f164d689da8e79",
-      "id": "5b48be8f7e23e5a29c7ea8bd9f48c23ca2498f20bf2d33a2abddc7904134e3c4",
-      "it": "9dba88ceeb106790f78f817a1c5313266d0249ae920dbc07d21e65d1622196eb",
-      "ja": "ac401c8438d3c470981096fcea266c486b76dd0b48bc48bdab89f80540e990d8",
-      "kk": "6f240434305ce1097bffaf648b60bdbdd371e88970bd3be4e6b6846c88032a31",
-      "ko": "d8320557a9156f45ced5b4065260f45bc35052a964165996b944076e6ff0f650",
-      "ky": "75518271a26d256c53a034add93613ed7898fb0821e07f9245f5eda86616671e",
-      "nl": "e1602e844093fa08c6bfb38fac058f2f319db802f2ab7e7c2cf0df74c9ce36fa",
-      "pl": "23f260ff9881eaf5fe7ce89faaab1a8199eaa931931d347702e6697ce873c24f",
-      "pt": "8510c12aaebbc2cd599200d7b4c799b32cdeeee53ddd41f1bb7e392010151846",
-      "ru": "b0df68f19d8e8f00458ca68201123bce248b54932d2e59a28f031eac17c86536",
-      "tr": "59095464e7cf07c3833179ddcdf13dcc3d127fe187db58058c0ab3aadf3adcf5",
-      "uk": "87fda1119b93cdb8f8a83df8f578af3cb17948fa65a532e8144c2c173efab68b",
-      "uz": "c875f701744dce766bb24b62ac2e8cac7e59d3d2bd14a45285a3f621abb1cf0a",
-      "vi": "d95255da5ad932a3a8408593b31a22d008c67d1e6ceff594594d1d1071580a11",
-      "zh-CN": "58f24f63c2ae5e7721e5562f04e63edaab3a96318d42a9e8ec618054ee580879",
-      "zh-TW": "3b0c276083f2a53b2850c93f419fc5da3811919a9f8f1b1f33c2036b041fb324",
+      "ar": "e2705520e5a5ba896cdd343131ab8498d2a47b0c742d4263e44d1cf662c7b7a0",
+      "az": "414845721fe3d7cac99c93b9c90f63b267f99544398c2dc8c1e8eae69376bccf",
+      "be": "874e4fab14c831a2ebffd56438007126db38b7738e560d1e2f1dce8d28f93916",
+      "bg": "ad099e10cd36c1472140a6574fe1dfc03492881fe6543f4e70fe48ad74921ee4",
+      "de": "2ab3620ef9fc573e72c2215d7b2f4f58ffe2bacddf2c48d900ccbb0048ce540c",
+      "en": "10834fd7ec1e86dac1c23c56008a5e8721729579bc6ccc02fda1b99eaacd43c9",
+      "es": "88a1f778ac699643b7518602c22034942b334b366bfa886dafe2cb58e3f69838",
+      "fr": "3a7732f4a18c7e5b51b40189864dd2e33e81dec2069aee1672216f124b90ea42",
+      "hi": "b2fb3dba03c299d1bea4f2fc4473f94a3346edd2db19bca1c2a2ace51ad662c5",
+      "id": "a34575d67870205a4acbaeec6fcf09b1c15ba34b0bf35f2aebb475b023f99293",
+      "it": "f8502f8afb0379ba79928bfb11b1f4bdad642853d016cb2a9db779361fc32936",
+      "ja": "0d7181220de2b19a253cdb192c503367f9e7fd39d81da3c0e656e2d4182fbc2c",
+      "kk": "4b308268178a7d7a3fdfbbb75c7e5387a7b38777b729e30762150c5a6766cb14",
+      "ko": "546134a72275d86014834529be35b10d88e4903e6417fd7dd675f6aec6312039",
+      "ky": "264ff8d2aa8ec29d885cccc6c483f77c05ab31a209ab3791f066e3a15666dd89",
+      "nl": "83b16a5c7464c069fcd36fbd3903aa26c95386c075ecd47abe1ae565af0b0280",
+      "pl": "d230d2cc3224375976445f3cbac1ac1b03e0286d6e8350bdec151ca46a093963",
+      "pt": "dcf70624609e15d2631eadb21206cdc1a92244cfc5dad565845904db4bc785e8",
+      "ru": "ca4c638617b4dd62f27a1d0f67aeb44b9d223ea1d957ecb779270d60a99d050d",
+      "tr": "795eb99fe2de31d7441b5d234c759d2e391e73e3b374076dcd111d9eb52f7257",
+      "uk": "8a5577bccf02fb3646b39582ff717b54213d7304e40bc1e522f15c6a42eea53a",
+      "uz": "d9079637ded0de878ad74d521c5a3362c681ebfd2ddf52b603d6e76277b162cf",
+      "vi": "3db2000191c8c9500855947e049e05bf0133dc0858193f4cef36d15233b57f41",
+      "zh-CN": "c6464c532a85cc5292d6cc17a82dc738403cc4258fcbab1278956092f29ab26b",
+      "zh-TW": "1bb5b1f728c87b4e1e1c020808488c7591bbd2416d61875a1fd4efa23a308eec",
     }),
   });
   // AUTO-GENERATED-END: LOCALE_DELIVERY_MANIFEST
@@ -994,20 +994,48 @@
   };
 
   /**
+   * Resolve the page-realm window (userscript sandboxes wrap it; unsafeWindow is
+   * the real one), unwrapping the Firefox Xray wrapper when present. Mirrors
+   * utils.getPageWindow so every page bridge resolves it the same way.
+   * @returns {Window | null}
+   */
+  function getPageWindow_() {
+    if (typeof unsafeWindow === 'undefined') return null;
+    const uw = /** @type {{ wrappedJSObject?: unknown }} */ (unsafeWindow);
+    const unwrapped = uw.wrappedJSObject;
+    if (unwrapped && typeof unwrapped === 'object') return /** @type {Window} */ (unwrapped);
+    return /** @type {Window} */ (unsafeWindow);
+  }
+
+  /**
+   * Dispatch an i18n lifecycle event on a target window.
+   * @param {EventTarget} target
+   * @param {string} name
+   * @param {Object} detail
+   */
+  function dispatchI18nEventTo(target, name, detail) {
+    try {
+      target.dispatchEvent(new CustomEvent(name, { detail: toStructuredCloneSafeDetail(detail) }));
+    } catch (_e) {
+      try {
+        target.dispatchEvent(new Event(name));
+      } catch {
+        /* no-op */
+      }
+    }
+  }
+
+  /**
    * @param {string} name
    * @param {Object} [detail]
    */
   function emitI18nEvent(name, detail = {}) {
     if (typeof window === 'undefined') return;
-    try {
-      window.dispatchEvent(new CustomEvent(name, { detail: toStructuredCloneSafeDetail(detail) }));
-    } catch (_e) {
-      try {
-        window.dispatchEvent(new Event(name));
-      } catch {
-        /* no-op */
-      }
-    }
+    dispatchI18nEventTo(window, name, detail);
+    // The page realm (Tabview) runs in a different window; mirror there so its
+    // listeners re-read the tab labels whenever the locale set changes.
+    const pageWin = getPageWindow_();
+    if (pageWin && pageWin !== window) dispatchI18nEventTo(pageWin, name, detail);
   }
 
   // ---------------------------------------------------------------------------
@@ -1573,6 +1601,21 @@
 
   if (typeof window !== 'undefined') {
     window.YouTubePlusI18n = i18nAPI;
+
+    // Page-realm bridge: Tabview renders its tab rail in the page window, which
+    // cannot reach the sandbox i18n object. Expose a read-only translator there
+    // so the page realm's window.YouTubePlusI18n.t(...) resolves real labels
+    // instead of its English fallback.
+    const pageWin = getPageWindow_();
+    if (pageWin && pageWin !== window) {
+      pageWin.YouTubePlusI18n = {
+        t: (
+          /** @type {string} */ key,
+          /** @type {Record<string, string | number>} */ params = {}
+        ) => i18nAPI.t(key, params),
+        getLanguage: () => i18nAPI.getLanguage(),
+      };
+    }
 
     // Back-compat shim for the legacy loader namespace. Ownership
     // is YouTubePlusI18n; this is kept only so any code that referenced

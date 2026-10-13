@@ -617,9 +617,9 @@
           'styles.sideVideosColumns',
           sideVideosColumnsValue,
           [
-            { value: 0, label: 'Default (Off)' },
-            { value: 1, label: '1 Column' },
-            { value: 2, label: '2 Columns' },
+            { value: 0, label: tr(t, 'sideColsDefault') },
+            { value: 1, label: tr(t, 'sideColsOne') },
+            { value: 2, label: tr(t, 'sideColsTwo') },
           ]
         )}
       </div>
@@ -1204,7 +1204,7 @@
         <div class="glass-card pip-submenu-card">
           <div class="yp-settings-item pip-shortcut-item">
             <div>
-              <label class="yp-settings-item-label">${escapeHTML(t('pipShortcutTitle'))}</label>
+              <label class="yp-settings-item-label">${escapeHTML(t('keyboardShortcut'))}</label>
               <div class="yp-settings-item-description">${escapeHTML(t('pipShortcutDescription'))}</div>
             </div>
             <div class="pip-shortcut-editor">
@@ -1490,7 +1490,6 @@
         <div class="yp-vote-bar-section" id="yp-vote-bar-section">
           <div class="yp-vote-bar-row">
             <div class="yp-vote-bar-count" id="yp-vote-bar-count">0</div>
-            <div class="yp-vote-bar-divider"></div>
             <div class="yp-vote-bar-buttons">
               <div class="yp-vote-bar-track" id="yp-vote-bar-fill"></div>
               <button class="yp-vote-bar-btn" id="yp-vote-bar-up" type="button" aria-label="${tr(t, 'like', 'Like')}" data-vote="1">
@@ -1500,7 +1499,6 @@
                 <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor"><path d="M15 3H6c-.83 0-1.54.5-1.84 1.22l-3.02 7.05c-.09.23-.14.47-.14.73v2c0 1.1.9 2 2 2h6.31l-.95 4.57-.03.32c0 .41.17.79.44 1.06L9.83 23l6.59-6.59c.36-.36.58-.86.58-1.41V5c0-1.1-.9-2-2-2zm4 0v12h4V3h-4z"/></svg>
               </button>
             </div>
-            <div class="yp-vote-bar-divider"></div>
             <button class="yp-voting-comments-icon" data-preview-comments="1" type="button" aria-label="${tr(t, 'comments', 'Comments')} (0)">
               <span>&#128172;</span> 0
             </button>

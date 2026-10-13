@@ -271,7 +271,7 @@ describe('Time Module', () => {
       expect(dropdown.querySelector('.yp-classic-set-a-item')).toBeTruthy();
       expect(dropdown.querySelector('.yp-classic-set-b-item')).toBeTruthy();
       expect(dropdown.querySelector('.yp-classic-reset-item')).toBeTruthy();
-      expect(dropdown.querySelector('.yp-classic-loop-status-badge')?.textContent).toBe('OFF');
+      expect(dropdown.querySelector('.yp-classic-loop-status-badge')?.textContent).toBe('stateOff');
 
       window.YouTubePlusTimeLoop.setLoopPoint('A');
       video.currentTime = 45;
@@ -281,7 +281,7 @@ describe('Time Module', () => {
       expect(dropdown.querySelector('.yp-classic-loop-toggle-item.is-active')).toBeTruthy();
       expect(dropdown.querySelector('.yp-classic-set-a-item.has-point')).toBeTruthy();
       expect(dropdown.querySelector('.yp-classic-set-b-item.has-point')).toBeTruthy();
-      expect(dropdown.querySelector('.yp-classic-loop-status-badge')?.textContent).toBe('ON');
+      expect(dropdown.querySelector('.yp-classic-loop-status-badge')?.textContent).toBe('stateOn');
 
       video.remove();
     });
@@ -481,7 +481,7 @@ describe('Vision Loop Pill & Dock', () => {
     expect(pill.querySelector('.yp-vision-set-b-btn .yp-vision-set-btn-val').textContent).toBe(
       '0:45'
     );
-    expect(pill.querySelector('.yp-vision-loop-middle-duration').textContent).toBe('33с');
+    expect(pill.querySelector('.yp-vision-loop-middle-duration').textContent).toBe('secondsShort');
 
     // Empty preview state has camera/film SVG and does not duplicate point labels
     const empties = pill.querySelectorAll('.yp-vision-loop-preview-empty');

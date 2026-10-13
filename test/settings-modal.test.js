@@ -470,6 +470,31 @@ describe('YouTubePlusSettingsModal', () => {
       window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
     });
 
+    test('a default-selector submenu toggle targets the submenu, not the button', () => {
+      const modal = openModal();
+      const panel = /** @type {HTMLElement} */ (modal.querySelector('.yp-settings-panel'));
+      const host = document.createElement('div');
+      host.innerHTML =
+        '<div class="yp-settings-item">' +
+        '<button class="yp-submenu-toggle" data-submenu="yp-test-submenu" ' +
+        'aria-expanded="true" style="display:inline-flex;"></button>' +
+        '</div>' +
+        '<div class="yp-test-submenu" data-submenu="yp-test-submenu" ' +
+        'style="display:block;"></div>';
+      panel.appendChild(host);
+      const toggleBtn = /** @type {HTMLElement} */ (host.querySelector('.yp-submenu-toggle'));
+      const submenu = /** @type {HTMLElement} */ (host.querySelector('.yp-test-submenu'));
+
+      toggleBtn.click();
+
+      // The toggle button must stay visible; the submenu collapses instead.
+      expect(toggleBtn.style.display).toBe('inline-flex');
+      expect(submenu.style.display).toBe('none');
+      expect(toggleBtn.getAttribute('aria-expanded')).toBe('false');
+
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+    });
+
     test('clicking a settings item row toggles its checkbox', () => {
       const modal = openModal();
       const row = document.createElement('div');

@@ -727,7 +727,7 @@ describe('i18n Module', () => {
       expect(status.isFallback).toBe(false);
       expect(status.isStale).toBe(false);
       expect(status.keysCount).toBe(Object.keys(staleDictionary).length);
-      expect(status.expectedKeysCount).toBe(418);
+      expect(status.expectedKeysCount).toBe(425);
 
       // The accepted payload is cached for the next load.
       expect(localStorage.getItem(`ytp_locale_cache_v${PKG_VERSION}_ru`)).not.toBeNull();
@@ -757,7 +757,7 @@ describe('i18n Module', () => {
       );
 
       const allKeys = Object.keys(enJson);
-      expect(allKeys.length).toBe(418);
+      expect(allKeys.length).toBe(425);
 
       for (const key of allKeys) {
         const translated = window.YouTubePlusI18n.t(key);
@@ -843,12 +843,12 @@ describe('i18n Module', () => {
 
       const enJson = JSON.parse(fs.readFileSync(path.join(localesDir, 'en.json'), 'utf8'));
       const enKeys = Object.keys(enJson).sort();
-      expect(enKeys.length).toBe(418);
+      expect(enKeys.length).toBe(425);
 
       for (const file of files) {
         const data = JSON.parse(fs.readFileSync(path.join(localesDir, file), 'utf8'));
         const keys = Object.keys(data).sort();
-        expect(keys.length).toBe(418);
+        expect(keys.length).toBe(425);
         expect(keys).toEqual(enKeys);
       }
     });

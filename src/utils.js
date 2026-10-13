@@ -162,7 +162,7 @@
   // ---------------------------------------------------------------------------
   _U.isYouTubeDomain = () => {
     const host = window.location.hostname || '';
-    return host.endsWith('youtube.com') && host !== 'music.youtube.com';
+    return /(^|\.)youtube\.com$/.test(host) && host !== 'music.youtube.com';
   };
   _U.isWatchRoute = () => window.location.pathname === '/watch';
   _U.isShortsRoute = () => window.location.pathname.startsWith('/shorts');

@@ -1,11 +1,13 @@
-![Extension Cover](https://i.imgur.com/Dt5jG3M.png)
-![YouTube Music](https://i.imgur.com/LOC8X6P.png)
+| [![Extension Cover](https://i.imgur.com/Dt5jG3M.png)](https://i.imgur.com/Dt5jG3M.png) | [![YouTube Music](https://i.imgur.com/LOC8X6P.png)](https://i.imgur.com/LOC8X6P.png) |
+| :---: | :---: |
+
+![Animation demo](https://i.imgur.com/k7ZDZSr.gif)
 
 <!-- GREASYFORK_INSTALLS:START -->
 
 <p align="center">
   <a href="https://greasyfork.org/scripts/537017-youtube">
-    <img alt="downloads" src="https://img.shields.io/badge/downloads-5986-blue?style=flat-square" height="25" />
+    <img alt="downloads" src="https://img.shields.io/badge/downloads-8434-blue?style=flat-square" height="25" />
   </a>&nbsp;&nbsp;
   <a href="https://greasyfork.org/scripts/537017-youtube">
     <img alt="version" src="https://img.shields.io/badge/version-3.0.0-blue?style=flat-square" height="25" />
@@ -14,6 +16,7 @@
     <img alt="Release" src="https://img.shields.io/badge/Release-Install-brightgreen?style=flat-square" height="25" />
   </a>
 </p>
+
 <!-- GREASYFORK_INSTALLS:END -->
 
 YouTube + is a userscript for YouTube and YouTube Music. It adds player buttons
@@ -81,7 +84,9 @@ Feature suggestions go to
 [issues](https://github.com/diorhc/YTP/issues), or use the Report section in
 the settings modal.
 
-![Animation demo](https://i.imgur.com/k7ZDZSr.gif)
+<div align="center">
+    <img src=".github/assets/stars.webp" height="500" />
+</div>
 
 <div align="center">
 

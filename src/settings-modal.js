@@ -130,7 +130,10 @@
       case 'performance-mode':
         return `.performance-mode-submenu[data-submenu="${key}"]`;
       default:
-        return `[data-submenu="${key}"]`;
+        // The toggle button carries the same data-submenu and precedes the
+        // submenu in the DOM, so a bare attribute selector matches the button
+        // and the toggle would hide itself. Exclude the toggle button.
+        return `[data-submenu="${key}"]:not(.yp-submenu-toggle)`;
     }
   };
 

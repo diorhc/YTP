@@ -13,12 +13,48 @@
 */
 
 const fs = require('fs/promises');
+const path = require('path');
 const { URL } = require('url');
 
+const FETCH_HEADERS = {
+  // GreasyFork (behind Cloudflare) rejects bare "node.js" user agents from CI
+  // runners; a browser-like UA plus json-first Accept keeps the fetch working.
+  'User-Agent':
+    'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  Accept: 'application/json, text/html;q=0.9, */*;q=0.8',
+  'Accept-Language': 'en-US,en;q=0.9',
+};
+
 async function fetchText(url) {
-  const res = await fetch(url, { headers: { 'User-Agent': 'node.js' } });
-  if (!res.ok) throw new Error(`${url} returned ${res.status}`);
-  return await res.text();
+  let lastError;
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      const res = await fetch(url, { headers: FETCH_HEADERS });
+      if (!res.ok) throw new Error(`${url} returned ${res.status}`);
+      return await res.text();
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) await new Promise(resolve => setTimeout(resolve, attempt * 1500));
+    }
+  }
+  throw lastError;
+}
+
+/**
+ * The version badge follows a release, not the daily install count, so the
+ * version is read from the repository (package.json) instead of being scraped
+ * from GreasyFork on every run.
+ * @returns {Promise<string|null>}
+ */
+async function readRepoVersion() {
+  try {
+    const pkgPath = path.join(__dirname, '..', 'package.json');
+    const pkg = JSON.parse(await fs.readFile(pkgPath, 'utf8'));
+    const raw = typeof pkg?.version === 'string' ? pkg.version.trim() : '';
+    return raw ? parseVersionString(raw) : null;
+  } catch {
+    return null;
+  }
 }
 
 function parseNumberString(inputStr) {
@@ -282,23 +318,25 @@ async function main() {
   const targetUrl = args[0];
   const readmePath = args[1] || 'README.md';
 
-  console.log('📥 Fetching GreasyFork data for', targetUrl);
+  console.log('📥 Fetching GreasyFork install count for', targetUrl);
 
+  // Only the install count changes daily; the version comes from the repo so a
+  // GreasyFork version-scrape failure can no longer fail the whole run.
+  /** @type {string|null} */
+  let version = await readRepoVersion();
   /** @type {number|null} */
   let installCount = null;
-  /** @type {string|null} */
-  let version = null;
 
   // Try JSON endpoint first
   try {
     const { installCount: jsonInstalls, version: jsonVersion } = await tryJsonEndpoint(targetUrl);
     installCount = jsonInstalls;
-    version = jsonVersion;
+    if (!version) version = jsonVersion;
   } catch {
     // ignore
   }
 
-  // Try HTML scraping if we're missing data
+  // Try HTML scraping if we're still missing data
   if (!installCount || !version) {
     try {
       const { installCount: htmlInstalls, version: htmlVersion } = await tryScrapeHtml(targetUrl);
@@ -312,10 +350,14 @@ async function main() {
     }
   }
 
-  if (!installCount || !version) {
-    console.error('Could not determine install count or version from GreasyFork.');
+  if (!installCount) {
+    console.error('Could not determine install count from GreasyFork.');
     console.error('Install count:', installCount || 'NOT FOUND');
-    console.error('Version:', version || 'NOT FOUND');
+    process.exit(2);
+  }
+
+  if (!version) {
+    console.error('Could not determine version (package.json is missing a version?).');
     process.exit(2);
   }
 

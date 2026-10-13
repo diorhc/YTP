@@ -1573,7 +1573,7 @@ describe('time.js classic loop dropdown and vision pill', () => {
     expect(btn.style.color).toBe('');
 
     loop.toggleLoop();
-    expect(dropdown.querySelector('.yp-classic-loop-status-badge').textContent).toBe('ON');
+    expect(dropdown.querySelector('.yp-classic-loop-status-badge').textContent).toBe('stateOn');
     expect(btn.style.color).toBe('var(--yt-accent, #ff0033)');
 
     btn.dispatchEvent(new MouseEvent('mouseleave'));
@@ -1749,7 +1749,7 @@ describe('time.js classic loop dropdown and vision pill', () => {
     delete window.YouTubePlusTimeLoop;
     document.dispatchEvent(new CustomEvent('yp-loop-state-changed'));
     // The handler falls back to an empty state instead of throwing.
-    expect(pill.querySelector('.yp-vision-loop-toggle-btn').textContent).toContain('OFF');
+    expect(pill.querySelector('.yp-vision-loop-toggle-btn').textContent).toContain('loopState');
   });
 
   test('the classic state listener ignores a missing loop facade', () => {
@@ -1762,14 +1762,14 @@ describe('time.js classic loop dropdown and vision pill', () => {
     const dropdown = document.getElementById('yp-classic-loop-dropdown');
     dropdown.classList.add('visible');
     const badge = dropdown.querySelector('.yp-classic-loop-status-badge');
-    expect(badge.textContent).toBe('OFF');
+    expect(badge.textContent).toBe('stateOff');
 
     // Without the facade the handler returns before recoloring the buttons or
     // refreshing the visible dropdown, so the rendered markup is untouched.
     delete window.YouTubePlusTimeLoop;
     expect(() => document.dispatchEvent(new CustomEvent('yp-loop-state-changed'))).not.toThrow();
     expect(dropdown.querySelector('.yp-classic-loop-status-badge')).toBe(badge);
-    expect(badge.textContent).toBe('OFF');
+    expect(badge.textContent).toBe('stateOff');
   });
 
   test('the dock button falls back to the SafeDOM surfaces when utils has none', () => {

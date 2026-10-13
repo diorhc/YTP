@@ -765,8 +765,8 @@ function getStatsStyles_(styleId) {
     function getCurrentVideoUrl() {
       const url = window.location.href;
 
-      // Validate URL is from YouTube domain
-      if (!url.includes('youtube.com')) {
+      // Validate the host is YouTube itself or a subdomain, not a look-alike.
+      if (!/(^|\.)youtube\.com$/.test(window.location.hostname || '')) {
         return null;
       }
 

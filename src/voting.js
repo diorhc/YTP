@@ -2581,7 +2581,6 @@
         <div class="yp-vote-bar-section" id="yp-vote-bar-section">
           <div class="yp-vote-bar-row">
             <div class="yp-vote-bar-count" id="yp-vote-bar-count">${totalVotes}</div>
-            <div class="yp-vote-bar-divider"></div>
             <div class="yp-vote-bar-buttons">
               <div class="yp-vote-bar-track" id="yp-vote-bar-fill" style="background:linear-gradient(to right, var(--yt-success) ${upPct}%, var(--yt-danger) ${upPct}%);"></div>
               <button class="yp-vote-bar-btn ${userVote === 1 ? 'active' : ''}" id="yp-vote-bar-up" data-vote="1" ${voteDisabledAttr} type="button" aria-label="${tf('like', 'Like')}${readOnlyTip}">
@@ -2591,7 +2590,6 @@
                 ${renderSvgIcon('dislike')}
               </button>
             </div>
-            <div class="yp-vote-bar-divider"></div>
             <button class="yp-voting-comments-icon" data-preview-comments="1" type="button" aria-label="${tf('comments', 'Comments')} (${commentCount === null ? tf('votesUnavailable', 'unavailable') : commentCount})">
               <span>&#128172;</span> ${commentCount === null ? '–' : commentCount}
             </button>
@@ -2898,9 +2896,8 @@
             <div class="yp-voting-score">
               <span class="yp-vote-total">${totalVotes}</span>
             </div>
-            <div class="yp-vote-bar-divider"></div>
             <div class="yp-voting-buttons">
-              <div class="yp-vote-bar-track yp-voting-buttons-track" style="background:linear-gradient(to right, var(--yt-success) ${upPct}%, var(--yt-danger) ${upPct}%);"></div>
+              <div class="yp-vote-bar-track yp-voting-buttons-track" data-bar-pct="${upPct}"></div>
               <button class="yp-vote-btn ${userVote === 1 ? 'active' : ''}" data-vote="1" ${voteDisabledAttr} type="button" aria-label="${tf('like', 'Like')}">
                 ${renderSvgIcon('like')}
               </button>
@@ -2908,7 +2905,6 @@
                 ${renderSvgIcon('dislike')}
               </button>
             </div>
-            <div class="yp-vote-bar-divider"></div>
             <button class="yp-voting-comments-icon" data-comments-open="1" type="button" aria-label="${tf('comments', 'Comments')} (${commentCountAria})">
               <span>&#128172;</span> ${commentCountLabel}
             </button>
@@ -2916,6 +2912,20 @@
         </div>
       </div>`;
   }
+
+  /**
+   * Paint each vote bar's success/danger split from its data-bar-pct. Applied
+   * after insert, on live nodes, because the inline `background` shorthand
+   * gradient does not survive the safe-HTML style sanitizer.
+   * @param {ParentNode} root
+   */
+  const applyVoteTrackGradients_ = root => {
+    for (const el of root.querySelectorAll('.yp-vote-bar-track[data-bar-pct]')) {
+      const pct = Math.max(0, Math.min(100, Number(el.getAttribute('data-bar-pct'))));
+      /** @type {HTMLElement} */ (el).style.background =
+        `linear-gradient(to right, var(--yt-success) ${pct}%, var(--yt-danger) ${pct}%)`;
+    }
+  };
 
   function wireFeatureListInteractions(
     /** @type {HTMLElement} */ listEl,
@@ -2925,6 +2935,7 @@
     // the scope limits wiring to freshly appended cards so the
     // accumulated list is never re-listened.
     const root = scope || listEl;
+    applyVoteTrackGradients_(root);
     const voteBtns = root.querySelectorAll('.yp-vote-btn');
     voteBtns.forEach((/** @type {Element} */ btn) => {
       _registerListener(btn, 'click', async () => {
